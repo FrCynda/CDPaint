@@ -133,4 +133,4 @@ Make sure:
 ### White/blank window in dev
 Check the dev server is running:
 - Open `http://localhost:1420` in your browser
-- If it fails, run `npm run dev` and check for errors
+- If it fails, run `npm run dev` and check for errors 
