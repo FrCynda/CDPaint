@@ -2,7 +2,7 @@
 
 A high-performance, WebGL-accelerated painting application designed for pixel artists and retro game developers. While it maintains the classic "Win32" aesthetic, it introduces professional image processing, active bit-depth enforcement, and specialized export tools for hardware-constrained environments like the Game Boy Advance (GBA).
 
-<img width="1920" height="1040" alt="image" src="https://github.com/user-attachments/assets/4d72af93-dd13-4076-bf8c-665cbcefd4f7" />
+<img width="1920" height="1039" alt="image" src="https://github.com/user-attachments/assets/849695fe-28fa-4d8f-a389-c7d16cdcda47" />
 
 
 ## 🚀 Key Features (Beyond Standard MS Paint)
