@@ -8547,6 +8547,19 @@ self.onmessage = (e) => {
             };
         }
 
+        getInclusiveRectFromPoints(a, b) {
+            const minX = Math.min(a.x, b.x);
+            const minY = Math.min(a.y, b.y);
+            const maxX = Math.max(a.x, b.x);
+            const maxY = Math.max(a.y, b.y);
+            return {
+                x: minX,
+                y: minY,
+                w: (maxX - minX) + 1,
+                h: (maxY - minY) + 1
+            };
+        }
+
         getNormalizedRect(s) {
             let rx = s.x;
             let ry = s.y;
@@ -9091,15 +9104,9 @@ self.onmessage = (e) => {
             }
             if(this.config.tool === 'select') {
                 const sp = this.clampPointToCanvasPixel(this.state.startPos);
-                let sx = sp.x;
-                let sy = sp.y;
                 const cp = this.clampPointToCanvasPixel(p);
-                let cx = cp.x;
-                let cy = cp.y;
-                const w = cx >= sx ? (cx - sx + 1) : (cx - sx - 1);
-                const h = cy >= sy ? (cy - sy + 1) : (cy - sy - 1);
-
-                this.updateSelectionUI(sx, sy, w, h);
+                const rect = this.getInclusiveRectFromPoints(sp, cp);
+                this.updateSelectionUI(rect.x, rect.y, rect.w, rect.h);
                 this.updateHoverPreview(p.x, p.y);
                 return;
             }
@@ -9288,20 +9295,17 @@ self.onmessage = (e) => {
             if(this.config.tool === 'select') {
                 this.ui.selControls.classList.remove('creating');
                 const sp = this.clampPointToCanvasPixel(this.state.startPos);
-                let sx = sp.x;
-                let sy = sp.y;
                 const cp = this.clampPointToCanvasPixel(p);
-                let cx = cp.x;
-                let cy = cp.y;
-                let w = cx >= sx ? (cx - sx + 1) : (cx - sx - 1);
-                let h = cy >= sy ? (cy - sy + 1) : (cy - sy - 1);
+                const rect = this.getInclusiveRectFromPoints(sp, cp);
+                const w = rect.w;
+                const h = rect.h;
 
                 if(Math.abs(w) <= 1 || Math.abs(h) <= 1) {
                     this.ui.selControls.style.display = 'none';
                     this.updateGlobalOverlays();
                     return;
                 }
-                this.createSelection(sx, sy, w, h);
+                this.createSelection(rect.x, rect.y, rect.w, rect.h);
                 this.state.selectionJustCreated = true;
                 this.renderSelection();
             } else if(['rect','circle','tri','line'].includes(this.config.tool)) {
