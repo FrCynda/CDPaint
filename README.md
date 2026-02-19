@@ -71,14 +71,28 @@ Tauri:
 
 ## Full tutorial: build and run (novice-friendly)
 
-### 1. Install prerequisites
-You need:
-- Node.js (LTS)
-- Rust (with Cargo)
+This section intentionally over-explains the setup so you can follow it even if you have never built a desktop app before.
 
-After installing, close and re-open your terminal so the commands are available.
+### 1. Install prerequisites (one-time setup)
+You need three things:
+- **Node.js (LTS)** for the frontend dev server and build.
+- **Rust + Cargo** for the Tauri backend and bundling.
+- **C++ build tools** on Windows for compiling native dependencies.
 
-Verify installs:
+Official download links (copy/paste into your browser):
+```text
+Node.js (LTS): https://nodejs.org/en/download
+Rust (rustup): https://www.rust-lang.org/tools/install
+Visual Studio Build Tools (C++): https://visualstudio.microsoft.com/visual-cpp-build-tools/
+Tauri prerequisites (Windows): https://tauri.app/v2/guides/prerequisites/
+```
+
+Notes:
+- For Rust, install via `rustup` when prompted. It sets up `cargo` automatically.
+- For Visual Studio Build Tools, choose the **Desktop development with C++** workload.
+- After installing, **close and re-open your terminal** so new commands are available.
+
+Verify installs (you should see version numbers, not errors):
 ```powershell
 node -v
 npm -v
@@ -86,38 +100,61 @@ rustc -V
 cargo -V
 ```
 
-### 2. Install frontend dependencies
-From the project folder:
+If any command says “not found,” the install did not finish correctly or the terminal needs a restart.
+
+### 2. Open a terminal in the project folder
+You should be in:
+`C:\Users\frenc\Desktop\CDPaint`
+
+In WebStorm:
+1. Open the built-in Terminal tab.
+2. Check the prompt path is the project folder.
+
+### 3. Install frontend dependencies (one-time per clone)
+This downloads the Node packages listed in `package.json`:
 ```powershell
 npm install
 ```
 
-### 3. Run the app in development
-This starts the dev server and opens the Tauri window:
+Expected result:
+- It creates a `node_modules/` folder.
+- No fatal errors.
+
+### 4. Run the app in development
+This starts a local web server and opens the desktop window:
 ```powershell
 npm run tauri dev
 ```
 
 What happens:
-- `npm run dev` starts the local server on `http://localhost:1420`
-- Tauri launches and loads that URL
+1. `npm run dev` starts a tiny server at `http://localhost:1420`.
+2. Tauri launches a native window that loads that URL.
 
-To stop:
-- Close the app window and press `Ctrl+C` in the terminal
+What you should see:
+- A CDPaint window.
+- The UI updates live when you edit files in `src/`.
 
-### 4. Build a production desktop app
-This creates the distributable app:
+To stop dev mode:
+- Close the app window.
+- Press `Ctrl+C` in the terminal.
+
+### 5. Build a production desktop app
+This creates release builds and installers:
 ```powershell
 npm run tauri:build
 ```
 
 What happens:
-- `npm run build` copies `src/` to `dist/`
-- Tauri bundles the app
+1. `npm run build` copies `src/` to `dist/`.
+2. Tauri compiles Rust and bundles the desktop app.
 
-Output locations (common):
-- Windows build artifacts: `src-tauri/target/release/`
-- Installer files: `src-tauri/target/release/bundle/`
+Output locations (common on Windows):
+- Release binaries: `src-tauri/target/release/`
+- Installers/bundles: `src-tauri/target/release/bundle/`
+
+If you don’t see output:
+- Re-run the command and read the last 20 lines for errors.
+- Most issues are missing C++ build tools or a failed Rust install.
 
 ## Common problems
 
