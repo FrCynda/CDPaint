@@ -72,104 +72,76 @@ Tauri:
 - Tauri uses the dev server in development (`beforeDevCommand`: `npm run dev`)
 - Tauri uses `dist/` for production builds (`beforeBuildCommand`: `npm run build`)
 
-## Full tutorial: build and run (novice-friendly)
+# CDPaint - Build & Run Guide
 
-This section intentionally over-explains the setup so you can follow it even if you have never built a desktop app before.
+Welcome! This guide is written specifically for complete beginners. You do not need to be a programmer or have any special coding software installed to build this desktop app. Just follow these steps one by one.
 
-### 1. Install prerequisites (one-time setup)
-You need three things:
-- **Node.js (LTS)** for the frontend dev server and build.
-- **Rust + Cargo** for the Tauri backend and bundling.
-- **C++ build tools** on Windows for compiling native dependencies.
+## 1. Install Prerequisites (One-Time Setup)
 
-Official download links (copy/paste into your browser):
-```text
-Node.js (LTS): https://nodejs.org/en/download
-Rust (rustup): https://www.rust-lang.org/tools/install
-Visual Studio Build Tools (C++): https://visualstudio.microsoft.com/visual-cpp-build-tools/
-Tauri prerequisites (Windows): https://tauri.app/v2/guides/prerequisites/
-```
+You only need to install three standard tools to make this work. Download them using the official links below:
 
-Notes:
-- For Rust, install via `rustup` when prompted. It sets up `cargo` automatically.
-- For Visual Studio Build Tools, choose the **Desktop development with C++** workload.
-- After installing, **close and re-open your terminal** so new commands are available.
+* **Node.js** (Runs the visual interface)
+    * **Download:** Get the **LTS** version from [nodejs.org](https://nodejs.org/en/download)
+    * **Setup:** Click through the standard installation, accepting all the defaults.
+* **Rust** (Runs the app's background engine)
+    * **Download:** Get the installer from [rust-lang.org](https://www.rust-lang.org/tools/install)
+    * **Setup:** When the black window pops up during installation, simply press `1` and hit **Enter** to accept the default installation.
+* **Visual Studio Build Tools** (Helps Windows read the code)
+    * **Download:** Get it from [microsoft.com](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+    * **Setup:** During installation, you will see a screen with checkboxes. You **must** check the box that says **Desktop development with C++**. 
 
-Verify installs (you should see version numbers, not errors):
-```powershell
-node -v
-npm -v
-rustc -V
-cargo -V
-```
+> **IMPORTANT:** Once all three are installed, **restart your computer** so Windows registers the new tools.
 
-If any command says “not found,” the install did not finish correctly or the terminal needs a restart.
+---
 
-### 2. Open a terminal in the project folder
-You should be in:
-`C:\Users\frenc\Desktop\CDPaint`
+## 2. Open the Command Prompt in Your Folder
 
-In WebStorm:
-1. Open the built-in Terminal tab.
-2. Check the prompt path is the project folder.
+Instead of using complex coding software, use this standard Windows shortcut to open your command prompt exactly where it needs to be:
 
-### 3. Install frontend dependencies (one-time per clone)
-This downloads the Node packages listed in `package.json`:
-```powershell
-npm install
-```
+1. Open your **CDPaint** folder (e.g., `C:\Users\frenc\Desktop\CDPaint`) normally using Windows File Explorer.
+2. Click directly on the long address bar at the very top of the folder window.
+3. Delete the text in the bar, type `cmd`, and press **Enter**.
+4. A black Command Prompt window will pop up, already locked onto your project folder. Keep it open!
 
-Expected result:
-- It creates a `node_modules/` folder.
-- No fatal errors.
+---
 
-### 4. Run the app in development
-This starts a local web server and opens the desktop window:
-```powershell
-npm run tauri dev
-```
+## 3. Install the App Files (One-Time Setup)
 
-What happens:
-1. `npm run dev` starts a tiny server at `http://localhost:1420`.
-2. Tauri launches a native window that loads that URL.
+We need to download the specific files your app needs to run. 
 
-What you should see:
-- A CDPaint window.
-- The UI updates live when you edit files in `src/`.
+In the black Command Prompt window you just opened, type the following command exactly as written and press **Enter**:
 
-To stop dev mode:
-- Close the app window.
-- Press `Ctrl+C` in the terminal.
+`npm install`
 
-### 5. Build a production desktop app
-This creates release builds and installers:
-```powershell
-npm run tauri:build
-```
+*Note: Wait for the progress bars to finish. When the text stops moving and you see a blinking cursor again, it is done.*
 
-What happens:
-1. `npm run build` copies `src/` to `dist/`.
-2. Tauri compiles Rust and bundles the desktop app.
+---
 
-Output locations (common on Windows):
-- Release binaries: `src-tauri/target/release/`
-- Installers/bundles: `src-tauri/target/release/bundle/`
+## 4. Run the App (Test Mode)
 
-If you don’t see output:
-- Re-run the command and read the last 20 lines for errors.
-- Most issues are missing C++ build tools or a failed Rust install.
+To launch your app so you can see it and test it, type this command and press **Enter**:
 
-## Common problems
+`npm run tauri dev`
 
-### "command not found" for node, npm, rustc, or cargo
-Install the missing tool and restart the terminal.
+* **What happens:** The black window will process some text, and after a few moments, your CDPaint desktop application will automatically open! 
+* **To stop it:** When you are done testing, close the CDPaint window normally. Then, click on your black Command Prompt window and press `Ctrl` + `C` to safely shut down the background process.
 
-### "failed to run beforeDevCommand" or "beforeBuildCommand"
-Make sure:
-- You ran `npm install`
-- `npm run dev` works on its own
-- `npm run build` works on its own
+---
 
+## 5. Build the Final App (To Share or Install)
+
+When you are completely finished and want to create the final, clickable application file (like an `.exe` installer) that you can share with others, use this command and press **Enter**:
+
+`npm run tauri:build`
+
+* **What happens:** This process takes a few minutes. Once it finishes, open your CDPaint folder in File Explorer. You will find your final, ready-to-use application hidden inside this specific folder path: `src-tauri/target/release/bundle/`
+
+---
+
+## Common Fixes
+
+* **"Command not found" error:** Your computer hasn't recognized the installations from Step 1. Make sure you fully restarted your computer after installing them.
+* **White or Blank app window:** You likely skipped Step 3. Close the app, run `npm install` in your command prompt, and try again.
 ### White/blank window in dev
 Check the dev server is running:
 - Open `http://localhost:1420` in your browser
