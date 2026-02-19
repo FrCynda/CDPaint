@@ -1,0 +1,14 @@
+{
+  "name": "CDPaint",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "tauri": "cd src-tauri && cargo tauri",
+    "tauri:build": "cd src-tauri && cargo tauri build",
+    "dev": "node scripts/dev.js",
+    "build": "node scripts/build.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "private": true
+}
