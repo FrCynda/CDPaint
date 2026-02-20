@@ -2378,11 +2378,9 @@
     <div class="dd-item" onclick="PaintApp.newFile()">New...</div>
     <div class="dd-item" onclick="document.getElementById('file-upload').click()">Open</div>
     <div class="dd-item" onclick="PaintApp.saveFile()">Save</div>
+    <div class="dd-item" onclick="PaintApp.saveAsFile()">Save As...</div>
 
     <div class="dd-item" onclick="PaintApp.openExportModal()">Export...</div>
-    <div class="dd-sep"></div>
-    <div class="dd-item" onclick="PaintApp.exportPalette()">Export Palette (.pal)</div>
-    <div class="dd-item" onclick="document.getElementById('pal-upload').click()">Import Palette (.pal)</div>
     <div class="dd-sep"></div>
     <div class="dd-item" onclick="PaintApp.openModal('props')">Properties</div>
   </div>
@@ -14224,6 +14222,73 @@ void main() {
             }
             return out;
         }
+        joinPath(base, name) {
+            const left = String(base || '');
+            const right = String(name || '');
+            if (!left) return right;
+            const sep = left.includes('\\') ? '\\' : '/';
+            if (left.endsWith('\\') || left.endsWith('/')) return `${left}${right}`;
+            return `${left}${sep}${right}`;
+        }
+        toUint8Array(data) {
+            if (data instanceof Uint8Array) return data;
+            if (data instanceof ArrayBuffer) return new Uint8Array(data);
+            if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            return new TextEncoder().encode(String(data || ''));
+        }
+        async saveExportFiles(files) {
+            if (!Array.isArray(files) || files.length === 0) return true;
+            const tauri = window.__TAURI__;
+            const hasTauriDialog = !!(tauri && tauri.dialog && typeof tauri.dialog.open === 'function');
+            const hasTauriWrite = !!(tauri && tauri.fs && typeof tauri.fs.writeFile === 'function');
+            if (hasTauriDialog && hasTauriWrite) {
+                const selected = await tauri.dialog.open({
+                    title: 'Choose Export Folder',
+                    directory: true,
+                    multiple: false
+                });
+                if (!selected) return null;
+                const dir = Array.isArray(selected) ? selected[0] : selected;
+                for (const file of files) {
+                    const fullPath = this.joinPath(dir, file.name);
+                    await tauri.fs.writeFile(fullPath, this.toUint8Array(file.bytes));
+                }
+                return true;
+            }
+            if (window.showDirectoryPicker) {
+                try {
+                    const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
+                    for (const file of files) {
+                        const handle = await dir.getFileHandle(file.name, { create: true });
+                        const writable = await handle.createWritable();
+                        await writable.write(this.toUint8Array(file.bytes));
+                        await writable.close();
+                    }
+                    return true;
+                } catch (e) {
+                    if (e && e.name === 'AbortError') return null;
+                    throw e;
+                }
+            }
+            if (files.length === 1 && window.showSaveFilePicker) {
+                try {
+                    const only = files[0];
+                    const isPal = /\.pal$/i.test(only.name);
+                    const types = isPal
+                        ? [{ description: 'Palette', accept: { 'text/plain': ['.pal'] } }]
+                        : [{ description: 'PNG Image', accept: { 'image/png': ['.png'] } }];
+                    const handle = await window.showSaveFilePicker({ suggestedName: only.name, types });
+                    const writable = await handle.createWritable();
+                    await writable.write(this.toUint8Array(only.bytes));
+                    await writable.close();
+                    return true;
+                } catch (e) {
+                    if (e && e.name === 'AbortError') return null;
+                    throw e;
+                }
+            }
+            return false;
+        }
         async doAdvancedExport() {
             const pkmnName = document.getElementById('export-pkmn-name').value.trim() || 'pokemon';
             const usePrefix = document.getElementById('export-use-prefix').checked;
@@ -14265,13 +14330,21 @@ void main() {
                 indices[i] = bestIdx;
             }
 
-            const downloadFile = (data, filename, isText = false) => {
-                const blob = new Blob([data], { type: isText ? 'text/plain' : 'image/png' });
-                const link = document.createElement('a');
-                link.download = filename;
-                link.href = URL.createObjectURL(blob);
-                link.click();
-                setTimeout(() => URL.revokeObjectURL(link.href), 100);
+            const queuedFiles = [];
+            const queueFile = (data, filename, isText = false) => {
+                const bytes = isText ? new TextEncoder().encode(String(data)) : this.toUint8Array(data);
+                queuedFiles.push({ name: filename, bytes });
+            };
+            const flushDownloads = () => {
+                queuedFiles.forEach((file) => {
+                    const isPal = /\.pal$/i.test(file.name);
+                    const blob = new Blob([file.bytes], { type: isPal ? 'text/plain' : 'image/png' });
+                    const link = document.createElement('a');
+                    link.download = file.name;
+                    link.href = URL.createObjectURL(blob);
+                    link.click();
+                    setTimeout(() => URL.revokeObjectURL(link.href), 100);
+                });
             };
 
             const savePng = (x, y, subW, subH, filename) => {
@@ -14282,7 +14355,7 @@ void main() {
                     }
                 }
                 const pngBytes = this.generateIndexedPNG(subW, subH, subIndices, finalPalette, 4); // Assuming 4bpp for decomps
-                downloadFile(pngBytes, filename);
+                queueFile(pngBytes, filename);
             };
 
             const shouldExport = (key) => {
@@ -14308,8 +14381,12 @@ void main() {
                         const c = finalPalette[i] || { r: 0, g: 0, b: 0 };
                         palStr += `${c.r} ${c.g} ${c.b}\r\n`;
                     }
-                    downloadFile(palStr, `${prefix}${isShiny ? 'shiny' : 'normal'}.pal`, true);
+                    queueFile(palStr, `${prefix}${isShiny ? 'shiny' : 'normal'}.pal`, true);
                 }
+
+                const saveResult = await this.saveExportFiles(queuedFiles);
+                if (saveResult === null) return;
+                if (saveResult === false) flushDownloads();
 
                 this.closeModals();
             } catch (e) {
@@ -15264,6 +15341,20 @@ void main() {
                 this.saveState();
             };
             reader.readAsText(file);
+        }
+
+        async saveAsFile() {
+            const prevHandle = this.state.fileHandle;
+            const prevPath = this.state.filePath;
+            this.state.fileHandle = null;
+            this.state.filePath = null;
+            try {
+                await this.saveFile();
+            } catch (e) {
+                this.state.fileHandle = prevHandle;
+                this.state.filePath = prevPath;
+                throw e;
+            }
         }
 
         async saveFile() {
