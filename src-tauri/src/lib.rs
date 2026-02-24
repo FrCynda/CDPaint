@@ -1,7 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
@@ -31,7 +31,7 @@ where
         }
         candidates.push(s);
     }
-    // Prefer existing image files.
+    // Accept only existing image files passed on launch.
     for s in &candidates {
         if is_current_exe(s) {
             continue;
@@ -39,28 +39,6 @@ where
         let p = Path::new(s);
         if p.is_file() && is_image_path(s) {
             return Some(normalize_candidate(s));
-        }
-    }
-    // Then any existing non-exe file.
-    for s in &candidates {
-        if is_current_exe(s) {
-            continue;
-        }
-        let p = Path::new(s);
-        if p.is_file() {
-            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-            if ext != "exe" {
-                return Some(normalize_candidate(s));
-            }
-        }
-    }
-    // Fallback: if it looks like an image path, accept it even if it doesn't exist yet.
-    for s in &candidates {
-        if is_current_exe(s) {
-            continue;
-        }
-        if is_image_path(s) {
-            return Some(s.to_string());
         }
     }
     None
@@ -88,8 +66,68 @@ fn get_pending_file(window: tauri::Window, state: tauri::State<'_, PendingFiles>
 
 fn is_image_path(path: &str) -> bool {
     let p = Path::new(path);
-    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp")
+    is_image_extension(p.extension().and_then(|e| e.to_str()))
+}
+
+fn is_image_extension(ext: Option<&str>) -> bool {
+    matches!(
+        ext.unwrap_or("").to_ascii_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp"
+    )
+}
+
+fn normalize_device_path(path: &str) -> String {
+    let mut s = path.trim().to_string();
+    if s.starts_with(r"\\?\UNC\") {
+        s = format!(r"\\{}", &s[r"\\?\UNC\".len()..]);
+    } else if s.starts_with(r"\\?\") {
+        s = s[r"\\?\".len()..].to_string();
+    }
+    s
+}
+
+fn normalize_to_absolute_path(path: &str) -> Result<PathBuf, String> {
+    let normalized = normalize_device_path(path);
+    let p = PathBuf::from(normalized);
+    if !p.is_absolute() {
+        return Err("path must be absolute".into());
+    }
+    Ok(p)
+}
+
+fn is_allowed_write_extension(ext: Option<&str>) -> bool {
+    matches!(
+        ext.unwrap_or("").to_ascii_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp" | "pal"
+    )
+}
+
+#[tauri::command]
+fn read_image_file(path: String) -> Result<Vec<u8>, String> {
+    let p = normalize_to_absolute_path(&path)?;
+    if !p.is_file() {
+        return Err("path is not an existing file".into());
+    }
+    if !is_image_extension(p.extension().and_then(|e| e.to_str())) {
+        return Err("only image files can be read".into());
+    }
+    std::fs::read(&p).map_err(|e| format!("read failed: {}", e))
+}
+
+#[tauri::command]
+fn write_allowed_file(path: String, data: Vec<u8>) -> Result<(), String> {
+    let p = normalize_to_absolute_path(&path)?;
+    if !is_allowed_write_extension(p.extension().and_then(|e| e.to_str())) {
+        return Err("file extension not allowed".into());
+    }
+    if let Some(parent) = p.parent() {
+        if !parent.exists() {
+            return Err("target directory does not exist".into());
+        }
+    } else {
+        return Err("invalid target path".into());
+    }
+    std::fs::write(&p, data).map_err(|e| format!("write failed: {}", e))
 }
 
 fn normalize_candidate(path: &str) -> String {
@@ -133,7 +171,7 @@ where
         if is_current_exe(&s) {
             continue;
         }
-        if is_image_path(&s) {
+        if is_image_path(&s) && Path::new(&s).is_file() {
             out.push(normalize_candidate(&s));
         }
     }
@@ -147,7 +185,6 @@ pub fn run() {
         .manage(PendingFiles(Mutex::new(HashMap::new())))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             let paths = collect_image_paths(argv.into_iter());
             if paths.is_empty() {
@@ -180,7 +217,12 @@ pub fn run() {
                 }
             });
         }))
-        .invoke_handler(tauri::generate_handler![greet, get_pending_file])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            get_pending_file,
+            read_image_file,
+            write_allowed_file
+        ])
         .setup(|app| {
             let args: Vec<String> = std::env::args().collect();
             if let Some(path) = first_file_path(args.into_iter().skip(1)) {
