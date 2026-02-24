@@ -11,8 +11,46 @@ permissions:
 env:
   TAURI_CLI_VERSION: "2.10.0"
 
+concurrency:
+  group: draft-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  release-gate:
+    name: Release Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate CHANGES_PENDING.md
+        shell: bash
+        run: |
+          test -f CHANGES_PENDING.md || { echo "CHANGES_PENDING.md is required for releases."; exit 1; }
+
+          for heading in "## Changes" "## Additions" "## Bug Fixes"; do
+            grep -q "^${heading}$" CHANGES_PENDING.md || { echo "Missing section: ${heading}"; exit 1; }
+          done
+
+          changes_count=$(awk '/^## Changes$/{f=1;next}/^## /{f=0}f && /^- /{c++}END{print c+0}' CHANGES_PENDING.md)
+          additions_count=$(awk '/^## Additions$/{f=1;next}/^## /{f=0}f && /^- /{c++}END{print c+0}' CHANGES_PENDING.md)
+          bugfix_count=$(awk '/^## Bug Fixes$/{f=1;next}/^## /{f=0}f && /^- /{c++}END{print c+0}' CHANGES_PENDING.md)
+
+          if [ "$changes_count" -eq 0 ] && [ "$additions_count" -eq 0 ] && [ "$bugfix_count" -eq 0 ]; then
+            echo "CHANGES_PENDING.md has no categorized entries."
+            exit 1
+          fi
+
+          current_tag="${GITHUB_REF_NAME}"
+          last_tag=$(sed -n 's/^- Last tag release: `\(.*\)`/\1/p' CHANGES_PENDING.md | head -n1)
+          if [ -n "$last_tag" ] && [ "$last_tag" = "$current_tag" ]; then
+            echo "CHANGES_PENDING.md baseline still matches current release tag (${current_tag})."
+            echo "It should describe changes leading up to this tag, not already be reset."
+            exit 1
+          fi
+
   draft-release:
+    needs: release-gate
     name: Draft (${{ matrix.platform }})
     runs-on: ${{ matrix.platform }}
     strategy:
