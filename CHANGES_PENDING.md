@@ -41,6 +41,7 @@ No release should be considered complete without this document being current.
 - Reduced visible startup race where users could draw before incoming file load completed.
 - Fixed GitHub Pages setup workflow enablement.
 - Fixed GitHub Pages deployment source to publish built `dist/` output instead of raw `src/`.
+- Fixed release asset rename race by adding release-availability retry logic before rename API calls.
 
 ## Commit Reference (Since `v1.1.3`)
 
