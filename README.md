@@ -14,7 +14,12 @@ A high-performance, WebGL-accelerated painting application designed for pixel ar
 - [Technical Stack](#-technical-stack)
 - [Architecture](#-architecture)
 - [Build & Run Guide](#-build--run-guide)
-- [Build on macOS and Linux](#6-build-on-macos-and-linux)
+- [Windows Install Guide](#1-windows-install-guide)
+- [macOS Install Guide](#2-macos-install-guide)
+- [Linux Install Guide (Ubuntu/Debian)](#3-linux-install-guide-ubuntudebian)
+- [Run in Dev Mode](#6-run-in-dev-mode)
+- [Build Production App](#7-build-production-app)
+- [CI Builds and Draft Releases (GitHub)](#8-ci-builds-and-draft-releases-github)
 - [Troubleshooting](#-troubleshooting)
 - [Legal & Licensing](#legal--licensing)
 
@@ -81,81 +86,28 @@ A specialized workflow for generating game-ready assets:
 
 # 💻 Build & Run Guide
 
-Welcome! This guide is written specifically for complete beginners. You do not need to be a programmer or have any special coding software installed to build this app.
-Simply follow these instructions one by one.
+This section is the shortest reliable path to run and build CDPaint.
 
-## 1. Install Prerequisites (One-Time Setup)
+## 1. Windows Install Guide
 
-You only need to install three standard tools to make this work. Download them using the official links below:
+1. Install Node.js (LTS): [nodejs.org](https://nodejs.org/en/download)
+2. Install Rust: [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
+3. Install Visual Studio Build Tools: [visualstudio.microsoft.com](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+4. In the Build Tools installer, enable **Desktop development with C++**
+5. Restart your computer once after installs
 
-1. **Node.js** (Runs the visual interface)
-   * **Download:** Get the **LTS** version from [nodejs.org](https://nodejs.org/en/download)
-   * **Setup:** Click through the standard installation, accepting all the defaults.
-2. **Rust** (Runs the app's background engine)
-   * **Download:** Get the installer from [rust-lang.org](https://www.rust-lang.org/tools/install)
-   * **Setup:** When the black window pops up during installation, simply press `1` and hit **Enter** to accept the default installation.
-3. **Visual Studio Build Tools** (Helps Windows read the code)
-   * **Download:** Get it from [visualstudio.microsoft.com](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-   * **Setup:** During installation, you will see a screen with checkboxes. You **must** check the box that says **Desktop development with C++**.
+## 2. macOS Install Guide
 
-> **IMPORTANT:** Once all three are installed, **restart your computer** so Windows registers the new tools.
-
-## 2. Open Command Prompt (The Easy Way)
-
-Instead of navigating through complex computer menus, use this standard Windows shortcut to open your command prompt exactly where it needs to be:
-
-1. Open your **CDPaint** folder wherever you saved or extracted it (for example, in your Downloads or Documents folder) using the standard Windows File Explorer.
-2. Click directly on the long address bar at the very top of the folder window (the bar that shows your current folder path).
-3. Delete whatever text is there, type `cmd`, and press **Enter**.
-4. A black Command Prompt window will pop up. Because you opened it this way, it automatically knows to look inside your CDPaint folder. Keep this window open!
-
-## 3. Install Dependencies
-
-Now we just need to tell the computer to download the final pieces the app needs to run. In that black window you just opened, simply type the following and press **Enter**:
-
-`npm install`
-
-*Note: You will see a lot of text scrolling by and some progress bars. Don't worry, it's just doing its job! When the text stops moving and you see a blinking cursor again, it is completely done.*
-
-## 4. Run the App (Test Mode)
-
-To launch the app so you can see it and test it out, type this into the same black window and press **Enter**:
-
-`npm run tauri dev`
-
-* **What happens:** The window will process some more text, and after a few moments, your CDPaint application will automatically pop open!
-* **To stop it:** Close the CDPaint window like you would close any normal app. Then, click on your black Command Prompt window and press the `Ctrl` and `C` keys on your keyboard at the same time to safely shut down the background process.
-
-## 5. Build the Final App
-
-When you are completely finished testing and want to create a final, clickable application file (like an `.exe` installer) that you can easily open later or share with friends, run this command:
-
-`npm run tauri:build`
-
-* **What happens:** This process takes a few minutes to pack everything tightly together. Once it finishes, open your CDPaint folder in File Explorer. You will find your final, ready-to-use application hidden inside this specific folder path: `src-tauri/target/release/bundle/`
-
-## 6. Build on macOS and Linux
-
-Use this section if you are building outside Windows.
-
-### macOS
-
-1. Install Xcode Command Line Tools:
+1. Install Node.js (LTS): [nodejs.org](https://nodejs.org/en/download)
+2. Install Rust: [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
+3. Install Xcode Command Line Tools:
    `xcode-select --install`
-2. Install Node.js (LTS) and Rust:
-   - Node.js: [nodejs.org](https://nodejs.org/en/download)
-   - Rust: [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
-3. In the project folder, install dependencies:
-   `npm install`
-4. Build the desktop app:
-   `npm run tauri:build`
-5. Output bundles are typically under:
-   - `target/release/bundle/`
-   - `src-tauri/target/release/bundle/`
 
-### Linux (Ubuntu/Debian)
+## 3. Linux Install Guide (Ubuntu/Debian)
 
-1. Install system dependencies:
+1. Install Node.js (LTS): [nodejs.org](https://nodejs.org/en/download)
+2. Install Rust: [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
+3. Install system libraries:
    ```bash
    sudo apt-get update
    sudo apt-get install -y \
@@ -169,23 +121,49 @@ Use this section if you are building outside Windows.
      librsvg2-dev \
      patchelf
    ```
-2. Install Node.js (LTS) and Rust:
-   - Node.js: [nodejs.org](https://nodejs.org/en/download)
-   - Rust: [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
-3. In the project folder, install dependencies:
-   `npm install`
-4. Build the desktop app:
-   `npm run tauri:build`
-5. Output bundles are typically under:
-   - `target/release/bundle/`
-   - `src-tauri/target/release/bundle/`
+
+## 4. Open a Terminal in the Project Folder
+
+- Windows: open the CDPaint folder in File Explorer, click the address bar, type `powershell` (or `cmd`), press Enter.
+- macOS/Linux: open Terminal and `cd` into the CDPaint folder.
+
+## 5. Install Dependencies
+
+```bash
+npm install
+```
+
+## 6. Run in Dev Mode
+
+```bash
+npm run tauri dev
+```
+
+- This opens the app in a development build.
+- Stop it with `Ctrl+C` in the terminal.
+
+## 7. Build Production App
+
+```bash
+npm run tauri:build
+```
+
+Build output is usually under:
+
+- `target/release/bundle/`
+- `src-tauri/target/release/bundle/`
+
+## 8. CI Builds and Draft Releases (GitHub)
+
+- Push to `master` to run `Build Desktop App` CI.
+- Push a version tag like `v1.1.4` to trigger automated `Draft Release` with attached assets.
 
 ---
 
 # 🔧 Troubleshooting
 
-* **"Command not found" error:** Your computer hasn't recognized the installations from Step 1. Make sure you fully restarted your computer after installing them.
-* **White or Blank app window:** You likely skipped Step 3. Close the app, run `npm install` in your command prompt, and try running it again.
+* **"Command not found" error:** Your computer hasn't recognized the OS install prerequisites yet. Re-check the install guide for your OS, then restart your computer.
+* **White or Blank app window:** You likely skipped dependency install. Close the app, run `npm install`, then start again with `npm run tauri dev`.
 
 ## White/blank window in dev
 Check if the dev server is running properly:
