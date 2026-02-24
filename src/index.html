@@ -213,9 +213,9 @@
         .tab.file { background: var(--win-blue); color: white; }
 
 
-        .ribbon { height: 100px; background: var(--bg-ribbon); border-bottom: 1px solid var(--border-ribbon); display: flex; padding: 5px; gap: 5px; position: relative; z-index: 100; overflow-x: auto; }
+        .ribbon { height: 100px; min-height: 100px; max-height: 100px; background: var(--bg-ribbon); border-bottom: 1px solid var(--border-ribbon); display: flex; padding: 5px; gap: 5px; position: relative; z-index: 100; overflow: hidden; }
 
-        .section { display: flex; flex-direction: column; align-items: center; justify-content: space-between; border-right: 1px solid #e0e0e0; padding: 0 8px; height: 100%; min-width: max-content; }
+        .section { display: flex; flex-direction: column; align-items: center; justify-content: space-between; border-right: 1px solid #e0e0e0; padding: 0 8px; height: 100%; min-width: max-content; flex-shrink: 0; }
         .colors-section { align-items: flex-start; }
         .ribbon-draggable { transition: transform 160ms ease; }
         .ribbon-drag-handle { cursor: grab; }
@@ -467,8 +467,9 @@
         .threshold-row { width: 120px; }
         #wand-threshold { width: 120px; }
         .threshold-values { width: 120px; display: flex; justify-content: space-between; font-size: 10px; color: #444; }
-        .wand-icon { display: none; }
+        .wand-icon { display: none; font-size: 16px; line-height: 1; width: 16px; text-align: center; transform: translateX(-3px); }
         .wand-icon.show { display: inline-block; }
+        .wand-menu-icon { width: 14px; display: inline-flex; justify-content: center; align-items: center; font-size: 13px; line-height: 1; }
         .ribbon-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 0 4px; }
         .ribbon-toggle input { margin: 0; width: 14px; height: 14px; accent-color: #0078d7; }
         .toggle-btn {
@@ -1700,6 +1701,17 @@
             align-items: center;
             gap: 4px;
         }
+        #modal-colors .select-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-height: 22px;
+        }
+        #modal-colors .select-hint {
+            font-size: 11px;
+            color: #555;
+            line-height: 1.2;
+        }
         #modal-colors .preset-row {
             display: flex;
             align-items: center;
@@ -1799,7 +1811,29 @@
             padding: 0 6px;
             font-size: 10px;
         }
+        #modal-colors .theme-select-btn.is-on {
+            background-color: #0078d7;
+            border-color: #005a9e;
+            color: #fff;
+        }
+        #modal-colors .color-item.is-picked {
+            background: #eef6ff;
+            border: 1px solid #9fc4ea;
+            border-radius: 2px;
+        }
         .color-preview-highlight {
+            outline: 2px dashed #0078d7 !important;
+            outline-offset: 2px;
+        }
+        body.theme-select-mode #title-bar,
+        body.theme-select-mode .tab-row,
+        body.theme-select-mode #ribbon,
+        body.theme-select-mode #ribbon-view,
+        body.theme-select-mode #ribbon-debug,
+        body.theme-select-mode #canvas-stage {
+            cursor: crosshair;
+        }
+        body.theme-select-mode .theme-select-candidate {
             outline: 2px dashed #0078d7 !important;
             outline-offset: 2px;
         }
@@ -1891,6 +1925,22 @@
         }
 
         #status-bar { height: 24px; background: #f0f0f0; border-top: 1px solid #ccc; display: flex; align-items: center; padding: 0 10px; gap: 15px; font-size: 11px; z-index: 100; }
+        #status-primary { display: flex; align-items: center; gap: 0; }
+        .status-segment {
+            width: 155px;
+            min-width: 155px;
+            max-width: 155px;
+            height: 18px;
+            padding: 0 6px;
+            display: flex;
+            align-items: center;
+            box-sizing: border-box;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+        .status-segment + .status-segment { border-left: 1px solid #c8c8c8; }
+        #status-right { display: flex; align-items: center; gap: 15px; }
         #status-reminder { color: #a40000; font-weight: 600; }
         #grid-overlay {
             position: fixed;
@@ -2053,8 +2103,8 @@
         }
         #close-confirm-modal .body-text {
             margin: 0;
-            font-size: 17px;
-            color: #1e5aa8;
+            font-size: 16px;
+            color: #0057d8;
             font-weight: normal;
         }
         #close-confirm-modal .separator {
@@ -2063,25 +2113,38 @@
         }
         #close-confirm-modal .button-area {
             background: #eeeeee;
-            padding: 10px 12px;
+            height: 40px;
+            box-sizing: border-box;
+            padding: 0 11px 0 12px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
         }
         #close-confirm-modal .btn-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 0; }
         #close-confirm-modal .btn-row button {
-            padding: 3px 18px;
+            height: 21px;
+            padding: 0 18px;
+            box-sizing: border-box;
             border: 1px solid #b0b0b0;
             background: #ffffff;
             cursor: pointer;
             border-radius: 4px;
             color: #000;
-            font-size: 11px;
+            font-size: 12px;
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            white-space: nowrap;
         }
-        #close-confirm-modal .btn-row button:hover { background: #e6e6e6; }
-        #close-confirm-modal .btn-primary {
-            background: #0078d7;
-            color: #fff;
-            border: 1px solid #005a9e;
+        #close-confirm-modal .btn-row button:nth-child(1) { width: 70px; min-width: 70px; max-width: 70px; }
+        #close-confirm-modal .btn-row button:nth-child(2) { width: 90px; min-width: 90px; max-width: 90px; text-align: center; padding-left: 16px; padding-right: 20px; }
+        #close-confirm-modal .btn-row button:nth-child(3) { width: 70px; min-width: 70px; max-width: 70px; }
+        #close-confirm-modal .btn-row button:hover:not(:disabled) {
+            background-color: #e5f1fb;
+            border-color: #0078d7;
         }
-        #close-confirm-modal .btn-primary:hover { background: #0063b1; }
+        #close-confirm-modal .btn-row button:focus {
+            outline: 1px solid #2b88d8;
+            outline-offset: -1px;
+        }
 
         #modal-info {
             position: fixed;
@@ -2330,10 +2393,7 @@
             z-index: 10;
         }
     </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/upng-js/2.1.0/UPNG.min.js"></script>
-
+    <script src="tauri-shim.js"></script>
     <script src="app.js"></script>
 </head>
 <body>
@@ -2381,6 +2441,8 @@
     <div class="dd-item" onclick="PaintApp.saveAsFile()">Save As...</div>
 
     <div class="dd-item" onclick="PaintApp.openExportModal()">Export...</div>
+    <div class="dd-item" onclick="PaintApp.promptImportPalette()">Import Palette...</div>
+    <div class="dd-item" onclick="PaintApp.exportPalette()">Export Palette...</div>
     <div class="dd-sep"></div>
     <div class="dd-item" onclick="PaintApp.openModal('props')">Properties</div>
   </div>
@@ -2478,8 +2540,8 @@
             <div class="btn btn-icon" data-tool="fill" onclick="PaintApp.setTool('fill')" title="Fill"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABMAAAAUCAYAAABvVQZ0AAABhGlDQ1BJQ0MgcHJvZmlsZQAAKJF9kb9Lw0AcxV9Ta0UqDnYQ6ZChOrWLijiWKhbBQmkrtOpgcukvaGJIUlwcBdeCgz8Wqw4uzro6uAqC4A8Q/wBxUnSREr+XFFrEeHDch3f3HnfvAKFVZ6rZlwBUzTKyqaRYKK6IwVcICKAfEcQkZurp3EIenuPrHj6+3sV5lve5P8eQUjIZ4BOJE0w3LOJ14plNS+e8TxxmVUkhPieOGXRB4keuyy6/ca44LPDMsJHPzhGHicVKD8s9zKqGSjxNHFVUjfKFgssK5y3Oar3BOvfkLwyVtOUc12lGkMIi0shAhIwGaqjDQpxWjRQTWdpPevjHHH+GXDK5amDkmMcGVEiOH/wPfndrlqcm3aRQEgi82PbHOBDcBdpN2/4+tu32CeB/Bq60rn+jBcx+kt7satEjYHgbuLjuavIecLkDjD7pkiE5kp+mUC4D72f0TUVg5BYYXHV76+zj9AHIU1dLN8DBITBRoew1j3cP9Pb275lOfz+WyXK1+DFMDQAAAAZiS0dEABcAAAD/BoEfYAAAAAlwSFlzAAAuIwAALiMBeKU/dgAAAAd0SU1FB+oCBQY3Mx1PjIYAAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAACHElEQVQ4y9XUv2sTYRzH8XdySSg21xp/5IekQgy0AW8xi+JkBv8CnUVrRofO/pgEd3exVXAQwbVqBZEI7dJByFDaxghpeun12sulSZPcPcnjICmNiWK79TM9w8OLz5cvfOHEp1TelLNzr2SpvCn/9sf7P9C6bsulxUWupNN8Xljg2Ni6bsv5lSoAH4odmq3W8bAedPd6DNd1SU3EqMWusrqxI4+E9aAHNy4SDPhpt9tExn2kJmK8Xy4NBQcwMfdYyvtTcn6lys2USt1xAWi2Wmhxlci4j8mJyFCwD5NPb0kl947CtsW1xCgA5d06FWObdrtFcW0NLa4SHfMPbeg93IifeQrbFkuPvmPWu1j7XToSvuVy3JuexjRNggE/ly+oRMaVAdDXw3qNACq7bVzHh+P6cTsQPBNm4eMnplIpLMsiFAqhxceAPbry98h9zex6A4DW8zwbuo5uCXTLwbBdAtEpzk2mESMq+6ILQDDgR4urxE4HqOw0+zGz6QCgJcKebCaJYeps1QSblotuC5reU7jKKLbwHiwF4O3XVbKZJH1jHo6WCHvyRUO++FLAEWEc0cURPoQLzqiC6OxxKazy5M0y2UwSLRH2DGwzeHumD8xmkjRqBkZNUKkK9KrDlu1iNuQABHDwqLx+JqN3Hnr+bNlrqIycZ2xEIaQq/CiVB6A+7F/pgR3fWRSxMxQ6UvJFQ868XJT5oiFP3gH9BcH8JGagiSF7AAAAAElFTkSuQmCC" width="19" height="20" alt=""></div>
 
             <div class="btn btn-icon" id="wand-tool-btn" data-tool="wand" onclick="PaintApp.setTool('wand')" title="Magic Wand">
-                <svg class="wand-icon wand-icon-contig" width="16" height="16" viewBox="0 0 24 24"><path d="M14 2l1.5 3L19 6l-3.5 1L14 10l-1.5-3L9 6l3.5-1L14 2zm-8 8l10 10-2 2L4 12l2-2zm4-2l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2z" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                <svg class="wand-icon wand-icon-global" width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5" fill="none" stroke="#000" stroke-width="1.6"/><path d="M12 5.5c2.5 2.2 2.5 10.8 0 13m0-13c-2.5 2.2-2.5 10.8 0 13M5.5 12h13" fill="none" stroke="#000" stroke-width="1.4" stroke-linecap="round"/><path d="M14 2l1.5 3L19 6l-3.5 1L14 10l-1.5-3L9 6l3.5-1L14 2z" fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span class="wand-icon wand-icon-contig" aria-hidden="true">&#x1FA84;</span>
+                <span class="wand-icon wand-icon-global" aria-hidden="true">&#x1F310;</span>
             </div>
 
             <div class="btn btn-icon" data-tool="eraser" onclick="PaintApp.setTool('eraser')" title="Eraser"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABUAAAAWCAYAAAAvg9c4AAABhGlDQ1BJQ0MgcHJvZmlsZQAAKJF9kb9Lw0AcxV9Ta0UqDnYQ6ZChOrWLijiWKhbBQmkrtOpgcukvaGJIUlwcBdeCgz8Wqw4uzro6uAqC4A8Q/wBxUnSREr+XFFrEeHDch3f3HnfvAKFVZ6rZlwBUzTKyqaRYKK6IwVcICKAfEcQkZurp3EIenuPrHj6+3sV5lve5P8eQUjIZ4BOJE0w3LOJ14plNS+e8TxxmVUkhPieOGXRB4keuyy6/ca44LPDMsJHPzhGHicVKD8s9zKqGSjxNHFVUjfKFgssK5y3Oar3BOvfkLwyVtOUc12lGkMIi0shAhIwGaqjDQpxWjRQTWdpPevjHHH+GXDK5amDkmMcGVEiOH/wPfndrlqcm3aRQEgi82PbHOBDcBdpN2/4+tu32CeB/Bq60rn+jBcx+kt7satEjYHgbuLjuavIecLkDjD7pkiE5kp+mUC4D72f0TUVg5BYYXHV76+zj9AHIU1dLN8DBITBRoew1j3cP9Pb275lOfz+WyXK1+DFMDQAAAAZiS0dEABcAAAD/BoEfYAAAAAlwSFlzAAAuIwAALiMBeKU/dgAAAAd0SU1FB+oCBQY3GLHzdcYAAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAABV0lEQVQ4y+3UvU7CUBQH8H8LVgZCgDTqIhGIEicUDBPGzUHiok7G5yA8gzEKVuNXHHwLB0eHO2B0cACVqTGNNjFQqVhbvA4mxkptIXUx4YwnN7/ce88H0I9/EUwvh0khT6nfj3gsBl9kDIFslnGFkkKepiKjAAC93UZL13H3KIMOcognpzC0tML0hH4HraIsipBUFcvbuwwAsG7Bs+oNvNwAuFD4K8e6BflgABVJwuzqmjPaLQgAoTCPYCJh/6e9gA/1BhZLOyan46bkWKCZuSSuFBmX0r0tKDeUDhAAvD8TrNoAPDxmUpOflb2+BW1qmOZHOsBcUXDuU7JXpJn4sHXbVGrwvbzjtaVBVhTktoRf29H0fNZo2s6eoRuOoGWhyP4G9bTfkB6PmvKn5xfAs4YFB9B2oshRiXo0FemJKMrVGuriE+bXN5k/2Tjk5JCSA4H2d2/X8QH+hZChgG8ZJAAAAABJRU5ErkJggg==" width="21" height="22" alt=""></div>
@@ -2864,12 +2926,12 @@
 <div id="wand-menu" class="dropdown-menu" style="left: 0; top: 0;">
     <div class="dd-item" onclick="PaintApp.setWandMode('contiguous')" id="item-wand-contig">
         <div class="dd-check"><svg width="12" height="12" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" fill="currentColor"/></svg></div>
-        <svg width="14" height="14" viewBox="0 0 24 24"><path d="M14 2l1.5 3L19 6l-3.5 1L14 10l-1.5-3L9 6l3.5-1L14 2zm-8 8l10 10-2 2L4 12l2-2zm4-2l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2z" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="wand-menu-icon" aria-hidden="true">&#x1FA84;</span>
         <span>Contiguous Wand</span>
     </div>
     <div class="dd-item" onclick="PaintApp.setWandMode('global')" id="item-wand-global">
         <div class="dd-check"><svg width="12" height="12" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" fill="currentColor"/></svg></div>
-        <svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5" fill="none" stroke="#000" stroke-width="1.6"/><path d="M12 5.5c2.5 2.2 2.5 10.8 0 13m0-13c-2.5 2.2-2.5 10.8 0 13M5.5 12h13" fill="none" stroke="#000" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <span class="wand-menu-icon" aria-hidden="true">&#x1F310;</span>
         <span>Global Color Wand</span>
     </div>
 </div>
@@ -2977,14 +3039,17 @@
 
     <!-- status bar for coords/zoom/size -->
 <div id="status-bar">
-    <div style="flex:1" id="status-coords">0, 0px</div>
-    <div style="display:flex; gap:15px">
-        <div id="status-dims">800 x 600px</div>
+    <div id="status-primary">
+        <div class="status-segment" id="status-coords">0, 0px</div>
+        <div class="status-segment" id="status-selection-size">-</div>
+        <div class="status-segment" id="status-dims">800 x 600px</div>
+    </div>
+    <div style="flex:1"></div>
+    <div id="status-right">
         <div id="status-colors">Colors: 0</div>
         <div id="status-sel-colors" style="display:none">Sel: 0</div>
+        <div id="status-reminder"></div>
     </div>
-    <div id="status-reminder"></div>
-    <div style="width:20px"></div>
     <div id="status-zoom">100%</div>
 </div>
 
@@ -3175,6 +3240,10 @@
             <div style="font-size:11px; color:#666;">Edit any color token used in the UI. Click Edit to open the color editor.</div>
             <div class="search-row">
                 <input class="search-input" id="color-customizer-search" type="text" placeholder="Search colors or UI elements">
+            </div>
+            <div class="select-row">
+                <button class="btn btn-small theme-select-btn" id="theme-select-toggle-btn" type="button">Select to Edit: Off</button>
+                <span class="select-hint" id="theme-select-hint">Turn this on, then click a UI element to edit its color token.</span>
             </div>
             <div class="preset-row">
                 <select class="preset-select" id="color-customizer-preset">
@@ -3793,19 +3862,6 @@
 </div>
 
 <script>
-    // Tauri fs compat: map legacy helpers to writeFile while keeping text as bytes.
-    const __tauri = window.__TAURI__;
-    if (__tauri && __tauri.fs) {
-        if (typeof __tauri.fs.writeBinaryFile !== 'function' && typeof __tauri.fs.writeFile === 'function') {
-            __tauri.fs.writeBinaryFile = (path, data) => __tauri.fs.writeFile(path, data);
-        }
-        if (typeof __tauri.fs.writeTextFile !== 'function' && typeof __tauri.fs.writeFile === 'function') {
-            __tauri.fs.writeTextFile = (path, data) => {
-                const bytes = new TextEncoder().encode(String(data));
-                return __tauri.fs.writeFile(path, bytes);
-            };
-        }
-    }
     // tiny seeded RNG for repeatable jitter/patterns (not crypto, obvs)
     class SeededRNG {
         constructor(seed) { this.seed = seed; }
@@ -3875,6 +3931,23 @@
         }
     }
 
+    class CompressionCompat {
+        static async deflate(bytes) {
+            if (typeof CompressionStream === 'function') {
+                const stream = new CompressionStream('deflate');
+                const writer = stream.writable.getWriter();
+                await writer.write(bytes);
+                await writer.close();
+                const compressed = await new Response(stream.readable).arrayBuffer();
+                return new Uint8Array(compressed);
+            }
+            if (window.pako && typeof window.pako.deflate === 'function') {
+                return window.pako.deflate(bytes);
+            }
+            throw new Error('Deflate compression is unavailable in this runtime');
+        }
+    }
+
     // main app brain: tools, UI wiring, history, etc. its big, sorry
     class PaintEngine {
         constructor() {
@@ -3924,6 +3997,8 @@
                 pickerArmed: false,
                 pickerSlot: 1,
                 pickerPreviewLastSample: 0,
+                hoverPreviewLastSample: 0,
+                hoverPreviewLastPoint: null,
                 fileHandle: null,
                 filePath: null,
                 lastMouse: null,
@@ -3951,6 +4026,7 @@
                 exportPalette: [],
                 exportDraggingIndex: -1,
                 exportPreset: 'gba-sprite',
+                tempSelectionDrawRect: null,
                 exportDir: null
             };
             this.resizeState = { w:0, h:0, ratio: 1 };
@@ -3974,6 +4050,11 @@
             this._antsPattern = null;
             this._antsPatternCtx = null;
             this.colorPreviewState = new WeakMap();
+            this.themeSelectActive = false;
+            this.themeSelectHoverEl = null;
+            this.themeSelectPickedRowKey = null;
+            this.themeSelectPickedRowTimer = null;
+            this.themeSelectBound = false;
             this._wandPreviewBuffer = null;
             this._wandPreviewImageData = null;
             this._wandStack = null;
@@ -4010,11 +4091,14 @@
             this.isForceClosing = false;
             this._unlistenCloseEvent = null;
             this._closeListenerInstalling = false;
+            this._closeConfirmKeydown = null;
             this.ui = {
                 stage: document.getElementById('canvas-stage'),
                 cMain: /** @type {HTMLCanvasElement} */ (document.getElementById('layer-main')),
                 cTemp: /** @type {HTMLCanvasElement} */ (document.getElementById('layer-temp')),
                 coords: document.getElementById('status-coords'),
+                statusSelectionSize: document.getElementById('status-selection-size'),
+                statusDims: document.getElementById('status-dims'),
                 sizeInput: document.getElementById('pen-size-input'),
                 palRec: document.getElementById('palette-recent'),
                 selControls: document.getElementById('selection-controls'),
@@ -4216,7 +4300,15 @@
                 this.setColor(e.target.value, this.config.activeSlot);
                 this.addRecentColor(e.target.value);
             });
-            document.getElementById('pal-upload').onchange = e => this.importPalette(e.target.files[0]);
+            const palUpload = document.getElementById('pal-upload');
+            if (palUpload) {
+                palUpload.onchange = (e) => {
+                    const file = e && e.target && e.target.files ? e.target.files[0] : null;
+                    if (!file) return;
+                    this.importPalette(file);
+                    e.target.value = '';
+                };
+            }
             const swapBtn = document.getElementById('swap-colors-btn');
             if (swapBtn) {
                 swapBtn.addEventListener('click', () => this.swapColors());
@@ -4286,6 +4378,7 @@
             window.addEventListener('resize', () => {
                 this.updateBounds();
                 this.updateGridOverlay();
+                this.reclampOpenDraggableWindows();
             });
             setTimeout(() => this.updateBounds(), 100);
 
@@ -4302,6 +4395,10 @@
             });
             window.addEventListener('keydown', e => {
                 this.updateKeyState(e, true);
+                if (e.key === 'F5') {
+                    e.preventDefault();
+                    return;
+                }
                 if (e.ctrlKey && e.key && e.key.toLowerCase() === 'r') {
                     e.preventDefault();
                     return;
@@ -4443,6 +4540,7 @@
                 this.updateBounds();
                 this.updateGridOverlay();
             });
+            this.initThemeSelectMode();
             this.deferHeavyInit();
             this.setTool(this.config.tool);
             this.updateModeButtons();
@@ -4602,8 +4700,7 @@
             if (!win) return;
             const x = e.clientX - this.hotkeysDrag.offsetX;
             const y = e.clientY - this.hotkeysDrag.offsetY;
-            win.style.left = x + 'px';
-            win.style.top = y + 'px';
+            this.setClampedWindowPosition(win, x, y);
         }
         endHotkeysDrag() {
             this.hotkeysDrag = null;
@@ -4653,8 +4750,7 @@
             if (!win) return;
             const x = e.clientX - this.modalDrag.offsetX;
             const y = e.clientY - this.modalDrag.offsetY;
-            win.style.left = x + 'px';
-            win.style.top = y + 'px';
+            this.setClampedWindowPosition(win, x, y);
         }
         endModalDrag() {
             this.modalDrag = null;
@@ -5344,19 +5440,22 @@
         openFileFromPath(path) {
             const tauri = window.__TAURI__;
             if (!tauri || !tauri.core || !path) return;
-            let normalizedPath = String(path);
-            if (normalizedPath.startsWith('\\\\?\\UNC\\')) {
-                normalizedPath = '\\\\' + normalizedPath.slice('\\\\?\\UNC\\'.length);
-            } else if (normalizedPath.startsWith('\\\\?\\')) {
-                normalizedPath = normalizedPath.slice('\\\\?\\'.length);
+            const normalizedPath = this.normalizeIncomingPath(path);
+            if (!this.isSupportedImagePath(normalizedPath)) {
+                console.warn('Rejected non-image path', normalizedPath);
+                return;
             }
             this.state.fileHandle = null;
-            this.state.filePath = normalizedPath;
+            this.state.filePath = null;
+            const commitLoadedImage = () => {
+                this.state.fileHandle = null;
+                this.state.filePath = normalizedPath;
+                this.state.fileName = this.getFilenameFromPath(normalizedPath);
+                this.handleLoadedImage(img, false);
+            };
             const img = new Image();
             img.onload = () => {
-                this.state.fileHandle = null;
-                this.state.fileName = this.getFilenameFromPath(path);
-                this.handleLoadedImage(img, false);
+                commitLoadedImage();
             };
             img.onerror = (e) => {
                 console.log('Failed to load file', { path: normalizedPath, error: e });
@@ -5365,9 +5464,7 @@
             const fastSrc = tauri.core.convertFileSrc(normalizedPath);
             const fallbackTimer = setTimeout(() => {
                 if (loaded) return;
-                const fs = tauri.fs;
-                if (!fs || !fs.readFile) return;
-                fs.readFile(normalizedPath).then((data) => {
+                this.tauriReadImageBytes(normalizedPath).then((data) => {
                     if (loaded) return;
                     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
                     const blob = new Blob([bytes]);
@@ -5376,28 +5473,22 @@
                         loaded = true;
                         clearTimeout(fallbackTimer);
                         URL.revokeObjectURL(url);
-                        this.state.fileHandle = null;
-                        this.state.fileName = this.getFilenameFromPath(path);
-                        this.handleLoadedImage(img, false);
+                        commitLoadedImage();
                     };
                     img.src = url;
                 }).catch((err) => {
-                    console.log('readFile failed', { path: normalizedPath, err });
+                    console.log('read image failed', { path: normalizedPath, err });
                 });
             }, 200);
             img.onload = () => {
                 loaded = true;
                 clearTimeout(fallbackTimer);
-                this.state.fileHandle = null;
-                this.state.fileName = this.getFilenameFromPath(path);
-                this.handleLoadedImage(img, false);
+                commitLoadedImage();
             };
             img.onerror = (e) => {
                 console.log('Failed to load file', { path: normalizedPath, error: e });
                 if (loaded) return;
-                const fs = tauri.fs;
-                if (!fs || !fs.readFile) return;
-                fs.readFile(normalizedPath).then((data) => {
+                this.tauriReadImageBytes(normalizedPath).then((data) => {
                     if (loaded) return;
                     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
                     const blob = new Blob([bytes]);
@@ -5406,13 +5497,11 @@
                         loaded = true;
                         clearTimeout(fallbackTimer);
                         URL.revokeObjectURL(url);
-                        this.state.fileHandle = null;
-                        this.state.fileName = this.getFilenameFromPath(path);
-                        this.handleLoadedImage(img, false);
+                        commitLoadedImage();
                     };
                     img.src = url;
                 }).catch((err) => {
-                    console.log('readFile failed', { path: normalizedPath, err });
+                    console.log('read image failed', { path: normalizedPath, err });
                 });
             };
             img.src = fastSrc;
@@ -5496,6 +5585,34 @@
             this.dismissSaveReminder();
             this.saveFile();
         }
+        setupCloseConfirmKeyNav() {
+            const modal = this.ui.closeConfirmModal;
+            if (!modal) return;
+            this.teardownCloseConfirmKeyNav();
+            this._closeConfirmKeydown = (e) => {
+                if (!modal || modal.style.display !== 'flex') return;
+                const buttons = Array.from(modal.querySelectorAll('.btn-row button'));
+                if (!buttons.length) return;
+                const key = e.key;
+                if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(key)) return;
+                const active = document.activeElement;
+                const current = buttons.indexOf(active);
+                let next = current >= 0 ? current : 0;
+                if (key === 'ArrowRight' || key === 'ArrowDown') next = (next + 1) % buttons.length;
+                if (key === 'ArrowLeft' || key === 'ArrowUp') next = (next - 1 + buttons.length) % buttons.length;
+                if (key === 'Home') next = 0;
+                if (key === 'End') next = buttons.length - 1;
+                e.preventDefault();
+                e.stopPropagation();
+                buttons[next].focus();
+            };
+            window.addEventListener('keydown', this._closeConfirmKeydown, true);
+        }
+        teardownCloseConfirmKeyNav() {
+            if (!this._closeConfirmKeydown) return;
+            window.removeEventListener('keydown', this._closeConfirmKeydown, true);
+            this._closeConfirmKeydown = null;
+        }
         showCloseConfirm() {
             const modal = this.ui.closeConfirmModal;
             if (!modal) return;
@@ -5503,10 +5620,14 @@
             if (label) label.textContent = this.getCurrentFilename();
             modal.style.display = 'flex';
             this.centerModal('close-confirm-modal');
+            this.setupCloseConfirmKeyNav();
+            const saveBtn = modal.querySelector('.btn-row .btn-primary');
+            if (saveBtn) requestAnimationFrame(() => saveBtn.focus());
         }
         dismissCloseConfirm() {
             const modal = this.ui.closeConfirmModal;
             if (!modal) return;
+            this.teardownCloseConfirmKeyNav();
             modal.style.display = 'none';
             this.isForceClosing = false;
         }
@@ -5811,6 +5932,8 @@
             this.colorOverrides = this.loadColorOverrides();
             this.customColorPresets = this.loadCustomColorPresets();
             this.applyColorOverrides();
+            this.initThemeSelectMode();
+            this.updateThemeSelectUi();
         }
         initThemeMode() {
             const stored = localStorage.getItem('paint.themeMode') || 'light';
@@ -5944,6 +6067,19 @@
             if (!path) return 'untitled.png';
             const parts = String(path).split(/[/\\]+/);
             return parts[parts.length - 1] || 'untitled.png';
+        }
+        normalizeIncomingPath(path) {
+            if (!path) return '';
+            let normalizedPath = String(path);
+            if (normalizedPath.startsWith('\\\\?\\UNC\\')) {
+                normalizedPath = '\\\\' + normalizedPath.slice('\\\\?\\UNC\\'.length);
+            } else if (normalizedPath.startsWith('\\\\?\\')) {
+                normalizedPath = normalizedPath.slice('\\\\?\\'.length);
+            }
+            return normalizedPath;
+        }
+        isSupportedImagePath(path) {
+            return /\.(png|jpe?g|bmp|gif|webp)$/i.test(String(path || ''));
         }
         markSaved(filename = null) {
             if (filename) this.state.fileName = filename;
@@ -6177,6 +6313,323 @@
                 const stillActive = Object.values(perEl).some(entry => entry && entry.timer);
                 if (!stillActive) el.classList.remove('color-preview-highlight');
             }, 5000);
+        }
+        initThemeSelectMode() {
+            if (this.themeSelectBound) return;
+            this.themeSelectBound = true;
+            const btn = document.getElementById('theme-select-toggle-btn');
+            if (btn && !btn.dataset.themeSelectBound) {
+                btn.dataset.themeSelectBound = '1';
+                btn.addEventListener('click', () => this.toggleThemeSelectMode());
+            }
+            document.addEventListener('mousemove', (e) => this.handleThemeSelectMouseMove(e), true);
+            document.addEventListener('mousedown', (e) => this.handleThemeSelectMouseDown(e), true);
+            document.addEventListener('click', (e) => this.handleThemeSelectClick(e), true);
+            window.addEventListener('keydown', (e) => this.handleThemeSelectKeydown(e), true);
+            this.updateThemeSelectUi();
+        }
+        isColorModalOpen() {
+            const modal = document.getElementById('modal-colors');
+            return !!(modal && modal.style.display === 'flex');
+        }
+        isWinColorOpen() {
+            const modal = document.getElementById('modal-wincolor');
+            return !!(modal && modal.style.display === 'flex');
+        }
+        updateThemeSelectUi(hintOverride = '') {
+            const btn = document.getElementById('theme-select-toggle-btn');
+            const hint = document.getElementById('theme-select-hint');
+            if (btn) {
+                btn.classList.toggle('is-on', this.themeSelectActive);
+                btn.textContent = this.themeSelectActive ? 'Select to Edit: On' : 'Select to Edit: Off';
+            }
+            if (hint) {
+                if (hintOverride) {
+                    hint.textContent = hintOverride;
+                } else if (this.themeSelectActive) {
+                    hint.textContent = 'Click any UI element to edit it. Click near edges for border/outline colors. Esc exits.';
+                } else {
+                    hint.textContent = 'Turn this on, then click a UI element to edit its color token.';
+                }
+            }
+        }
+        toggleThemeSelectMode(force = null) {
+            const next = force === null ? !this.themeSelectActive : !!force;
+            if (next && !this.isColorModalOpen()) return;
+            if (next === this.themeSelectActive) {
+                this.updateThemeSelectUi();
+                return;
+            }
+            this.themeSelectActive = next;
+            document.body.classList.toggle('theme-select-mode', this.themeSelectActive);
+            if (!this.themeSelectActive) {
+                this.clearThemeSelectHover();
+                if (this.themeSelectPickedRowTimer) {
+                    clearTimeout(this.themeSelectPickedRowTimer);
+                    this.themeSelectPickedRowTimer = null;
+                }
+            }
+            this.updateThemeSelectUi();
+        }
+        clearThemeSelectHover() {
+            if (this.themeSelectHoverEl && this.themeSelectHoverEl.classList) {
+                this.themeSelectHoverEl.classList.remove('theme-select-candidate');
+            }
+            this.themeSelectHoverEl = null;
+        }
+        setThemeSelectHoverElement(el) {
+            if (this.themeSelectHoverEl === el) return;
+            if (this.themeSelectHoverEl && this.themeSelectHoverEl.classList) {
+                this.themeSelectHoverEl.classList.remove('theme-select-candidate');
+            }
+            this.themeSelectHoverEl = null;
+            if (el && el.classList) {
+                el.classList.add('theme-select-candidate');
+                this.themeSelectHoverEl = el;
+            }
+        }
+        getThemeSelectEventElement(event) {
+            const target = event && event.target && event.target.nodeType === 1 ? event.target : null;
+            if (!target) return null;
+            if (target.closest('#modal-colors .window')) return null;
+            if (target.closest('#modal-wincolor .window')) return null;
+            if (target.closest('.modal-mask .window')) return null;
+            return target;
+        }
+        findThemeColorKeyByColor(normalizedColor) {
+            if (!normalizedColor || !this.colorCustomizerRows) return null;
+            for (const key of this.colorCustomizerRows.keys()) {
+                if (key === normalizedColor) return key;
+            }
+            for (const [key, row] of this.colorCustomizerRows.entries()) {
+                if (row.currentNormalized === normalizedColor) return key;
+            }
+            return null;
+        }
+        colorStringToRgba(color) {
+            if (!color) return null;
+            const normalized = this.normalizeColor(color);
+            if (!normalized) return null;
+            const match = normalized.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([0-9.]+))?\)/i);
+            if (!match) return null;
+            return {
+                r: Math.max(0, Math.min(255, parseInt(match[1], 10))),
+                g: Math.max(0, Math.min(255, parseInt(match[2], 10))),
+                b: Math.max(0, Math.min(255, parseInt(match[3], 10))),
+                a: match[4] === undefined ? 1 : Math.max(0, Math.min(1, parseFloat(match[4])))
+            };
+        }
+        findNearestThemeColorKey(normalizedColor, maxDistance = 44) {
+            if (!normalizedColor || !this.colorCustomizerRows || !this.colorCustomizerRows.size) return null;
+            const src = this.colorStringToRgba(normalizedColor);
+            if (!src || src.a <= 0) return null;
+            let bestKey = null;
+            let bestDist = Infinity;
+            for (const [key, row] of this.colorCustomizerRows.entries()) {
+                const to = this.colorStringToRgba(row.currentNormalized || key);
+                if (!to || to.a <= 0) continue;
+                const dr = src.r - to.r;
+                const dg = src.g - to.g;
+                const db = src.b - to.b;
+                const dist = Math.sqrt((dr * dr) + (dg * dg) + (db * db));
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    bestKey = key;
+                }
+            }
+            return bestDist <= maxDistance ? bestKey : null;
+        }
+        getThemeSelectPropOrderForElement(el, cs, point = null) {
+            const base = [
+                'backgroundColor',
+                'color',
+                'borderTopColor',
+                'borderRightColor',
+                'borderBottomColor',
+                'borderLeftColor',
+                'outlineColor'
+            ];
+            if (!el || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return base;
+            let rect = null;
+            try { rect = el.getBoundingClientRect(); } catch (e) { rect = null; }
+            if (!rect) return base;
+            const dTop = Math.abs(point.y - rect.top);
+            const dRight = Math.abs(rect.right - point.x);
+            const dBottom = Math.abs(rect.bottom - point.y);
+            const dLeft = Math.abs(point.x - rect.left);
+            const minEdgeDist = Math.min(dTop, dRight, dBottom, dLeft);
+            if (!Number.isFinite(minEdgeDist) || minEdgeDist > 8) return base;
+            const borderRows = [
+                { prop: 'borderTopColor', dist: dTop, width: parseFloat(cs.borderTopWidth) || 0 },
+                { prop: 'borderRightColor', dist: dRight, width: parseFloat(cs.borderRightWidth) || 0 },
+                { prop: 'borderBottomColor', dist: dBottom, width: parseFloat(cs.borderBottomWidth) || 0 },
+                { prop: 'borderLeftColor', dist: dLeft, width: parseFloat(cs.borderLeftWidth) || 0 }
+            ];
+            const activeBorders = borderRows.filter(row => row.width > 0.5);
+            const orderedBorders = (activeBorders.length ? activeBorders : borderRows)
+                .slice()
+                .sort((a, b) => a.dist - b.dist)
+                .map(row => row.prop);
+            return [
+                ...orderedBorders,
+                'outlineColor',
+                'backgroundColor',
+                'color'
+            ];
+        }
+        resolveThemeSelectMatchFromElement(startEl, point = null) {
+            if (!startEl) return null;
+            const attrs = ['fill', 'stroke', 'stop-color'];
+            const seen = new Set();
+            const tryColor = (raw, element, source) => {
+                const normalized = this.normalizeColor(raw);
+                if (!normalized || seen.has(normalized)) return null;
+                seen.add(normalized);
+                if (normalized === 'rgba(0, 0, 0, 0)') return null;
+                if (this.getAlphaFromNormalized(normalized) === 0) return null;
+                const key = this.findThemeColorKeyByColor(normalized);
+                if (key) return { key, element, inferred: false, source };
+                const nearest = this.findNearestThemeColorKey(normalized);
+                return nearest ? { key: nearest, element, inferred: true, source } : null;
+            };
+            let el = startEl;
+            let depth = 0;
+            while (el && depth < 8) {
+                if (el.nodeType !== 1) break;
+                let cs = null;
+                try { cs = getComputedStyle(el); } catch (e) {}
+                if (cs) {
+                    const props = this.getThemeSelectPropOrderForElement(el, cs, point);
+                    for (const prop of props) {
+                        const match = tryColor(cs[prop], el, prop);
+                        if (match) return match;
+                    }
+                }
+                if (el.getAttribute) {
+                    for (const attr of attrs) {
+                        const raw = el.getAttribute(attr);
+                        if (!raw) continue;
+                        const match = tryColor(raw, el, attr);
+                        if (match) return match;
+                    }
+                }
+                el = el.parentElement;
+                depth += 1;
+            }
+            return null;
+        }
+        resolveThemeSelectMatchFromPoint(x, y, fallbackEl = null) {
+            if (typeof document.elementsFromPoint === 'function') {
+                const stack = document.elementsFromPoint(x, y);
+                for (const el of stack) {
+                    if (!el || el.nodeType !== 1) continue;
+                    if (el.closest('#modal-colors .window')) continue;
+                    if (el.closest('#modal-wincolor .window')) continue;
+                    if (el.closest('.modal-mask .window')) continue;
+                    const match = this.resolveThemeSelectMatchFromElement(el, { x, y });
+                    if (match) return match;
+                }
+            }
+            return this.resolveThemeSelectMatchFromElement(fallbackEl, { x, y });
+        }
+        focusColorCustomizerRow(key) {
+            if (!this.colorCustomizerRows) return;
+            const row = this.colorCustomizerRows.get(key);
+            if (!row) return;
+            if (row.root.style.display === 'none') {
+                const search = document.getElementById('color-customizer-search');
+                if (search) {
+                    search.value = '';
+                    this.applyColorSearchFilter('');
+                }
+            }
+            if (this.themeSelectPickedRowKey && this.colorCustomizerRows.has(this.themeSelectPickedRowKey)) {
+                const prev = this.colorCustomizerRows.get(this.themeSelectPickedRowKey);
+                if (prev && prev.root) prev.root.classList.remove('is-picked');
+            }
+            if (this.themeSelectPickedRowTimer) {
+                clearTimeout(this.themeSelectPickedRowTimer);
+                this.themeSelectPickedRowTimer = null;
+            }
+            row.root.classList.add('is-picked');
+            if (row.root.scrollIntoView) {
+                row.root.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+            this.themeSelectPickedRowKey = key;
+            this.themeSelectPickedRowTimer = setTimeout(() => {
+                if (row.root) row.root.classList.remove('is-picked');
+                this.themeSelectPickedRowTimer = null;
+            }, 1500);
+        }
+        handleThemeSelectMouseMove(e) {
+            if (!this.themeSelectActive) return;
+            if (!this.isColorModalOpen()) {
+                this.toggleThemeSelectMode(false);
+                return;
+            }
+            if (this.isWinColorOpen()) {
+                this.clearThemeSelectHover();
+                return;
+            }
+            const target = this.getThemeSelectEventElement(e);
+            if (!target) {
+                this.clearThemeSelectHover();
+                return;
+            }
+            this.setThemeSelectHoverElement(target);
+        }
+        handleThemeSelectMouseDown(e) {
+            if (!this.themeSelectActive || e.button !== 0) return;
+            if (!this.isColorModalOpen()) {
+                this.toggleThemeSelectMode(false);
+                return;
+            }
+            if (this.isWinColorOpen()) return;
+            const target = this.getThemeSelectEventElement(e);
+            if (!target) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            const match = this.resolveThemeSelectMatchFromPoint(e.clientX, e.clientY, target);
+            if (!match) this.updateThemeSelectUi('No editable color token found here. Try another element.');
+        }
+        handleThemeSelectClick(e) {
+            if (!this.themeSelectActive || e.button !== 0) return;
+            if (!this.isColorModalOpen()) {
+                this.toggleThemeSelectMode(false);
+                return;
+            }
+            if (this.isWinColorOpen()) return;
+            const target = this.getThemeSelectEventElement(e);
+            if (!target) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            if (!this.colorCustomizerRows || !this.colorCustomizerRows.size) {
+                this.initColorCustomizer();
+                this.buildColorCustomizer();
+            }
+            const match = this.resolveThemeSelectMatchFromPoint(e.clientX, e.clientY, target);
+            if (!match) {
+                this.updateThemeSelectUi('No editable color token found here. Try another element.');
+                this.clearThemeSelectHover();
+                return;
+            }
+            this.focusColorCustomizerRow(match.key);
+            this.openColorPickerForKey(match.key);
+            if (match.source && (match.source.indexOf('border') === 0 || match.source === 'outlineColor')) {
+                this.updateThemeSelectUi('Border/outline token selected.');
+            } else if (match.inferred) {
+                this.updateThemeSelectUi('Selected nearest token match for this element color.');
+            } else {
+                this.updateThemeSelectUi();
+            }
+        }
+        handleThemeSelectKeydown(e) {
+            if (!this.themeSelectActive) return;
+            if (e.key !== 'Escape') return;
+            if (this.isWinColorOpen()) return;
+            this.toggleThemeSelectMode(false);
+            e.preventDefault();
+            e.stopImmediatePropagation();
         }
         openColorPickerForKey(key) {
             const row = this.colorCustomizerRows ? this.colorCustomizerRows.get(key) : null;
@@ -6623,7 +7076,8 @@
                     swatch,
                     defaultValue: item.display,
                     root: row,
-                    searchText
+                    searchText,
+                    currentNormalized: this.normalizeColor(item.display) || item.key
                 });
             });
         const search = document.getElementById('color-customizer-search');
@@ -6639,6 +7093,7 @@
         }
         this.refreshColorPresetOptions();
         this.refreshColorCustomizerUI();
+        this.updateThemeSelectUi();
     }
         refreshColorCustomizerUI() {
             if (!this.colorCustomizerRows) return;
@@ -6647,6 +7102,7 @@
                 const value = override || row.defaultValue;
                 row.input.value = value;
                 row.swatch.style.backgroundColor = value;
+                row.currentNormalized = this.normalizeColor(value) || this.normalizeColor(row.defaultValue) || key;
             });
         }
         updateColorOverrideFromInput(input, swatch, defaultValue) {
@@ -8781,6 +9237,7 @@ self.onmessage = (e) => {
                     this.ui.selControls.style.top = this.state.startPos.y + 'px';
                     this.ui.selControls.style.width = '0px';
                     this.ui.selControls.style.height = '0px';
+                    this.setStatusSelectionSize(0, 0);
                     this.updateGlobalOverlays({x:this.state.startPos.x, y:this.state.startPos.y, w:0, h:0});
                     return;
                 }
@@ -9181,6 +9638,15 @@ self.onmessage = (e) => {
 
         updateHoverPreview(x, y) {
             if (!this.ui.hoverPreview) return;
+            const ix = Math.floor(x);
+            const iy = Math.floor(y);
+            const now = performance.now();
+            const lastAt = this.state.hoverPreviewLastSample || 0;
+            const lastPt = this.state.hoverPreviewLastPoint;
+            if (lastPt && lastPt.x === ix && lastPt.y === iy && (now - lastAt) < 24) return;
+            if ((now - lastAt) < 16) return;
+            this.state.hoverPreviewLastSample = now;
+            this.state.hoverPreviewLastPoint = { x: ix, y: iy };
             const ctx = this.ui.hoverPreview.getContext('2d');
             ctx.imageSmoothingEnabled = false;
             
@@ -9188,8 +9654,8 @@ self.onmessage = (e) => {
             ctx.fillStyle = '#808080';
             ctx.fillRect(0, 0, 60, 60);
 
-            const startX = Math.floor(x) - 1;
-            const startY = Math.floor(y) - 1;
+            const startX = ix - 1;
+            const startY = iy - 1;
 
             // Draw 3x3 area from main canvas, scaled up to 60x60 (factor of 20)
             ctx.drawImage(this.ui.cMain, startX, startY, 3, 3, 0, 0, 60, 60);
@@ -9361,6 +9827,7 @@ self.onmessage = (e) => {
 
                 if(Math.abs(w) <= 1 || Math.abs(h) <= 1) {
                     this.ui.selControls.style.display = 'none';
+                    this.clearStatusSelectionSize();
                     this.updateGlobalOverlays();
                     return;
                 }
@@ -9467,6 +9934,7 @@ self.onmessage = (e) => {
             this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
             this.state.activeShape = null; this.state.shapeEditMode = false;
             this.ui.selControls.style.display = 'none';
+            this.clearStatusSelectionSize();
             this.updateGlobalOverlays();
             this.saveState();
             this.collapseSelectionCutStep();
@@ -9631,15 +10099,16 @@ self.onmessage = (e) => {
 
         renderSelection() {
             if(!this.state.selection) {
+                this.resetSelectionTempDirty();
                 this.stopOutlineAnimation();
                 this.ui.selControls.style.display = 'none';
+                this.clearStatusSelectionSize();
                 this.updateGlobalOverlays();
                 return;
             }
             const s = this.state.selection;
             this.stopOutlineAnimation();
 
-            this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
             this.disableSmoothing(this.ctxTemp);
 
             let dx = Math.floor(s.x);
@@ -9649,6 +10118,8 @@ self.onmessage = (e) => {
 
             let destX = dw < 0 ? dx + dw : dx;
             let destY = dh < 0 ? dy + dh : dy;
+            const clearRect = this.getSelectionTempDrawRect(destX, destY, dw, dh);
+            this.clearSelectionTempDirty(clearRect);
 
             const renderC = this.getRenderedSelectionCanvas();
             this.ctxTemp.save();
@@ -9675,7 +10146,6 @@ self.onmessage = (e) => {
                 this.renderSelectionFastCanvas();
                 return;
             }
-            this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
             this.disableSmoothing(this.ctxTemp);
 
             let dx = Math.floor(s.x);
@@ -9685,6 +10155,8 @@ self.onmessage = (e) => {
 
             let destX = dw < 0 ? dx + dw : dx;
             let destY = dh < 0 ? dy + dh : dy;
+            const clearRect = this.getSelectionTempDrawRect(destX, destY, dw, dh);
+            this.clearSelectionTempDirty(clearRect);
             const aw = Math.max(1, Math.abs(dw));
             const ah = Math.max(1, Math.abs(dh));
 
@@ -9731,7 +10203,6 @@ self.onmessage = (e) => {
         }
         renderSelectionFastCanvas() {
             const s = this.state.selection;
-            this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
             this.disableSmoothing(this.ctxTemp);
 
             let dx = Math.floor(s.x);
@@ -9741,6 +10212,8 @@ self.onmessage = (e) => {
 
             let destX = dw < 0 ? dx + dw : dx;
             let destY = dh < 0 ? dy + dh : dy;
+            const clearRect = this.getSelectionTempDrawRect(destX, destY, dw, dh);
+            this.clearSelectionTempDirty(clearRect);
 
             this.ctxTemp.save();
             this.ctxTemp.translate(destX, destY);
@@ -9754,6 +10227,41 @@ self.onmessage = (e) => {
             }
             this.ctxTemp.restore();
             this.updateSelectionUI(s.x, s.y, s.w, s.h);
+        }
+        getSelectionTempDrawRect(destX, destY, dw, dh, pad = 3) {
+            const aw = Math.max(1, Math.abs(dw));
+            const ah = Math.max(1, Math.abs(dh));
+            return {
+                x: Math.floor(destX - pad),
+                y: Math.floor(destY - pad),
+                w: Math.ceil(aw + (pad * 2)),
+                h: Math.ceil(ah + (pad * 2))
+            };
+        }
+        unionRects(a, b) {
+            if (!a) return b ? { ...b } : null;
+            if (!b) return { ...a };
+            const x1 = Math.min(a.x, b.x);
+            const y1 = Math.min(a.y, b.y);
+            const x2 = Math.max(a.x + a.w, b.x + b.w);
+            const y2 = Math.max(a.y + a.h, b.y + b.h);
+            return { x: x1, y: y1, w: Math.max(0, x2 - x1), h: Math.max(0, y2 - y1) };
+        }
+        clearSelectionTempDirty(nextRect) {
+            const toClear = this.unionRects(this.state.tempSelectionDrawRect, nextRect);
+            this.state.tempSelectionDrawRect = nextRect ? { ...nextRect } : null;
+            if (!toClear || toClear.w <= 0 || toClear.h <= 0) return;
+            const x = Math.max(0, toClear.x);
+            const y = Math.max(0, toClear.y);
+            const x2 = Math.min(this.config.width, toClear.x + toClear.w);
+            const y2 = Math.min(this.config.height, toClear.y + toClear.h);
+            const w = x2 - x;
+            const h = y2 - y;
+            if (w <= 0 || h <= 0) return;
+            this.ctxTemp.clearRect(x, y, w, h);
+        }
+        resetSelectionTempDirty() {
+            this.state.tempSelectionDrawRect = null;
         }
         ensureSelectionOutline(s) {
             if (!s.mask || s._maskOutline) return;
@@ -10013,6 +10521,18 @@ self.onmessage = (e) => {
             }
         }
 
+        setStatusSelectionSize(w, h) {
+            if (!this.ui.statusSelectionSize) return;
+            const sw = Math.max(0, Math.floor(Math.abs(w)));
+            const sh = Math.max(0, Math.floor(Math.abs(h)));
+            this.ui.statusSelectionSize.innerText = `${sw} x ${sh}px`;
+        }
+
+        clearStatusSelectionSize() {
+            if (!this.ui.statusSelectionSize) return;
+            this.ui.statusSelectionSize.innerText = '-';
+        }
+
         updateSelectionUI(x, y, w, h) {
             let lx = x, ly = y, lw = w, lh = h;
             if(lw < 0) { lx += lw; lw = Math.abs(lw); }
@@ -10025,6 +10545,11 @@ self.onmessage = (e) => {
             el.style.top = ly + 'px';
             el.style.width = lw + 'px';
             el.style.height = lh + 'px';
+            if (this.state.selection || (this.state.isDrawing && this.config.tool === 'select')) {
+                this.setStatusSelectionSize(lw, lh);
+            } else {
+                this.clearStatusSelectionSize();
+            }
 
             if (this.state.isDrawing && this.config.tool === 'select' && !this.state.selection) {
                 this.updateGlobalOverlays({x:lx, y:ly, w:lw, h:lh});
@@ -10053,7 +10578,9 @@ self.onmessage = (e) => {
             this.state.selection = null;
             this.state.selectionOriginalPos = null;
             this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
+            this.resetSelectionTempDirty();
             this.ui.selControls.style.display = 'none';
+            this.clearStatusSelectionSize();
             this.stopOutlineAnimation();
             this.updateGlobalOverlays();
             this.saveState();
@@ -10265,7 +10792,9 @@ self.onmessage = (e) => {
             } else {
                 this.state.selection = null;
                 this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
+                this.resetSelectionTempDirty();
                 this.ui.selControls.style.display = 'none';
+                this.clearStatusSelectionSize();
                 this.stopOutlineAnimation();
                 this.updateGlobalOverlays();
                 this.state.selectionCutStep = null;
@@ -10277,7 +10806,9 @@ self.onmessage = (e) => {
                 this.state.selection = null;
                 this.state.selectionOriginalPos = null;
                 this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
+                this.resetSelectionTempDirty();
                 this.ui.selControls.style.display = 'none';
+                this.clearStatusSelectionSize();
                 this.stopOutlineAnimation();
                 this.updateGlobalOverlays();
                 this.saveState();
@@ -10310,6 +10841,7 @@ self.onmessage = (e) => {
             this.state.selection = null;
             this.state.selectionOriginalPos = null;
             this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
+            this.resetSelectionTempDirty();
             this.renderSelection();
             this.saveState();
         }
@@ -12015,13 +12547,56 @@ void main() {
         moveWinColorDrag(e) {
             if (!this.winColorDrag) return;
             const win = this.ui.winWindow;
+            if (!win) return;
             const x = e.clientX - this.winColorDrag.offsetX;
             const y = e.clientY - this.winColorDrag.offsetY;
-            win.style.left = x + 'px';
-            win.style.top = y + 'px';
+            this.setClampedWindowPosition(win, x, y);
         }
         endWinColorDrag() {
             this.winColorDrag = null;
+        }
+        setClampedWindowPosition(win, desiredLeft, desiredTop) {
+            if (!win) return;
+            const rect = win.getBoundingClientRect();
+            const w = rect.width || win.offsetWidth || 0;
+            const h = rect.height || win.offsetHeight || 0;
+            const title = win.querySelector('.title-bar');
+            const titleH = Math.max(24, title ? (title.offsetHeight || 0) : 0);
+
+            const minLeft = Math.min(0, window.innerWidth - w);
+            const maxLeft = Math.max(0, window.innerWidth - w);
+            const minTop = 0;
+            const maxTop = Math.max(0, h > window.innerHeight ? (window.innerHeight - titleH) : (window.innerHeight - h));
+
+            const left = Math.round(Math.min(maxLeft, Math.max(minLeft, desiredLeft)));
+            const top = Math.round(Math.min(maxTop, Math.max(minTop, desiredTop)));
+            win.style.left = left + 'px';
+            win.style.top = top + 'px';
+        }
+        reclampOpenDraggableWindows() {
+            const ids = [
+                'modal-hotkeys',
+                'modal-resize',
+                'modal-depth',
+                'modal-edgeclean',
+                'modal-export',
+                'modal-huesat',
+                'save-reminder-modal',
+                'close-confirm-modal',
+                'modal-info',
+                'modal-colors',
+                'modal-confirm-reset',
+                'modal-toolbar',
+                'modal-wincolor'
+            ];
+            ids.forEach((id) => {
+                const modal = document.getElementById(id);
+                if (!modal || modal.style.display !== 'flex') return;
+                const win = modal.querySelector('.window');
+                if (!win) return;
+                const rect = win.getBoundingClientRect();
+                this.setClampedWindowPosition(win, rect.left, rect.top);
+            });
         }
         toggleWinColor() {
             this.ui.winWindow.classList.add('expanded');
@@ -12922,7 +13497,7 @@ void main() {
             this.updateGlobalOverlays();
             this.updateBounds();
 
-            document.getElementById('status-dims').innerText=`${previewW} x ${previewH}px`;
+            this.ui.statusDims.innerText = `${previewW} x ${previewH}px`;
         }
         async endCanvasResize() {
             this.state.isCanvasResizing=false;
@@ -12978,7 +13553,7 @@ void main() {
             this.ui.stage.style.width=w+'px';
             this.ui.stage.style.height=h+'px';
             this.updateBounds();
-            document.getElementById('status-dims').innerText=`${Math.floor(w)} x ${Math.floor(h)}px`;
+            this.ui.statusDims.innerText = `${Math.floor(w)} x ${Math.floor(h)}px`;
             this.deferColorCounts();
             this.updateViewportScrollability();
             this.updateGridOverlay();
@@ -13114,6 +13689,8 @@ void main() {
                 this.state.activeShape = null;
                 this.state.shapeEditMode = false;
                 this.ui.selControls.style.display = 'none';
+                this.clearStatusSelectionSize();
+                this.updateGlobalOverlays();
                 this.state.isDirty = true;
                 this.updateTitleBarActions();
                 return;
@@ -13122,6 +13699,7 @@ void main() {
                 this.state.step--;
                 const d=this.state.history[this.state.step];
                 this.restoreHistoryEntry(d);
+                this.updateGlobalOverlays();
                 this.deferColorCounts();
                 this.state.isDirty = true;
             }
@@ -13146,6 +13724,7 @@ void main() {
                 if (this.state.selection) {
                     this.state.selection = null;
                     this.ui.selControls.style.display = 'none';
+                    this.clearStatusSelectionSize();
                     this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
                     this.updateGlobalOverlays();
                     this.state.selectionCutStep = null;
@@ -13153,6 +13732,7 @@ void main() {
                 this.state.step = Math.min(this.state.history.length-1, this.state.step + 1);
                 const d=this.state.history[this.state.step];
                 this.restoreHistoryEntry(d);
+                this.updateGlobalOverlays();
                 this.deferColorCounts();
                 this.state.isDirty = true;
             }
@@ -13255,7 +13835,12 @@ void main() {
                 this.openHueSat();
             }
             if(id==='colors') {
+                if (!this.colorDefaults || !this.colorStyleEl) {
+                    this.initColorCustomizer();
+                }
                 this.buildColorCustomizer();
+                this.toggleThemeSelectMode(false);
+                this.updateThemeSelectUi();
                 this.centerModal('modal-' + id);
             }
             if(id==='toolbar') {
@@ -13281,6 +13866,7 @@ void main() {
                 return;
             }
             document.querySelectorAll('.modal-mask').forEach(m=>m.style.display='none');
+            this.toggleThemeSelectMode(false);
             const info = document.getElementById('modal-info');
             if (info) info.style.display = 'none';
             this.depthBackup = null;
@@ -14163,7 +14749,7 @@ void main() {
                 this.updateExportPreview();
             }
         }
-        generateIndexedPNG(w, h, indices, palette, bitDepth) {
+        async generateIndexedPNG(w, h, indices, palette, bitDepth) {
             const ihdr = new Uint8Array(13);
             const ihdrView = new DataView(ihdr.buffer);
             ihdrView.setUint32(0, w, false);
@@ -14200,7 +14786,7 @@ void main() {
                 }
             }
 
-            const idatData = pako.deflate(rawData);
+            const idatData = await CompressionCompat.deflate(rawData);
 
             const sig = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
             const chunks = [
@@ -14236,11 +14822,26 @@ void main() {
             if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
             return new TextEncoder().encode(String(data || ''));
         }
+        async tauriInvoke(command, payload = {}) {
+            const tauri = window.__TAURI__;
+            if (!tauri || !tauri.core || typeof tauri.core.invoke !== 'function') {
+                throw new Error('Tauri invoke API is unavailable');
+            }
+            return tauri.core.invoke(command, payload);
+        }
+        async tauriReadImageBytes(path) {
+            const data = await this.tauriInvoke('read_image_file', { path });
+            return data instanceof Uint8Array ? data : new Uint8Array(data);
+        }
+        async tauriWriteAllowedFile(path, data) {
+            const bytes = this.toUint8Array(data);
+            await this.tauriInvoke('write_allowed_file', { path, data: Array.from(bytes) });
+        }
         async saveExportFiles(files) {
             if (!Array.isArray(files) || files.length === 0) return true;
             const tauri = window.__TAURI__;
             const hasTauriDialog = !!(tauri && tauri.dialog && typeof tauri.dialog.open === 'function');
-            const hasTauriWrite = !!(tauri && tauri.fs && typeof tauri.fs.writeFile === 'function');
+            const hasTauriWrite = !!(tauri && tauri.core && typeof tauri.core.invoke === 'function');
             if (hasTauriDialog && hasTauriWrite) {
                 const selected = await tauri.dialog.open({
                     title: 'Choose Export Folder',
@@ -14251,7 +14852,7 @@ void main() {
                 const dir = Array.isArray(selected) ? selected[0] : selected;
                 for (const file of files) {
                     const fullPath = this.joinPath(dir, file.name);
-                    await tauri.fs.writeFile(fullPath, this.toUint8Array(file.bytes));
+                    await this.tauriWriteAllowedFile(fullPath, file.bytes);
                 }
                 return true;
             }
@@ -14347,14 +14948,14 @@ void main() {
                 });
             };
 
-            const savePng = (x, y, subW, subH, filename) => {
+            const savePng = async (x, y, subW, subH, filename) => {
                 const subIndices = new Uint8Array(subW * subH);
                 for (let row = 0; row < subH; row++) {
                     for (let col = 0; col < subW; col++) {
                         subIndices[row * subW + col] = indices[(y + row) * w + (x + col)];
                     }
                 }
-                const pngBytes = this.generateIndexedPNG(subW, subH, subIndices, finalPalette, 4); // Assuming 4bpp for decomps
+                const pngBytes = await this.generateIndexedPNG(subW, subH, subIndices, finalPalette, 4); // Assuming 4bpp for decomps
                 queueFile(pngBytes, filename);
             };
 
@@ -14366,13 +14967,13 @@ void main() {
             try {
                 // Execute the saves based on asset type
                 if (assetType === 'front-back' && w === 128 && h === 64) {
-                    if (shouldExport('front')) savePng(0, 0, 64, 64, `${prefix}front${shinySuffix}.png`);
-                    if (shouldExport('back')) savePng(64, 0, 64, 64, `${prefix}back${shinySuffix}.png`);
+                    if (shouldExport('front')) await savePng(0, 0, 64, 64, `${prefix}front${shinySuffix}.png`);
+                    if (shouldExport('back')) await savePng(64, 0, 64, 64, `${prefix}back${shinySuffix}.png`);
                 } else if (assetType === 'custom') {
-                    if (shouldExport('main')) savePng(0, 0, w, h, `${pkmnName}${shinySuffix}.png`);
+                    if (shouldExport('main')) await savePng(0, 0, w, h, `${pkmnName}${shinySuffix}.png`);
                 } else {
                     // front, back, anim_front, footprint, icon
-                    if (shouldExport('main')) savePng(0, 0, w, h, `${prefix}${assetType}${shinySuffix}.png`);
+                    if (shouldExport('main')) await savePng(0, 0, w, h, `${prefix}${assetType}${shinySuffix}.png`);
                 }
 
                 if (genPal && shouldExport('pal')) {
@@ -15300,6 +15901,13 @@ void main() {
             }
         }
 
+        promptImportPalette() {
+            const input = document.getElementById('pal-upload');
+            if (!input) return;
+            input.value = '';
+            input.click();
+        }
+
         exportPalette() {
             if (this.bitDepth === 24) {
                 const { list } = this.extractPalette(this.ctx, this.config.width, this.config.height);
@@ -15318,24 +15926,32 @@ void main() {
             a.href = url;
             a.download = 'palette.pal';
             a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 100);
         }
 
         importPalette(file) {
+            if (!file) return;
             const reader = new FileReader();
             reader.onload = (e) => {
                 const text = e.target.result;
                 const lines = text.split(/\r?\n/);
                 if(lines[0] !== 'JASC-PAL' || lines[1] !== '0100') { alert('Invalid JASC-PAL file'); return; }
-                const count = parseInt(lines[2]);
+                const count = parseInt(lines[2], 10);
+                if (!Number.isFinite(count) || count < 0) { alert('Invalid JASC-PAL file'); return; }
                 this.palette = [];
                 for(let i=3; i<3+count; i++) {
                     if(!lines[i]) continue;
                     const parts = lines[i].trim().split(/\s+/);
                     if(parts.length < 3) continue;
+                    const r = Number(parts[0]);
+                    const g = Number(parts[1]);
+                    const b = Number(parts[2]);
+                    if (![r, g, b].every(v => Number.isFinite(v) && v >= 0 && v <= 255)) continue;
                     let alpha = 255;
                     if (this.palette.length === 0) alpha = 0;
-                    this.palette.push({r:parseInt(parts[0]), g:parseInt(parts[1]), b:parseInt(parts[2]), a:alpha});
+                    this.palette.push({r:Math.round(r), g:Math.round(g), b:Math.round(b), a:alpha});
                 }
+                if (!this.palette.length) { alert('Palette file had no valid colors'); return; }
                 this.paletteLab = null;
                 this.enforcePalette(this.ctx, this.config.width, this.config.height, {set: new Set(), list: this.palette});
                 this.saveState();
@@ -15365,10 +15981,15 @@ void main() {
                 let blob = await new Promise(resolve => this.ui.cMain.toBlob(resolve, 'image/png'));
                 blob = await PngMetadata.inject(blob);
                 const tauri = window.__TAURI__;
-                if (tauri && tauri.fs && tauri.fs.writeFile && this.state.filePath) {
+                if (tauri && tauri.core && tauri.core.invoke && this.state.filePath) {
+                    const normalizedPath = this.normalizeIncomingPath(this.state.filePath);
+                    if (!this.isSupportedImagePath(normalizedPath)) {
+                        throw new Error(`Refusing to write non-image path: ${normalizedPath}`);
+                    }
                     const bytes = new Uint8Array(await blob.arrayBuffer());
-                    await tauri.fs.writeFile(this.state.filePath, bytes);
-                    this.markSaved(this.getFilenameFromPath(this.state.filePath));
+                    await this.tauriWriteAllowedFile(normalizedPath, bytes);
+                    this.state.filePath = normalizedPath;
+                    this.markSaved(this.getFilenameFromPath(normalizedPath));
                     this.resetSaveReminderTimer();
                     return;
                 }
