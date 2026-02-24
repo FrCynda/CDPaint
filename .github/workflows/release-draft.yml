@@ -87,3 +87,64 @@ jobs:
           releaseBody: |
             Automated draft release for ${{ github.ref_name }}.
             Edit this draft before publishing.
+
+  rename-assets:
+    name: Rename Release Assets
+    runs-on: ubuntu-latest
+    needs: draft-release
+    steps:
+      - name: Rename assets to readable versioned names
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tag = context.ref.replace('refs/tags/', '');
+
+            const rel = await github.rest.repos.getReleaseByTag({
+              owner,
+              repo,
+              tag
+            });
+
+            const assets = rel.data.assets || [];
+
+            function desiredName(name) {
+              const lower = name.toLowerCase();
+              if (lower.endsWith('.rpm')) return `CDPaint-${tag}-Linux-rpm-x64.rpm`;
+              if (lower.endsWith('.appimage')) return `CDPaint-${tag}-Linux-AppImage-x64.AppImage`;
+              if (lower.endsWith('.deb')) return `CDPaint-${tag}-Linux-deb-x64.deb`;
+              if (lower.endsWith('-setup.exe') || lower.endsWith('.exe')) return `CDPaint-${tag}-Windows-Setup-x64.exe`;
+              if (lower.endsWith('.msi')) return `CDPaint-${tag}-Windows-Installer-x64.msi`;
+              if (lower.endsWith('.dmg')) {
+                if (lower.includes('aarch64') || lower.includes('arm64')) return `CDPaint-${tag}-macOS-dmg-AppleSilicon.dmg`;
+                return `CDPaint-${tag}-macOS-dmg-x64.dmg`;
+              }
+              if (lower.endsWith('.app.tar.gz')) {
+                if (lower.includes('aarch64') || lower.includes('arm64')) return `CDPaint-${tag}-macOS-app-archive-AppleSilicon.tar.gz`;
+                return `CDPaint-${tag}-macOS-app-archive-x64.tar.gz`;
+              }
+              return null;
+            }
+
+            const occupied = new Set(assets.map(a => a.name));
+
+            for (const asset of assets) {
+              const target = desiredName(asset.name);
+              if (!target) continue;
+              if (asset.name === target) continue;
+              if (occupied.has(target)) {
+                core.warning(`Skipping rename for ${asset.name}; target already exists: ${target}`);
+                continue;
+              }
+              await github.rest.repos.updateReleaseAsset({
+                owner,
+                repo,
+                asset_id: asset.id,
+                name: target
+              });
+              core.info(`Renamed ${asset.name} -> ${target}`);
+              occupied.delete(asset.name);
+              occupied.add(target);
+            }
