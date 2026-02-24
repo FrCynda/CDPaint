@@ -9,6 +9,7 @@ A high-performance, WebGL-accelerated painting application designed for pixel ar
 **Try the live browser demo:** https://frcynda.github.io/CDPaint/
 
 **Performance note:** This demo runs best in **Chromium-based** browsers. **Gecko-based** browsers (Firefox, LibreWolf, Waterfox, etc.) are noticeably slower.
+
 <img width="1920" height="1039" alt="CDPaint Interface" src="https://github.com/user-attachments/assets/849695fe-28fa-4d8f-a389-c7d16cdcda47" />
 
 # Table of Contents
