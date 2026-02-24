@@ -132,6 +132,52 @@ When you are completely finished testing and want to create a final, clickable a
 
 * **What happens:** This process takes a few minutes to pack everything tightly together. Once it finishes, open your CDPaint folder in File Explorer. You will find your final, ready-to-use application hidden inside this specific folder path: `src-tauri/target/release/bundle/`
 
+## 6. Build on macOS and Linux
+
+Use this section if you are building outside Windows.
+
+### macOS
+
+1. Install Xcode Command Line Tools:
+   `xcode-select --install`
+2. Install Node.js (LTS) and Rust:
+   - Node.js: [nodejs.org](https://nodejs.org/en/download)
+   - Rust: [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
+3. In the project folder, install dependencies:
+   `npm install`
+4. Build the desktop app:
+   `npm run tauri:build`
+5. Output bundles are typically under:
+   - `target/release/bundle/`
+   - `src-tauri/target/release/bundle/`
+
+### Linux (Ubuntu/Debian)
+
+1. Install system dependencies:
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y \
+     pkg-config \
+     libssl-dev \
+     libglib2.0-dev \
+     libwebkit2gtk-4.1-dev \
+     libsoup-3.0-dev \
+     libgtk-3-dev \
+     libayatana-appindicator3-dev \
+     librsvg2-dev \
+     patchelf
+   ```
+2. Install Node.js (LTS) and Rust:
+   - Node.js: [nodejs.org](https://nodejs.org/en/download)
+   - Rust: [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
+3. In the project folder, install dependencies:
+   `npm install`
+4. Build the desktop app:
+   `npm run tauri:build`
+5. Output bundles are typically under:
+   - `target/release/bundle/`
+   - `src-tauri/target/release/bundle/`
+
 ---
 
 # 🔧 Troubleshooting
