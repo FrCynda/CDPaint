@@ -6,11 +6,13 @@
 
 A high-performance, WebGL-accelerated painting application designed for pixel artists and retro game developers. While it maintains a modern Windows aesthetic, it introduces useful image processing, active bit-depth enforcement, and specialized export tools for hardware-constrained environments like the Game Boy Advance (GBA).
 
+**Try the live browser demo:** https://frcynda.github.io/CDPaint/
+
+**Performance note:** This demo runs best in **Chromium-based** browsers. **Gecko-based** browsers (Firefox, LibreWolf, Waterfox, etc.) are noticeably slower.
 <img width="1920" height="1039" alt="CDPaint Interface" src="https://github.com/user-attachments/assets/849695fe-28fa-4d8f-a389-c7d16cdcda47" />
 
 # Table of Contents
 
-- [Web Demo](#web-demo)
 - [Key Features](#-key-features)
 - [Technical Stack](#-technical-stack)
 - [Architecture](#-architecture)
@@ -20,14 +22,6 @@ A high-performance, WebGL-accelerated painting application designed for pixel ar
 - [Linux Build + Installer (Ubuntu/Debian)](#3-linux-build--installer-ubuntudebian)
 - [Troubleshooting](#-troubleshooting)
 - [Legal & Licensing](#legal--licensing)
-
----
-
-# Web Demo
-
-Live browser demo: https://frcynda.github.io/CDPaint/
-
-Performance note: best tested in Chrome and other Chromium-based browsers (including Microsoft Edge). Firefox may run slower for this canvas-heavy app.
 
 ---
 
