@@ -4017,6 +4017,7 @@
                 ribbonContextSection: null,
                 busyOps: 0,
                 isSaving: false,
+                isFileLoading: false,
                 isDirty: false,
                 fileName: 'untitled.png',
                 resizePreviewActive: false,
@@ -5423,18 +5424,21 @@
                 }
             });
             if (tauri.core && tauri.core.invoke) {
-                const poll = (attemptsLeft) => {
-                    tauri.core.invoke('get_pending_file').then((path) => {
-                        if (path) {
-                            this.openFileFromPath(path);
-                            return;
-                        }
-                        if (attemptsLeft > 0) {
-                            setTimeout(() => poll(attemptsLeft - 1), 200);
-                        }
-                    }).catch(() => {});
-                };
-                poll(10);
+                // Lock input during startup file handoff check to avoid drawing
+                // before an initial "open with CDPaint" file is applied.
+                this.state.isFileLoading = true;
+                this.updateBusyIndicator();
+                tauri.core.invoke('get_pending_file').then((path) => {
+                    if (path) {
+                        this.openFileFromPath(path);
+                    } else {
+                        this.state.isFileLoading = false;
+                        this.updateBusyIndicator();
+                    }
+                }).catch(() => {
+                    this.state.isFileLoading = false;
+                    this.updateBusyIndicator();
+                });
             }
         }
         openFileFromPath(path) {
@@ -5445,26 +5449,25 @@
                 console.warn('Rejected non-image path', normalizedPath);
                 return;
             }
+            this.state.isFileLoading = true;
+            this.updateBusyIndicator();
             this.state.fileHandle = null;
             this.state.filePath = null;
-            const commitLoadedImage = () => {
+            const commitLoadedImage = async () => {
                 this.state.fileHandle = null;
                 this.state.filePath = normalizedPath;
                 this.state.fileName = this.getFilenameFromPath(normalizedPath);
-                this.handleLoadedImage(img, false);
+                await this.handleLoadedImage(img, false);
+            };
+            const finishLoading = () => {
+                this.state.isFileLoading = false;
+                this.updateBusyIndicator();
             };
             const img = new Image();
-            img.onload = () => {
-                commitLoadedImage();
-            };
-            img.onerror = (e) => {
-                console.log('Failed to load file', { path: normalizedPath, error: e });
-            };
             let loaded = false;
             const fastSrc = tauri.core.convertFileSrc(normalizedPath);
-            const fallbackTimer = setTimeout(() => {
-                if (loaded) return;
-                this.tauriReadImageBytes(normalizedPath).then((data) => {
+            const applyFromBytes = () => {
+                return this.tauriReadImageBytes(normalizedPath).then((data) => {
                     if (loaded) return;
                     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
                     const blob = new Blob([bytes]);
@@ -5473,35 +5476,37 @@
                         loaded = true;
                         clearTimeout(fallbackTimer);
                         URL.revokeObjectURL(url);
-                        commitLoadedImage();
+                        commitLoadedImage().catch((err) => {
+                            console.log('commit loaded image failed', { path: normalizedPath, err });
+                        }).finally(finishLoading);
+                    };
+                    img.onerror = () => {
+                        URL.revokeObjectURL(url);
+                        finishLoading();
                     };
                     img.src = url;
-                }).catch((err) => {
-                    console.log('read image failed', { path: normalizedPath, err });
                 });
-            }, 200);
+            };
+            const fallbackTimer = setTimeout(() => {
+                if (loaded) return;
+                applyFromBytes().catch((err) => {
+                    console.log('read image failed', { path: normalizedPath, err });
+                    finishLoading();
+                });
+            }, 50);
             img.onload = () => {
                 loaded = true;
                 clearTimeout(fallbackTimer);
-                commitLoadedImage();
+                commitLoadedImage().catch((err) => {
+                    console.log('commit loaded image failed', { path: normalizedPath, err });
+                }).finally(finishLoading);
             };
             img.onerror = (e) => {
                 console.log('Failed to load file', { path: normalizedPath, error: e });
                 if (loaded) return;
-                this.tauriReadImageBytes(normalizedPath).then((data) => {
-                    if (loaded) return;
-                    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-                    const blob = new Blob([bytes]);
-                    const url = URL.createObjectURL(blob);
-                    img.onload = () => {
-                        loaded = true;
-                        clearTimeout(fallbackTimer);
-                        URL.revokeObjectURL(url);
-                        commitLoadedImage();
-                    };
-                    img.src = url;
-                }).catch((err) => {
+                applyFromBytes().catch((err) => {
                     console.log('read image failed', { path: normalizedPath, err });
+                    finishLoading();
                 });
             };
             img.src = fastSrc;
@@ -9166,6 +9171,7 @@ self.onmessage = (e) => {
             if (this.state.isPanning) return;
             if (e.button === 1) return;
             if (this.state.quantizeBusy) return;
+            if (this.state.isFileLoading) return;
             this._lastPointerEvent = e;
 
             if(this.state.isCanvasResizing) return;
@@ -13099,7 +13105,7 @@ void main() {
             }
         }
         updateBusyIndicator() {
-            const show = !!this.state.isSaving || (this.state.busyOps > 0) || !!this.state.forceBusyIndicator;
+            const show = !!this.state.isSaving || !!this.state.isFileLoading || (this.state.busyOps > 0) || !!this.state.forceBusyIndicator;
             this.showSaveIndicator(show);
         }
         beginOperation() {
