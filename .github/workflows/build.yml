@@ -6,10 +6,20 @@ on:
     branches:
       - main
       - master
+    paths-ignore:
+      - "README.md"
+      - "AGENTS.md"
+      - "CHANGES_PENDING.md"
+      - "docs/**"
   pull_request:
     branches:
       - main
       - master
+    paths-ignore:
+      - "README.md"
+      - "AGENTS.md"
+      - "CHANGES_PENDING.md"
+      - "docs/**"
 
 permissions:
   contents: read
@@ -17,8 +27,33 @@ permissions:
 env:
   TAURI_CLI_VERSION: "2.10.0"
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  quick-check:
+    name: Quick Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Frontend build check
+        run: npm run build
+
   tauri-build:
+    if: github.event_name != 'pull_request'
+    needs: quick-check
     name: Tauri (${{ matrix.platform }})
     runs-on: ${{ matrix.platform }}
     strategy:
