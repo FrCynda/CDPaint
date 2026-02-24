@@ -10,6 +10,7 @@ A high-performance, WebGL-accelerated painting application designed for pixel ar
 
 # Table of Contents
 
+- [Web Demo](#web-demo)
 - [Key Features](#-key-features)
 - [Technical Stack](#-technical-stack)
 - [Architecture](#-architecture)
@@ -19,6 +20,14 @@ A high-performance, WebGL-accelerated painting application designed for pixel ar
 - [Linux Build + Installer (Ubuntu/Debian)](#3-linux-build--installer-ubuntudebian)
 - [Troubleshooting](#-troubleshooting)
 - [Legal & Licensing](#legal--licensing)
+
+---
+
+# Web Demo
+
+Live browser demo: https://frcynda.github.io/CDPaint/
+
+Performance note: best tested in Chrome and other Chromium-based browsers (including Microsoft Edge). Firefox may run slower for this canvas-heavy app.
 
 ---
 
