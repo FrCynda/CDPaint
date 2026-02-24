@@ -14,12 +14,9 @@ A high-performance, WebGL-accelerated painting application designed for pixel ar
 - [Technical Stack](#-technical-stack)
 - [Architecture](#-architecture)
 - [Build & Run Guide](#-build--run-guide)
-- [Windows Install Guide](#1-windows-install-guide)
-- [macOS Install Guide](#2-macos-install-guide)
-- [Linux Install Guide (Ubuntu/Debian)](#3-linux-install-guide-ubuntudebian)
-- [Run in Dev Mode](#6-run-in-dev-mode)
-- [Build Production App](#7-build-production-app)
-- [CI Builds and Draft Releases (GitHub)](#8-ci-builds-and-draft-releases-github)
+- [Windows Build + Installer](#1-windows-build--installer)
+- [macOS Build + Installer](#2-macos-build--installer)
+- [Linux Build + Installer (Ubuntu/Debian)](#3-linux-build--installer-ubuntudebian)
 - [Troubleshooting](#-troubleshooting)
 - [Legal & Licensing](#legal--licensing)
 
@@ -86,24 +83,42 @@ A specialized workflow for generating game-ready assets:
 
 # 💻 Build & Run Guide
 
-This section is the shortest reliable path to run and build CDPaint.
+Use the section for your OS. Each one includes everything needed to build and run an installer.
 
-## 1. Windows Install Guide
+## 1. Windows Build + Installer
 
 1. Install Node.js (LTS): [nodejs.org](https://nodejs.org/en/download)
 2. Install Rust: [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
 3. Install Visual Studio Build Tools: [visualstudio.microsoft.com](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 4. In the Build Tools installer, enable **Desktop development with C++**
-5. Restart your computer once after installs
+5. Restart Windows once after installs
+6. Open the CDPaint folder in File Explorer, click the address bar, type `powershell`, press Enter
+7. Run:
+   ```bash
+   npm install
+   npm run tauri:build
+   ```
+8. Open the installer output folder:
+   - `src-tauri/target/release/bundle/nsis/` for `.exe`
+   - `src-tauri/target/release/bundle/msi/` for `.msi`
+9. Double-click the installer you want and complete install
 
-## 2. macOS Install Guide
+## 2. macOS Build + Installer
 
 1. Install Node.js (LTS): [nodejs.org](https://nodejs.org/en/download)
 2. Install Rust: [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
-3. Install Xcode Command Line Tools:
-   `xcode-select --install`
+3. Install Xcode Command Line Tools: `xcode-select --install`
+4. Open Terminal and `cd` into your CDPaint folder
+5. Run:
+   ```bash
+   npm install
+   npm run tauri:build
+   ```
+6. Open the installer output folder:
+   - `src-tauri/target/release/bundle/dmg/` for `.dmg`
+7. Open the `.dmg` and install CDPaint
 
-## 3. Linux Install Guide (Ubuntu/Debian)
+## 3. Linux Build + Installer (Ubuntu/Debian)
 
 1. Install Node.js (LTS): [nodejs.org](https://nodejs.org/en/download)
 2. Install Rust: [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
@@ -121,54 +136,29 @@ This section is the shortest reliable path to run and build CDPaint.
      librsvg2-dev \
      patchelf
    ```
-
-## 4. Open a Terminal in the Project Folder
-
-- Windows: open the CDPaint folder in File Explorer, click the address bar, type `powershell` (or `cmd`), press Enter.
-- macOS/Linux: open Terminal and `cd` into the CDPaint folder.
-
-## 5. Install Dependencies
-
-```bash
-npm install
-```
-
-## 6. Run in Dev Mode
-
-```bash
-npm run tauri dev
-```
-
-- This opens the app in a development build.
-- Stop it with `Ctrl+C` in the terminal.
-
-## 7. Build Production App
-
-```bash
-npm run tauri:build
-```
-
-Build output is usually under:
-
-- `target/release/bundle/`
-- `src-tauri/target/release/bundle/`
-
-## 8. CI Builds and Draft Releases (GitHub)
-
-- Push to `master` to run `Build Desktop App` CI.
-- Push a version tag like `v1.1.4` to trigger automated `Draft Release` with attached assets.
+4. Open Terminal and `cd` into your CDPaint folder
+5. Run:
+   ```bash
+   npm install
+   npm run tauri:build
+   ```
+6. Open the installer output folder:
+   - `src-tauri/target/release/bundle/appimage/` for `.AppImage`
+   - `src-tauri/target/release/bundle/deb/` for `.deb`
+   - `src-tauri/target/release/bundle/rpm/` for `.rpm`
+7. Install using your preferred package type (`.AppImage`, `.deb`, or `.rpm`)
 
 ---
 
 # 🔧 Troubleshooting
 
 * **"Command not found" error:** Your computer hasn't recognized the OS install prerequisites yet. Re-check the install guide for your OS, then restart your computer.
-* **White or Blank app window:** You likely skipped dependency install. Close the app, run `npm install`, then start again with `npm run tauri dev`.
-
-## White/blank window in dev
-Check if the dev server is running properly:
-1. Open `http://localhost:1420` in your web browser.
-2. If it fails to load, manually run `npm run dev` in your terminal and check the output for any specific errors.
+* **Installer folder is empty:** Build likely failed earlier. Scroll up in terminal output, fix the first error shown, then run `npm run tauri:build` again.
+* **Can't find output files:** Check both `src-tauri/target/release/bundle/` and `target/release/bundle/`.
+* **Windows says app is unrecognized (SmartScreen):** Click `More info` then `Run anyway` for unsigned builds.
+* **macOS says app is damaged or blocked:** Open `System Settings -> Privacy & Security`, find the blocked app message, click `Open Anyway`, then launch again.
+* **Linux AppImage won't open:** In terminal, run `chmod +x path/to/CDPaint.AppImage`, then run it again.
+* **Build fails with toolchain/version errors:** Check versions with `node -v`, `npm -v`, `rustc -V`, and `cargo -V`. Update Node (LTS) and Rust if needed.
 
 ---
 
