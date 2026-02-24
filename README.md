@@ -10,11 +10,13 @@ A high-performance, WebGL-accelerated painting application designed for pixel ar
 
 # Table of Contents
 
-- [🚀 Key Features](#-key-features)
-- [🛠 Technical Stack](#-technical-stack)
-- [🏗 Architecture](#-architecture)
-- [💻 Build & Run Guide](#-build--run-guide)
-- [🔧 Troubleshooting](#-troubleshooting)
+- [Key Features](#-key-features)
+- [Technical Stack](#-technical-stack)
+- [Architecture](#-architecture)
+- [Build & Run Guide](#-build--run-guide)
+- [Build on macOS and Linux](#6-build-on-macos-and-linux)
+- [Troubleshooting](#-troubleshooting)
+- [Legal & Licensing](#legal--licensing)
 
 ---
 
