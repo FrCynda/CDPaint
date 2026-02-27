@@ -8,6 +8,14 @@
 
   const invoke = (cmd, args = {}, options) => internal.invoke(cmd, args, options);
 
+  async function invokeDialog(command, options = {}) {
+    try {
+      return await invoke(command, { options });
+    } catch (_) {
+      return invoke(command, options);
+    }
+  }
+
   function toEventTarget(target) {
     if (!target) return { kind: "Any" };
     if (typeof target === "string") return { kind: "AnyLabel", label: target };
@@ -87,7 +95,8 @@
       listen
     },
     dialog: {
-      open: async (options = {}) => invoke("plugin:dialog|open", { options })
+      open: async (options = {}) => invokeDialog("plugin:dialog|open", options),
+      save: async (options = {}) => invokeDialog("plugin:dialog|save", options)
     },
     window: windowApi
   };
