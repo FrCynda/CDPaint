@@ -2062,7 +2062,7 @@
             align-items: center;
             justify-content: center;
             z-index: 13000;
-            background: rgba(0,0,0,0.15);
+            background: transparent;
         }
         #close-confirm-modal .window {
             width: 350px;
@@ -3007,11 +3007,18 @@
         <canvas id="layer-main" width="800" height="600"></canvas>
         <canvas id="layer-temp" width="800" height="600"></canvas>
         <svg id="global-overlay-svg">
+            <defs>
+                <clipPath id="ants-clip" clipPathUnits="userSpaceOnUse">
+                    <rect id="ants-clip-rect" x="0" y="0" width="0" height="0"></rect>
+                </clipPath>
+            </defs>
             <rect id="svg-ghost-rect" class="svg-marquee-rect" x="0" y="0" width="0" height="0" style="display:none"></rect>
             <rect id="svg-sel-rect-back" class="svg-marquee-rect marquee-white" x="0" y="0" width="0" height="0" style="display:none"></rect>
             <rect id="svg-sel-rect" class="svg-marquee-rect" x="0" y="0" width="0" height="0" style="display:none"></rect>
-            <path id="svg-ants-path-back" class="svg-ants-path-back" d="" style="display:none"></path>
-            <path id="svg-ants-path" class="svg-ants-path" d="" style="display:none"></path>
+            <g id="svg-ants-wrap" clip-path="url(#ants-clip)">
+                <path id="svg-ants-path-back" class="svg-ants-path-back" d="" style="display:none"></path>
+                <path id="svg-ants-path" class="svg-ants-path" d="" style="display:none"></path>
+            </g>
         </svg>
         
                 <div id="selection-controls">
@@ -3932,19 +3939,99 @@
     }
 
     class CompressionCompat {
-        static async deflate(bytes) {
-            if (typeof CompressionStream === 'function') {
-                const stream = new CompressionStream('deflate');
-                const writer = stream.writable.getWriter();
+        static toBytes(input) {
+            if (input instanceof Uint8Array) return input;
+            if (input instanceof ArrayBuffer) return new Uint8Array(input);
+            if (ArrayBuffer.isView(input)) return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+            return new Uint8Array(0);
+        }
+        static async deflateWithCompressionStream(bytes, timeoutMs = 1200) {
+            const stream = new CompressionStream('deflate');
+            const writer = stream.writable.getWriter();
+            const compress = (async () => {
                 await writer.write(bytes);
                 await writer.close();
                 const compressed = await new Response(stream.readable).arrayBuffer();
                 return new Uint8Array(compressed);
+            })();
+            if (!timeoutMs || timeoutMs <= 0) return compress;
+            let timer = null;
+            try {
+                return await Promise.race([
+                    compress,
+                    new Promise((_, reject) => {
+                        timer = setTimeout(() => reject(new Error('CompressionStream timed out')), timeoutMs);
+                    })
+                ]);
+            } finally {
+                if (timer) clearTimeout(timer);
             }
+        }
+        static adler32(bytes) {
+            let a = 1;
+            let b = 0;
+            const MOD = 65521;
+            const input = this.toBytes(bytes);
+            const len = input.length;
+            for (let i = 0; i < len; i++) {
+                a += input[i];
+                if (a >= MOD) a -= MOD;
+                b += a;
+                if (b >= MOD) b -= MOD;
+            }
+            return ((b << 16) | a) >>> 0;
+        }
+        static deflateStored(bytes) {
+            const input = this.toBytes(bytes);
+            const chunks = [];
+            chunks.push(new Uint8Array([0x78, 0x01])); // zlib header (no compression/low memory)
+            let offset = 0;
+            while (offset < input.length) {
+                const remaining = input.length - offset;
+                const blockLen = Math.min(0xffff, remaining);
+                const isFinal = offset + blockLen >= input.length;
+                const header = new Uint8Array(5);
+                header[0] = isFinal ? 0x01 : 0x00; // BFINAL + BTYPE=00
+                header[1] = blockLen & 0xff;
+                header[2] = (blockLen >>> 8) & 0xff;
+                const nlen = (~blockLen) & 0xffff;
+                header[3] = nlen & 0xff;
+                header[4] = (nlen >>> 8) & 0xff;
+                chunks.push(header);
+                chunks.push(input.subarray(offset, offset + blockLen));
+                offset += blockLen;
+            }
+            const adler = this.adler32(input);
+            const trailer = new Uint8Array([
+                (adler >>> 24) & 0xff,
+                (adler >>> 16) & 0xff,
+                (adler >>> 8) & 0xff,
+                adler & 0xff
+            ]);
+            chunks.push(trailer);
+            let total = 0;
+            for (const part of chunks) total += part.length;
+            const out = new Uint8Array(total);
+            let writeAt = 0;
+            for (const part of chunks) {
+                out.set(part, writeAt);
+                writeAt += part.length;
+            }
+            return out;
+        }
+        static async deflate(bytes) {
+            const input = this.toBytes(bytes);
             if (window.pako && typeof window.pako.deflate === 'function') {
-                return window.pako.deflate(bytes);
+                return window.pako.deflate(input);
             }
-            throw new Error('Deflate compression is unavailable in this runtime');
+            if (typeof CompressionStream === 'function') {
+                try {
+                    return await this.deflateWithCompressionStream(input, 1200);
+                } catch (err) {
+                    console.warn('CompressionStream failed, falling back to stored deflate', err);
+                }
+            }
+            return this.deflateStored(input);
         }
     }
 
@@ -4019,6 +4106,7 @@
                 isSaving: false,
                 isFileLoading: false,
                 isDirty: false,
+                hasDocument: false,
                 fileName: 'untitled.png',
                 resizePreviewActive: false,
                 resizePreviewRect: null,
@@ -4048,6 +4136,27 @@
             this.winColorQuantMode = null;
             this._antsPatternCanvas = null;
             this._colorCountPending = false;
+            this._colorCountTimer = null;
+            this._colorCountLastAt = 0;
+            this._colorCountMinIntervalMs = 120;
+            this._colorCountJobId = 0;
+            this._colorCountWorker = null;
+            this._colorCountWorkerUrl = null;
+            this._colorCountWorkerFailed = false;
+            this._overlayRaf = null;
+            this._pendingOverlayOverride = null;
+            this._gridOverlayRaf = null;
+            this._selectionRenderRaf = null;
+            this._selectionUiCacheKey = '';
+            this._gridOverlayCacheKey = '';
+            this._tileOverlayCacheKey = '';
+            this._antsOverlayCache = {
+                selection: null,
+                path: '',
+                transform: '',
+                visible: false,
+                clip: '0,0,0,0'
+            };
             this._antsPattern = null;
             this._antsPatternCtx = null;
             this.colorPreviewState = new WeakMap();
@@ -4093,6 +4202,7 @@
             this._unlistenCloseEvent = null;
             this._closeListenerInstalling = false;
             this._closeConfirmKeydown = null;
+            this._startupWindowRevealed = false;
             this.ui = {
                 stage: document.getElementById('canvas-stage'),
                 cMain: /** @type {HTMLCanvasElement} */ (document.getElementById('layer-main')),
@@ -4108,8 +4218,10 @@
                 svgGhostRect: document.getElementById('svg-ghost-rect'),
                 svgSelRect: document.getElementById('svg-sel-rect'),
                 svgSelRectBack: document.getElementById('svg-sel-rect-back'),
+                svgAntsWrap: document.getElementById('svg-ants-wrap'),
                 svgAntsPath: document.getElementById('svg-ants-path'),
                 svgAntsPathBack: document.getElementById('svg-ants-path-back'),
+                svgAntsClipRect: document.getElementById('ants-clip-rect'),
                 eraserGhost: document.getElementById('eraser-ghost'),
                 statusColors: document.getElementById('status-colors'),
                 statusSelColors: document.getElementById('status-sel-colors'),
@@ -4117,11 +4229,16 @@
                 saveReminderModal: document.getElementById('save-reminder-modal'),
                 closeConfirmModal: document.getElementById('close-confirm-modal'),
                 gridOverlay: document.getElementById('grid-overlay'),
+                gridLines: document.getElementById('grid-lines-4'),
+                gridClipRect: document.getElementById('grid-clip-rect'),
                 tileOverlay: document.getElementById('tile-overlay'),
+                tileShadeWrap: document.getElementById('tile-shade-wrap'),
+                tileClipRect: document.getElementById('tile-clip-rect'),
                 gridlineColorSwatch: document.getElementById('gridline-color-swatch'),
                 hoverPreview: document.getElementById('hover-preview'),
                 pencilIcon: document.getElementById('pencil-cursor-icon'),
                 saveIndicator: document.getElementById('save-indicator'),
+                statusZoom: document.getElementById('status-zoom'),
                 canvasResizeHandles: document.getElementById('canvas-resize-handles'),
                 resizerRight: document.querySelector('.resizer.r-right'),
                 resizerBottom: document.querySelector('.resizer.r-bottom'),
@@ -4171,6 +4288,8 @@
                 edgePreviewBtn: document.getElementById('edge-preview-btn'),
                 edgeApplyBtn: document.getElementById('edge-apply-btn')
             };
+            this._lastCoordsText = this.ui.coords ? this.ui.coords.textContent : '';
+            this._lastSelectionSizeText = this.ui.statusSelectionSize ? this.ui.statusSelectionSize.textContent : '-';
             this.ctx = this.ui.cMain.getContext('2d', {willReadFrequently:true});
             this.ctxTemp = this.ui.cTemp.getContext('2d');
             this.disableSmoothing(this.ctx);
@@ -4244,6 +4363,64 @@
             });
         }
 
+        loadImageFromSrc(src) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = (e) => reject(e);
+                img.src = src;
+            });
+        }
+
+        loadTauriImageFromPath(path) {
+            const tauri = window.__TAURI__;
+            const convertFileSrc = tauri && tauri.core && typeof tauri.core.convertFileSrc === 'function'
+                ? tauri.core.convertFileSrc
+                : null;
+            if (!convertFileSrc) {
+                return this.tauriReadImageBytes(path).then((data) => {
+                    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+                    return this.loadImageFromBlob(new Blob([bytes]));
+                });
+            }
+            const fastSrc = convertFileSrc(path);
+            return new Promise((resolve, reject) => {
+                let settled = false;
+                let fallbackStarted = false;
+                let fallbackTimer = null;
+                const finishResolve = (img) => {
+                    if (settled) return;
+                    settled = true;
+                    if (fallbackTimer) clearTimeout(fallbackTimer);
+                    resolve(img);
+                };
+                const finishReject = (err) => {
+                    if (settled) return;
+                    settled = true;
+                    if (fallbackTimer) clearTimeout(fallbackTimer);
+                    reject(err);
+                };
+                const tryBytesFallback = async () => {
+                    if (settled || fallbackStarted) return;
+                    fallbackStarted = true;
+                    try {
+                        const data = await this.tauriReadImageBytes(path);
+                        if (settled) return;
+                        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+                        const img = await this.loadImageFromBlob(new Blob([bytes]));
+                        finishResolve(img);
+                    } catch (err) {
+                        finishReject(err);
+                    }
+                };
+                const fastImg = new Image();
+                fastImg.onload = () => finishResolve(fastImg);
+                fastImg.onerror = () => { tryBytesFallback(); };
+                fallbackTimer = setTimeout(() => { tryBytesFallback(); }, 50);
+                fastImg.src = fastSrc;
+            });
+        }
+
         async decodeImageVariants(blob) {
             const variants = [];
             const addVariant = (source, label) => {
@@ -4291,6 +4468,138 @@
             ctx.oImageSmoothingEnabled = false;
         }
 
+        setCoordsStatus(x, y) {
+            if (!this.ui.coords) return;
+            const next = `${x}, ${y}px`;
+            if (next === this._lastCoordsText) return;
+            this._lastCoordsText = next;
+            this.ui.coords.textContent = next;
+        }
+
+        requestGlobalOverlayUpdate(creatingOverride = null) {
+            this._pendingOverlayOverride = creatingOverride ? {
+                x: creatingOverride.x,
+                y: creatingOverride.y,
+                w: creatingOverride.w,
+                h: creatingOverride.h
+            } : null;
+            if (this._overlayRaf) return;
+            this._overlayRaf = requestAnimationFrame(() => {
+                this._overlayRaf = null;
+                const pending = this._pendingOverlayOverride;
+                this._pendingOverlayOverride = null;
+                this.updateGlobalOverlays(pending);
+            });
+        }
+
+        requestGridOverlayUpdate() {
+            if (this._gridOverlayRaf) return;
+            this._gridOverlayRaf = requestAnimationFrame(() => {
+                this._gridOverlayRaf = null;
+                this.updateGridOverlay();
+            });
+        }
+
+        requestSelectionRenderFast() {
+            if (this._selectionRenderRaf) return;
+            this._selectionRenderRaf = requestAnimationFrame(() => {
+                this._selectionRenderRaf = null;
+                if (!this.state.selection) return;
+                this.renderSelectionFast();
+            });
+        }
+
+        ensureColorCountWorker() {
+            if (this._colorCountWorkerFailed) return null;
+            if (this._colorCountWorker) return this._colorCountWorker;
+            if (typeof Worker === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined' || !URL.createObjectURL) {
+                this._colorCountWorkerFailed = true;
+                return null;
+            }
+            const code = `
+                function countColors(data) {
+                    const set = new Set();
+                    for (let i = 0; i < data.length; i += 4) {
+                        if (data[i + 3] === 0) continue;
+                        set.add((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]);
+                    }
+                    return set.size;
+                }
+                self.onmessage = function (e) {
+                    const payload = e && e.data ? e.data : {};
+                    const jobId = payload.jobId || 0;
+                    const mainData = payload.mainData ? new Uint8ClampedArray(payload.mainData) : new Uint8ClampedArray(0);
+                    const selData = payload.selData ? new Uint8ClampedArray(payload.selData) : null;
+                    const total = countColors(mainData);
+                    const sel = selData ? countColors(selData) : null;
+                    self.postMessage({ jobId, total, sel });
+                };
+            `;
+            try {
+                const blob = new Blob([code], { type: 'application/javascript' });
+                const url = URL.createObjectURL(blob);
+                const worker = new Worker(url);
+                worker.onmessage = (event) => {
+                    const payload = event && event.data ? event.data : null;
+                    if (!payload) return;
+                    if (payload.jobId !== this._colorCountJobId) return;
+                    this.setColorCountStatus(payload.total, payload.sel, !!this.state.selection);
+                };
+                worker.onerror = () => {
+                    this._colorCountWorkerFailed = true;
+                    try { worker.terminate(); } catch (e) {}
+                    this._colorCountWorker = null;
+                    if (this._colorCountWorkerUrl) {
+                        URL.revokeObjectURL(this._colorCountWorkerUrl);
+                        this._colorCountWorkerUrl = null;
+                    }
+                };
+                this._colorCountWorker = worker;
+                this._colorCountWorkerUrl = url;
+                return worker;
+            } catch (e) {
+                this._colorCountWorkerFailed = true;
+                return null;
+            }
+        }
+
+        shouldUseCanvasMaskAnts() {
+            // Disabled: SVG ants preserve the original look exactly.
+            return false;
+        }
+
+        countColorsFromData(data) {
+            if (!data || data.length === 0) return 0;
+            const set = new Set();
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i + 3] === 0) continue;
+                set.add((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]);
+            }
+            return set.size;
+        }
+
+        setColorCountStatus(total, selCount = null, hasSelection = false) {
+            this.ui.statusColors.textContent = `Colors: ${total}`;
+            if (hasSelection) {
+                this.ui.statusSelColors.style.display = 'block';
+                this.ui.statusSelColors.textContent = `Sel: ${selCount === null ? 0 : selCount}`;
+            } else {
+                this.ui.statusSelColors.style.display = 'none';
+            }
+        }
+
+        initializeBlankDocument() {
+            if (this.state.hasDocument) return;
+            this.state.history = [];
+            this.state.step = -1;
+            this.setSize(this.config.width, this.config.height);
+            this.ctx.fillStyle = 'white';
+            this.ctx.fillRect(0, 0, this.config.width, this.config.height);
+            this.saveState();
+            this.markClean();
+            this.state.hasDocument = true;
+        }
+
         init() {
             const colors = ['#000000','#7f7f7f','#880015','#ed1c24','#ff7f27','#fff200','#22b14c','#00a2e8','#3f48cc','#a349a4','#ffffff','#c3c3c3','#b97a57','#ffaec9','#ffc90e','#efe4b0','#b5e61d','#99d9ea','#7092be','#c8bfe7'];
 
@@ -4320,9 +4629,6 @@
                     }
                 });
             }
-            this.ctx.fillStyle='white'; this.ctx.fillRect(0,0,800,600);
-            this.saveState();
-            this.markClean();
             this.toggleAnchorCanvas(this.config.anchorCanvas);
             this.updateAnchorStatus();
             const c1Disp = document.getElementById('c1-disp');
@@ -4537,11 +4843,13 @@
 
             this.ui.viewport.addEventListener('scroll', () => {
                 this.clampViewportScroll();
-                this.updateGlobalOverlays();
+                this.requestGlobalOverlayUpdate();
                 this.updateBounds();
-                this.updateGridOverlay();
+                this.requestGridOverlayUpdate();
             });
             this.initThemeSelectMode();
+            this.initColorCustomizer();
+            this.initThemeMode();
             this.deferHeavyInit();
             this.setTool(this.config.tool);
             this.updateModeButtons();
@@ -4552,7 +4860,8 @@
             this.initGridlines();
             this.initTileMode();
             this.initTitleBarControls();
-            this.initTauriFileOpenListener();
+            Promise.resolve(this.initTauriFileOpenListener())
+                .finally(() => this.revealStartupWindow());
             this.setActiveTab('home');
         }
 
@@ -4564,8 +4873,6 @@
                 this.initHotkeys();
                 this.initWinColorDialog();
                 this.initHueSat();
-                this.initColorCustomizer();
-                this.initThemeMode();
             };
             if (window.requestIdleCallback) {
                 requestIdleCallback(run, { timeout: 750 });
@@ -5412,104 +5719,74 @@
         initTauriFileOpenListener() {
             const tauri = window.__TAURI__;
             if (!tauri || !tauri.event) {
-                return;
+                this.initializeBlankDocument();
+                return Promise.resolve();
             }
             tauri.event.listen('open-file', (event) => {
                 const payload = event && event.payload;
                 if (!payload) return;
                 if (Array.isArray(payload)) {
-                    payload.forEach(path => this.openFileFromPath(path));
+                    payload.forEach(path => {
+                        this.openFileFromPath(path).catch((err) => {
+                            console.log('open-file event load failed', { path, err });
+                        });
+                    });
                 } else {
-                    this.openFileFromPath(payload);
+                    this.openFileFromPath(payload).catch((err) => {
+                        console.log('open-file event load failed', { path: payload, err });
+                    });
                 }
             });
-            if (tauri.core && tauri.core.invoke) {
-                // Lock input during startup file handoff check to avoid drawing
-                // before an initial "open with CDPaint" file is applied.
-                this.state.isFileLoading = true;
-                this.updateBusyIndicator();
-                tauri.core.invoke('get_pending_file').then((path) => {
+            const invoke = this.getTauriInvokeFn();
+            if (invoke) {
+                return invoke('get_pending_file').then((path) => {
                     if (path) {
-                        this.openFileFromPath(path);
+                        return this.openFileFromPath(path);
                     } else {
-                        this.state.isFileLoading = false;
-                        this.updateBusyIndicator();
+                        this.initializeBlankDocument();
+                        return null;
                     }
                 }).catch(() => {
-                    this.state.isFileLoading = false;
-                    this.updateBusyIndicator();
+                    this.initializeBlankDocument();
+                    return null;
                 });
             }
+            this.initializeBlankDocument();
+            return Promise.resolve();
         }
-        openFileFromPath(path) {
+        async openFileFromPath(path) {
             const tauri = window.__TAURI__;
-            if (!tauri || !tauri.core || !path) return;
+            if (!tauri || !this.getTauriInvokeFn() || !path) {
+                if (!this.state.hasDocument) this.initializeBlankDocument();
+                return false;
+            }
             const normalizedPath = this.normalizeIncomingPath(path);
             if (!this.isSupportedImagePath(normalizedPath)) {
                 console.warn('Rejected non-image path', normalizedPath);
-                return;
+                if (!this.state.hasDocument) this.initializeBlankDocument();
+                this.state.isFileLoading = false;
+                this.updateBusyIndicator();
+                return false;
             }
             this.state.isFileLoading = true;
             this.updateBusyIndicator();
             this.state.fileHandle = null;
             this.state.filePath = null;
-            const commitLoadedImage = async () => {
+            try {
+                const img = await this.loadTauriImageFromPath(normalizedPath);
                 this.state.fileHandle = null;
                 this.state.filePath = normalizedPath;
                 this.state.fileName = this.getFilenameFromPath(normalizedPath);
                 await this.handleLoadedImage(img, false);
-            };
-            const finishLoading = () => {
+                return true;
+            } catch (err) {
+                console.log('Failed to load file', { path: normalizedPath, err });
+                if (!this.state.hasDocument) this.initializeBlankDocument();
+                return false;
+            } finally {
                 this.state.isFileLoading = false;
                 this.updateBusyIndicator();
-            };
-            const img = new Image();
-            let loaded = false;
-            const fastSrc = tauri.core.convertFileSrc(normalizedPath);
-            const applyFromBytes = () => {
-                return this.tauriReadImageBytes(normalizedPath).then((data) => {
-                    if (loaded) return;
-                    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-                    const blob = new Blob([bytes]);
-                    const url = URL.createObjectURL(blob);
-                    img.onload = () => {
-                        loaded = true;
-                        clearTimeout(fallbackTimer);
-                        URL.revokeObjectURL(url);
-                        commitLoadedImage().catch((err) => {
-                            console.log('commit loaded image failed', { path: normalizedPath, err });
-                        }).finally(finishLoading);
-                    };
-                    img.onerror = () => {
-                        URL.revokeObjectURL(url);
-                        finishLoading();
-                    };
-                    img.src = url;
-                });
-            };
-            const fallbackTimer = setTimeout(() => {
-                if (loaded) return;
-                applyFromBytes().catch((err) => {
-                    console.log('read image failed', { path: normalizedPath, err });
-                    finishLoading();
-                });
-            }, 50);
-            img.onload = () => {
-                loaded = true;
-                clearTimeout(fallbackTimer);
-                commitLoadedImage().catch((err) => {
-                    console.log('commit loaded image failed', { path: normalizedPath, err });
-                }).finally(finishLoading);
-            };
-            img.onerror = (e) => {
-                console.log('Failed to load file', { path: normalizedPath, error: e });
-                if (loaded) return;
-                applyFromBytes().catch((err) => {
-                    console.log('read image failed', { path: normalizedPath, err });
-                    finishLoading();
-                });
-            };
-            img.src = fastSrc;
+            }
         }
         setSaveReminderEnabled(enabled) {
             this.saveReminderEnabled = !!enabled;
@@ -5849,6 +6126,7 @@
             if (!this.ui.tileOverlay) return;
             if (!this.tileModeEnabled || !this.tileDarkenEnabled) {
                 this.ui.tileOverlay.style.display = 'none';
+                this._tileOverlayCacheKey = '';
                 return;
             }
             this.ui.tileOverlay.style.display = 'block';
@@ -5861,8 +6139,8 @@
             this.ui.tileOverlay.setAttribute('width', String(viewW));
             this.ui.tileOverlay.setAttribute('height', String(viewH));
             this.ui.tileOverlay.setAttribute('viewBox', `0 0 ${viewW} ${viewH}`);
-            const wrap = this.ui.tileOverlay.querySelector('#tile-shade-wrap');
-            const clipRect = this.ui.tileOverlay.querySelector('#tile-clip-rect');
+            const wrap = this.ui.tileShadeWrap;
+            const clipRect = this.ui.tileClipRect;
             const left = Math.round(stageRect.left);
             const top = Math.round(stageRect.top);
             const right = Math.round(stageRect.right);
@@ -5881,11 +6159,15 @@
             }
             if (!wrap || clipWidth === 0 || clipHeight === 0) {
                 this.ui.tileOverlay.style.display = 'none';
+                this._tileOverlayCacheKey = '';
                 return;
             }
-            wrap.innerHTML = '';
             const tilePx = Math.max(1, Math.round(this.tileSize * (this.config.zoom || 1)));
             const tiles = Math.max(3, this.tileGrid);
+            const overlayKey = `${viewW}|${viewH}|${left}|${top}|${tilePx}|${tiles}|${this.tileDarkenOpacity}`;
+            if (overlayKey === this._tileOverlayCacheKey) return;
+            this._tileOverlayCacheKey = overlayKey;
+            wrap.innerHTML = '';
             const center = Math.floor(tiles / 2);
             const fillOpacity = String(this.tileDarkenOpacity);
             for (let row = 0; row < tiles; row++) {
@@ -5990,6 +6272,31 @@
                 return this._tauriWindow;
             }
             return null;
+        }
+        revealStartupWindow(attempt = 0) {
+            if (this._startupWindowRevealed) return;
+            const tauri = window.__TAURI__;
+            const canInvokeShow = !!this.getTauriInvokeFn();
+            const win = this.getTauriWindow();
+            const canWindowShow = !!(win && typeof win.show === 'function');
+            if (!canInvokeShow && !canWindowShow) {
+                // Browser/web demo path: no native window to reveal.
+                return;
+            }
+            const tryAgain = () => {
+                if (attempt < 20) {
+                    setTimeout(() => this.revealStartupWindow(attempt + 1), 50);
+                }
+            };
+            const doShow = canInvokeShow
+                ? this.tauriInvoke('show_current_window')
+                : win.show();
+            this._startupWindowRevealed = true;
+            Promise.resolve(doShow).catch((err) => {
+                this._startupWindowRevealed = false;
+                tryAgain();
+                if (attempt >= 20) console.log('Failed to reveal startup window', err);
+            });
         }
         async initCloseListener() {
             const win = this.getTauriWindow();
@@ -7140,10 +7447,15 @@
             this.applyColorOverrides();
         }
         updateGridOverlay() {
+            if (this._gridOverlayRaf) {
+                cancelAnimationFrame(this._gridOverlayRaf);
+                this._gridOverlayRaf = null;
+            }
             this.updateTileOverlay();
             if (!this.ui.gridOverlay) return;
             if (!this.gridlinesEnabled || this.gridlinesSize <= 0) {
                 this.ui.gridOverlay.style.display = 'none';
+                this._gridOverlayCacheKey = '';
                 return;
             }
             this.ui.gridOverlay.style.display = 'block';
@@ -7156,8 +7468,8 @@
             this.ui.gridOverlay.setAttribute('width', String(viewW));
             this.ui.gridOverlay.setAttribute('height', String(viewH));
             this.ui.gridOverlay.setAttribute('viewBox', `0 0 ${viewW} ${viewH}`);
-            const lines = this.ui.gridOverlay.querySelector('#grid-lines-4');
-            const clipRect = this.ui.gridOverlay.querySelector('#grid-clip-rect');
+            const lines = this.ui.gridLines;
+            const clipRect = this.ui.gridClipRect;
             const left = Math.round(stageRect.left);
             const top = Math.round(stageRect.top);
             const right = Math.round(stageRect.right);
@@ -7176,9 +7488,13 @@
             }
             if (!lines || clipWidth === 0 || clipHeight === 0) {
                 this.ui.gridOverlay.style.display = 'none';
+                this._gridOverlayCacheKey = '';
                 return;
             }
             const step = Math.max(4, this.gridlinesSize * (this.config.zoom || 1));
+            const overlayKey = `${viewW}|${viewH}|${left}|${top}|${right}|${bottom}|${step}|${this.gridlinesColor}`;
+            if (overlayKey === this._gridOverlayCacheKey) return;
+            this._gridOverlayCacheKey = overlayKey;
             lines.style.display = 'block';
             lines.innerHTML = '';
             lines.setAttribute('stroke', this.gridlinesColor);
@@ -8619,6 +8935,11 @@ self.onmessage = (e) => {
         }
 
         updateGlobalOverlays(creatingOverride = null) {
+            if (this._overlayRaf) {
+                cancelAnimationFrame(this._overlayRaf);
+                this._overlayRaf = null;
+            }
+            this._pendingOverlayOverride = null;
             const z = this.config.zoom || 1;
             const isCreating = !!creatingOverride;
             const overlayUnscaled = !isCreating;
@@ -8740,9 +9061,10 @@ self.onmessage = (e) => {
             updateRect(this.ui.svgGhostRect, ghostX, ghostY, ghostW, ghostH, hasGhost);
 
             if (this.ui.svgAntsPath) {
-                if (sel && sel.mask) {
+                const useCanvasMaskAnts = this.shouldUseCanvasMaskAnts();
+                if (sel && sel.mask && !useCanvasMaskAnts) {
                     this.ensureSelectionOutline(sel);
-                    const d = sel._maskOutlinePath || '';
+                    let d = sel._maskOutlinePath || '';
                     const offX = (sel.mask.width === this.config.width && sel.mask.height === this.config.height) ? 0 : selX;
                     const offY = (sel.mask.width === this.config.width && sel.mask.height === this.config.height) ? 0 : selY;
                     const nudge = 0;
@@ -8751,19 +9073,125 @@ self.onmessage = (e) => {
                     const tx = (overlayUnscaled ? Math.round(baseTx) : baseTx) + nudge;
                     const ty = (overlayUnscaled ? Math.round(baseTy) : baseTy) + nudge;
                     const matScale = overlayUnscaled ? z : 1;
-                    if (this.ui.svgAntsPathBack) {
-                        this.ui.svgAntsPathBack.setAttribute('d', d);
-                        this.ui.svgAntsPathBack.setAttribute('transform', `matrix(${matScale} 0 0 ${matScale} ${tx} ${ty})`);
-                        this.ui.svgAntsPathBack.style.display = d ? 'block' : 'none';
+                    const transform = `matrix(${matScale} 0 0 ${matScale} ${tx} ${ty})`;
+                    const clipRect = this.ui.svgAntsClipRect;
+                    const antsWrap = this.ui.svgAntsWrap;
+                    let clipX = 0;
+                    let clipY = 0;
+                    let clipW = 0;
+                    let clipH = 0;
+                    let clipVisible = true;
+                    if (clipRect && antsWrap && this.ui.viewport) {
+                        clipVisible = false;
+                        const stageRect = this.ui.stage ? this.ui.stage.getBoundingClientRect() : null;
+                        const vpRect = this.ui.viewport.getBoundingClientRect();
+                        if (stageRect && vpRect) {
+                            const left = Math.max(stageRect.left, vpRect.left);
+                            const top = Math.max(stageRect.top, vpRect.top);
+                            const right = Math.min(stageRect.right, vpRect.right);
+                            const bottom = Math.min(stageRect.bottom, vpRect.bottom);
+                            if (right > left && bottom > top) {
+                                const ctm = antsWrap.getScreenCTM ? antsWrap.getScreenCTM() : null;
+                                let inv = null;
+                                if (ctm && typeof ctm.inverse === 'function') {
+                                    try {
+                                        inv = ctm.inverse();
+                                    } catch (e) {
+                                        inv = null;
+                                    }
+                                }
+                                if (inv) {
+                                    const map = (x, y) => ({
+                                        x: (inv.a * x) + (inv.c * y) + inv.e,
+                                        y: (inv.b * x) + (inv.d * y) + inv.f
+                                    });
+                                    const p1 = map(left, top);
+                                    const p2 = map(right, top);
+                                    const p3 = map(left, bottom);
+                                    const p4 = map(right, bottom);
+                                    const minX = Math.min(p1.x, p2.x, p3.x, p4.x);
+                                    const minY = Math.min(p1.y, p2.y, p3.y, p4.y);
+                                    const maxX = Math.max(p1.x, p2.x, p3.x, p4.x);
+                                    const maxY = Math.max(p1.y, p2.y, p3.y, p4.y);
+                                    const origin = map(0, 0);
+                                    const unitX = map(1, 0);
+                                    const unitY = map(0, 1);
+                                    const localPerPxX = Math.hypot(unitX.x - origin.x, unitX.y - origin.y);
+                                    const localPerPxY = Math.hypot(unitY.x - origin.x, unitY.y - origin.y);
+                                    const pad = 2 * Math.max(localPerPxX, localPerPxY, 1e-6);
+                                    const clipLeft = Math.floor(minX - pad);
+                                    const clipTop = Math.floor(minY - pad);
+                                    const clipRight = Math.ceil(maxX + pad);
+                                    const clipBottom = Math.ceil(maxY + pad);
+                                    clipX = clipLeft;
+                                    clipY = clipTop;
+                                    clipW = Math.max(0, clipRight - clipLeft);
+                                    clipH = Math.max(0, clipBottom - clipTop);
+                                    clipVisible = clipW > 0 && clipH > 0;
+                                } else {
+                                    // If CTM is unavailable, fail open (no culling) instead of misaligning ants.
+                                    clipX = 0;
+                                    clipY = 0;
+                                    clipW = 1000000;
+                                    clipH = 1000000;
+                                    clipVisible = true;
+                                }
+                            }
+                        }
                     }
-                    this.ui.svgAntsPath.setAttribute('d', d);
-                    this.ui.svgAntsPath.setAttribute('transform', `matrix(${matScale} 0 0 ${matScale} ${tx} ${ty})`);
-                    this.ui.svgAntsPath.style.display = d ? 'block' : 'none';
+                    if (clipVisible && clipRect && antsWrap && this.ui.viewport) {
+                        const invPathScale = 1 / Math.max(Math.abs(matScale), 1e-6);
+                        const qx1 = (clipX - tx) * invPathScale;
+                        const qy1 = (clipY - ty) * invPathScale;
+                        const qx2 = ((clipX + clipW) - tx) * invPathScale;
+                        const qy2 = ((clipY + clipH) - ty) * invPathScale;
+                        const queryX = Math.floor(Math.min(qx1, qx2));
+                        const queryY = Math.floor(Math.min(qy1, qy2));
+                        const queryRight = Math.ceil(Math.max(qx1, qx2));
+                        const queryBottom = Math.ceil(Math.max(qy1, qy2));
+                        const queryW = Math.max(0, queryRight - queryX);
+                        const queryH = Math.max(0, queryBottom - queryY);
+                        d = this.getVisibleMaskOutlinePath(sel, queryX, queryY, queryW, queryH);
+                        clipVisible = !!d;
+                    } else if (!clipVisible) {
+                        d = '';
+                    }
+                    const clip = `${clipX},${clipY},${clipW},${clipH}`;
+                    const visible = !!d && clipVisible;
+                    const cache = this._antsOverlayCache || { selection: null, path: '', transform: '', visible: false, clip: '0,0,0,0' };
+                    const changed = cache.selection !== sel || cache.path !== d || cache.transform !== transform || cache.visible !== visible || cache.clip !== clip;
+                    if (changed) {
+                        if (clipRect) {
+                            clipRect.setAttribute('x', String(clipX));
+                            clipRect.setAttribute('y', String(clipY));
+                            clipRect.setAttribute('width', String(clipW));
+                            clipRect.setAttribute('height', String(clipH));
+                        }
+                        if (this.ui.svgAntsPathBack) {
+                            this.ui.svgAntsPathBack.setAttribute('d', d);
+                            this.ui.svgAntsPathBack.setAttribute('transform', transform);
+                            this.ui.svgAntsPathBack.style.display = visible ? 'block' : 'none';
+                        }
+                        this.ui.svgAntsPath.setAttribute('d', d);
+                        this.ui.svgAntsPath.setAttribute('transform', transform);
+                        this.ui.svgAntsPath.style.display = visible ? 'block' : 'none';
+                        this._antsOverlayCache = { selection: sel, path: d, transform, visible, clip };
+                    }
                 } else {
-                    if (this.ui.svgAntsPathBack) {
-                        this.ui.svgAntsPathBack.style.display = 'none';
+                    const cache = this._antsOverlayCache || { selection: null, path: '', transform: '', visible: false, clip: '0,0,0,0' };
+                    if (cache.visible || cache.clip !== '0,0,0,0') {
+                        if (this.ui.svgAntsClipRect) {
+                            this.ui.svgAntsClipRect.setAttribute('x', '0');
+                            this.ui.svgAntsClipRect.setAttribute('y', '0');
+                            this.ui.svgAntsClipRect.setAttribute('width', '0');
+                            this.ui.svgAntsClipRect.setAttribute('height', '0');
+                        }
+                        if (this.ui.svgAntsPathBack) {
+                            this.ui.svgAntsPathBack.style.display = 'none';
+                        }
+                        this.ui.svgAntsPath.style.display = 'none';
+                        this._antsOverlayCache = { selection: null, path: '', transform: '', visible: false, clip: '0,0,0,0' };
                     }
-                    this.ui.svgAntsPath.style.display = 'none';
                 }
             }
         }
@@ -9159,7 +9587,7 @@ self.onmessage = (e) => {
             const setConfig = opts.setConfig !== false;
             if (setConfig) this.config.wandTolerance = v;
             if (this.ui.wandThreshold) this.ui.wandThreshold.value = v;
-            if (this.ui.wandThresholdVal) this.ui.wandThresholdVal.innerText = v;
+            if (this.ui.wandThresholdVal) this.ui.wandThresholdVal.textContent = v;
             const applySelection = opts.applySelection !== false;
             if (applySelection && this.state.wandActive && this.state.wandStart && this.state.wandBase) {
                 this.state.wandTol = v;
@@ -9354,7 +9782,7 @@ self.onmessage = (e) => {
             this.state.lastMouse = { clientX: lastEvent.clientX, clientY: lastEvent.clientY };
             if (this.config.tool === 'picker' && this.state.pickerArmed) {
                 const p = this.getMouse(lastEvent);
-                this.ui.coords.innerText = `${p.x}, ${p.y}px`;
+                this.setCoordsStatus(p.x, p.y);
                 const now = performance.now();
                 if (now - (this.state.pickerPreviewLastSample || 0) >= 16) {
                     this.state.pickerPreviewLastSample = now;
@@ -9386,7 +9814,7 @@ self.onmessage = (e) => {
                 const dy = e.clientY - this.state.panStart.y;
                 this.ui.viewport.scrollLeft = this.state.scrollStart.x - dx;
                 this.ui.viewport.scrollTop = this.state.scrollStart.y - dy;
-                this.updateGlobalOverlays();
+                this.requestGlobalOverlayUpdate();
                 return;
             }
             if (this.state.isCanvasDragging) {
@@ -9399,14 +9827,14 @@ self.onmessage = (e) => {
                 });
                 this.applyStageTransform();
                 this.updateBounds();
-                this.updateGlobalOverlays();
-                this.updateGridOverlay();
+                this.requestGlobalOverlayUpdate();
+                this.requestGridOverlayUpdate();
                 return;
             }
 
             if(this.state.isCanvasResizing) { this.doCanvasResize(e); return; }
             const p = this.getMouse(e);
-            this.ui.coords.innerText = `${p.x}, ${p.y}px`;
+            this.setCoordsStatus(p.x, p.y);
             if (this.config.tool === 'pencil' && !e.ctrlKey && this.state.pencilCtrlAxis) {
                 this.state.pencilCtrlAxis = null;
             }
@@ -9432,7 +9860,7 @@ self.onmessage = (e) => {
                 const tol = dist <= deadZone ? 0 : Math.min(255, Math.round((dist / 3.3333333333) * 10) / 10);
                 if (tol !== this.state.wandTol) {
                     this.state.wandTol = tol;
-                    if (this.ui.wandThresholdVal) this.ui.wandThresholdVal.innerText = tol;
+                    if (this.ui.wandThresholdVal) this.ui.wandThresholdVal.textContent = tol;
                     this.magicWandSelectAsync(this.state.wandStart.x, this.state.wandStart.y, tol, this.getSelectionOp(e), this.state.wandBase);
                 }
                 this.updateHoverPreview(p.x, p.y);
@@ -9477,7 +9905,7 @@ self.onmessage = (e) => {
                     this.state.selection.x += dx; this.state.selection.y += dy;
                     this.state.selStart.x += dx; this.state.selStart.y += dy;
                     if(e.shiftKey) this.stampSelection();
-                    this.renderSelection();
+                    this.requestSelectionRenderFast();
                 }
                 this.updateHoverPreview(p.x, p.y);
                 return;
@@ -9528,6 +9956,7 @@ self.onmessage = (e) => {
                 if (s.h < 0) s.y = nr.y - s.h;
                 else s.y = nr.y;
                 this.updateSelectionUI(s.x, s.y, s.w, s.h);
+                this.requestSelectionRenderFast();
                 this.updateHoverPreview(p.x, p.y);
                 return;
             }
@@ -9947,30 +10376,54 @@ self.onmessage = (e) => {
         }
 
         updateColorCounts() {
-            const total = this.countColors(this.ctx, this.config.width, this.config.height);
-            this.ui.statusColors.innerText = `Colors: ${total}`;
-
-            if(this.state.selection) {
+            const width = this.config.width;
+            const height = this.config.height;
+            const hasSelection = !!this.state.selection;
+            let mainData = null;
+            let selData = null;
+            let selCtx = null;
+            let selW = 0;
+            let selH = 0;
+            try {
+                mainData = this.ctx.getImageData(0, 0, width, height).data;
+            } catch (e) {}
+            if (hasSelection) {
                 const s = this.state.selection;
-                const selCtx = s.canvas.getContext('2d');
-                const selCount = this.countColors(selCtx, s.w, s.h);
-                this.ui.statusSelColors.style.display = 'block';
-                this.ui.statusSelColors.innerText = `Sel: ${selCount}`;
-            } else {
-                this.ui.statusSelColors.style.display = 'none';
+                selCtx = s.canvas.getContext('2d');
+                selW = Math.max(0, Math.floor(Math.abs(s.w)));
+                selH = Math.max(0, Math.floor(Math.abs(s.h)));
+                try {
+                    if (selW > 0 && selH > 0) selData = selCtx.getImageData(0, 0, selW, selH).data;
+                } catch (e) {}
             }
+
+            const jobId = ++this._colorCountJobId;
+            const worker = this.ensureColorCountWorker();
+            if (worker && mainData) {
+                try {
+                    const transfer = [mainData.buffer];
+                    const payload = { jobId, mainData: mainData.buffer, selData: null };
+                    if (selData) {
+                        payload.selData = selData.buffer;
+                        transfer.push(selData.buffer);
+                    }
+                    worker.postMessage(payload, transfer);
+                    return;
+                } catch (e) {}
+            }
+
+            const total = mainData ? this.countColorsFromData(mainData) : this.countColors(this.ctx, width, height);
+            let selCount = null;
+            if (hasSelection) {
+                selCount = selData ? this.countColorsFromData(selData) : this.countColors(selCtx, selW, selH);
+            }
+            this.setColorCountStatus(total, selCount, hasSelection);
         }
 
         countColors(ctx, w, h) {
             if(w <= 0 || h <= 0) return 0;
             const d = ctx.getImageData(0,0,w,h).data;
-            const s = new Set();
-            for(let i=0; i<d.length; i+=4) {
-                if(d[i+3] === 0) continue;
-                const key = (d[i] << 16) | (d[i+1] << 8) | d[i+2];
-                s.add(key);
-            }
-            return s.size;
+            return this.countColorsFromData(d);
         }
 
         extractPalette(ctx, w, h) {
@@ -10113,7 +10566,6 @@ self.onmessage = (e) => {
                 return;
             }
             const s = this.state.selection;
-            this.stopOutlineAnimation();
 
             this.disableSmoothing(this.ctxTemp);
 
@@ -10122,22 +10574,27 @@ self.onmessage = (e) => {
             let dw = Math.floor(s.w);
             let dh = Math.floor(s.h);
 
+            if (s.mask && this.shouldUseCanvasMaskAnts()) this.startOutlineAnimation();
+            else this.stopOutlineAnimation();
+
             let destX = dw < 0 ? dx + dw : dx;
             let destY = dh < 0 ? dy + dh : dy;
             const clearRect = this.getSelectionTempDrawRect(destX, destY, dw, dh);
             this.clearSelectionTempDirty(clearRect);
 
             const renderC = this.getRenderedSelectionCanvas();
-            this.ctxTemp.save();
-            this.ctxTemp.translate(destX, destY);
-            this.ctxTemp.scale(dw < 0 ? -1 : 1, dh < 0 ? -1 : 1);
-            this.ctxTemp.drawImage(renderC, 0, 0);
+            this.ctxTemp.drawImage(renderC, destX, destY);
             if (s.mask) {
+                this.ctxTemp.save();
                 this.ctxTemp.globalCompositeOperation = 'destination-in';
+                this.ctxTemp.translate(destX, destY);
+                this.ctxTemp.scale(dw < 0 ? -1 : 1, dh < 0 ? -1 : 1);
                 this.ctxTemp.drawImage(s.mask, 0, 0, Math.abs(dw), Math.abs(dh));
-                this.ctxTemp.globalCompositeOperation = 'source-over';
+                this.ctxTemp.restore();
+                if (this.shouldUseCanvasMaskAnts()) {
+                    this.drawSelectionOutline(s, destX, destY, dw, dh);
+                }
             }
-            this.ctxTemp.restore();
 
             this.updateSelectionUI(s.x, s.y, s.w, s.h);
         }
@@ -10216,22 +10673,27 @@ self.onmessage = (e) => {
             let dw = Math.floor(s.w);
             let dh = Math.floor(s.h);
 
+            if (s.mask && this.shouldUseCanvasMaskAnts()) this.startOutlineAnimation();
+            else this.stopOutlineAnimation();
+
             let destX = dw < 0 ? dx + dw : dx;
             let destY = dh < 0 ? dy + dh : dy;
             const clearRect = this.getSelectionTempDrawRect(destX, destY, dw, dh);
             this.clearSelectionTempDirty(clearRect);
 
-            this.ctxTemp.save();
-            this.ctxTemp.translate(destX, destY);
-            this.ctxTemp.scale(dw < 0 ? -1 : 1, dh < 0 ? -1 : 1);
             const renderC = this.getRenderedSelectionCanvas();
-            this.ctxTemp.drawImage(renderC, 0, 0, Math.abs(dw), Math.abs(dh));
+            this.ctxTemp.drawImage(renderC, destX, destY, Math.abs(dw), Math.abs(dh));
             if (s.mask) {
+                this.ctxTemp.save();
                 this.ctxTemp.globalCompositeOperation = 'destination-in';
+                this.ctxTemp.translate(destX, destY);
+                this.ctxTemp.scale(dw < 0 ? -1 : 1, dh < 0 ? -1 : 1);
                 this.ctxTemp.drawImage(s.mask, 0, 0, Math.abs(dw), Math.abs(dh));
-                this.ctxTemp.globalCompositeOperation = 'source-over';
+                this.ctxTemp.restore();
+                if (this.shouldUseCanvasMaskAnts()) {
+                    this.drawSelectionOutline(s, destX, destY, dw, dh);
+                }
             }
-            this.ctxTemp.restore();
             this.updateSelectionUI(s.x, s.y, s.w, s.h);
         }
         getSelectionTempDrawRect(destX, destY, dw, dh, pad = 3) {
@@ -10297,10 +10759,67 @@ self.onmessage = (e) => {
             }
             octx.putImageData(out, 0, 0);
             s._maskOutline = outline;
-            s._maskOutlinePath = this.buildMaskOutlinePath(s.mask);
+            const outlineData = this.buildMaskOutlineData(s.mask);
+            s._maskOutlinePath = outlineData.path;
+            s._maskOutlineData = outlineData;
+            s._maskVisiblePathCacheKey = '';
+            s._maskVisiblePathCacheValue = '';
         }
-        buildMaskOutlinePath(mask) {
-            if (!mask) return '';
+        simplifyAxisAlignedPath(points, closed = false) {
+            if (!Array.isArray(points) || points.length <= 2) return Array.isArray(points) ? points.slice() : [];
+            const out = points.map((p) => ({ x: p.x, y: p.y }));
+            const isCollinear = (a, b, c) => (
+                (a.x === b.x && b.x === c.x) ||
+                (a.y === b.y && b.y === c.y)
+            );
+
+            if (!closed) {
+                const simple = [out[0]];
+                for (let i = 1; i < out.length - 1; i++) {
+                    if (!isCollinear(out[i - 1], out[i], out[i + 1])) {
+                        simple.push(out[i]);
+                    }
+                }
+                simple.push(out[out.length - 1]);
+                return simple;
+            }
+
+            if (out.length > 1) {
+                const first = out[0];
+                const last = out[out.length - 1];
+                if (first.x === last.x && first.y === last.y) {
+                    out.pop();
+                }
+            }
+            if (out.length <= 3) return out;
+
+            let changed = true;
+            while (changed && out.length > 3) {
+                changed = false;
+                for (let i = 0; i < out.length; i++) {
+                    const prev = out[(i - 1 + out.length) % out.length];
+                    const curr = out[i];
+                    const next = out[(i + 1) % out.length];
+                    if (isCollinear(prev, curr, next)) {
+                        out.splice(i, 1);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            return out;
+        }
+        buildMaskOutlineData(mask) {
+            if (!mask) {
+                return {
+                    path: '',
+                    width: 0,
+                    height: 0,
+                    tileSize: 32,
+                    bins: new Map(),
+                    segments: []
+                };
+            }
             const mw = mask.width;
             const mh = mask.height;
             const mctx = mask.getContext('2d');
@@ -10324,7 +10843,16 @@ self.onmessage = (e) => {
                     if (left === 0) addEdge(x0, y1, x0, y0);
                 }
             }
-            if (!edges.length) return '';
+            if (!edges.length) {
+                return {
+                    path: '',
+                    width: mw,
+                    height: mh,
+                    tileSize: 32,
+                    bins: new Map(),
+                    segments: []
+                };
+            }
             const key = (p) => `${p.x},${p.y}`;
             const adj = new Map();
             for (let i = 0; i < edges.length; i++) {
@@ -10337,6 +10865,7 @@ self.onmessage = (e) => {
                 adj.get(kb).push(i);
             }
             const paths = [];
+            const segments = [];
             for (let i = 0; i < edges.length; i++) {
                 if (edges[i].used) continue;
                 const startEdge = edges[i];
@@ -10377,14 +10906,199 @@ self.onmessage = (e) => {
                     currKey = key(curr);
                     points.push(curr);
                 }
-                let d = `M${points[0].x} ${points[0].y}`;
-                for (let j = 1; j < points.length; j++) {
-                    d += `L${points[j].x} ${points[j].y}`;
+                const isClosed = points.length > 2 && currKey === startKey;
+                const simplified = this.simplifyAxisAlignedPath(points, isClosed);
+                if (!simplified.length) continue;
+                if (!isClosed && simplified.length < 2) continue;
+
+                const pushSegment = (a, b) => {
+                    const x1 = a.x;
+                    const y1 = a.y;
+                    const x2 = b.x;
+                    const y2 = b.y;
+                    if (x1 === x2 && y1 === y2) return;
+                    segments.push({
+                        x1, y1, x2, y2,
+                        minX: Math.min(x1, x2),
+                        minY: Math.min(y1, y2),
+                        maxX: Math.max(x1, x2),
+                        maxY: Math.max(y1, y2)
+                    });
+                };
+                for (let j = 1; j < simplified.length; j++) {
+                    pushSegment(simplified[j - 1], simplified[j]);
                 }
-                if (points.length > 2 && currKey === startKey) d += 'Z';
+                if (isClosed) {
+                    pushSegment(simplified[simplified.length - 1], simplified[0]);
+                }
+
+                let d = `M${simplified[0].x} ${simplified[0].y}`;
+                for (let j = 1; j < simplified.length; j++) {
+                    d += `L${simplified[j].x} ${simplified[j].y}`;
+                }
+                if (isClosed) d += 'Z';
                 paths.push(d);
             }
-            return paths.join('');
+            const tileSize = 32;
+            const bins = new Map();
+            for (let i = 0; i < segments.length; i++) {
+                const s = segments[i];
+                const tx0 = Math.floor(s.minX / tileSize);
+                const ty0 = Math.floor(s.minY / tileSize);
+                const tx1 = Math.floor(s.maxX / tileSize);
+                const ty1 = Math.floor(s.maxY / tileSize);
+                for (let ty = ty0; ty <= ty1; ty++) {
+                    for (let tx = tx0; tx <= tx1; tx++) {
+                        const k = `${tx},${ty}`;
+                        let list = bins.get(k);
+                        if (!list) {
+                            list = [];
+                            bins.set(k, list);
+                        }
+                        list.push(i);
+                    }
+                }
+            }
+            return {
+                path: paths.join(''),
+                width: mw,
+                height: mh,
+                tileSize,
+                bins,
+                segments
+            };
+        }
+        buildMaskOutlinePath(mask) {
+            const data = this.buildMaskOutlineData(mask);
+            return data.path || '';
+        }
+        getVisibleMaskOutlinePath(s, clipX, clipY, clipW, clipH) {
+            if (!s || !s.mask) return '';
+            const full = s._maskOutlinePath || '';
+            const data = s._maskOutlineData;
+            if (!full || !data || !Array.isArray(data.segments) || !data.segments.length) return full;
+            if (!(clipW > 0 && clipH > 0)) return '';
+
+            const cacheKey = `${clipX}|${clipY}|${clipW}|${clipH}`;
+            if (s._maskVisiblePathCacheKey === cacheKey) {
+                return s._maskVisiblePathCacheValue || '';
+            }
+
+            const pad = 1;
+            const qLeft = Math.max(0, clipX - pad);
+            const qTop = Math.max(0, clipY - pad);
+            const qRight = Math.min(data.width, clipX + clipW + pad);
+            const qBottom = Math.min(data.height, clipY + clipH + pad);
+            if (!(qRight > qLeft && qBottom > qTop)) {
+                s._maskVisiblePathCacheKey = cacheKey;
+                s._maskVisiblePathCacheValue = '';
+                return '';
+            }
+
+            const tileSize = data.tileSize || 32;
+            const tx0 = Math.floor(qLeft / tileSize);
+            const ty0 = Math.floor(qTop / tileSize);
+            const tx1 = Math.floor(qRight / tileSize);
+            const ty1 = Math.floor(qBottom / tileSize);
+            const seen = new Set();
+            const clippedSegments = [];
+            for (let ty = ty0; ty <= ty1; ty++) {
+                for (let tx = tx0; tx <= tx1; tx++) {
+                    const list = data.bins.get(`${tx},${ty}`);
+                    if (!list) continue;
+                    for (const idxSeg of list) {
+                        if (seen.has(idxSeg)) continue;
+                        seen.add(idxSeg);
+                        const seg = data.segments[idxSeg];
+                        if (seg.maxX < qLeft || seg.minX > qRight || seg.maxY < qTop || seg.minY > qBottom) continue;
+                        if (seg.y1 === seg.y2) {
+                            const y = seg.y1;
+                            if (y < qTop || y > qBottom) continue;
+                            const minX = Math.min(seg.x1, seg.x2);
+                            const maxX = Math.max(seg.x1, seg.x2);
+                            const x1 = Math.max(minX, qLeft);
+                            const x2 = Math.min(maxX, qRight);
+                            if (x2 <= x1) continue;
+                            clippedSegments.push({ x1, y1: y, x2, y2: y });
+                        } else if (seg.x1 === seg.x2) {
+                            const x = seg.x1;
+                            if (x < qLeft || x > qRight) continue;
+                            const minY = Math.min(seg.y1, seg.y2);
+                            const maxY = Math.max(seg.y1, seg.y2);
+                            const y1 = Math.max(minY, qTop);
+                            const y2 = Math.min(maxY, qBottom);
+                            if (y2 <= y1) continue;
+                            clippedSegments.push({ x1: x, y1, x2: x, y2 });
+                        }
+                    }
+                }
+            }
+
+            if (!clippedSegments.length) {
+                s._maskVisiblePathCacheKey = cacheKey;
+                s._maskVisiblePathCacheValue = '';
+                return '';
+            }
+
+            const keyPt = (x, y) => `${x},${y}`;
+            const segAdj = new Map();
+            for (let i = 0; i < clippedSegments.length; i++) {
+                const seg = clippedSegments[i];
+                const ka = keyPt(seg.x1, seg.y1);
+                const kb = keyPt(seg.x2, seg.y2);
+                if (!segAdj.has(ka)) segAdj.set(ka, []);
+                if (!segAdj.has(kb)) segAdj.set(kb, []);
+                segAdj.get(ka).push(i);
+                segAdj.get(kb).push(i);
+            }
+            const used = new Uint8Array(clippedSegments.length);
+            const nextFrom = (pt) => {
+                const list = segAdj.get(keyPt(pt.x, pt.y)) || [];
+                for (const idxSeg of list) {
+                    if (used[idxSeg]) continue;
+                    const seg = clippedSegments[idxSeg];
+                    if (seg.x1 === pt.x && seg.y1 === pt.y) return { idx: idxSeg, pt: { x: seg.x2, y: seg.y2 } };
+                    if (seg.x2 === pt.x && seg.y2 === pt.y) return { idx: idxSeg, pt: { x: seg.x1, y: seg.y1 } };
+                }
+                return null;
+            };
+
+            let d = '';
+            for (let i = 0; i < clippedSegments.length; i++) {
+                if (used[i]) continue;
+                used[i] = 1;
+                const seg = clippedSegments[i];
+                const pts = [{ x: seg.x1, y: seg.y1 }, { x: seg.x2, y: seg.y2 }];
+
+                let tail = pts[pts.length - 1];
+                while (true) {
+                    const next = nextFrom(tail);
+                    if (!next) break;
+                    used[next.idx] = 1;
+                    tail = next.pt;
+                    pts.push(tail);
+                }
+
+                let head = pts[0];
+                while (true) {
+                    const next = nextFrom(head);
+                    if (!next) break;
+                    used[next.idx] = 1;
+                    head = next.pt;
+                    pts.unshift(head);
+                }
+
+                const simplified = this.simplifyAxisAlignedPath(pts, false);
+                if (!simplified || simplified.length < 2) continue;
+                d += `M${simplified[0].x} ${simplified[0].y}`;
+                for (let j = 1; j < simplified.length; j++) {
+                    d += `L${simplified[j].x} ${simplified[j].y}`;
+                }
+            }
+
+            s._maskVisiblePathCacheKey = cacheKey;
+            s._maskVisiblePathCacheValue = d;
+            return d;
         }
         drawSelectionCutout(ctx, s, pos) {
             const nr = this.getNormalizedRect(pos);
@@ -10425,43 +11139,78 @@ self.onmessage = (e) => {
             }
             return this._antsPattern;
         }
+        getSelectionOutlinePath2D(s) {
+            if (!s || !s.mask) return null;
+            this.ensureSelectionOutline(s);
+            const d = s._maskOutlinePath || '';
+            if (!d) return null;
+            if (s._maskPath2D && s._maskPath2DSource === d) {
+                return s._maskPath2D;
+            }
+            try {
+                s._maskPath2D = new Path2D(d);
+                s._maskPath2DSource = d;
+                return s._maskPath2D;
+            } catch (e) {
+                s._maskPath2D = null;
+                s._maskPath2DSource = null;
+                return null;
+            }
+        }
         drawSelectionOutline(s, destX, destY, dw, dh) {
             if (!s || !s.mask) return;
-            if (!this.bounds) this.updateBounds();
-            this.ensureSelectionOutline(s);
-            const outline = s._maskOutline;
-            if (!outline) return;
+            if (!this.shouldUseCanvasMaskAnts()) return;
+            const path = this.getSelectionOutlinePath2D(s);
+            if (!path) return;
             const ctx = this.ctxTemp;
             const aw = Math.max(1, Math.abs(dw));
             const ah = Math.max(1, Math.abs(dh));
-            const pattern = this.getAntsPattern(ctx);
-            const z = this.config.zoom || 1;
-            const phase = this.state.outlinePhase || 0;
-            if (pattern && pattern.setTransform) {
-                const offX = (-this.bounds.left + phase);
-                const offY = (-this.bounds.top + phase);
-                const m = new DOMMatrix();
-                m.scaleSelf(1 / z);
-                m.translateSelf(offX, offY);
-                pattern.setTransform(m);
-            }
-            const fx = Math.round(destX * z);
-            const fy = Math.round(destY * z);
-            const fw = Math.max(1, Math.round(aw * z));
-            const fh = Math.max(1, Math.round(ah * z));
-            this.disableSmoothing(ctx);
             ctx.save();
-            ctx.setTransform(1 / z, 0, 0, 1 / z, 0, 0);
-            ctx.fillStyle = pattern;
-            ctx.fillRect(fx, fy, fw, fh);
-            ctx.globalCompositeOperation = 'destination-in';
-            ctx.drawImage(outline, fx, fy, fw, fh);
+            const z = this.config.zoom || 1;
+            const viewport = this.ui.viewport;
+            if (viewport) {
+                const vx = viewport.scrollLeft / z;
+                const vy = viewport.scrollTop / z;
+                const vw = viewport.clientWidth / z;
+                const vh = viewport.clientHeight / z;
+                const pad = 2 / z;
+                ctx.beginPath();
+                ctx.rect(vx - pad, vy - pad, vw + (pad * 2), vh + (pad * 2));
+                ctx.clip();
+            }
+
+            const mw = Math.max(1, s.mask.width || aw);
+            const mh = Math.max(1, s.mask.height || ah);
+            const sx = aw / mw;
+            const sy = ah / mh;
+            const invScale = 1 / Math.max(sx, sy, 1e-6);
+            const lineWidth = (1 / z) * invScale;
+            const dash = (15 / z) * invScale;
+            const phase = (this.state.outlinePhase || 0) * ((1 / z) * invScale);
+
+            ctx.translate(destX, destY);
+            ctx.scale(dw < 0 ? -1 : 1, dh < 0 ? -1 : 1);
+            ctx.scale(sx, sy);
+
+            ctx.lineCap = 'butt';
+            ctx.lineJoin = 'miter';
+            ctx.lineWidth = lineWidth;
+            ctx.setLineDash([]);
+            ctx.strokeStyle = '#000000';
+            ctx.stroke(path);
+
+            ctx.setLineDash([dash, dash]);
+            ctx.lineDashOffset = -phase;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke(path);
             ctx.globalCompositeOperation = 'source-over';
             ctx.restore();
         }
         startOutlineAnimation() {
             if (this.state.outlineAnimId) return;
-            const stepMs = 200;
+            // Match prior CSS ants speed: 30 px dash travel over 3.5s.
+            const stepMs = 117;
+            const phaseSpan = 30;
             const tick = (ts) => {
                 if (!this.state.selection || !this.state.selection.mask) {
                     this.stopOutlineAnimation();
@@ -10469,7 +11218,7 @@ self.onmessage = (e) => {
                 }
                 if (!this.state.outlineLastTime) this.state.outlineLastTime = ts;
                 if (ts - this.state.outlineLastTime >= stepMs) {
-                    this.state.outlinePhase = (this.state.outlinePhase + 1) % 2;
+                    this.state.outlinePhase = (this.state.outlinePhase + 1) % phaseSpan;
                     this.state.outlineLastTime = ts;
                     this.renderSelectionFast();
                 }
@@ -10484,9 +11233,20 @@ self.onmessage = (e) => {
         }
         deferColorCounts() {
             if (this._colorCountPending) return;
+            const elapsed = performance.now() - this._colorCountLastAt;
+            if (elapsed < this._colorCountMinIntervalMs) {
+                if (this._colorCountTimer) return;
+                const wait = Math.max(0, Math.round(this._colorCountMinIntervalMs - elapsed));
+                this._colorCountTimer = setTimeout(() => {
+                    this._colorCountTimer = null;
+                    this.deferColorCounts();
+                }, wait);
+                return;
+            }
             this._colorCountPending = true;
             const run = () => {
                 this._colorCountPending = false;
+                this._colorCountLastAt = performance.now();
                 this.updateColorCounts();
             };
             if (window.requestIdleCallback) {
@@ -10531,12 +11291,17 @@ self.onmessage = (e) => {
             if (!this.ui.statusSelectionSize) return;
             const sw = Math.max(0, Math.floor(Math.abs(w)));
             const sh = Math.max(0, Math.floor(Math.abs(h)));
-            this.ui.statusSelectionSize.innerText = `${sw} x ${sh}px`;
+            const next = `${sw} x ${sh}px`;
+            if (next === this._lastSelectionSizeText) return;
+            this._lastSelectionSizeText = next;
+            this.ui.statusSelectionSize.textContent = next;
         }
 
         clearStatusSelectionSize() {
             if (!this.ui.statusSelectionSize) return;
-            this.ui.statusSelectionSize.innerText = '-';
+            if (this._lastSelectionSizeText === '-') return;
+            this._lastSelectionSizeText = '-';
+            this.ui.statusSelectionSize.textContent = '-';
         }
 
         updateSelectionUI(x, y, w, h) {
@@ -10545,22 +11310,28 @@ self.onmessage = (e) => {
             if(lh < 0) { ly += lh; lh = Math.abs(lh); }
             const el = this.ui.selControls;
             const hideHandles = !!(this.state.selection && this.state.selection.noHandles);
-            el.classList.toggle('no-handles', hideHandles);
-            el.style.display = 'block';
-            el.style.left = lx + 'px';
-            el.style.top = ly + 'px';
-            el.style.width = lw + 'px';
-            el.style.height = lh + 'px';
+            const isCreating = this.state.isDrawing && this.config.tool === 'select' && !this.state.selection;
+            const cacheKey = `${lx}|${ly}|${lw}|${lh}|${hideHandles ? 1 : 0}|${isCreating ? 1 : 0}`;
+            const needsDisplayRestore = el.style.display !== 'block';
+            if (needsDisplayRestore || cacheKey !== this._selectionUiCacheKey) {
+                el.classList.toggle('no-handles', hideHandles);
+                el.style.display = 'block';
+                el.style.left = lx + 'px';
+                el.style.top = ly + 'px';
+                el.style.width = lw + 'px';
+                el.style.height = lh + 'px';
+                this._selectionUiCacheKey = cacheKey;
+            }
             if (this.state.selection || (this.state.isDrawing && this.config.tool === 'select')) {
                 this.setStatusSelectionSize(lw, lh);
             } else {
                 this.clearStatusSelectionSize();
             }
 
-            if (this.state.isDrawing && this.config.tool === 'select' && !this.state.selection) {
-                this.updateGlobalOverlays({x:lx, y:ly, w:lw, h:lh});
+            if (isCreating) {
+                this.requestGlobalOverlayUpdate({x:lx, y:ly, w:lw, h:lh});
             } else {
-                this.updateGlobalOverlays();
+                this.requestGlobalOverlayUpdate();
             }
         }
 
@@ -12216,7 +12987,7 @@ void main() {
             if (idx >= this.zoomLevels.length) idx = this.zoomLevels.length - 1;
 
             this.config.zoom = this.zoomLevels[idx] / 100;
-            document.getElementById('status-zoom').innerText=this.zoomLevels[idx]+'%';
+            if (this.ui.statusZoom) this.ui.statusZoom.textContent = this.zoomLevels[idx] + '%';
             document.documentElement.style.setProperty('--zoom', this.config.zoom);
             document.documentElement.style.setProperty('--zoom-inv', (1 / (this.config.zoom || 1)).toString());
             this.applyStageTransform();
@@ -13503,7 +14274,7 @@ void main() {
             this.updateGlobalOverlays();
             this.updateBounds();
 
-            this.ui.statusDims.innerText = `${previewW} x ${previewH}px`;
+            this.ui.statusDims.textContent = `${previewW} x ${previewH}px`;
         }
         async endCanvasResize() {
             this.state.isCanvasResizing=false;
@@ -13559,7 +14330,7 @@ void main() {
             this.ui.stage.style.width=w+'px';
             this.ui.stage.style.height=h+'px';
             this.updateBounds();
-            this.ui.statusDims.innerText = `${Math.floor(w)} x ${Math.floor(h)}px`;
+            this.ui.statusDims.textContent = `${Math.floor(w)} x ${Math.floor(h)}px`;
             this.deferColorCounts();
             this.updateViewportScrollability();
             this.updateGridOverlay();
@@ -14480,7 +15251,7 @@ void main() {
             }
             if (!cfg.indexed) {
                 const countLabel = document.getElementById('export-palette-count');
-                if (countLabel) countLabel.innerText = '--';
+                if (countLabel) countLabel.textContent = '--';
             }
 
             this.updateExportPreview();
@@ -14568,7 +15339,7 @@ void main() {
             if (countLabel) {
                 const total = this.state.exportPalette.length;
                 const used = this.state.exportPalette.filter(c => c.a > 0).length;
-                countLabel.innerText = `${used}/${total}`;
+                countLabel.textContent = `${used}/${total}`;
             }
         }
         onExportDragStart(e, index) {
@@ -14828,12 +15599,31 @@ void main() {
             if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
             return new TextEncoder().encode(String(data || ''));
         }
-        async tauriInvoke(command, payload = {}) {
+        getErrorText(error) {
+            const raw = (error && error.message) || error;
+            const text = String(raw || '').trim();
+            return text || 'Unknown error';
+        }
+        getTauriInvokeFn() {
             const tauri = window.__TAURI__;
-            if (!tauri || !tauri.core || typeof tauri.core.invoke !== 'function') {
+            if (tauri && tauri.core && typeof tauri.core.invoke === 'function') {
+                return tauri.core.invoke.bind(tauri.core);
+            }
+            if (tauri && typeof tauri.invoke === 'function') {
+                return tauri.invoke.bind(tauri);
+            }
+            const internals = window.__TAURI_INTERNALS__;
+            if (internals && typeof internals.invoke === 'function') {
+                return internals.invoke.bind(internals);
+            }
+            return null;
+        }
+        async tauriInvoke(command, payload = {}) {
+            const invoke = this.getTauriInvokeFn();
+            if (!invoke) {
                 throw new Error('Tauri invoke API is unavailable');
             }
-            return tauri.core.invoke(command, payload);
+            return invoke(command, payload);
         }
         async tauriReadImageBytes(path) {
             const data = await this.tauriInvoke('read_image_file', { path });
@@ -14843,24 +15633,331 @@ void main() {
             const bytes = this.toUint8Array(data);
             await this.tauriInvoke('write_allowed_file', { path, data: Array.from(bytes) });
         }
-        async saveExportFiles(files) {
-            if (!Array.isArray(files) || files.length === 0) return true;
-            const tauri = window.__TAURI__;
-            const hasTauriDialog = !!(tauri && tauri.dialog && typeof tauri.dialog.open === 'function');
-            const hasTauriWrite = !!(tauri && tauri.core && typeof tauri.core.invoke === 'function');
-            if (hasTauriDialog && hasTauriWrite) {
-                const selected = await tauri.dialog.open({
-                    title: 'Choose Export Folder',
-                    directory: true,
-                    multiple: false
-                });
-                if (!selected) return null;
-                const dir = Array.isArray(selected) ? selected[0] : selected;
-                for (const file of files) {
-                    const fullPath = this.joinPath(dir, file.name);
-                    await this.tauriWriteAllowedFile(fullPath, file.bytes);
-                }
+        async tauriWriteExportFiles(directory, files) {
+            const dir = this.normalizeExportDirectoryPath(directory);
+            const payloadFiles = (files || []).map((file) => ({
+                name: String(file.name || ''),
+                data: Array.from(this.toUint8Array(file.bytes))
+            }));
+            await this.tauriInvoke('write_export_files', { directory: dir, files: payloadFiles });
+        }
+        async tauriWriteExportFilesPerFile(directory, files) {
+            const dir = this.normalizeExportDirectoryPath(directory);
+            if (!dir) throw new Error('Export directory is empty');
+            const list = Array.isArray(files) ? files : [];
+            for (const file of list) {
+                const fileName = String((file && file.name) || '').trim();
+                if (!fileName) throw new Error('Export file name is empty');
+                const outputPath = this.joinPath(dir, fileName);
+                await this.tauriWriteAllowedFile(outputPath, file.bytes);
+            }
+        }
+        async tauriWriteExportFilesWithDialog(files) {
+            const payloadFiles = (files || []).map((file) => ({
+                name: String(file.name || ''),
+                data: Array.from(this.toUint8Array(file.bytes))
+            }));
+            try {
+                const result = await this.tauriInvoke('write_export_files_with_dialog', { files: payloadFiles });
+                if (!result) return null;
                 return true;
+            } catch (e) {
+                const msg = String((e && e.message) || e || '');
+                if (/unknown command|not found|write_export_files_with_dialog/i.test(msg)) {
+                    return undefined;
+                }
+                throw e;
+            }
+        }
+        async tauriWriteExportFilesWithSaveDialog(files) {
+            const payloadFiles = (files || []).map((file) => ({
+                name: String(file.name || ''),
+                data: Array.from(this.toUint8Array(file.bytes))
+            }));
+            const suggested = files && files.length ? String(files[0].name || '') : '';
+            const attempts = [
+                { files: payloadFiles, suggestedName: suggested },
+                { files: payloadFiles, suggested_name: suggested }
+            ];
+            let lastArgError = null;
+            for (const payload of attempts) {
+                try {
+                    const result = await this.tauriInvoke('write_export_files_with_save_dialog', payload);
+                    if (!result) return null;
+                    return true;
+                } catch (e) {
+                    const msg = String((e && e.message) || e || '');
+                    if (/unknown command|not found|write_export_files_with_save_dialog/i.test(msg)) {
+                        return undefined;
+                    }
+                    if (/invalid args|missing required key|unknown field|invalid type/i.test(msg)) {
+                        lastArgError = e;
+                        continue;
+                    }
+                    throw e;
+                }
+            }
+            if (lastArgError) throw lastArgError;
+            return undefined;
+        }
+        async tauriWriteExportFileWithSaveDialog(file, defaultDirectory = '') {
+            const payloadFile = {
+                name: String((file && file.name) || ''),
+                data: Array.from(this.toUint8Array(file && file.bytes))
+            };
+            const suggested = String(payloadFile.name || '');
+            const defaultDir = this.normalizeExportDirectoryPath(defaultDirectory);
+            const attempts = [
+                { file: payloadFile, suggestedName: suggested, defaultDirectory: defaultDir || null },
+                { file: payloadFile, suggested_name: suggested, default_directory: defaultDir || null }
+            ];
+            let lastArgError = null;
+            for (const payload of attempts) {
+                try {
+                    const result = await this.tauriInvoke('write_export_file_with_save_dialog', payload);
+                    if (result === null) return null;
+                    if (typeof result === 'string') {
+                        return this.normalizeExportDirectoryPath(result);
+                    }
+                    return '';
+                } catch (e) {
+                    const msg = String((e && e.message) || e || '');
+                    if (/unknown command|not found|write_export_file_with_save_dialog/i.test(msg)) {
+                        return undefined;
+                    }
+                    if (/invalid args|missing required key|unknown field|invalid type/i.test(msg)) {
+                        lastArgError = e;
+                        continue;
+                    }
+                    throw e;
+                }
+            }
+            if (lastArgError) throw lastArgError;
+            return undefined;
+        }
+        async tauriPickExportFolderNative() {
+            try {
+                const dir = await this.tauriInvoke('pick_export_folder');
+                if (!dir) return null;
+                const out = this.normalizeExportDirectoryPath(dir);
+                return out || null;
+            } catch (e) {
+                return undefined;
+            }
+        }
+        async tauriOpenDirectoryDialog(options = {}) {
+            const tauri = window.__TAURI__;
+            if (!tauri) return undefined;
+            if (tauri.dialog && typeof tauri.dialog.open === 'function') {
+                return tauri.dialog.open(options);
+            }
+            const invoke = this.getTauriInvokeFn();
+            if (invoke) {
+                try {
+                    return await invoke('plugin:dialog|open', { options });
+                } catch (e) {
+                    try {
+                        // Some runtimes may expect options to be passed directly.
+                        return await invoke('plugin:dialog|open', options);
+                    } catch (_) {
+                        throw e;
+                    }
+                }
+            }
+            return undefined;
+        }
+        async tauriSaveFileDialog(options = {}) {
+            const tauri = window.__TAURI__;
+            if (!tauri) return undefined;
+            if (tauri.dialog && typeof tauri.dialog.save === 'function') {
+                return tauri.dialog.save(options);
+            }
+            const invoke = this.getTauriInvokeFn();
+            if (invoke) {
+                try {
+                    return await invoke('plugin:dialog|save', { options });
+                } catch (e) {
+                    try {
+                        // Some runtimes may expect options to be passed directly.
+                        return await invoke('plugin:dialog|save', options);
+                    } catch (_) {
+                        throw e;
+                    }
+                }
+            }
+            return undefined;
+        }
+        async pickExportDirectoryForDesktop() {
+            const selected = await this.tauriOpenDirectoryDialog({
+                title: 'Choose Export Folder',
+                directory: true,
+                multiple: false
+            });
+            if (selected !== undefined) {
+                if (!selected) return null;
+                const dir = this.normalizeDialogPathSelection(selected);
+                return dir || null;
+            }
+            const nativeDir = await this.tauriPickExportFolderNative();
+            if (nativeDir === null) return null;
+            if (typeof nativeDir === 'string' && nativeDir) return nativeDir;
+            return undefined;
+        }
+        normalizeExportDirectoryPath(input) {
+            if (input === null || input === undefined) return '';
+            return String(input).trim();
+        }
+        normalizeDialogPathSelection(selected) {
+            if (!selected) return '';
+            const raw = Array.isArray(selected) ? selected[0] : selected;
+            if (typeof raw === 'string') {
+                return this.normalizeExportDirectoryPath(raw);
+            }
+            if (!raw || typeof raw !== 'object') {
+                return '';
+            }
+            const direct = ['path', 'filePath', 'file', 'url', 'href'];
+            for (const key of direct) {
+                if (typeof raw[key] === 'string') {
+                    return this.normalizeExportDirectoryPath(raw[key]);
+                }
+            }
+            if (typeof raw.toString === 'function') {
+                const text = raw.toString();
+                if (text && text !== '[object Object]') {
+                    return this.normalizeExportDirectoryPath(text);
+                }
+            }
+            return '';
+        }
+        getParentDirectory(path) {
+            const raw = this.normalizeExportDirectoryPath(path);
+            if (!raw) return '';
+            const trimmed = raw.replace(/[\\/]+$/, '');
+            const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+            if (idx < 0) return '';
+            const parent = trimmed.slice(0, idx);
+            if (/^[a-zA-Z]:$/.test(parent)) return `${parent}\\`;
+            if (parent === '') return trimmed.startsWith('/') ? '/' : '';
+            return parent;
+        }
+        async tauriWriteExportFilesOneByOneViaDialog(files, initialDirectory = '') {
+            const list = Array.isArray(files) ? files : [];
+            if (!list.length) return true;
+            let dirHint = this.normalizeExportDirectoryPath(initialDirectory);
+            for (const file of list) {
+                const fileName = String((file && file.name) || '').trim() || 'export.png';
+                const defaultPath = dirHint ? this.joinPath(dirHint, fileName) : fileName;
+                const selection = await this.tauriSaveFileDialog({
+                    title: 'Save Export File',
+                    defaultPath
+                });
+                if (selection === undefined) return undefined;
+                if (!selection) return null;
+                const outPath = this.normalizeDialogPathSelection(selection);
+                if (!outPath) return null;
+                await this.tauriWriteAllowedFile(outPath, file.bytes);
+                const parent = this.getParentDirectory(outPath);
+                if (parent) dirHint = parent;
+            }
+            if (dirHint) this.state.exportDir = dirHint;
+            return true;
+        }
+        async saveExportFiles(files, preselectedDir = null, options = {}) {
+            if (!Array.isArray(files) || files.length === 0) return true;
+            const hasTauriWrite = !!this.getTauriInvokeFn();
+            const opts = options && typeof options === 'object' ? options : {};
+            const skipDirectoryPrompt = !!opts.skipDirectoryPrompt;
+            const tauriFailures = [];
+            const rememberTauriFailure = (step, err) => {
+                const msg = this.getErrorText(err);
+                tauriFailures.push(`${step}: ${msg}`);
+            };
+            if (hasTauriWrite) {
+                let chosenDir = '';
+                if (skipDirectoryPrompt && typeof preselectedDir === 'string' && preselectedDir) {
+                    chosenDir = this.normalizeExportDirectoryPath(preselectedDir);
+                } else {
+                    try {
+                        const pickedDir = await this.pickExportDirectoryForDesktop();
+                        if (pickedDir === null) return null;
+                        if (typeof pickedDir === 'string' && pickedDir) {
+                            chosenDir = this.normalizeExportDirectoryPath(pickedDir);
+                            this.state.exportDir = chosenDir;
+                        }
+                    } catch (e) {
+                        rememberTauriFailure('desktop folder picker', e);
+                    }
+                    // If directory picker is unavailable in this runtime, reuse last known export dir.
+                    if (!chosenDir && typeof preselectedDir === 'string' && preselectedDir) {
+                        chosenDir = this.normalizeExportDirectoryPath(preselectedDir);
+                    }
+                }
+                if (chosenDir) {
+                    try {
+                        await this.tauriWriteExportFiles(chosenDir, files);
+                        return true;
+                    } catch (e) {
+                        rememberTauriFailure('native batch write', e);
+                        try {
+                            await this.tauriWriteExportFilesPerFile(chosenDir, files);
+                            return true;
+                        } catch (perFileError) {
+                            rememberTauriFailure('native per-file write', perFileError);
+                        }
+                    }
+                }
+                try {
+                    const wroteViaSaveDialog = await this.tauriWriteExportFilesWithSaveDialog(files);
+                    if (wroteViaSaveDialog === true) return true;
+                    if (wroteViaSaveDialog === null) return null;
+                } catch (e) {
+                    rememberTauriFailure('save dialog write', e);
+                }
+                try {
+                    const wroteViaDialog = await this.tauriWriteExportFilesWithDialog(files);
+                    if (wroteViaDialog === true) return true;
+                    if (wroteViaDialog === null) return null;
+                } catch (e) {
+                    rememberTauriFailure('folder dialog write', e);
+                }
+                try {
+                    const nativeDir = await this.tauriPickExportFolderNative();
+                    if (nativeDir === null) return null;
+                    if (typeof nativeDir === 'string' && nativeDir) {
+                        try {
+                            await this.tauriWriteExportFiles(nativeDir, files);
+                            return true;
+                        } catch (batchError) {
+                            rememberTauriFailure('native picker batch write', batchError);
+                            await this.tauriWriteExportFilesPerFile(nativeDir, files);
+                            return true;
+                        }
+                    }
+                } catch (e) {
+                    rememberTauriFailure('native picker write', e);
+                }
+                try {
+                    const selected = await this.tauriOpenDirectoryDialog({
+                        title: 'Choose Export Folder',
+                        directory: true,
+                        multiple: false
+                    });
+                    if (selected !== undefined) {
+                        if (!selected) return null;
+                        const dir = this.normalizeDialogPathSelection(selected);
+                        if (!dir) return null;
+                        try {
+                            await this.tauriWriteExportFiles(dir, files);
+                        } catch (batchError) {
+                            rememberTauriFailure('dialog picker batch write', batchError);
+                            await this.tauriWriteExportFilesPerFile(dir, files);
+                        }
+                        return true;
+                    }
+                } catch (e) {
+                    rememberTauriFailure('dialog picker write', e);
+                }
             }
             if (window.showDirectoryPicker) {
                 try {
@@ -14874,7 +15971,11 @@ void main() {
                     return true;
                 } catch (e) {
                     if (e && e.name === 'AbortError') return null;
-                    throw e;
+                    if (hasTauriWrite) {
+                        rememberTauriFailure('browser directory picker write', e);
+                    } else {
+                        throw e;
+                    }
                 }
             }
             if (files.length === 1 && window.showSaveFilePicker) {
@@ -14891,8 +15992,18 @@ void main() {
                     return true;
                 } catch (e) {
                     if (e && e.name === 'AbortError') return null;
-                    throw e;
+                    if (hasTauriWrite) {
+                        rememberTauriFailure('browser save picker write', e);
+                    } else {
+                        throw e;
+                    }
                 }
+            }
+            if (hasTauriWrite) {
+                if (!tauriFailures.length) {
+                    throw new Error('Desktop export failed: no writable save path was available.');
+                }
+                throw new Error(`Desktop export failed:\n${tauriFailures.join('\n')}`);
             }
             return false;
         }
@@ -14903,9 +16014,26 @@ void main() {
             const assetType = document.getElementById('export-asset-type').value;
             const genPal = document.getElementById('export-gen-pal').checked;
             const force15 = document.getElementById('export-15bit').checked;
-
             const prefix = usePrefix ? `${pkmnName}_` : ``;
             const shinySuffix = isShiny ? '_shiny' : '';
+            let selectedExportDir = this.normalizeExportDirectoryPath(this.state.exportDir || '');
+            const hasTauriWrite = !!this.getTauriInvokeFn();
+            let skipDesktopPrompt = false;
+
+            if (hasTauriWrite) {
+                try {
+                    const pickedDir = await this.pickExportDirectoryForDesktop();
+                    if (pickedDir === null) return;
+                    if (typeof pickedDir === 'string' && pickedDir) {
+                        selectedExportDir = this.normalizeExportDirectoryPath(pickedDir);
+                        this.state.exportDir = selectedExportDir;
+                        skipDesktopPrompt = true;
+                    }
+                } catch (e) {
+                    // Keep export flow alive: saveExportFiles will try additional picker/write fallbacks.
+                    console.warn('Desktop export folder picker failed before generation', e);
+                }
+            }
 
             const finalPalette = this.state.exportPalette.map(c => {
                 if (!force15) return c;
@@ -14990,8 +16118,14 @@ void main() {
                     }
                     queueFile(palStr, `${prefix}${isShiny ? 'shiny' : 'normal'}.pal`, true);
                 }
+                if (!queuedFiles.length) {
+                    alert('No export files are selected.');
+                    return;
+                }
 
-                const saveResult = await this.saveExportFiles(queuedFiles);
+                const saveResult = await this.saveExportFiles(queuedFiles, selectedExportDir, {
+                    skipDirectoryPrompt: skipDesktopPrompt
+                });
                 if (saveResult === null) return;
                 if (saveResult === false) flushDownloads();
 
@@ -15135,6 +16269,7 @@ void main() {
                 this.setSize(img.width, img.height);
                 this.ctx.drawImage(img, 0, 0);
                 await this.applyCurrentModeToCanvasAsync(this.ctx, img.width, img.height, true);
+                this.state.hasDocument = true;
                 this.saveState();
                 this.markSaved(this.state.fileName);
             }
@@ -15416,7 +16551,7 @@ void main() {
             const palette = this.extractPalette(selCtx, selW, selH);
             const source = opts && opts.source ? opts.source : null;
             this.state.selectionCutStep = this.state.step;
-            this.state.selection = { x: minX, y: minY, w: selW, h: selH, canvas: selC, originalX: minX, originalY: minY, palette: palette, mask: maskSel, source: source, noHandles: source === 'wand', _maskOutline: null, _maskOutlinePath: null, _maskAnts: null, _maskOutlineScreen: null, _maskAntsScreen: null, _glTex: null, _glTexDirty: true };
+            this.state.selection = { x: minX, y: minY, w: selW, h: selH, canvas: selC, originalX: minX, originalY: minY, palette: palette, mask: maskSel, source: source, noHandles: source === 'wand', _maskOutline: null, _maskOutlinePath: null, _maskOutlineData: null, _maskVisiblePathCacheKey: '', _maskVisiblePathCacheValue: '', _maskAnts: null, _maskOutlineScreen: null, _maskAntsScreen: null, _glTex: null, _glTexDirty: true };
             this.state.selectionOriginalPos = { x: minX, y: minY, w: selW, h: selH };
             this.renderSelection();
         }
@@ -15882,6 +17017,7 @@ void main() {
             this.state.filePath = null;
             this.state.fileName = 'untitled.png';
             this.saveState();
+            this.state.hasDocument = true;
             this.state.resizePreviewActive = false;
             this.state.resizePreviewRect = null;
             this.state.resizePreviewGhost = null;
@@ -15986,8 +17122,7 @@ void main() {
                 const supportsFs = window.showSaveFilePicker && window.showOpenFilePicker;
                 let blob = await new Promise(resolve => this.ui.cMain.toBlob(resolve, 'image/png'));
                 blob = await PngMetadata.inject(blob);
-                const tauri = window.__TAURI__;
-                if (tauri && tauri.core && tauri.core.invoke && this.state.filePath) {
+                if (this.getTauriInvokeFn() && this.state.filePath) {
                     const normalizedPath = this.normalizeIncomingPath(this.state.filePath);
                     if (!this.isSupportedImagePath(normalizedPath)) {
                         throw new Error(`Refusing to write non-image path: ${normalizedPath}`);
