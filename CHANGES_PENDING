@@ -1,0 +1,235 @@
+# Changes Pending
+
+Living release-tracking document for all updates since the latest tag.
+
+- Last tag release: `v1.1.5`
+- Current head: `d0fe71c`
+- Range: `v1.1.5..HEAD`
+
+## Release Prerequisite
+
+Before creating/publishing any new release tag:
+
+1. Update this file with every relevant change since the last tag.
+2. Ensure entries are categorized under `Changes`, `Additions`, and `Bug Fixes`.
+3. Confirm this file is complete and use it as the source for release notes.
+
+No release should be considered complete without this document being current.
+
+## Changes
+
+- Configured brush presets to use default texture patterns suited to their medium (e.g. watercolor uses `paper`, drybrush uses `coarse`, and charcoal uses `chalky`).
+- Improved real-time brush rendering to cache multiple size, rotation, and texture combinations simultaneously under a key-based cache.
+- Replaced CDPaint's color-depth reduction palette path with the standalone color-depth test implementation: Wu palette generation, nearest RGB palette matching, and matching Floyd-Steinberg diffusion behavior.
+- Accelerated color-depth reduction by using a precomputed 32K RGB palette lookup table instead of scanning every palette color for every pixel.
+- Simplified the Decrease Color Depth dialog to an IrfanView-style option list, hid the legacy Fine Tuning controls in-place for possible future restoration, and changed the actions to OK/Cancel.
+- Fine-tuned Decrease Color Depth dialog spacing with a `Colors:` label, clearer separation before checkbox options, slightly roomier checkbox rows, and a taller window.
+- Styled Decrease Color Depth color radio buttons as 16px IrfanView-style circular selectors with gray unselected borders, solid blue selected fill, and a centered white inner dot.
+- Refined Decrease Color Depth radio styling with a thinner unselected border, a quick selected-dot scale animation, and no dotted focus ring after clicking an option.
+- Updated Decrease Color Depth selected radio fill color to `#0078D7`.
+- Updated Decrease Color Depth unselected radio circle color to `#767676`.
+- Reduced Decrease Color Depth radio circle size to 13x13.
+- Darkened the Decrease Color Depth unselected radio circle color very slightly to `#707070`.
+- Fixed Decrease Color Depth radio circles becoming oval by locking their dimensions and scoping text-input focus styling away from radios.
+- Refined Decrease Color Depth radio interactions: centered the selected inner circle, shrinks the selected radio on row hover, keeps the default cursor over radio circles, and adds 1px vertical padding to color rows.
+- Reimplemented Decrease Color Depth color radio visuals with separate custom circle spans for reliable centering, kept the custom color value editable at all times, and changed its input to a bottom-border-only style.
+- Updated the Decrease Color Depth custom value input with a white background and no number spinner arrows, and changed the selected radio inner dot to 5x5 for cleaner centering inside the 13px circle.
+- Adjusted Decrease Color Depth selected radio dot 1px left and changed hover behavior so the inner white dot grows instead of shrinking the blue circle.
+- Recentered the Decrease Color Depth selected radio dot and removed size interpolation so the inner white circle stays on odd pixel sizes.
+- Reworked Decrease Color Depth selected radio centering to use grid layout instead of absolute positioning/offsets.
+- Restored title-bar Undo/Redo icon image size to 16x16 after the shared title-action image sizing made them too small.
+- Smoothed and slowed the Decrease Color Depth radio button animations for selected and hover states.
+- Shifted the Decrease Color Depth color choices 4px left and restored the radio animation speed to its original faster timing.
+- Fixed the Decrease Color Depth close button markup so it uses the same encoded close glyph pattern as the other dialogs instead of mojibake.
+- Added Hue/Saturation-style sidebar docking controls to the Resize and Skew and Decrease Color Depth dialogs.
+- Synced `src/index.html` to the user-provided `sdf_fixed2.html` baseline (full-file replacement) before further depth-reduction/dithering rework.
+- Anchored vector shape resize behavior around the shape center so the selection stays centered while editing smart pencil and shape-tool objects.
+- Added a small red center marker that appears while rotating selections or shapes to make the rotation pivot obvious.
+- Refined the selection rotate-handle icon to a cleaner pixel-style SVG glyph for better readability at small size.
+- Swapped the selection rotate-handle icon to the provided SVG artwork and made it dynamic-invert (`mix-blend-mode: difference`) so the icon appears as the negative of pixels beneath it.
+- Updated the selection rotate-handle icon styling to be larger and borderless (no surrounding circle), and replaced blend-mode inversion with true pixel-sampled inversion against the canvas content beneath the icon.
+- Replaced the File tab dropdown with a two-panel template layout (fixed-size action column + recent-files panel) to match the requested application-menu design while keeping existing File action handlers.
+- Increased File-menu Fluent emoji icon display size for better visual prominence/readability.
+- Tuned File-menu Fluent icon rendering for sharper edges by using native 32px icon sizing and pixel-stable icon container layout.
+- Boosted saturation/contrast specifically for the File-menu floppy-disk Save icon to make it stand out more strongly.
+- Applied the same strong saturation/contrast boost to File-menu New and Save As icons for visual consistency with Save.
+- Increased Magic Wand Fluent icon crispness and color punch (pixel-stable sizing + saturation/contrast boost) for both toolbar and wand dropdown icons.
+- Darkened Magic Wand Fluent icons and nudged the globe-mode icon 1px to the right (toolbar + wand dropdown) for better visual alignment.
+- Updated the local Fluent globe icon artwork color to a bluer base fill for the Magic Wand global-mode icon.
+- Set the local Fluent globe icon base fill to `#2d63f7` for the Magic Wand global-mode icon.
+- Updated the local Fluent globe icon base fill to `#63D8FE` for the Magic Wand global-mode icon.
+- Removed wand icon post-processing effects (filter/rendering tweaks) so wand icons display with raw asset colors.
+- Reverted File-menu icon post-processing boosts and recolored the local floppy-disk icon purple elements to `#9C75CA`.
+- Made the page areas in local New and Save As Fluent icons pure white (`#FFFFFF`) including folded corners.
+- Redesigned the Properties window into a cleaner window-style dialog and expanded it with a high-density diagnostics panel showing extensive document, depth/palette, edit-state, selection/view, and runtime/system details.
+- Reduced Properties window size and simplified its diagnostics to a smaller, cleaner essential-info layout.
+- Reduced File-menu Recent files panel width by about 60% (to ~40% of previous width) while keeping it docked on the right side.
+- Adjusted overall File-menu container width to match the narrowed Recent files panel (removing leftover empty width).
+- Added collapsible Recent files behavior in File menu: clicking a recent entry auto-collapses the recent panel and shrinks the menu, with a small side-arrow control to reopen it.
+- Simplified Recent panel collapse behavior: removed persistence complexity, kept a direct side-arrow toggle, and made recent-file clicks collapse immediately while keeping the menu open.
+- Fixed File-menu layout regression by restoring absolute positioning so opening File no longer inserts large whitespace in the top UI.
+- Updated File-menu recent filename rows to use reliable ellipsis truncation (`...`) when names exceed available width.
+- Reduced File-menu empty-state recent text size so â€œNo recent files yetâ€ fits cleanly without clipping.
+- Restyled the File-menu recent-panel toggle arrow to a smaller top-side tab control instead of a full-height side strip.
+- Restored File-menu recent-panel arrow state persistence across sessions using a dedicated `localStorage` key.
+- Increased the File-menu recent-panel arrow tab slightly and aligned it flush with the top-right corner border.
+- Made the File-menu recent-panel arrow tab more sober/neutral and changed collapsed-state placement so the tab protrudes outside the menu edge.
+- Fixed File-menu arrow-tab visibility by allowing the menu container to overflow visibly when the collapsed tab protrudes outside the edge.
+- Removed extra right-side slack in collapsed File menu by tightening collapsed width to the button column and letting the left panel fill it.
+- Fixed collapsed File-menu button overhang by removing the left panel's fixed pixel basis so action rows size to the menu's actual inner width.
+- Updated Rust workspace config to `resolver = "2"` for cleaner Cargo output and edition-2021 dependency resolution behavior.
+- Redesigned the Theme colors modal to a more professional two-panel layout with stronger visual hierarchy, quick editor state, and clearer action grouping.
+- Replaced the main toolbar and shape tool icons with the new PNG icon set (stored in `src/assets/toolbar-icons/`), while keeping the previous inline icons in-code as labeled legacy data/comments for easy rollback.
+- Made the new toolbar icon set pixel-perfect by padding all toolbar icons to a fixed 24x24 canvas (no scaling), and set Smart Pencil to reuse the same `pencil.png` icon as the standard Pencil.
+- Fixed pencil mode icon UI: only one pencil icon is shown at a time, and right-click cycling correctly switches between `pencil.png` and `pencil-smart.png`.
+- Nudged the pencil tool icon 1px to the right for pixel-perfect alignment (applies to both standard and smart pencil modes).
+- Nudged toolbar icons for pixel-perfect alignment: eraser down 1px; color picker down 1px and right 1px.
+- Nudged the contiguous Magic Wand toolbar icon 2px to the right for alignment.
+- Added the new Triangle toolbar icon (`Triangle.png`) to the pixel-perfect toolbar icon set and wired it to the Triangle shape tool.
+- Fixed Triangle toolbar icon clipping while keeping it pixel-perfect: Triangle icon is now padded (no resampling) to 24x26 for display, and the toolbar CSS allows non-24x24 icons to render without being cut.
+- Nudged the Triangle toolbar icon down 1px for final alignment.
+- Fixed Magic Wand toolbar mode icons being swapped by swapping the underlying `wand-contig.png` and `wand-global.png` assets (and their originals).
+- Prevented right-click on the Pencil tool button from bubbling into other UI context/dropdown behaviors (right-click now only toggles pencil mode).
+- Swapped the Clipboard ribbon Paste icon and Color Mode 24/16/15/8/4/1bpp buttons to the provided PNG icons, keeping the legacy Clipboard base64 icon in-code as a labeled backup.
+- Ensured the new Clipboard and Color Mode icons render at native pixel size with pixelated rendering (no scaling).
+- Made dropdown menu icons pixel-perfect by adding a `.pixel-perfect` class with `image-rendering: pixelated; crisp-edges;` and `-ms-interpolation-mode: nearest-neighbor;`.
+- Removed fixed width/height sizing from dropdown menu icons so they display at their natural size.
+- Aligned Crop, Resize, and Rotate button text to the left with `justify-content: flex-start;`.
+- Reduced dropdown icon spacing to `margin-right: 3px` and removed all separator lines between icons and text.
+- Reduced dropdown menu item padding from `5px 15px` to `5px 5px` to shrink space around icons while keeping icon-to-text spacing the same.
+- Removed the horizontal separator line between "Rotate 180°" and "Flip Vertical" in the rotate menu.
+- Applied all dropdown icon styling changes to `True.html` (the version with the layer system intact) instead of `index.html`.
+- Replaced the selection rotate handle icon (SVG) with the provided `rotate selection.png` asset in `True.html`.
+
+## Additions
+
+- Added a "Texture pattern" selector dropdown below the texture amount slider in the brush settings panel.
+- Added 5 distinct procedurally generated noise patterns for the brush engine: Fine, Coarse, Canvas, Paper, and Chalky.
+- Enhanced the settings preview canvas to draw live textured dabs with the selected grain pattern.
+- Added an in-app Updates dialog (Help: Updates) that checks the latest GitHub release notes/version and can download+install signed updates when updater artifacts are available.
+- Remade the Updates dialog UI to match other app dialogs (clean layout, consistent styling, clearer status states, and a visible progress indicator while checking/downloading), and improved it further with draggable window positioning (remembered) plus GitHub-style formatted release notes.
+- Fixed desktop version metadata being stuck at `0.1.0` by syncing the app version fields to `1.1.6` (so the Updates dialog and updater use the real in-progress version for the next release).
+- Replaced the title-bar Undo/Redo icons with new PNG assets (including dedicated greyed-out variants), while keeping the old SVG icons commented in-place as a code backup.
+- Added interactive selection rotation with a dedicated rotate handle above the top-center selection resize handle, including drag-to-rotate with `Shift` angle snapping.
+- Added CleanEdge-based pixel art selection rotation so rotated sprites use the dedicated edge-preserving sprite-rotation/upscaling algorithm instead of plain nearest-neighbor resampling.
+- Added explicit selection rotation status readout (`Rot: X.XXÂ°`, normalized to `0.00..359.99`) in the status bar with live updates during handle rotation.
+- Added precision rotate-handle modifiers for finer control: hold `Alt` for slower high-precision adjustment, `Ctrl` for 1-degree stepping, and `Shift` for 15-degree snapping.
+- Added bundled Fluent Emoji Flat SVG assets for File-menu icons so icon style is consistent across systems instead of relying on OS emoji rendering.
+- Added bundled Fluent Emoji Flat SVG icons for Magic Wand UI (toolbar mode icon + wand dropdown mode icons) to match the same non-system emoji art style.
+- Added persistent File-menu recent files on the right panel (`localStorage`-backed), including click-to-reopen for path-based recent entries and automatic pruning of missing files.
+- Added an MS Paint-style line-width preset selector (1-4 px) below the existing Width control in the main toolbar, opened from a dedicated dropdown arrow button (Resize/Select-style caret) and applying tool width directly.
+- Added 4bpp (16-color) and 1bpp (2-color) options to the main toolbar's Color Mode section.
+- Added width-on-hover wheel control for the toolbar Width input: scrolling while hovering adjusts width without focusing the field, and `Ctrl + wheel` changes width in Â±10 steps.
+- Added persistence for View anchor mode (`Anchored`/`Free`): the toggle state is now saved and restored on next app launch.
+- Added shortcut-aware tool hover tooltips: tool buttons now show the current mapped shortcut(s), and Magic Wand tooltip includes a right-click mode-switch hint.
+- Added advanced Theme colors tools: improved multi-token search (`changed`, `default`, `hex:`, `ui:`/`el:`), live result count, optional `Changed only` filter, and clear-search action.
+- Added a Quick Color Editor sidebar for selected theme tokens with HEX input plus RGB and HSL sliders/numeric controls for faster fine tuning.
+- Added theme color history support with `Undo Last Change` (button + `Ctrl+Z` shortcut while the modal is open), including undo for preset/randomize/reset operations.
+- Added guided color stepping tools for finding/recoloring specific tokens one-at-a-time, including `Step Next To Pure Red`, `Selected -> Pure Red`, and `R` keyboard stepping shortcut.
+- Updated red-step behavior to be true one-at-a-time navigation: each step restores the previous token before applying red to the next token, plus reverse stepping support with `U` (and a Step Back button).
+- Added Theme Colors support for CSS variable tokens (`var(--token)`) so same-looking colors can be edited independently by UI role, including a dedicated `--shape-icon-color` token for shape toolbar icons.
+- Added Theme Colors JSON export (`Export Theme`) and made Theme Colors modeless/persistent so it stays open while using other UI and dialogs, closing only via its title-bar `X`.
+- Added a dedicated global text color token (`--app-text-color`) used by the app body so text color has an explicit editable Theme Colors value.
+- Added a broader set of granular UI color tokens (title bar, tab row, section labels/dividers, button hover/active states, dropdown menus, threshold labels, toggle/hotkey icon accents, and selection-menu icon states) so unrelated UI parts can be themed independently.
+- Further split unrelated theme coupling by adding dedicated tokens for Theme Colors window surfaces (`--theme-colors-window-bg`, titlebar gradient/border) and separate toggle icon tokens for Anchor vs Theme Mode so these no longer share the same editable color by default.
+- Added alpha editing to Theme Colors Quick Editor (`A` slider + numeric input), with live rgba override output when alpha is below 100%.
+- Added more decoupled view/ribbon icon tokens (`--view-center-icon-color`, `--view-edgeclean-icon-color`, `--view-theme-icon-color`) and additional Theme Colors editor-panel tokens to reduce remaining shared color links.
+- Added a Smart Shape secondary pencil mode with a dedicated sparkle pencil icon, toggled by right-clicking the Pencil tool to switch between standard and smart pencil behavior.
+- Unified the on-canvas pencil cursor so both pencil modes use the same cursor icon.
+- Removed the ghosted original stroke when the Smart Pencil snaps into a shape, so only the snapped shape is visible.
+- Kept Smart Pencil shapes editable after release (selection-like resize/commit) and added on-path edit handles for line, curve, and polygon shapes.
+- Improved Smart Pencil drawing performance by rendering previews only on pointer moves with a lighter stroke path.
+- Made Smart Pencil previews crisp again by using pixel-perfect line rendering with path decimation, and added a bright cyan snapped-shape preview so the vector snap is obvious.
+- Smart Pencil now redraws immediately when a snap occurs (even without moving) and the snapped preview uses the active draw color.
+- Prevented Smart Pencil from clearing the active-shape preview on release, so the shape remains visible until committed.
+- Moved curve edit handles onto the curve itself (start/mid/end) instead of off-curve control points.
+- Expanded curve path handles to four points (start, end, and two on-curve handles that each drive a single bezier control point).
+- Enabled rotation handle support for editable vector shapes so they can be rotated before rasterizing.
+- Fixed rotated vector shape handle interactions by mapping resize/path edits into the shape's local space.
+- Kept the selection box axis-aligned for rotated vector shapes (no rotated selection box).
+- Adjusted the selection box to tightly contain rotated vector shapes.
+- Fixed overlay selection outline to match the rotated vector shape bounds.
+- Fixed rotated shape handle placement and resize math so handles follow the shape and resizing is stable.
+- Updated vector shape resize handles to scale relative to the shape's bounds (axis-aligned box) for predictable behavior when rotated.
+- Anchored vector shape resize handles to the opposite edge so middle handles resize only in their axis without drifting.
+- Added dedicated selection icon tokens (`--select-icon-free-color`, `--select-icon-poly-main-color`, `--select-icon-poly-accent-color`) and remapped inline SVG rect fills (including `rect#4-3`) to these vars so those pixels no longer share broad raw color entries with unrelated UI.
+- Added dedicated title-bar save icon pixel tokens and remapped the inline save SVG palette (including its `rect#4-3`) to those vars, removing another major shared raw-color source from Theme Colors.
+- Expanded Theme Colors with many new per-SVG token entries (`svg(...)`) so inline SVG colors are editable by icon/context instead of one shared raw color; removed shared raw SVG color rows from the list to prevent one edit from recoloring unrelated SVG elements.
+- Increased SVG token granularity again to per-element entries (`svgel(...)` with refs like `rect#...`) so repeated colors inside a single SVG are independently editable instead of grouped by SVG/color.
+- Expanded granularity beyond SVG: inline attribute colors are now tokenized per element + attribute + occurrence (`attrel(...)`) across the UI, producing significantly more independent Theme Colors entries and reducing shared-coupling edits.
+- Excluded palette mini swatches from Theme Colors targeting and theme-select picking, and hard-enforced their fixed border/shine/color styling after theme apply and palette renders so swatch colors stay unchanged/non-themeable.
+- Added dedicated mini-swatch border/inner/hover border/hover inner tokens (`--palette-mini-swatch-*`) so swatch border styling is uniquely theme-editable, while swatch fill colors remain locked and non-themeable.
+- Added a dedicated Theme Colors list background token (`--theme-colors-list-bg`) so `#modal-colors .color-list` has its own independently editable color.
+- Added native fullscreen toggle on `F11` for desktop windows.
+
+## Bug Fixes
+
+- Reworked Floyd-Steinberg depth dithering to diffuse errors in plain `0..255` RGB channel space, avoiding the previous linear/sRGB conversion mismatch that could smear or "melt" reduced-color output.
+- Improved `Ctrl+S` save feedback: successful hotkey saves now keep the spinner/wait cursor visible briefly (minimum hold duration) so save confirmation remains noticeable even on very fast writes.
+- Fixed curve edit handles so they stay on-curve while dragging, and dragging a handle no longer drags other control points with it.
+- Fixed erratic shape handle dragging by basing move/resize/path edits on a cached drag-start shape snapshot instead of cumulative deltas.
+- Fixed shape handle stability across repeated rotate/resize/move operations: rotated resizes now render every frame (no null first frame), path-handle drags bake rotation into geometry for consistent behavior, rotated polyline resizes preserve open/closed state, and shape drags use sub-pixel mouse coordinates to prevent handle jumps.
+- Fixed severe performance drops while dragging polygon/curve path handles by reusing path-handle DOM nodes (no rebuild per mousemove), caching active-shape bounds, and batching handle updates to `requestAnimationFrame`.
+- Added strict pixel snapping for vector-shape translation only: dragging the selection box to move a whole shape rounds X/Y to integers, while rotation and vertex/path handle edits remain high-precision floats.
+- Fixed Smart Pencil-created editable shapes not responding to brush size hotkeys: `Ctrl+Plus/Minus` now updates the active shape stroke width while it is in shape edit mode.
+- Fixed larger shape and Smart Pencil shape strokes inheriting anti-aliased edge pixels from the round brush cache, restoring hard same-color pixels.
+- Reduced inconsistent transform lag spikes by throttling the rotate-handle pixel-sampled inversion (avoids repeated `getImageData()` readbacks) and skipping path-handle relayout when only shape translation changed.
+- Declared the `--sel-rotate-icon-color` CSS custom property in `:root` to resolve editor/lint "Cannot resolve custom property" warnings for the rotate-handle SVG color variable.
+- Improved selection-rotation precision significantly by switching rotate-drag input to sub-pixel mouse coordinates, using continuous unwrapped angle accumulation (no Â±180Ã‚Â° clamp during a drag), and adding radius-scaled sensitivity for finer low-radius control.
+- Fixed undo/redo behavior when starting a new rectangular selection after an undo: creating/selecting no longer truncates redo history by itself; redo is preserved until the selection causes an actual document change (move/transform/commit/delete).
+- Fixed selection-rotation handle rendering orientation in the new CleanEdge path by correcting the texture upload Y-flip state (removed mirrored/vertical-flipped preview behavior that inverted perceived rotate direction).
+- Fixed selection-rotation handle drag math so rotation direction now follows cursor direction, and made repeated handle drags continue from the current rotation instead of resetting to default on re-click.
+- Fixed rotated selection border thickness scaling by making the rotated-border stroke/inset use inverse zoom, keeping it visually ~1px in screen space like other selection overlays.
+- Fixed rotated selection border zoom behavior more robustly by replacing CSS border-based stroke with inverse-zoom gradient edge lines (avoids browser border-width clamping under transform so the frame stays ~1px on screen).
+- Fixed rotated rectangular selection border rendering to show all four edges with alternating colors (top/bottom/left/right) while rotating.
+- Fixed high-zoom (>200%) rotated-border dropout on right/bottom edges by moving the rotated frame to a dedicated inverse-scaled overlay element (`#sel-rot-border`) instead of drawing directly on the hit-area box.
+- Fixed selection resize-handle blurriness at certain fractional zoom levels by snapping handle centers to screen pixels (prevents 1px borders landing on half-pixels and anti-aliasing).
+- Fixed rotated complex/masked selections to keep using ants outlines and rotate ants with the selection instead of falling back to a rectangular rotated border.
+- Fixed selection handle blur by snapping handle placement to screen pixels while keeping handles stage-relative, and kept the rotate handle icon size constant across zoom.
+- Fixed selection/path handles not tracking the canvas in free (unanchored) mode after the recent handle changes.
+- Hardened rotate-release click suppression so the next stray click after rotating a selection or editable shape is consumed instead of sometimes deselecting the active transform.
+- Fixed `Ctrl` rotation snapping so selections and editable shapes now snap to absolute world axes/octants (`0, 45, 90...`) instead of snapping relative to the angle where the drag started.
+- Added a Debug-only `Smart Pencil: Curve only` toggle that constrains Smart Pencil detection to cubic curves, skipping line/polygon/circle/ellipse snapping when enabled.
+- Adjusted `Smart Pencil: Curve only` so it always converts the stroke into a cubic curve, including strokes that look like closed shapes, instead of falling back to freehand.
+- Moved the `Smart Pencil: Curve only` toggle from Debug to Misc so it sits with normal utility controls instead of debug-only tools.
+- Moved the `Undo history` controls from Debug to Misc so both utility cards live in the regular Misc toolbar.
+- Fixed the selection rotate-handle CSS variable reference typo so `--sel-rotate-icon-color` resolves correctly again.
+- Fixed desktop relaunch behavior for single-instance mode: clicking the desktop shortcut or taskbar app entry now opens a new CDPaint window instead of only focusing the existing one.
+- Fixed Magic Wand right-click interaction: right-click now directly toggles wand mode (contiguous/global) and selects Wand immediately, without opening the dropdown menu.
+- Fixed picker tool return behavior so after sampling a color it restores the last drawing tool including Fill (bucket) and shape tools, while not switching to non-drawing tools like Zoom/Wand.
+- Fixed selection-move preview transparency mismatch: when Transparent Selection is enabled, drag/move preview now honors Color 2 transparency the same way as the final committed selection.
+- Fixed crop behavior so it no longer keys out Color 2 transparency while cropping, preventing Color 2 pixels from being erased during crop.
+- Fixed transparent Color 2 tolerance handling so a zero tolerance stays zero instead of falling back to a default when pasting or rendering selections.
+- Fixed auto-paste transparency re-keying after color-mode conversion: when tolerance is zero, the post-conversion pass no longer removes newly quantized colors.
+- Fixed paste transparency keying to use a pre-conversion mask, preventing color-mode conversion from turning unrelated colors transparent.
+- Set the default transparent selection tolerance to 0 so only exact Color 2 matches are keyed unless changed.
+- Fixed selection preview blurring at zoomed-out levels by snapping the draw position/size to screen pixels for crisp rendering.
+- Fixed a Windows maximized-window hitbox issue where the invisible top resize strip could intercept clicks near custom top-right title controls (close/maximize). Switched to native no-shadow windows (`shadow: false`) so custom title bar layout stays unchanged and drag-to-restore still works.
+- Fixed maximize/restore title button state desync after drag-to-restore from maximized by refreshing the maximize icon on window resize events.
+- Fixed stale top-left title bar app icon by removing the hardcoded embedded base64 image and loading `src/app-icon.png` so the custom title bar icon stays in sync with current project icon assets.
+- Fixed maximized window restore behavior on Windows so persisted startup state no longer applies normal size/position before maximize, preventing a visible resize border/frame when opening in maximized mode.
+- Fixed a remaining Windows frameless maximize border case for file-opened secondary windows by syncing `resizable` with maximize state (`false` when maximized, restored to `true` after unmaximize).
+- Enforced a minimum desktop window size of `400x400` (main window and file-opened secondary windows), with startup size restore clamped to that minimum.
+- Updated `F11` fullscreen behavior to center the app window on-screen before entering fullscreen (and recenter after exiting), preventing off-screen window state from trapping the UI.
+- Restored maximized frameless title-bar interaction on Windows by keeping maximized windows resizable (fixes drag/minimize controls becoming unresponsive).
+- Fixed modal backdrop-close behavior while Theme Colors is open so clicking outside other dialogs no longer auto-closes them during theme editing.
+- Reverted the ribbon Color Mode buttons from PNG icon labels back to simple text labels (`24bpp`, `16bpp`, `15bpp`, `8bpp`, `4bpp`, `1bpp`) for the previous simpler UI.
+- Fixed free-form lasso selection cancelling when the mouse is released outside the canvas by recording a clamped release point before finalizing the selection.
+- Changed selection and shape rotation `Ctrl` snapping to the common 8 axes (`45deg` increments) instead of fine 1-degree steps.
+- Fixed selection handle icon blur/soft edges across zoom levels by replacing center-translate counter-scaling with pixel-aligned inverse-scale positioning for the selection handles and rotate handle.
+- Switched selection resize handles from a CSS background image to explicit `<img>` icons sized in inverse-zoom layout units, to avoid browser blur/resampling on the handle artwork at different zoom levels.
+- Moved selection controls/handles out of the zoom-scaled stage into viewport screen space so the resize handles stay true `6x6` screen pixels at every zoom level without transform blur or color softening.
+- Fixed modal input capture while Theme Colors is open by making dialog backdrops non-blocking in that mode, allowing simultaneous interaction with Theme Colors, other dialogs, and main UI.
+- Added a basic undo-history cap for RAM efficiency: document undo now defaults to a 50-state limit, trims oldest snapshots automatically, and exposes a simple Debug tab toggle + value control backed by local storage.
+
+## Commit Reference (Since `v1.1.5`)
+
+- (none yet)
+
+## Next Cycle Reset
+
+After the next release tag is published:
+
+1. Update `Last tag release`, `Current head`, and `Range`.
+2. Clear categorized sections for the new cycle.
+3. Start adding new entries immediately for ongoing tracking.
