@@ -1159,9 +1159,10 @@
                     endX: 0,   endY: 0
                 },
                 freehand: {
-                    size: 4, smoothing: 0.5, thinning: 0.5, streamline: 0.5,
-                    taperStart: 0, taperEnd: 0, capStart: true, capEnd: true,
-                    simulatePressure: true, easing: 'linear'
+                    size: 4, smoothing: 0.5, thinning: 0.65, streamline: 0.5,
+                    taperStart: 0, taperEnd: 0, taperPower: 0.5,
+                    capStart: true, capEnd: true,
+                    simulatePressure: true, easing: 'linearOut'
                 }
             };
             this.state = {
@@ -20805,23 +20806,49 @@ self.onmessage = function(e) {
             linear: t => t,
             easeIn: t => t * t,
             easeOut: t => t * (2 - t),
-            easeInOut: t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+            easeInOut: t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
+            linearOut: t => 1 - (1 - t) * (1 - t),
+            easeOutQuad: t => t * (2 - t),
+            easeOutSine: t => Math.sin((t * Math.PI) / 2),
+            easeOutCubic: t => 1 - Math.pow(1 - t, 3)
         };
 
-        getFreehandOptions() {
+        // Build a reverse map easing value → key so the UI slider can
+        // derive a taper power from the selected easing string.
+        static _taperEasingFromKey = {
+            linear: t => t,
+            easeOutQuad: t => t * (2 - t),
+            easeOutSine: t => Math.sin((t * Math.PI) / 2),
+            easeOutCubic: t => 1 - Math.pow(1 - t, 3),
+            easeIn: t => t * t,
+            easeInOut: t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
+            linearOut: t => 1 - (1 - t) * (1 - t)
+        };
+
+        getFreehandOptions(isComplete = false) {
             const fh = this.config.freehand || {};
             const easingFn = PaintEngine._freehandEasingMap[fh.easing] || PaintEngine._freehandEasingMap.linear;
+            const taperEasingFn = PaintEngine._taperEasingFromKey[fh.easing] || PaintEngine._taperEasingFromKey.linear;
+            const taperPower = fh.taperPower ?? 0.5;
+            const taperEasing = t => Math.pow(taperEasingFn(t), taperPower);
             return {
                 size: fh.size ?? 4,
-                smoothing: fh.smoothing ?? 0.5,
+                smoothing: fh.smoothing != null ? Math.min(0.99, Math.max(0.01, fh.smoothing)) : 0.5,
                 thinning: fh.thinning ?? 0.5,
                 streamline: fh.streamline ?? 0.5,
-                taperStart: fh.taperStart ?? 0,
-                taperEnd: fh.taperEnd ?? 0,
-                capStart: fh.capStart ?? true,
-                capEnd: fh.capEnd ?? true,
                 simulatePressure: fh.simulatePressure ?? true,
-                easing: easingFn
+                easing: easingFn,
+                last: isComplete,
+                start: {
+                    cap: fh.capStart !== false,
+                    taper: fh.taperStart || 0,
+                    easing: taperEasing
+                },
+                end: {
+                    cap: fh.capEnd !== false,
+                    taper: fh.taperEnd || 0,
+                    easing: taperEasing
+                }
             };
         }
 
@@ -20852,10 +20879,12 @@ self.onmessage = function(e) {
         }
 
         commitFreehandStroke() {
-            if (!this._freehandStrokePoints || this._freehandStrokePoints.length < 2) return;
             const pts = this.state.freehandPoints;
             if (pts.length < 2) return;
-            const stroke = this._freehandStrokePoints;
+            const opts = this.getFreehandOptions(true);
+            const stroke = getStroke(pts, opts);
+            if (!stroke || stroke.length < 2) return;
+            this._freehandStrokePoints = stroke;
             const color = this.getActiveDrawColor(false);
             this.renderFreehandOutline(this.ctx, stroke, color, 1);
             this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
@@ -20864,17 +20893,26 @@ self.onmessage = function(e) {
         }
 
         renderFreehandOutline(ctx, outline, color, alpha) {
-            if (!outline || outline.length < 3) return;
+            if (!outline || outline.length < 4) return;
+            const len = outline.length;
+            const avg = (a, b) => (a + b) / 2;
             const path = new Path2D();
-            const first = outline[0];
-            path.moveTo(first[0], first[1]);
-            for (let i = 0; i < outline.length - 1; i++) {
-                const mx = (outline[i][0] + outline[i + 1][0]) / 2;
-                const my = (outline[i][1] + outline[i + 1][1]) / 2;
-                path.quadraticCurveTo(outline[i][0], outline[i][1], mx, my);
+            let a = outline[0], b = outline[1], c = outline[2];
+            path.moveTo(a[0], a[1]);
+            path.quadraticCurveTo(b[0], b[1], avg(b[0], c[0]), avg(b[1], c[1]));
+            let prevCp = b;
+            let prevMp = [avg(b[0], c[0]), avg(b[1], c[1])];
+            for (let i = 2, max = len - 1; i < max; i++) {
+                a = outline[i];
+                b = outline[i + 1];
+                const rcpX = 2 * prevMp[0] - prevCp[0];
+                const rcpY = 2 * prevMp[1] - prevCp[1];
+                const mx = avg(a[0], b[0]);
+                const my = avg(a[1], b[1]);
+                path.quadraticCurveTo(rcpX, rcpY, mx, my);
+                prevCp = [rcpX, rcpY];
+                prevMp = [mx, my];
             }
-            const last = outline[outline.length - 1];
-            path.quadraticCurveTo(last[0], last[1], first[0], first[1]);
             path.closePath();
             ctx.save();
             ctx.fillStyle = color;
@@ -20890,7 +20928,8 @@ self.onmessage = function(e) {
                 ['fh-thinning', 'thinning'],
                 ['fh-streamline', 'streamline'],
                 ['fh-taperStart', 'taperStart'],
-                ['fh-taperEnd', 'taperEnd']
+                ['fh-taperEnd', 'taperEnd'],
+                ['fh-taperPower', 'taperPower']
             ];
             for (const [id, key] of sliderMap) {
                 const el = document.getElementById(id);
@@ -20961,7 +21000,8 @@ self.onmessage = function(e) {
                 ['fh-thinning', 'thinning'],
                 ['fh-streamline', 'streamline'],
                 ['fh-taperStart', 'taperStart'],
-                ['fh-taperEnd', 'taperEnd']
+                ['fh-taperEnd', 'taperEnd'],
+                ['fh-taperPower', 'taperPower']
             ];
             for (const [id, key] of sliderMap) {
                 const el = document.getElementById(id);
@@ -21000,9 +21040,10 @@ self.onmessage = function(e) {
 
         resetFreehandSettings() {
             this.config.freehand = {
-                size: 4, smoothing: 0.5, thinning: 0.5, streamline: 0.5,
-                taperStart: 0, taperEnd: 0, capStart: true, capEnd: true,
-                simulatePressure: true, easing: 'linear'
+                size: 4, smoothing: 0.5, thinning: 0.65, streamline: 0.5,
+                taperStart: 0, taperEnd: 0, taperPower: 0.5,
+                capStart: true, capEnd: true,
+                simulatePressure: true, easing: 'linearOut'
             };
             this.updateFreehandPanel();
             this._saveFreehandConfig();
