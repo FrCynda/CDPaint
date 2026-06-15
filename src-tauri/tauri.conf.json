@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "cdpaint",
-  "version": "0.1.0",
+  "version": "1.1.6",
   "identifier": "com.frenc.cdpaint",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -16,6 +16,7 @@
         "decorations": false,
         "fullscreen": false,
         "height": 800,
+        "shadow": false,
         "resizable": true,
         "title": "CDPaint",
         "visible": false,
@@ -68,5 +69,16 @@
         "mimeType": "image/*"
       }
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/FrCynda/CDPaint/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMzQjJGRTVGRkE4RjUyN0MKUldSOFVvLzZYLzZ5dzVqZnhxaVhVNmhyeDdoWldKRGdXSG5sT3Rnd0p2cVBJMWlyemQ4NEY2T1gK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

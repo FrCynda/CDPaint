@@ -1,6 +1,6 @@
 {
   "name": "CDPaint",
-  "version": "1.0.0",
+  "version": "1.1.6",
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -10,5 +10,8 @@
     "build": "node scripts/build.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "private": true
+  "private": true,
+  "dependencies": {
+    "perfect-freehand": "^1.2.3"
+  }
 }
