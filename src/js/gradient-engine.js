@@ -141,15 +141,25 @@
     // ─── CPU render cache (param-hash → Uint8ClampedArray) ───────────────────────
 
     const _renderCache   = new Map();
-    const _RENDER_CACHE_MAX = 8;
 
     function _cacheGet(key) { return _renderCache.get(key) || null; }
 
     function _cacheSet(key, buf, imageData) {
-        if (_renderCache.size >= _RENDER_CACHE_MAX) {
+        const sysMemGB    = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 8;
+        const budgetBytes  = sysMemGB * 4 * 1024 * 1024;
+        const entryBytes   = imageData.width * imageData.height * 4;
+        const maxEntries   = Math.max(1, Math.min(8, Math.floor(budgetBytes / entryBytes)));
+        while (_renderCache.size >= maxEntries) {
             _renderCache.delete(_renderCache.keys().next().value);
         }
         _renderCache.set(key, { buf, imageData });
+    }
+
+    function _cacheClear() {
+        _renderCache.clear();
+        _glPrograms.clear();
+        _glLastKey = null; _glLastW = 0; _glLastH = 0;
+        _cpuOff = null; _cpuOffCtx = null; _cpuOffW = 0; _cpuOffH = 0;
     }
 
     // ─── WebGL state ──────────────────────────────────────────────────────────────

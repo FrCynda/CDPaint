@@ -844,286 +844,9 @@
     })();
 
     // ─── Gradient Tool Engine ─────────────────────────────────────────────────
-    const GRAD_HANDLE_RADIUS = 8; // canvas-pixel hit radius for handles
+    // All gradient rendering and GRAD_HANDLE_RADIUS are in js/gradient-engine.js,
+    // loaded before this file.  See that module for the optimised implementation.
 
-    // _gradientDrawVector is now a no-op stub — vector overlay is handled by
-    // PaintEngine._gradientDrawVectorSVG() which renders into the screen-space SVG overlay
-    // so handles and the ant-line stay exactly 1 screen-pixel regardless of zoom.
-    function _gradientDrawVector(ctx, g, zoom) { /* superseded by SVG overlay */ }
-
-    function _gradientHexToRgba(hex) {
-        let h = hex.replace('#', '');
-        if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
-        return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16), 255];
-    }
-
-    function _gradientLerp(t, stops, midpoint) {
-        if (t <= 0) return _gradientHexToRgba(stops[0].color);
-        if (t >= 1) return _gradientHexToRgba(stops[stops.length-1].color);
-        let i = 0;
-        while (i < stops.length-1 && t > stops[i+1].offset) i++;
-        const s1 = stops[i], s2 = stops[i+1];
-        let lt = (t - s1.offset) / ((s2.offset - s1.offset) || 1);
-        // Apply midpoint skew via power curve: exponent = log(0.5)/log(midpoint).
-        // midpoint=0.5 -> linear. <0.5 -> blend reaches midpoint colour sooner. >0.5 -> later.
-        const mp = midpoint == null ? 0.5 : Math.max(0.01, Math.min(0.99, midpoint));
-        if (mp !== 0.5) lt = Math.pow(lt, Math.log(0.5) / Math.log(mp));
-        const c1 = _gradientHexToRgba(s1.color), c2 = _gradientHexToRgba(s2.color);
-        return [
-            c1[0] + (c2[0]-c1[0])*lt,
-            c1[1] + (c2[1]-c1[1])*lt,
-            c1[2] + (c2[2]-c1[2])*lt, 255
-        ];
-    }
-
-    function _gradientRepeat(t, mode) {
-        if (mode === 'repeat') return ((t%1)+1)%1;
-        if (mode === 'mirror') { const f = Math.floor(t), fr = t-f; return (Math.abs(f)%2===1)?1-fr:fr; }
-        return Math.max(0, Math.min(1, t));
-    }
-
-    // ── Staggered / Phase-Shifted Quantized Gradient ──────────────────────────
-    // Renders each channel independently through floor-based quantizers with
-    // different phase offsets so Red, Green, and Blue bands overlap
-    // asynchronously, creating hundreds of intermediate sub-hues from only a
-    // handful of quantization levels. Alpha is interpolated smoothly (no phase shift).
-    function _gradientStaggeredRender(ctx, g, W, H, stops) {
-        const { startX: sx, startY: sy, endX: ex, endY: ey, staggerLevels } = g;
-        const c1 = _gradientHexToRgba(stops[0].color);
-        const c2 = _gradientHexToRgba(stops[1].color);
-        if (!c1 || !c2) return;
-
-        // Each channel uses a slightly different number of quantizer levels
-        // (nearby coprime integers).  This guarantees that even for a pure
-        // white→black gradient the R, G, and B quantizer grids will never
-        // align, producing up to Lr × Lg × Lb unique colours.
-        const baseLevels = Math.max(2, staggerLevels || 256);
-        const maxR = baseLevels - 1;   // e.g. 255  (256 levels)
-        const maxG = baseLevels;       // e.g. 256  (257 levels, coprime to 255)
-        const maxB = baseLevels - 2;   // e.g. 254  (255 levels, coprime to 255)
-
-        // Pull channel data into locals — inner loop never touches c1/c2 again
-        const sr = c1[0], sg = c1[1], sb = c1[2], sa = c1[3];
-        const dR = c2[0] - sr, dG = c2[1] - sg, dB = c2[2] - sb, dA = c2[3] - sa;
-
-        // Reciprocal avoids a per-pixel division
-        const dx = ex - sx, dy = ey - sy;
-        const invLenSq = 1 / (dx * dx + dy * dy);
-        if (!isFinite(invLenSq)) return;
-
-        const imageData = ctx.createImageData(W, H);
-        const data = imageData.data;
-        const stride = W * 4;
-
-        for (let y = 0; y < H; y++) {
-            const rowOff = y * stride;
-            const py = y - sy;
-            for (let x = 0; x < W; x++) {
-                let t = ((x - sx) * dx + py * dy) * invLenSq;
-                if (t < 0) t = 0; else if (t > 1) t = 1;
-
-                const vr = sr + dR * t;
-                const vg = sg + dG * t;
-                const vb = sb + dB * t;
-                const idx = rowOff + x * 4;
-                data[idx]     = Math.round((Math.round(vr * maxR / 255) / maxR) * 255);
-                data[idx + 1] = Math.round((Math.round(vg * maxG / 255) / maxG) * 255);
-                data[idx + 2] = Math.round((Math.round(vb * maxB / 255) / maxB) * 255);
-                data[idx + 3] = sa + dA * t + 0.5 | 0;
-            }
-        }
-
-        ctx.putImageData(imageData, 0, 0);
-    }
-
-    function _gradientRender(ctx, g, W, H, c1hex, c2hex) {
-        const { type, repeat, dither, reverse, startX: sx, startY: sy, endX: ex, endY: ey } = g;
-        const midpoint = g.midpoint != null ? g.midpoint : 0.5;
-        const stops = reverse
-            ? [{ offset: 0, color: c2hex }, { offset: 1, color: c1hex }]
-            : [{ offset: 0, color: c1hex }, { offset: 1, color: c2hex }];
-        const dx = ex-sx, dy = ey-sy;
-        const dist = Math.hypot(dx, dy);
-        if (dist < 1) { ctx.fillStyle = stops[0].color; ctx.fillRect(0,0,W,H); return; }
-
-        // Staggered / phase-shifted quantized gradient — completely separate path
-        if (type === 'staggered') {
-            _gradientStaggeredRender(ctx, g, W, H, stops);
-            return;
-        }
-
-        if ((type === 'linear' || type === 'bilinear' || type === 'radial') && !dither) {
-            // intentionally removed — all types now use pixel-buffer path below
-        }
-
-        // Pixel-buffer path for advanced gradients
-        const LUT = 512;
-        const lut = new Array(LUT);
-        for (let i = 0; i < LUT; i++) lut[i] = _gradientLerp(i/(LUT-1), stops, midpoint);
-        const baseAngle = Math.atan2(dy, dx);
-        const cosA = Math.cos(-baseAngle), sinA = Math.sin(-baseAngle);
-        const TWO_PI = Math.PI * 2;
-        const imageData = ctx.createImageData(W, H);
-        const data = imageData.data;
-        for (let y = 0; y < H; y++) {
-            for (let x = 0; x < W; x++) {
-                const px = x-sx, py = y-sy;
-                let angle = Math.atan2(py, px) - baseAngle;
-                if (angle < 0) angle += TWO_PI;
-                const pixDist = Math.hypot(px, py);
-                let t = 0;
-                switch (type) {
-                    case 'linear':   { const rx=px*cosA-py*sinA; t=rx/dist; break; }
-                    case 'bilinear': { const rx=px*cosA-py*sinA; t=Math.abs((rx/dist*2+1)%2-1); break; }
-                    case 'radial':   t = pixDist/dist; break;
-                    case 'conic':   t = angle/TWO_PI; break;
-                    case 'square': { const rx=px*cosA-py*sinA, ry=px*sinA+py*cosA; t=Math.max(Math.abs(rx),Math.abs(ry))/dist; break; }
-                    case 'spiral': {
-                        // True two-colour Archimedean spiral.
-                        // The handle distance controls band spacing: one full dist = one full
-                        // colour cycle (one arm of each colour). Short distance → tight spiral,
-                        // long distance → loose spiral. The pattern is infinite — it tiles
-                        // outward forever with no clamping.
-                        //
-                        // Archimedean spiral: r = a·θ  (θ unwound continuously from origin)
-                        // For each pixel at polar (r, θ), find the "spiral phase":
-                        //   φ = r/dist − θ/TWO_PI   (normalised to [0,1) per revolution)
-                        // Take frac(φ) → t oscillates 0→1→0→1 outward = hard stripe.
-                        // For smooth colour we use a cosine blend: t = 0.5 − 0.5·cos(φ·TWO_PI)
-                        const turnsPerDist = 1;           // 1 colour cycle per `dist` pixels
-                        const phi = (pixDist / dist) * turnsPerDist - angle / TWO_PI;
-                        t = 0.5 - 0.5 * Math.cos(phi * TWO_PI);
-                        break;
-                    }
-                    case 'star': {
-                        // dist=star size, midpoint controls spacing (larger = more gap)
-                        const _sz  = Math.max(4, dist);
-                        const _cel = _sz * (1 + midpoint * 3);
-                        const _gx  = px * cosA - py * sinA;
-                        const _gy  = px * sinA + py * cosA;
-                        const _cx  = (((_gx % _cel) + _cel) % _cel) / _cel - 0.5;
-                        const _cy  = (((_gy % _cel) + _cel) % _cel) / _cel - 0.5;
-                        const _sf  = _sz / _cel;
-                        const _scx = _cx / _sf, _scy = _cy / _sf;
-                        const _sR  = Math.hypot(_scx, _scy);
-                        const _sA  = Math.atan2(_scy, _scx);
-                        const _s5  = TWO_PI / 5;
-                        const _sec = Math.round(_sA / _s5);
-                        const _a1  = _sA - _sec * _s5;
-                        const _rR  = 1 / (Math.cos(_a1) / 0.38 + Math.abs(Math.sin(_a1)) / 0.16);
-                        t = _sR <= _rR * 0.95 ? 1 : 0;
-                        break;
-                    }
-                    case 'pattern': {
-                        // Polka dots — dist=dot size, midpoint=spacing
-                        const _sz2  = Math.max(4, dist);
-                        const _cel2 = _sz2 * (1 + midpoint * 3);
-                        const _gx2  = px * cosA - py * sinA;
-                        const _gy2  = px * sinA + py * cosA;
-                        const _cx2  = (((_gx2 % _cel2) + _cel2) % _cel2) / _cel2 - 0.5;
-                        const _cy2  = (((_gy2 % _cel2) + _cel2) % _cel2) / _cel2 - 0.5;
-                        t = Math.hypot(_cx2, _cy2) <= (_sz2 / _cel2) * 0.5 ? 1 : 0;
-                        break;
-                    }
-                    case 'dots_lg': {
-                        // Hex-offset polka dots — dist=dot size, midpoint=spacing
-                        const _sz3  = Math.max(4, dist);
-                        const _cel3 = _sz3 * (1 + midpoint * 3);
-                        const _gx3  = px * cosA - py * sinA;
-                        const _gy3  = px * sinA + py * cosA;
-                        const _row3 = Math.floor(_gy3 / _cel3 + 1000);
-                        const _ox3  = (_row3 % 2) * 0.5;
-                        const _cx3  = ((_gx3 / _cel3 + _ox3 + 1000) % 1) - 0.5;
-                        const _cy3  = ((_gy3 / _cel3 + 1000) % 1) - 0.5;
-                        t = Math.hypot(_cx3, _cy3) <= (_sz3 / _cel3) * 0.5 ? 1 : 0;
-                        break;
-                    }
-                    case 'diamond': {
-                        // Diamonds — dist=shape size, midpoint=spacing
-                        const _sz4  = Math.max(4, dist);
-                        const _cel4 = _sz4 * (1 + midpoint * 3);
-                        const _gx4  = px * cosA - py * sinA;
-                        const _gy4  = px * sinA + py * cosA;
-                        const _cx4  = (((_gx4 % _cel4) + _cel4) % _cel4) / _cel4 - 0.5;
-                        const _cy4  = (((_gy4 % _cel4) + _cel4) % _cel4) / _cel4 - 0.5;
-                        t = (Math.abs(_cx4) + Math.abs(_cy4)) <= (_sz4 / _cel4) * 0.5 ? 1 : 0;
-                        break;
-                    }
-                    case 'cross': {
-                        // Crosses — dist=shape size, midpoint=spacing
-                        const _sz5  = Math.max(4, dist);
-                        const _cel5 = _sz5 * (1 + midpoint * 3);
-                        const _gx5  = px * cosA - py * sinA;
-                        const _gy5  = px * sinA + py * cosA;
-                        const _cx5  = (((_gx5 % _cel5) + _cel5) % _cel5) / _cel5 - 0.5;
-                        const _cy5  = (((_gy5 % _cel5) + _cel5) % _cel5) / _cel5 - 0.5;
-                        const _sf5  = _sz5 / _cel5;
-                        const _arm  = _sf5 * 0.15;
-                        t = (Math.abs(_cx5) <= _arm || Math.abs(_cy5) <= _arm) && (Math.abs(_cx5) <= _sf5*0.5 && Math.abs(_cy5) <= _sf5*0.5) ? 1 : 0;
-                        break;
-                    }
-                    case 'checkerboard': {
-                        // Checkerboard — midpoint has no spacing meaning, ignored
-                        const _cel6 = Math.max(4, dist);
-                        const _gx6  = px * cosA - py * sinA;
-                        const _gy6  = px * sinA + py * cosA;
-                        t = (Math.floor(_gx6 / _cel6) + Math.floor(_gy6 / _cel6)) % 2 === 0 ? 0 : 1;
-                        break;
-                    }
-                    case 'stripes': {
-                        // Stripes — dist=stripe width, midpoint=gap ratio (0=no gap, 1=equal gap)
-                        const _sw  = Math.max(2, dist * 0.25);
-                        const _gap = _sw * (midpoint * 4);
-                        const _per = _sw + _gap;
-                        const _rx7 = ((px * cosA - py * sinA) % _per + _per) % _per;
-                        t = _rx7 <= _sw ? 1 : 0;
-                        break;
-                    }
-                    default: t=0;
-                }
-                const _isTile = type==='star'||type==='pattern'||type==='dots_lg'||type==='diamond'||type==='cross'||type==='checkerboard'||type==='stripes';
-                if (!_isTile && type !== 'conic' && type !== 'spiral') t = _gradientRepeat(t, repeat);
-                else if (type === 'conic') t = ((t%1)+1)%1;
-                const idx = (y*W+x)*4;
-                // ── Deterministic 2D dither across adjacent LUT colours ──
-                // Map t [0,1] to a floating LUT index; fractional part selects
-                // between two neighbouring colour entries to avoid banding.
-                const tClamped = Math.max(0, Math.min(1, t));
-                const lutPos   = tClamped * (LUT - 1);
-                const lutIdx   = Math.min(LUT - 2, Math.floor(lutPos));
-                const frac     = lutPos - lutIdx;
-                const cLo = lut[lutIdx];
-                const cHi = lut[lutIdx + 1];
-                // Ordered dither: decide per-pixel whether to pick lo or hi colour
-                const row = y & 7;
-                const col = x & 7;
-                // 8x8 Bayer-like threshold matrix (0..63)
-                const bayer = [
-                    [ 0,32, 8,40, 2,34,10,42],
-                    [48,16,56,24,50,18,58,26],
-                    [12,44, 4,36,14,46, 6,38],
-                    [60,28,52,20,62,30,54,22],
-                    [ 3,35,11,43, 1,33, 9,41],
-                    [51,19,59,27,49,17,57,25],
-                    [15,47, 7,39,13,45, 5,37],
-                    [63,31,55,23,61,29,53,21]
-                ];
-                const threshold = bayer[row][col] / 64;
-                const pickHi = frac > threshold;
-                const c = pickHi ? cHi : cLo;
-                data[idx]   = c[0];
-                data[idx+1] = c[1];
-                data[idx+2] = c[2];
-                data[idx+3] = c[3];
-            }
-        }
-        // Use offscreen canvas so drawImage respects any active ctx.clip()
-        const off = document.createElement('canvas');
-        off.width = W; off.height = H;
-        off.getContext('2d').putImageData(imageData, 0, 0);
-        ctx.drawImage(off, 0, 0);
-    }
-    // ─── End Gradient Tool Engine ─────────────────────────────────────────────
 
     // PaintApp: the central application class.
     // Owns all tool state, canvas references, UI wiring, undo history, and feature modules.
@@ -1159,10 +882,14 @@
                     endX: 0,   endY: 0
                 },
                 freehand: {
-                    size: 4, smoothing: 0.5, thinning: 0.65, streamline: 0.5,
-                    taperStart: 0, taperEnd: 0, taperPower: 0.5,
-                    capStart: true, capEnd: true,
-                    simulatePressure: true, easing: 'linearOut'
+                    size: 4, smoothing: 0.5, thinning: 0.5, streamline: 0.5,
+                    taperStart: 0, taperEnd: 0,
+                    capStart: false, capEnd: false,
+                    simulatePressure: true, easing: 'linear',
+                    easingStart: 'linear', easingEnd: 'linear',
+                    fillEnabled: true,
+                    strokeWidth: 0,
+                    pixelMode: true
                 }
             };
             this.state = {
@@ -1418,7 +1145,7 @@
             this._lastSelectionSizeText = this.ui.statusSelectionSize ? this.ui.statusSelectionSize.textContent : '-';
             this._lastRotationStatusText = this.ui.statusRotation ? this.ui.statusRotation.textContent : 'Rot: 0.00°';
             this.ctx = this.ui.cMain.getContext('2d', {willReadFrequently:true});
-            this.ctxTemp = this.ui.cTemp.getContext('2d');
+            this.ctxTemp = this.ui.cTemp.getContext('2d', { willReadFrequently: true });
             this.disableSmoothing(this.ctx);
             this.disableSmoothing(this.ctxTemp);
             this.gl = null;
@@ -1453,8 +1180,13 @@
                 // Tiled history breaks the canvas into independently-compressed tiles.
                 // Threshold set low enough that typical working sizes (> 512×512) benefit;
                 // anything smaller than a small sprite is stored as a flat snapshot instead.
-                thresholdPixels: 512 * 512
+                thresholdPixels: 512 * 512,
+                anchorInterval: 10,        // store full anchor every N steps
+                maxDeltaWalk: 30           // force anchor if delta chain exceeds this
             };
+            this._prevTileMap = null;          // Map<"x,y", {rle|solid}> for delta diffing
+            this._lastAnchorStep = -1;         // step index of last full anchor
+            this._canvasResizedSinceLastSave = false;
             this.historyLimitEnabled = true;
             this.historyLimit = 50;
             this.bounds = { left: 0, top: 0 };
@@ -2193,6 +1925,7 @@
             this.initGridlines();
             this.initTileMode();
             this.initHistoryLimitControls();
+            this._applyMemoryBudget();
             this.initTitleBarControls();
             this.bindFreehandSettings();
             Promise.resolve(this.initTauriFileOpenListener())
@@ -3200,6 +2933,7 @@
                     this.state.selectionCutStep -= overflow;
                     if (this.state.selectionCutStep < 0) this.state.selectionCutStep = null;
                 }
+                this._repairDeltaAnchors(overflow);
                 this.updateTitleBarActions();
                 return;
             }
@@ -3213,7 +2947,22 @@
                 this.state.selectionCutStep -= overflow;
                 if (this.state.selectionCutStep < 0) this.state.selectionCutStep = null;
             }
+            this._repairDeltaAnchors(overflow);
             this.updateTitleBarActions();
+        }
+        _repairDeltaAnchors(evictedCount) {
+            // After evicting entries from the front, delta entries with _anchorStep
+            // pointing to evicted entries become orphaned. Reset _lastAnchorStep so
+            // the next saveState() creates a fresh anchor.
+            const firstRemaining = this.state.history.length > 0 ? evictedCount : -1;
+            for (let i = 0; i < this.state.history.length; i++) {
+                const e = this.state.history[i];
+                if (e.isDelta && e._anchorStep < firstRemaining) {
+                    this._lastAnchorStep = -1;
+                    return;
+                }
+            }
+            if (this._lastAnchorStep >= 0) this._lastAnchorStep -= evictedCount;
         }
         initTauriFileOpenListener() {
             const tauri = window.__TAURI__;
@@ -10950,9 +10699,6 @@ void main() {
                 } else {
                     this.state.freehandPoints.push({ x: p.x, y: p.y, pressure: e.pressure != null ? e.pressure : 0.5 });
                 }
-                if (this.state.freehandPoints.length > 2000) {
-                    this.state.freehandPoints = this.state.freehandPoints.slice(-2000);
-                }
                 this.scheduleFreehandPreview();
                 this.updateHoverPreview(p.x, p.y);
                 return;
@@ -11170,73 +10916,61 @@ void main() {
             const z   = this.config.zoom || 1;
             const NS  = 'http://www.w3.org/2000/svg';
 
-            // Canvas-pixel → screen-pixel
             const sx = g.startX * z,  sy = g.startY * z;
             const ex = g.endX   * z,  ey = g.endY   * z;
 
-            // Clear previous contents
-            while (grp.firstChild) grp.removeChild(grp.firstChild);
+            // Cache SVG elements on the group — create once, mutate thereafter
+            if (!grp._cached) {
+                const H_SIZE = 19, H_HALF = (H_SIZE - 1) / 2;
+                const M_SIZE = 6, M_HALF = (M_SIZE - 1) / 2;
 
-            // ── Handles: GradientHandle.png image, centred on each endpoint ──────────────
-            const HANDLE_SIZE = 19; // display size in screen pixels (odd so centre pixel is exact)
-            const HALF = (HANDLE_SIZE - 1) / 2; // pixel offset to centre (9 for 19px)
+                const mkEl = (tag, attrs) => {
+                    const el = document.createElementNS(NS, tag);
+                    for (const k in attrs) el.setAttribute(k, attrs[k]);
+                    return el;
+                };
 
-            const mkHandle = (cx, cy) => {
-                const img = document.createElementNS(NS, 'image');
-                img.setAttribute('href', 'assets/GradientHandle.png');
-                img.setAttribute('x', Math.round(cx - HALF));
-                img.setAttribute('y', Math.round(cy - HALF));
-                img.setAttribute('width',  HANDLE_SIZE);
-                img.setAttribute('height', HANDLE_SIZE);
-                img.setAttribute('image-rendering', 'pixelated');
-                return img;
-            };
+                grp._cached = {
+                    h1:  mkEl('image', { href:'assets/GradientHandle.png', width:H_SIZE, height:H_SIZE, 'image-rendering':'pixelated' }),
+                    h2:  mkEl('image', { href:'assets/GradientHandle.png', width:H_SIZE, height:H_SIZE, 'image-rendering':'pixelated' }),
+                    lineB: mkEl('line', { stroke:'#000', 'stroke-width':3, 'stroke-linecap':'round', 'stroke-opacity':'0.35' }),
+                    lineW: mkEl('line', { stroke:'#fff', 'stroke-width':1, 'stroke-linecap':'round' }),
+                    mp:   mkEl('image', { href:'assets/handle.png', width:M_SIZE, height:M_SIZE, 'image-rendering':'pixelated', style:'cursor:ew-resize;' })
+                };
+                const c = grp._cached;
+                grp.append(c.h1, c.h2, c.lineB, c.lineW, c.mp);
+            }
 
-            grp.appendChild(mkHandle(sx, sy));
-            grp.appendChild(mkHandle(ex, ey));
+            const c = grp._cached;
+            const H_HALF = 9, M_HALF = 2.5;
 
-            // ── Connecting line ──────────────────────────────────────────────────────────
-            const mkLine = (stroke, w) => {
-                const el = document.createElementNS(NS, 'line');
-                el.setAttribute('x1', sx); el.setAttribute('y1', sy);
-                el.setAttribute('x2', ex); el.setAttribute('y2', ey);
-                el.setAttribute('stroke', stroke);
-                el.setAttribute('stroke-width', w);
-                el.setAttribute('stroke-linecap', 'round');
-                return el;
-            };
-            const blackLine = mkLine('#000000', 3);
-            blackLine.setAttribute('stroke-opacity', '0.35');
-            grp.appendChild(blackLine);
-            grp.appendChild(mkLine('#ffffff', 1));
+            // Update handle positions
+            c.h1.setAttribute('x', Math.round(sx - H_HALF));
+            c.h1.setAttribute('y', Math.round(sy - H_HALF));
+            c.h2.setAttribute('x', Math.round(ex - H_HALF));
+            c.h2.setAttribute('y', Math.round(ey - H_HALF));
 
-            // ── Midpoint handle ─────────────────────────────────────────────────────────
-            // Rendered after the line so it sits on top.
+            // Update line endpoints
+            c.lineB.setAttribute('x1', sx); c.lineB.setAttribute('y1', sy);
+            c.lineB.setAttribute('x2', ex); c.lineB.setAttribute('y2', ey);
+            c.lineW.setAttribute('x1', sx); c.lineW.setAttribute('y1', sy);
+            c.lineW.setAttribute('x2', ex); c.lineW.setAttribute('y2', ey);
+
+            // Update midpoint handle
             const mp  = (g.midpoint != null) ? g.midpoint : 0.5;
             const mpx = sx + (ex - sx) * mp;
             const mpy = sy + (ey - sy) * mp;
-            const MH_SIZE = 6; // native size of handle.png
-            const MH_HALF = (MH_SIZE - 1) / 2; // pixel offset to centre (2.5 for 6px)
-
-            const mpHandle = document.createElementNS(NS, 'image');
-            mpHandle.setAttribute('href', 'assets/handle.png');
-            mpHandle.setAttribute('x', Math.round(mpx - MH_HALF));
-            mpHandle.setAttribute('y', Math.round(mpy - MH_HALF));
-            mpHandle.setAttribute('width',  MH_SIZE);
-            mpHandle.setAttribute('height', MH_SIZE);
-            mpHandle.setAttribute('image-rendering', 'pixelated');
-            mpHandle.setAttribute('style', 'cursor:ew-resize;');
-            grp.appendChild(mpHandle);
+            c.mp.setAttribute('x', Math.round(mpx - M_HALF));
+            c.mp.setAttribute('y', Math.round(mpy - M_HALF));
 
             grp.style.display = '';
         }
 
-        // Hide and empty the gradient vector SVG overlay.
+        // Hide the gradient vector SVG overlay. Keeps cached elements alive.
         _gradientClearVectorSVG() {
             const grp = this.ui.gradVectorOverlay;
             if (!grp) return;
             grp.style.display = 'none';
-            while (grp.firstChild) grp.removeChild(grp.firstChild);
         }
 
         // Clip the temp canvas gradient preview to the selection bounds.
@@ -15965,6 +15699,13 @@ void main() {
             if (this.state.wandActive && t!=='wand') {
                 this.state.wandActive = false;
                 this.state.wandBase = null;
+                this.state.wandVisited = null;
+                this.state.wandMaskCanvas = null;
+                this.state.wandMaskImageData = null;
+                this.state.wandDiff = null;
+                this._wandPreviewImageData = null;
+                this._wandPreviewBuffer = null;
+                this._wandStack = null;
             }
             if (this.state.smartPencilActive && t !== 'pencil') {
                 this.finishSmartPencilStroke();
@@ -15986,6 +15727,7 @@ void main() {
                     this.state.selection.noHandles = false;
                     this.renderSelection();
                 }
+                _cacheClear();
             }
             // Hide selection handles when entering gradient tool (handleless marching ants)
             if (t === 'gradient' && this.state.selection) {
@@ -17343,6 +17085,7 @@ void main() {
             this.config.width=w;
             this.config.height=h;
             this.tileHistory.enabled = this.shouldUseTiledHistory(w, h);
+            this._canvasResizedSinceLastSave = true;
             this.ui.cMain.width=w;
             this.ui.cMain.height=h;
             this.ui.cTemp.width=w;
@@ -17374,6 +17117,15 @@ void main() {
         shouldUseTiledHistory(w, h) {
             return (w * h) >= this.tileHistory.thresholdPixels;
         }
+        _applyMemoryBudget() {
+            const gb = navigator.deviceMemory || 8;
+            if (gb <= 4) {
+                this.tileHistory.anchorInterval = 5;
+                if (this.historyLimit > 20) this.historyLimit = 20;
+            } else if (gb >= 16) {
+                this.tileHistory.anchorInterval = 15;
+            }
+        }
         getSolidTileColor(data) {
             if (data.length < 4) return null;
             const r = data[0];
@@ -17387,33 +17139,83 @@ void main() {
             }
             return [r, g, b, a];
         }
-        captureTiledSnapshot(canvas) {
+        _rleEncode(data) {
+            const out = [];
+            let i = 0;
+            while (i < data.length) {
+                let run = 1;
+                const maxRun = Math.min(255, (data.length - i) / 4);
+                while (run < maxRun && data[i] === data[i+run*4] && data[i+1] === data[i+run*4+1]
+                    && data[i+2] === data[i+run*4+2] && data[i+3] === data[i+run*4+3]) run++;
+                out.push(run, data[i], data[i+1], data[i+2], data[i+3]);
+                i += run * 4;
+            }
+            return new Uint8Array(out);
+        }
+        _rleDecode(rle, w, h) {
+            const out = new Uint8ClampedArray(w * h * 4);
+            let di = 0;
+            for (let i = 0; i < rle.length; i += 5) {
+                const count = rle[i];
+                for (let j = 0; j < count; j++) {
+                    out[di] = rle[i+1]; out[di+1] = rle[i+2];
+                    out[di+2] = rle[i+3]; out[di+3] = rle[i+4];
+                    di += 4;
+                }
+            }
+            return out;
+        }
+        captureTiledSnapshot(canvas, prevTiles) {
             const tileSize = this.tileHistory.tileSize;
             const width = canvas.width;
             const height = canvas.height;
             const ctx = canvas.getContext('2d');
             const tiles = [];
-            // Single readback instead of one per tile — eliminates O(tiles) GPU stalls.
-            const full = ctx.getImageData(0, 0, width, height);
-            const fullData = full.data;
-            for (let y = 0; y < height; y += tileSize) {
+            const tileMap = new Map();
+            // Strip readback: reads tileSize-high bands (~4 MB at 4K) instead of
+            // one full-canvas readback (~67 MB at 4K). Each strip contains exactly
+            // one row of tiles, so no tile crosses a strip boundary.
+            for (let stripY = 0; stripY < height; stripY += tileSize) {
+                const stripH = Math.min(tileSize, height - stripY);
+                const strip = ctx.getImageData(0, stripY, width, stripH);
+                const stripData = strip.data;
+                const y = stripY;
                 for (let x = 0; x < width; x += tileSize) {
                     const w = Math.min(tileSize, width - x);
                     const h = Math.min(tileSize, height - y);
                     const tileData = new Uint8ClampedArray(w * h * 4);
                     for (let row = 0; row < h; row++) {
-                        const srcOffset = ((y + row) * width + x) * 4;
-                        tileData.set(fullData.subarray(srcOffset, srcOffset + w * 4), row * w * 4);
+                        const srcOffset = (row * width + x) * 4;
+                        tileData.set(stripData.subarray(srcOffset, srcOffset + w * 4), row * w * 4);
                     }
+                    const key = x + ',' + y;
                     const solid = this.getSolidTileColor(tileData);
+                    const rle = solid ? null : this._rleEncode(tileData);
+                    // Delta: skip if unchanged from previous snapshot
+                    if (prevTiles) {
+                        const prev = prevTiles.get(key);
+                        if (prev) {
+                            if (solid && prev.solid && solid[0] === prev.solid[0] && solid[1] === prev.solid[1] && solid[2] === prev.solid[2] && solid[3] === prev.solid[3]) {
+                                tileMap.set(key, prev);
+                                continue;
+                            }
+                            if (rle && prev.rle && rle.length === prev.rle.length) {
+                                let same = true;
+                                for (let qi = 0; qi < rle.length; qi++) { if (rle[qi] !== prev.rle[qi]) { same = false; break; } }
+                                if (same) { tileMap.set(key, prev); continue; }
+                            }
+                        }
+                    }
                     if (solid) {
                         tiles.push({ x, y, w, h, solid });
+                        tileMap.set(key, { solid });
                     } else {
-                        tiles.push({ x, y, w, h, data: tileData });
+                        tiles.push({ x, y, w, h, rle });
+                        tileMap.set(key, { rle });
                     }
                 }
             }
-            return { width, height, tileSize, tiles };
+            return { width, height, tileSize, tiles, tileMap };
         }
         applyTiledSnapshot(snapshot) {
             const ctx = this.ctx;
@@ -17428,10 +17230,9 @@ void main() {
             // changed tile) but the JS side does zero byte-copying.
             for (const tile of tiles) {
                 if (tile.solid) continue;
-                const { x, y, w, h, data } = tile;
-                // Wrap the raw typed-array slice in an ImageData without copying.
-                const tileImageData = new ImageData(data, w, h);
-                ctx.putImageData(tileImageData, x, y);
+                const { x, y, w, h } = tile;
+                const data = tile.rle ? this._rleDecode(tile.rle, w, h) : tile.data;
+                ctx.putImageData(new ImageData(data, w, h), x, y);
             }
             // Paint solid tiles (clearRect for transparent, fillRect otherwise).
             for (const tile of tiles) {
@@ -17452,10 +17253,24 @@ void main() {
                 }
             }
         }
-        restoreHistoryEntry(entry) {
+        restoreHistoryEntry(entry, stepIdx) {
             this.setSize(entry.width, entry.height);
             this.disableSmoothing(this.ctx);
-            if (entry.tiles) {
+            if (entry.tiles && entry.isDelta) {
+                // Walk backward to find the nearest full anchor
+                let anchorStep = (stepIdx || 0) - 1;
+                while (anchorStep >= 0 && this.state.history[anchorStep].isDelta) anchorStep--;
+                if (anchorStep >= 0) {
+                    this.ctx.clearRect(0, 0, entry.width, entry.height);
+                    this.applyTiledSnapshot(this.state.history[anchorStep].tiles);
+                    for (let ri = anchorStep + 1; ri <= (stepIdx || 0); ri++) {
+                        this.applyTiledSnapshot(this.state.history[ri].tiles);
+                    }
+                } else {
+                    this.ctx.clearRect(0, 0, entry.width, entry.height);
+                    this.applyTiledSnapshot(entry.tiles);
+                }
+            } else if (entry.tiles) {
                 this.ctx.clearRect(0, 0, entry.width, entry.height);
                 this.applyTiledSnapshot(entry.tiles);
             } else if (entry.bitmap) {
@@ -17472,7 +17287,7 @@ void main() {
             if (entry.bitmap) { try { entry.bitmap.close(); } catch (_) {} }
             if (entry.snaps) {
                 for (const sv of entry.snaps) {
-                    if (!sv.ref && sv.bitmap) { try { sv.bitmap.close(); } catch (_) {} }
+                    if (!sv.ref && sv.bitmap) { try { sv.bitmap.close(); } catch (_) {} sv.bitmap = null; }
                 }
             }
         }
@@ -17546,8 +17361,24 @@ void main() {
                 for (const e of dropped) this._closeBitmapEntry(e);
             }
             if (this.tileHistory.enabled) {
-                const tiles = this.captureTiledSnapshot(this.ui.cMain);
-                this.state.history.push({ tiles, width: tiles.width, height: tiles.height });
+                const stepsSinceAnchor = this.state.step - this._lastAnchorStep;
+                const forceAnchor = stepsSinceAnchor < 0
+                    || stepsSinceAnchor >= this.tileHistory.anchorInterval
+                    || this._canvasResizedSinceLastSave
+                    || stepsSinceAnchor >= this.tileHistory.maxDeltaWalk;
+                const prevTiles = forceAnchor ? null : this._prevTileMap;
+                const snapshot = this.captureTiledSnapshot(this.ui.cMain, prevTiles);
+                this._prevTileMap = snapshot.tileMap;
+                this._canvasResizedSinceLastSave = false;
+                const entry = {
+                    tiles: snapshot.tiles,
+                    width: snapshot.width,
+                    height: snapshot.height,
+                    isDelta: snapshot.tiles.length > 0 && !forceAnchor && prevTiles !== null
+                };
+                if (!entry.isDelta || this._lastAnchorStep < 0) this._lastAnchorStep = this.state.step + 1;
+                entry._anchorStep = this._lastAnchorStep;
+                this.state.history.push(entry);
                 this.state.step++;
                 this.enforceHistoryLimit();
                 this.state.isDirty = true;
@@ -17662,7 +17493,9 @@ void main() {
             if(this.state.step>0) {
                 this.state.step--;
                 const d=this.state.history[this.state.step];
-                this.restoreHistoryEntry(d);
+                this.beginOperation();
+                this.restoreHistoryEntry(d, this.state.step);
+                this.endOperation();
                 // Restore a wand selection that was active at this history step, allowing
                 // the user to see the marching ants come back one click at a time.
                 if (d.wandSelSnap) {
@@ -17700,7 +17533,9 @@ void main() {
                 }
                 this.state.step = Math.min(this.state.history.length-1, this.state.step + 1);
                 const d=this.state.history[this.state.step];
-                this.restoreHistoryEntry(d);
+                this.beginOperation();
+                this.restoreHistoryEntry(d, this.state.step);
+                this.endOperation();
                 // Re-apply the wand selection that was alive at this history step so that
                 // Ctrl+Y re-adds selections one click at a time (mirror of step-by-step undo).
                 if (d.wandSelSnap) {
@@ -20804,33 +20639,35 @@ self.onmessage = function(e) {
 
         static _freehandEasingMap = {
             linear: t => t,
-            easeIn: t => t * t,
-            easeOut: t => t * (2 - t),
-            easeInOut: t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
-            linearOut: t => 1 - (1 - t) * (1 - t),
+            easeInQuad: t => t * t,
             easeOutQuad: t => t * (2 - t),
+            easeInOutQuad: t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
+            easeInCubic: t => t * t * t,
+            easeOutCubic: t => --t * t * t + 1,
+            easeInOutCubic: t => t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1,
+            easeInQuart: t => t * t * t * t,
+            easeOutQuart: t => 1 - --t * t * t * t,
+            easeInOutQuart: t => t < 0.5 ? 8 * t * t * t * t : 1 - 8 * --t * t * t * t,
+            easeInQuint: t => t * t * t * t * t,
+            easeOutQuint: t => 1 + --t * t * t * t * t,
+            easeInOutQuint: t => t < 0.5 ? 16 * t * t * t * t * t : 1 + 16 * --t * t * t * t * t,
+            easeInSine: t => 1 - Math.cos((t * Math.PI) / 2),
             easeOutSine: t => Math.sin((t * Math.PI) / 2),
-            easeOutCubic: t => 1 - Math.pow(1 - t, 3)
-        };
-
-        // Build a reverse map easing value → key so the UI slider can
-        // derive a taper power from the selected easing string.
-        static _taperEasingFromKey = {
-            linear: t => t,
-            easeOutQuad: t => t * (2 - t),
-            easeOutSine: t => Math.sin((t * Math.PI) / 2),
-            easeOutCubic: t => 1 - Math.pow(1 - t, 3),
-            easeIn: t => t * t,
-            easeInOut: t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
-            linearOut: t => 1 - (1 - t) * (1 - t)
+            easeInOutSine: t => -(Math.cos(Math.PI * t) - 1) / 2,
+            easeInExpo: t => (t <= 0 ? 0 : Math.pow(2, 10 * t - 10)),
+            easeOutExpo: t => (t >= 1 ? 1 : 1 - Math.pow(2, -10 * t)),
+            easeInOutExpo: t => t <= 0 ? 0 : t >= 1 ? 1 : t < 0.5 ? Math.pow(2, 20 * t - 10) / 2 : (2 - Math.pow(2, -20 * t + 10)) / 2
         };
 
         getFreehandOptions(isComplete = false) {
             const fh = this.config.freehand || {};
             const easingFn = PaintEngine._freehandEasingMap[fh.easing] || PaintEngine._freehandEasingMap.linear;
-            const taperEasingFn = PaintEngine._taperEasingFromKey[fh.easing] || PaintEngine._taperEasingFromKey.linear;
-            const taperPower = fh.taperPower ?? 0.5;
-            const taperEasing = t => Math.pow(taperEasingFn(t), taperPower);
+            const easingStartFn = PaintEngine._freehandEasingMap[fh.easingStart] || easingFn;
+            const easingEndFn = PaintEngine._freehandEasingMap[fh.easingEnd] || easingFn;
+            const rawTaperStart = fh.taperStart;
+            const rawTaperEnd = fh.taperEnd;
+            const taperStartVal = rawTaperStart === true || rawTaperStart >= 100 ? true : (rawTaperStart > 0 ? rawTaperStart : 0);
+            const taperEndVal = rawTaperEnd === true || rawTaperEnd >= 100 ? true : (rawTaperEnd > 0 ? rawTaperEnd : 0);
             return {
                 size: fh.size ?? 4,
                 smoothing: fh.smoothing != null ? Math.min(0.99, Math.max(0.01, fh.smoothing)) : 0.5,
@@ -20840,14 +20677,14 @@ self.onmessage = function(e) {
                 easing: easingFn,
                 last: isComplete,
                 start: {
-                    cap: fh.capStart !== false,
-                    taper: fh.taperStart || 0,
-                    easing: taperEasing
+                    cap: fh.capStart === true,
+                    taper: taperStartVal,
+                    easing: easingStartFn
                 },
                 end: {
-                    cap: fh.capEnd !== false,
-                    taper: fh.taperEnd || 0,
-                    easing: taperEasing
+                    cap: fh.capEnd === true,
+                    taper: taperEndVal,
+                    easing: easingEndFn
                 }
             };
         }
@@ -20868,13 +20705,19 @@ self.onmessage = function(e) {
             }
             const pts = this.state.freehandPoints;
             if (pts.length < 2) return;
-            const opts = this.getFreehandOptions();
+            const opts = this.getFreehandOptions(true);
             const stroke = getStroke(pts, opts);
             this._freehandStrokePoints = stroke;
             if (!stroke || stroke.length < 2) return;
             this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
-            const color = this.getActiveDrawColor(false);
-            this.renderFreehandOutline(this.ctxTemp, stroke, color, 0.5);
+            const fh = this.config.freehand || {};
+            this.renderFreehandOutline(this.ctxTemp, stroke, {
+                alpha: 0.5,
+                isFilled: fh.fillEnabled !== false,
+                strokeWidth: fh.strokeWidth || 0,
+                fillColor: this.getActiveDrawColor(false),
+                strokeColor: this.getActiveDrawColor(true)
+            });
             this._fhPreviewing = true;
         }
 
@@ -20885,14 +20728,89 @@ self.onmessage = function(e) {
             const stroke = getStroke(pts, opts);
             if (!stroke || stroke.length < 2) return;
             this._freehandStrokePoints = stroke;
-            const color = this.getActiveDrawColor(false);
-            this.renderFreehandOutline(this.ctx, stroke, color, 1);
+            for (const p of stroke) {
+                p[0] = Math.round(p[0]);
+                p[1] = Math.round(p[1]);
+            }
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const p of stroke) {
+                if (p[0] < minX) minX = p[0];
+                if (p[1] < minY) minY = p[1];
+                if (p[0] > maxX) maxX = p[0];
+                if (p[1] > maxY) maxY = p[1];
+            }
+            const fh = this.config.freehand || {};
+            const pad = Math.ceil((fh.strokeWidth || 0) * 2) + 2;
+            minX = Math.max(0, Math.floor(minX) - pad);
+            minY = Math.max(0, Math.floor(minY) - pad);
+            maxX = Math.min(this.config.width, Math.ceil(maxX) + pad);
+            maxY = Math.min(this.config.height, Math.ceil(maxY) + pad);
+            const bw = maxX - minX;
+            const bh = maxY - minY;
+            if (bw <= 0 || bh <= 0) return;
+            const strokeColor = this.getActiveDrawColor(true);
+            const fillColor = this.getActiveDrawColor(false);
+            const strokeWidth = fh.strokeWidth || 0;
+            const isFilled = fh.fillEnabled !== false;
+            const pixelMode = fh.pixelMode !== false;
+            this.disableSmoothing(this.ctx);
+            if (pixelMode) {
+                // Pass 1 — stroke
+                if (strokeWidth > 0) {
+                    this.ctxTemp.clearRect(minX, minY, bw, bh);
+                    this.renderFreehandOutline(this.ctxTemp, stroke, {
+                        alpha: 1, isFilled: false,
+                        strokeWidth: strokeWidth,
+                        fillColor: fillColor,
+                        strokeColor: strokeColor
+                    });
+                    this._quantizeToColor(this.ctxTemp, minX, minY, bw, bh, strokeColor);
+                    this.ctx.drawImage(this.ctxTemp.canvas, minX, minY, bw, bh, minX, minY, bw, bh);
+                }
+                // Pass 2 — fill (drawn on top of stroke)
+                if (isFilled) {
+                    this.ctxTemp.clearRect(minX, minY, bw, bh);
+                    this.renderFreehandOutline(this.ctxTemp, stroke, {
+                        alpha: 1, isFilled: true,
+                        strokeWidth: 0,
+                        fillColor: fillColor,
+                        strokeColor: strokeColor
+                    });
+                    this._quantizeToColor(this.ctxTemp, minX, minY, bw, bh, fillColor);
+                    this.ctx.drawImage(this.ctxTemp.canvas, minX, minY, bw, bh, minX, minY, bw, bh);
+                }
+            } else {
+                this.renderFreehandOutline(this.ctx, stroke, {
+                    alpha: 1,
+                    isFilled: isFilled,
+                    strokeWidth: strokeWidth,
+                    fillColor: fillColor,
+                    strokeColor: strokeColor
+                });
+            }
             this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
             this._fhPreviewing = false;
             this.saveState();
         }
 
-        renderFreehandOutline(ctx, outline, color, alpha) {
+        _quantizeToColor(ctx, x, y, w, h, hexColor) {
+            const rgb = this.hexToRgb(hexColor);
+            const imageData = ctx.getImageData(x, y, w, h);
+            const d = imageData.data;
+            for (let i = 0; i < d.length; i += 4) {
+                if (d[i + 3] > 127) {
+                    d[i] = rgb.r;
+                    d[i + 1] = rgb.g;
+                    d[i + 2] = rgb.b;
+                    d[i + 3] = 255;
+                } else {
+                    d[i + 3] = 0;
+                }
+            }
+            ctx.putImageData(imageData, x, y);
+        }
+
+        renderFreehandOutline(ctx, outline, opts = {}) {
             if (!outline || outline.length < 4) return;
             const len = outline.length;
             const avg = (a, b) => (a + b) / 2;
@@ -20914,10 +20832,22 @@ self.onmessage = function(e) {
                 prevMp = [mx, my];
             }
             path.closePath();
+            const alpha = opts.alpha != null ? opts.alpha : 1;
+            const isFilled = opts.isFilled !== false;
+            const strokeWidth = opts.strokeWidth || 0;
+            const fillColor = opts.fillColor || '#000000';
+            const strokeColor = opts.strokeColor || '#000000';
             ctx.save();
-            ctx.fillStyle = color;
-            ctx.globalAlpha = alpha != null ? alpha : 1;
-            ctx.fill(path);
+            ctx.globalAlpha = alpha;
+            if (strokeWidth > 0) {
+                ctx.strokeStyle = strokeColor;
+                ctx.lineWidth = strokeWidth * 2;
+                ctx.stroke(path);
+            }
+            if (isFilled) {
+                ctx.fillStyle = fillColor;
+                ctx.fill(path);
+            }
             ctx.restore();
         }
 
@@ -20929,7 +20859,7 @@ self.onmessage = function(e) {
                 ['fh-streamline', 'streamline'],
                 ['fh-taperStart', 'taperStart'],
                 ['fh-taperEnd', 'taperEnd'],
-                ['fh-taperPower', 'taperPower']
+                ['fh-strokeWidth', 'strokeWidth']
             ];
             for (const [id, key] of sliderMap) {
                 const el = document.getElementById(id);
@@ -20941,10 +20871,17 @@ self.onmessage = function(e) {
                     this._saveFreehandConfig();
                 });
             }
-            const easingEl = document.getElementById('fh-easing');
-            if (easingEl) {
-                easingEl.addEventListener('change', () => {
-                    this.config.freehand.easing = easingEl.value;
+            const selMap = [
+                ['fh-easing', 'easing'],
+                ['fh-easingStart', 'easingStart'],
+                ['fh-easingEnd', 'easingEnd']
+            ];
+            for (const [id, key] of selMap) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                el.addEventListener('change', () => {
+                    this.config.freehand[key] = el.value;
+                    this.updateFreehandPanel();
                     this._saveFreehandConfig();
                 });
             }
@@ -20959,6 +20896,21 @@ self.onmessage = function(e) {
             if (capEndEl) {
                 capEndEl.addEventListener('change', () => {
                     this.config.freehand.capEnd = capEndEl.checked;
+                    this._saveFreehandConfig();
+                });
+            }
+            const fillEl = document.getElementById('fh-fill');
+            if (fillEl) {
+                fillEl.addEventListener('change', () => {
+                    this.config.freehand.fillEnabled = fillEl.checked;
+                    this.updateFreehandPanel();
+                    this._saveFreehandConfig();
+                });
+            }
+            const pixelModeEl = document.getElementById('fh-pixelMode');
+            if (pixelModeEl) {
+                pixelModeEl.addEventListener('change', () => {
+                    this.config.freehand.pixelMode = pixelModeEl.checked;
                     this._saveFreehandConfig();
                 });
             }
@@ -21001,23 +20953,56 @@ self.onmessage = function(e) {
                 ['fh-streamline', 'streamline'],
                 ['fh-taperStart', 'taperStart'],
                 ['fh-taperEnd', 'taperEnd'],
-                ['fh-taperPower', 'taperPower']
+                ['fh-strokeWidth', 'strokeWidth']
             ];
             for (const [id, key] of sliderMap) {
                 const el = document.getElementById(id);
                 if (!el) continue;
-                el.value = fh[key] ?? 0;
+                const raw = fh[key];
+                const numVal = raw === true ? 100 : (raw ?? 0);
+                el.value = numVal;
                 const label = document.getElementById(id + '-val');
-                if (label) label.textContent = fh[key] ?? 0;
+                if (label) label.textContent = numVal;
             }
-            const easingEl = document.getElementById('fh-easing');
-            if (easingEl) easingEl.value = fh.easing || 'linear';
+            const selMap = [
+                ['fh-easing', 'easing'],
+                ['fh-easingStart', 'easingStart'],
+                ['fh-easingEnd', 'easingEnd']
+            ];
+            for (const [id, key] of selMap) {
+                const el = document.getElementById(id);
+                if (el) el.value = fh[key] || 'linear';
+            }
             const capStartEl = document.getElementById('fh-capStart');
             if (capStartEl) capStartEl.checked = fh.capStart !== false;
             const capEndEl = document.getElementById('fh-capEnd');
             if (capEndEl) capEndEl.checked = fh.capEnd !== false;
             const simPresEl = document.getElementById('fh-simulatePressure');
             if (simPresEl) simPresEl.checked = fh.simulatePressure !== false;
+            const fillEl = document.getElementById('fh-fill');
+            if (fillEl) fillEl.checked = fh.fillEnabled !== false;
+            const pixelModeEl = document.getElementById('fh-pixelMode');
+            if (pixelModeEl) pixelModeEl.checked = fh.pixelMode !== false;
+            const fillSwatch = document.getElementById('fh-fill-swatch');
+            if (fillSwatch) fillSwatch.style.backgroundColor = this.config.c1;
+            const strokeSwatch = document.getElementById('fh-stroke-swatch');
+            if (strokeSwatch) strokeSwatch.style.backgroundColor = this.config.c2;
+            const capStartRow = document.getElementById('fh-capStart-row');
+            if (capStartRow) {
+                capStartRow.classList.toggle('fh-hidden', fh.taperStart > 0);
+            }
+            const capEndRow = document.getElementById('fh-capEnd-row');
+            if (capEndRow) {
+                capEndRow.classList.toggle('fh-hidden', fh.taperEnd > 0);
+            }
+            const easingStartRow = document.getElementById('fh-easingStart-row');
+            if (easingStartRow) {
+                easingStartRow.classList.toggle('fh-hidden', !(fh.taperStart > 0));
+            }
+            const easingEndRow = document.getElementById('fh-easingEnd-row');
+            if (easingEndRow) {
+                easingEndRow.classList.toggle('fh-hidden', !(fh.taperEnd > 0));
+            }
         }
 
         _saveFreehandConfig() {
@@ -21040,10 +21025,14 @@ self.onmessage = function(e) {
 
         resetFreehandSettings() {
             this.config.freehand = {
-                size: 4, smoothing: 0.5, thinning: 0.65, streamline: 0.5,
-                taperStart: 0, taperEnd: 0, taperPower: 0.5,
-                capStart: true, capEnd: true,
-                simulatePressure: true, easing: 'linearOut'
+                size: 4, smoothing: 0.5, thinning: 0.5, streamline: 0.5,
+                taperStart: 0, taperEnd: 0,
+                capStart: false, capEnd: false,
+                simulatePressure: true, easing: 'linear',
+                easingStart: 'linear', easingEnd: 'linear',
+                fillEnabled: true,
+                strokeWidth: 0,
+                pixelMode: true
             };
             this.updateFreehandPanel();
             this._saveFreehandConfig();
@@ -21101,7 +21090,7 @@ self.onmessage = function(e) {
                     const l = mgr.layers[mgr.activeIdx];
                     // Return a no-op proxy context for locked layers to prevent drawing
                     if (l && l.locked) return _lockedCtxProxy(l.ctx);
-                    return l.ctx;
+                    return (l && l.ctx) || _holder.ctx;
                 },
                 set(v) { _holder.ctx = v; },
                 configurable: true,
@@ -21204,6 +21193,7 @@ self.onmessage = function(e) {
 }
 .lsi.lsi-dragging{opacity:.35;}
 .lsi.lsi-dragover{box-shadow:inset 0 2px 0 #0078d7;}
+.lsi.lsi-child{padding-left:24px;}
 
 /* Left icon column: eye + lock side by side */
 .lsi-icons{
@@ -21448,6 +21438,7 @@ self.onmessage = function(e) {
             e.preventDefault();
             _ctxTargetIdx = idx;
             const l = mgr.layers[idx];
+            if (!l) { _closeCtx(); return; }
             const alphaItem     = document.getElementById('lsctx-alpha');
             const alphaLockItem = document.getElementById('lsctx-alphalock');
             const lockItem      = document.getElementById('lsctx-lock');
@@ -21577,7 +21568,7 @@ self.onmessage = function(e) {
             const ctx = mgr._compositeCtx;
             ctx.clearRect(0, 0, w, h);
             for (const l of mgr.layers) {
-                if (!l.visible) continue;
+                if (!l.visible || l.isGroup) continue;
                 ctx.save();
                 ctx.globalAlpha = l.opacity;
                 ctx.globalCompositeOperation = l.blendMode || 'source-over';
@@ -21626,6 +21617,7 @@ self.onmessage = function(e) {
                 isBase:  true,
                 locked:  false,
                 alpha:   false,
+                parentId: null,
             });
             // cTemp must remain visually on top of any layer canvases we insert.
             if (app.ui.cTemp) app.ui.cTemp.style.zIndex = '200';
@@ -21649,6 +21641,8 @@ self.onmessage = function(e) {
                 id, name: 'Layer ' + id, canvas: c, ctx,
                 visible: true, opacity: 1.0, isBase: false,
                 locked: false, alpha: true,
+                blendMode: 'source-over', alphaLock: false, _dirty: false,
+                parentId: null,
             });
             _setActive(mgr.layers.length - 1);
             _refreshList();
@@ -21669,6 +21663,9 @@ self.onmessage = function(e) {
                 id, name: src.name + ' copy', canvas: c, ctx,
                 visible: true, opacity: src.opacity, isBase: false,
                 locked: false, alpha: src.alpha !== false,
+                blendMode: src.blendMode, alphaLock: src.alphaLock,
+                _dirty: false,
+                parentId: src.parentId,
             };
             mgr.layers.splice(mgr.activeIdx + 1, 0, layer);
             _setActive(mgr.activeIdx + 1);
@@ -21678,8 +21675,12 @@ self.onmessage = function(e) {
         function _delLayer() {
             if (!mgr.active || mgr.layers.length <= 1) return;
             const l = mgr.layers[mgr.activeIdx];
+            if (l.isGroup) {
+                for (const child of mgr.layers) {
+                    if (child.parentId === l.id) child.parentId = null;
+                }
+            }
             if (l.isBase) {
-                // Clear the base canvas so it becomes transparent and the checkerboard shows through.
                 l.ctx.clearRect(0, 0, app.config.width, app.config.height);
             } else if (l.canvas.parentNode) {
                 l.canvas.parentNode.removeChild(l.canvas);
@@ -21754,6 +21755,8 @@ self.onmessage = function(e) {
                 locked: false, alpha: false,
                 canvas: document.createElement('canvas'), // placeholder
                 ctx: null,
+                blendMode: 'source-over', alphaLock: false, _dirty: false,
+                parentId: null,
             };
             mgr.layers.splice(idx, 0, grpLayer);
             _setActive(idx + 1);
@@ -21765,7 +21768,15 @@ self.onmessage = function(e) {
             if (idx < 0 || idx >= mgr.layers.length) return;
             const l = mgr.layers[idx];
             l.visible = !l.visible;
-            l.canvas.style.display = l.visible ? '' : 'none';
+            if (l.canvas) l.canvas.style.display = l.visible ? '' : 'none';
+            if (l.isGroup) {
+                for (const child of mgr.layers) {
+                    if (child.parentId === l.id) {
+                        child.visible = l.visible;
+                        if (child.canvas) child.canvas.style.display = l.visible ? '' : 'none';
+                    }
+                }
+            }
             _refreshList();
         }
 
@@ -21783,7 +21794,7 @@ self.onmessage = function(e) {
         function _resizeLayers(w, h) {
             if (!mgr.active) return;
             for (const l of mgr.layers) {
-                if (l.isBase) continue;
+                if (l.isBase || l.isGroup) continue;
                 l.canvas.width  = w;
                 l.canvas.height = h;
                 app.disableSmoothing(l.ctx);
@@ -21799,6 +21810,33 @@ self.onmessage = function(e) {
             _panelOpen = (v !== undefined) ? !!v : !_panelOpen;
             _panelEl.classList.toggle('open', _panelOpen);
             if (_panelOpen) { _refreshList(); _schedThumb(); }
+        }
+
+        // ── Recursive helpers for group trees ────────────────────────
+        function _isDescendant(childId, ancestorId) {
+            while (childId) {
+                if (childId === ancestorId) return true;
+                const layer = mgr.layers.find(l => l.id === childId);
+                childId = layer ? layer.parentId : null;
+            }
+            return false;
+        }
+        function _setVisRecursive(groupId, visible) {
+            for (const child of mgr.layers) {
+                if (child.parentId === groupId) {
+                    child.visible = visible;
+                    if (child.canvas) child.canvas.style.display = visible ? '' : 'none';
+                    if (child.isGroup) _setVisRecursive(child.id, visible);
+                }
+            }
+        }
+        function _unparentDescendants(groupId) {
+            for (let i = 0; i < mgr.layers.length; i++) {
+                if (mgr.layers[i].parentId === groupId) {
+                    mgr.layers[i].parentId = null;
+                    if (mgr.layers[i].isGroup) _unparentDescendants(mgr.layers[i].id);
+                }
+            }
         }
 
         function _refreshList() {
@@ -21827,44 +21865,11 @@ self.onmessage = function(e) {
                 : '<rect x="3" y="7" width="10" height="8" rx="1.5" stroke="currentColor" stroke-width="1.5" fill="none"/>' +
                   '<path d="M5 7V5a3 3 0 0 1 6 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>';
 
-            // Render top-layer-first
-            for (let i = mgr.layers.length - 1; i >= 0; i--) {
+            // ── Helper: render a single layer row into parentEl ──────────
+            function _renderLayerRow(i, parentEl, isChild) {
                 const l = mgr.layers[i];
-
-                if (l.isGroup) {
-                    // ── Group header ────────────────────────────────────────
-                    const grp = document.createElement('div');
-                    grp.className = 'lsi-group';
-                    grp.dataset.gi = i;
-                    const sel = i === mgr.activeIdx ? ' sel' : '';
-                    grp.innerHTML =
-                        '<div class="lsi-group-hdr' + sel + '" data-gi="' + i + '">' +
-                        '<span class="lsi-vis" data-vi="' + i + '" title="' + (l.visible ? 'Hide' : 'Show') + '">' +
-                        '<svg width="15" height="15" viewBox="0 0 16 16" fill="none">' + (l.visible ? eyeOpenPath : eyeClosedPath) + '</svg></span>' +
-                        '<span class="lsi-group-arrow' + (l._open !== false ? ' open' : '') + '">▶</span>' +
-                        '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><rect x="1" y="4" width="14" height="9" rx="1.5" stroke="#0078d7" stroke-width="1.5" fill="none"/><rect x="3" y="2" width="5" height="3" rx="1" fill="#0078d7" opacity=".6"/></svg>' +
-                        '<span style="flex:1;font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + this.escapeHtml(l.name) + '</span>' +
-                        '</div>' +
-                        '<div class="lsi-group-children"' + (l._open === false ? ' style="display:none"' : '') + '></div>';
-                    list.appendChild(grp);
-                    const hdr = grp.querySelector('.lsi-group-hdr');
-                    hdr.addEventListener('click', e => {
-                        if (e.target.closest('.lsi-vis') || e.target.closest('.lsi-group-arrow')) return;
-                        _setActive(parseInt(hdr.dataset.gi, 10));
-                    });
-                    grp.querySelector('.lsi-vis').addEventListener('click', e => { e.stopPropagation(); _toggleVis(i); });
-                    grp.querySelector('.lsi-group-arrow').addEventListener('click', e => {
-                        e.stopPropagation();
-                        l._open = l._open === false;
-                        _refreshList();
-                    });
-                    hdr.addEventListener('contextmenu', e => { _setActive(i); _openCtx(e, i); });
-                    continue;
-                }
-
-                // ── Regular layer row ─────────────────────────────────────
                 const item = document.createElement('div');
-                item.className = 'lsi' + (i === mgr.activeIdx ? ' lssel' : '');
+                item.className = 'lsi' + (i === mgr.activeIdx ? ' lssel' : '') + (isChild ? ' lsi-child' : '');
                 item.dataset.li = i;
                 item.draggable = true;
 
@@ -21874,7 +21879,6 @@ self.onmessage = function(e) {
                     ? '<span class="lsi-alpha-badge" title="Alpha channel">α</span>' : '';
 
                 item.innerHTML =
-                    // Left icon column: eye + lock side by side
                     '<div class="lsi-icons">' +
                       '<span class="lsi-vis' + visClass + '" data-vi="' + i + '" title="' + (l.visible ? 'Hide layer' : 'Show layer') + '">' +
                         (l.visible
@@ -21887,11 +21891,9 @@ self.onmessage = function(e) {
                           : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="5" y="11" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M8 11V7a4 4 0 0 1 8 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>') +
                       '</span>' +
                     '</div>' +
-                    // Thumbnail
                     '<div class="lsi-thumb-wrap"><canvas class="lsi-thumb" id="lsit-' + l.id + '" width="42" height="40"></canvas></div>' +
-                    // Name + blend mode row (right side)
                     '<div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;padding-right:4px;">' +
-                      '<span class="lsi-name" title="' + this.escapeHtml(l.name) + '">' + this.escapeHtml(l.name) + alphaBadge + (l.alphaLock ? ' <span style="font-size:9px;color:#0078d7;background:rgba(0,120,215,.1);padding:0 3px;border-radius:2px;font-weight:600;">αðŸ”’</span>' : '') + '</span>' +
+                      '<span class="lsi-name" title="' + app.escapeHtml(l.name) + '">' + app.escapeHtml(l.name) + alphaBadge + (l.alphaLock ? ' <span style="font-size:9px;color:#0078d7;background:rgba(0,120,215,.1);padding:0 3px;border-radius:2px;font-weight:600;">\u{1F512}</span>' : '') + '</span>' +
                       '<select class="lsi-blend" data-bi="' + i + '" title="Blend mode" style="font-size:10px;border:1px solid #ccc;border-radius:2px;background:#fff;padding:0 2px;height:16px;width:100%;cursor:pointer;">' +
                         '<option value="source-over"'  + ((!l.blendMode || l.blendMode==='source-over')  ? ' selected' : '') + '>Normal</option>' +
                         '<option value="multiply"'     + (l.blendMode==='multiply'     ? ' selected' : '') + '>Multiply</option>' +
@@ -21908,23 +21910,21 @@ self.onmessage = function(e) {
                       '</select>' +
                     '</div>';
 
-                list.appendChild(item);
+                parentEl.appendChild(item);
 
                 item.addEventListener('click', e => {
                     if (e.target.closest('.lsi-icons')) return;
                     if (e.target.classList.contains('lsi-rename-input')) return;
-                    if (e.target.closest('.lsi-name')) return; // let dblclick handle name clicks
+                    if (e.target.closest('.lsi-name')) return;
                     _setActive(parseInt(item.dataset.li, 10));
                 });
                 item.addEventListener('contextmenu', e => {
                     _setActive(parseInt(item.dataset.li, 10));
                     _openCtx(e, parseInt(item.dataset.li, 10));
                 });
-                // Double-click name to rename
                 const nameSpan = item.querySelector('.lsi-name');
                 if (nameSpan) {
                     nameSpan.addEventListener('click', e => {
-                        // single click on name still selects the layer
                         e.stopPropagation();
                         _setActive(parseInt(item.dataset.li, 10));
                     });
@@ -21967,8 +21967,6 @@ self.onmessage = function(e) {
                     mgr.layers[idx].locked = !mgr.layers[idx].locked;
                     _refreshList(); _syncBtns();
                 });
-
-                // Blend mode
                 item.querySelector('.lsi-blend').addEventListener('change', e => {
                     e.stopPropagation();
                     const idx = parseInt(e.currentTarget.dataset.bi, 10);
@@ -21994,18 +21992,135 @@ self.onmessage = function(e) {
                 });
                 item.addEventListener('dragleave', () => item.classList.remove('lsi-dragover'));
                 item.addEventListener('drop', e => {
-                    e.preventDefault();
-                    item.classList.remove('lsi-dragover');
-                    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10);
-                    const toIdx   = parseInt(item.dataset.li, 10);
-                    if (fromIdx === toIdx || isNaN(fromIdx) || isNaN(toIdx)) return;
-                    const moved = mgr.layers.splice(fromIdx, 1)[0];
-                    const dest  = fromIdx < toIdx ? toIdx - 1 : toIdx;
-                    mgr.layers.splice(dest, 0, moved);
-                    _rebuildZOrder();
-                    _setActive(dest);
-                    app.saveState();
+                    _handleDrop(e, parseInt(item.dataset.li, 10));
                 });
+            }
+
+            // ── Drop logic ──────────────────────────────────────────────
+            function _handleDrop(e, toIdx) {
+                e.preventDefault();
+                list.querySelectorAll('.lsi-dragover').forEach(el => el.classList.remove('lsi-dragover'));
+                const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                if (fromIdx === toIdx || isNaN(fromIdx) || isNaN(toIdx) ||
+                    fromIdx < 0 || fromIdx >= mgr.layers.length ||
+                    toIdx < 0 || toIdx >= mgr.layers.length) return;
+                const moved = mgr.layers.splice(fromIdx, 1)[0];
+                if (!moved) return;
+                const dest = fromIdx < toIdx ? toIdx - 1 : toIdx;
+                const targetLayer = mgr.layers[dest];
+                if (targetLayer && !targetLayer.isGroup) {
+                    moved.parentId = targetLayer.parentId || null;
+                }
+                mgr.layers.splice(dest, 0, moved);
+                _rebuildZOrder();
+                _setActive(dest);
+                app.saveState();
+            }
+
+            // ── Helper: recursively render a group and its children ─────
+            function _renderGroup(i, parentEl, depth) {
+                const l = mgr.layers[i];
+                const grp = document.createElement('div');
+                grp.className = 'lsi-group' + (depth > 0 ? ' lsi-nested' : '');
+                grp.dataset.gi = i;
+                const sel = i === mgr.activeIdx ? ' sel' : '';
+                const hideChildren = l._open === false ? ' style="display:none"' : '';
+                grp.innerHTML =
+                    '<div class="lsi-group-hdr' + sel + '" data-gi="' + i + '">' +
+                    '<span class="lsi-vis" data-vi="' + i + '" title="' + (l.visible ? 'Hide' : 'Show') + '">' +
+                    '<svg width="15" height="15" viewBox="0 0 16 16" fill="none">' + (l.visible ? eyeOpenPath : eyeClosedPath) + '</svg></span>' +
+                    '<span class="lsi-group-arrow' + (l._open !== false ? ' open' : '') + '">▶</span>' +
+                    '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><rect x="1" y="4" width="14" height="9" rx="1.5" stroke="#0078d7" stroke-width="1.5" fill="none"/><rect x="3" y="2" width="5" height="3" rx="1" fill="#0078d7" opacity=".6"/></svg>' +
+                    '<span style="flex:1;font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + app.escapeHtml(l.name) + '</span>' +
+                    '</div>' +
+                    '<div class="lsi-group-children"' + hideChildren + '></div>';
+                parentEl.appendChild(grp);
+
+                const hdr = grp.querySelector('.lsi-group-hdr');
+                hdr.addEventListener('click', e => {
+                    if (e.target.closest('.lsi-vis') || e.target.closest('.lsi-group-arrow')) return;
+                    _setActive(parseInt(hdr.dataset.gi, 10));
+                });
+                hdr.addEventListener('contextmenu', e => { _setActive(i); _openCtx(e, i); });
+                hdr.draggable = true;
+                hdr.addEventListener('dragstart', e => {
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', String(i));
+                    setTimeout(() => hdr.classList.add('lsi-dragging'), 0);
+                });
+                hdr.addEventListener('dragend', () => {
+                    hdr.classList.remove('lsi-dragging');
+                    list.querySelectorAll('.lsi-dragover').forEach(el => el.classList.remove('lsi-dragover'));
+                });
+                hdr.addEventListener('dragover', e => { e.preventDefault(); });
+
+                // Visibility toggle on the eye icon
+                grp.querySelector('.lsi-vis').addEventListener('click', e => { e.stopPropagation(); _toggleVis(i); });
+
+                // Collapse/expand arrow — also hide/show children canvases
+                grp.querySelector('.lsi-group-arrow').addEventListener('click', e => {
+                    e.stopPropagation();
+                    l._open = l._open === false;
+                    _setVisRecursive(l.id, l._open && l.visible);
+                    _refreshList();
+                });
+
+                // ── Drop handler for group header and children container ──
+                const groupDropHandler = (e) => {
+                    e.preventDefault();
+                    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                    if (isNaN(fromIdx) || fromIdx < 0 || fromIdx >= mgr.layers.length) return;
+                    const layer = mgr.layers[fromIdx];
+                    if (layer.id === l.id || _isDescendant(l.id, layer.id)) return;
+                    layer.parentId = l.id;
+                    mgr.layers.splice(fromIdx, 1);
+                    const grpIdx = mgr.layers.indexOf(l);
+                    let insertAt = grpIdx + 1;
+                    for (let ci = insertAt; ci < mgr.layers.length; ci++) {
+                        if (mgr.layers[ci].parentId === l.id) insertAt = ci + 1;
+                        else break;
+                    }
+                    mgr.layers.splice(insertAt, 0, layer);
+                    _rebuildZOrder();
+                    _setActive(mgr.layers.indexOf(layer));
+                    app.saveState();
+                    _refreshList();
+                };
+
+                hdr.addEventListener('drop', groupDropHandler);
+
+                // ── Render children ──────────────────────────────────────
+                const childrenContainer = grp.querySelector('.lsi-group-children');
+                const childIndices = childrenOf[l.id] || [];
+                for (let ci = childIndices.length - 1; ci >= 0; ci--) {
+                    if (mgr.layers[childIndices[ci]].isGroup) {
+                        _renderGroup(childIndices[ci], childrenContainer, depth + 1);
+                    } else {
+                        _renderLayerRow(childIndices[ci], childrenContainer, true);
+                    }
+                }
+
+                childrenContainer.addEventListener('dragover', e => { e.preventDefault(); });
+                childrenContainer.addEventListener('drop', groupDropHandler);
+            }
+
+            // ── Render all layers ───────────────────────────────────────
+            const childrenOf = {};
+            for (let j = 0; j < mgr.layers.length; j++) {
+                const l2 = mgr.layers[j];
+                if (l2.parentId && l2.parentId !== null) {
+                    (childrenOf[l2.parentId] = childrenOf[l2.parentId] || []).push(j);
+                }
+            }
+
+            for (let i = mgr.layers.length - 1; i >= 0; i--) {
+                const l = mgr.layers[i];
+                if (l.parentId) continue;
+                if (l.isGroup) {
+                    _renderGroup(i, list, 0);
+                } else {
+                    _renderLayerRow(i, list, false);
+                }
             }
             _schedThumb();
         }
@@ -22110,6 +22225,8 @@ self.onmessage = function(e) {
                 if (!l._dirty && prevSnaps && prevSnaps[i] && prevSnaps[i].id === l.id) {
                     // Layer unchanged — share the previous entry's snap by reference.
                     return { id: l.id, name: l.name, visible: l.visible, opacity: l.opacity,
+                             blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock, locked: l.locked,
+                             parentId: l.parentId,
                              isBase: l.isBase, snap: null, bitmap: null, ref: prevSnaps[i] };
                 }
                 // Dirty — clone the canvas now (always safe / synchronous fallback).
@@ -22118,6 +22235,8 @@ self.onmessage = function(e) {
                 snap.height = l.canvas.height;
                 snap.getContext('2d').drawImage(l.canvas, 0, 0);
                 return { id: l.id, name: l.name, visible: l.visible, opacity: l.opacity,
+                         blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock, locked: l.locked,
+                         parentId: l.parentId,
                          isBase: l.isBase, snap, bitmap: null, ref: null };
             });
 
@@ -22167,7 +22286,7 @@ self.onmessage = function(e) {
          *     — _lsys entries: restores all layer canvases.
          * ────────────────────────────────────────────────────────────────── */
         const _origRestoreEntry = app.restoreHistoryEntry.bind(app);
-        app.restoreHistoryEntry = function (entry) {
+        app.restoreHistoryEntry = function (entry, stepIdx) {
             if (!entry._lsys) {
                 // Undo/redo crossed the layer-activation boundary — collapse.
                 if (mgr.active && mgr.layers.length > 1) {
@@ -22183,7 +22302,7 @@ self.onmessage = function(e) {
                     _refreshList();
                     _syncBtns();
                 }
-                _origRestoreEntry(entry);
+                _origRestoreEntry(entry, stepIdx);
                 // Re-sync the holder after setSize may have re-created the context.
                 _holder.ctx = app.ui.cMain.getContext('2d', { willReadFrequently: true });
                 app.disableSmoothing(_holder.ctx);
@@ -22214,6 +22333,7 @@ self.onmessage = function(e) {
                     l.ctx.clearRect(0, 0, width, height);
                     l.ctx.drawImage(src, 0, 0);
                     l.name = sv.name; l.visible = sv.visible; l.opacity = sv.opacity;
+                    l.blendMode = sv.blendMode; l.alpha = sv.alpha; l.alphaLock = sv.alphaLock; l.locked = sv.locked; l.parentId = sv.parentId;
                     l.canvas.style.display = l.visible ? '' : 'none';
                     if (!l.isBase) l.canvas.style.opacity = l.opacity;
                     // Layer restored — clear dirty flag so next save can ref it.
@@ -22227,11 +22347,14 @@ self.onmessage = function(e) {
                     app.disableSmoothing(ctx);
                     ctx.drawImage(src, 0, 0);
                     _insertBeforeTemp(c);
+                    if (sv.id >= mgr.nextId) mgr.nextId = sv.id + 1;
                     mgr.layers.push({
                         id: sv.id, name: sv.name,
                         canvas: c, ctx,
                         visible: sv.visible, opacity: sv.opacity,
-                        isBase: false, _dirty: false
+                        blendMode: sv.blendMode, alpha: sv.alpha, alphaLock: sv.alphaLock, locked: sv.locked,
+                        isBase: false, _dirty: false,
+                        parentId: sv.parentId,
                     });
                 }
             }
@@ -22723,7 +22846,16 @@ self.onmessage = function(e) {
                     }
                     if (!pngBytes) { console.warn('[ORA] missing layer data:', src); continue; }
                     const blob = new Blob([pngBytes], { type: 'image/png' });
-                    const img  = await createImageBitmap(blob);
+                    const img  = window.createImageBitmap
+                        ? await createImageBitmap(blob)
+                        : await new Promise(resolve => {
+                            const url = URL.createObjectURL(blob);
+                            const i = new Image();
+                            i.onload = () => { URL.revokeObjectURL(url); resolve(i); };
+                            i.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+                            i.src = url;
+                          });
+                    if (!img) { console.warn('[ORA] failed to decode layer image'); continue; }
                     const lc   = document.createElement('canvas');
                     lc.width = fileW; lc.height = fileH;
                     lc.getContext('2d').drawImage(img, 0, 0);
@@ -22789,6 +22921,7 @@ self.onmessage = function(e) {
                         visible: ld.visible, opacity: ld.opacity,
                         blendMode: ld.blendMode, locked: ld.locked,
                         alphaLock: ld.alphaLock, isBase: false, alpha: true,
+                        parentId: null,
                     });
                 }
 
@@ -22902,4 +23035,4 @@ self.onmessage = function(e) {
         _syncBtns();
         // Ready — panel stays fully hidden until the hover zone is touched.
 
-    })(PaintApp);
+    })(PaintApp);
