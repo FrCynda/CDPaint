@@ -1006,6 +1006,9 @@
                     <li>Resize handles on the right, bottom, and corner are always visible; left/top handles appear in free mode.</li>
                     <li>Dragging a resize handle previews the new size; releasing commits the resize and shifts pixels if needed.</li>
                     <li>When anchored and the Zoom tool is not active, Ctrl + wheel keeps the top-left corner steady.</li>
+                    <li>Rotate canvas: Rotate Right 90, Rotate Left 90, Rotate 180, Flip Horizontal, Flip Vertical.</li>
+                    <li>Selection rotate: drag the rotate handle on the selection bounding box; right-click handle pivots about center in anchor mode.</li>
+                    <li>WebGL accelerated rotation is used when available for smooth antialiased results.</li>
                 </ul>
             </div>
             <div class="info-section">
@@ -1058,6 +1061,40 @@
                 </ul>
             </div>
             <div class="info-section">
+                <div class="info-title">Freehand Brush</div>
+                <ul class="info-list">
+                    <li>Variable-width pressure-sensitive brush using the Perfect Freehand library.</li>
+                    <li>Left sidebar with controls for Size, Smoothing, Streamline, Thinning, and Easing.</li>
+                    <li>Taper start/end with independent easing curves and cap toggles.</li>
+                    <li>Simulate Pressure checkbox for mouse users.</li>
+                    <li>Fill mode: toggle fill on/off, set stroke width and stroke color (Color 2).</li>
+                    <li>Pixel Mode: commits with binary thresholding for crisp pixel-art results; disable for smooth antialiased strokes.</li>
+                    <li>Live preview on the temp layer updates at 60fps; commits to the active layer on release.</li>
+                    <li>Switch tools mid-stroke cancels and discards the stroke. Undo cancels mid-stroke safely.</li>
+                </ul>
+            </div>
+            <div class="info-section">
+                <div class="info-title">Freehand Path Tool</div>
+                <ul class="info-list">
+                    <li>Smooth freeform paths using centripetal Catmull-Rom spline fitting with corner detection.</li>
+                    <li>RDP simplification (1.5px tolerance) removes redundant points while preserving shape.</li>
+                    <li>Corner detection preserves sharp turns (default threshold 72 degrees).</li>
+                    <li>Uniform width (single Path2D fill) or variable width (pressure-driven filled polygon with rounded end caps).</li>
+                    <li>Max 4000 raw input point buffer. Tunables: minWidth, tension, cornerAngle, usePressure.</li>
+                </ul>
+            </div>
+            <div class="info-section">
+                <div class="info-title">Gradient Tool</div>
+                <ul class="info-list">
+                    <li>14 gradient types: Linear, Bilinear, Radial, Square, Conic, Spiral, Staggered (Bands), Star, Pattern (Dots), Dots HX, Diamond, Cross, Checkerboard, Stripes.</li>
+                    <li>Interactive SVG handles for endpoint and midpoint placement.</li>
+                    <li>Options: Repeat (None/Repeat/Mirror), Dither (Floyd-Steinberg), Reverse, Bands (2–256 levels for Staggered), Midpoint (1–99%).</li>
+                    <li>4-tier rendering: CPU allocation-free, cached bitmap, or WebGL fragment-shader acceleration.</li>
+                    <li>8x8 Bayer ordered-dither matrix and LUT-based color interpolation.</li>
+                    <li>Rendered on temp canvas; Apply to commit, Escape to discard.</li>
+                </ul>
+            </div>
+            <div class="info-section">
                 <div class="info-title">Selections menu actions</div>
                 <ul class="info-list">
                     <li>Select All, Invert Selection, and Delete are available in the Select menu.</li>
@@ -1066,27 +1103,77 @@
                 </ul>
             </div>
             <div class="info-section">
+                <div class="info-title">Layers</div>
+                <ul class="info-list">
+                    <li>The Layers sidebar (right edge) provides a full layer stack: add, delete, reorder, rename, toggle visibility, lock.</li>
+                    <li>Each layer has its own canvas; drawing only affects the active layer (highlighted in the list).</li>
+                    <li>Opacity slider and blend mode select (Normal, Multiply, Screen, Overlay, etc.) per layer.</li>
+                    <li>Drag layers to reorder; the top layer in the list renders on top.</li>
+                    <li>Merge Down combines the active layer into the one below it.</li>
+                    <li>Thumbnails show a live preview of each layer's content.</li>
+                    <li>When layers are active, Save uses ORA (OpenRaster) format to preserve all layers, groups, blend modes, and opacity.</li>
+                </ul>
+            </div>
+            <div class="info-section">
+                <div class="info-title">Group Layers</div>
+                <ul class="info-list">
+                    <li>Select multiple layers and click Group to nest them under a group header.</li>
+                    <li>Groups can be nested to arbitrary depth. Click the collapse arrow to expand/collapse a group.</li>
+                    <li>Drag layers into and out of groups. Drag a group onto another group to nest them.</li>
+                    <li>Hiding a group (eye toggle) cascades visibility to all children.</li>
+                    <li>Deleting a group un-parents its children (they become top-level layers).</li>
+                    <li>Groups are rendered as a flat array with parentId references — no tree structure overhead.</li>
+                </ul>
+            </div>
+            <div class="info-section">
                 <div class="info-title">Hue/Sat and adjustment dialogs</div>
                 <ul class="info-list">
-                    <li>Hue/Sat operates per channel; Split View shows before/after with a draggable divider.</li>
+                    <li>Hue/Sat operates per channel (Master, R, Y, G, C, B, M) with Hue, Saturation, Lightness, Chroma, Overlap sliders.</li>
+                    <li>Split View shows before/after with a draggable divider.</li>
                     <li>Cancel restores pixels; OK commits the adjustment.</li>
                     <li>Resize/Skew supports percent or pixels and an optional aspect lock.</li>
-                    <li>Decrease Color Depth offers palette or 15/16bpp modes plus optional dithering.</li>
+                    <li>Decrease Color Depth offers RGB565, 256, 16, 2 colors, or Custom (2–256). Options: Floyd-Steinberg dithering, Wu palette quantization, make grayscale.</li>
+                </ul>
+            </div>
+            <div class="info-section">
+                <div class="info-title">Stray Pixel Cleaner (Gap Stitch)</div>
+                <ul class="info-list">
+                    <li>Removes stray pixel islands and thin aliasing ribbons trapped between larger shapes without touching intentional lines or corners.</li>
+                    <li>Parameters: Cluster Radius (1–20px), Min Shape Size (1–9999px), Color Tolerance (0–128), Iterations (1–10).</li>
+                    <li>Uses BFS (breadth-first search) cluster analysis. Apply, Apply & Close, or Cancel.</li>
+                </ul>
+            </div>
+            <div class="info-section">
+                <div class="info-title">Smart Pencil</div>
+                <ul class="info-list">
+                    <li>Draw rough freehand strokes and Smart Pencil detects intended shapes (rectangles, circles, lines, etc.).</li>
+                    <li>"Curve Only" debug option bypasses shape detection and always outputs smooth curves.</li>
+                    <li>Toggle Smart Pencil mode in the ribbon.</li>
+                </ul>
+            </div>
+            <div class="info-section">
+                <div class="info-title">Tile Mode</div>
+                <ul class="info-list">
+                    <li>Toggle tile overlay to divide the canvas into a grid of tiles for sprite/tileset work.</li>
+                    <li>Configurable tile size (default 16px) and grid count (default 3, odd numbers only).</li>
+                    <li>Darken non-active tiles to focus on the active tile.</li>
+                    <li>Tiled history breaks undo into per-tile independently compressed entries.</li>
                 </ul>
             </div>
             <div class="info-section">
                 <div class="info-title">Colors, palettes, and swatches</div>
                 <ul class="info-list">
                     <li>Left click a swatch sets Color 1; right click sets Color 2.</li>
-                    <li>Swap flips Color 1 and Color 2.</li>
+                    <li>Swap (X) flips Color 1 and Color 2.</li>
                     <li>Edit Colors opens the Win-style color dialog.</li>
                     <li>Palette export/import uses JASC-PAL format.</li>
+                    <li>Theme Colors editor: full UI color token system with search, presets, randomize, HSL/RGB/A sliders, export/import.</li>
                 </ul>
             </div>
             <div class="info-section">
                 <div class="info-title">Gridlines and overlays</div>
                 <ul class="info-list">
-                    <li>Gridlines are a visual overlay only; spacing and color are configurable.</li>
+                    <li>Gridlines are a visual overlay only; spacing (default 64px, min 4px) and color are configurable.</li>
                     <li>The grid stays one screen pixel thick for crispness at any zoom.</li>
                     <li>Selection ants and outlines are previews; pixels are unchanged until committed.</li>
                 </ul>
@@ -1099,20 +1186,58 @@
                 </ul>
             </div>
             <div class="info-section">
+                <div class="info-title">History</div>
+                <ul class="info-list">
+                    <li>Undo (Ctrl+Z) and Redo (Ctrl+Y). Configurable history limit (default 50 states, off by default).</li>
+                    <li>When the limit is enabled, old states are pruned as new ones are added.</li>
+                    <li>History entry count is shown in Image Properties.</li>
+                </ul>
+            </div>
+            <div class="info-section">
                 <div class="info-title">Save, export, and reminders</div>
                 <ul class="info-list">
-                    <li>Save uses the file handle if available, otherwise downloads a new file.</li>
-                    <li>Export supports PNG/JPEG and color profiles (sRGB, Display P3, Adobe RGB, CMYK simulations).</li>
-                    <li>Save reminders wait for a short idle gap before showing.</li>
+                    <li>Save uses the file handle if available, otherwise opens the system Save dialog or downloads.</li>
+                    <li>When layers are active, Save uses ORA (OpenRaster) format preserving layers, groups, blend modes, and opacity.</li>
+                    <li>Export supports PNG/JPEG with color profiles (sRGB, Display P3, Adobe RGB, CMYK simulations).</li>
+                    <li>PNG export includes sRGB and pHYs ancillary chunks for correct color-space and DPI metadata.</li>
+                    <li>Advanced Export Studio (GBA Mode) for Pokémon asset export: split files, force 15-bit RGB555, generate .PAL (JASC-PAL), drag-to-reorder palette, export presets (GBA Sprite, GBA Tile, Game Boy), new canvas presets.</li>
+                    <li>Save reminders wait for a short idle gap before showing; configurable interval (default 60 min).</li>
+                </ul>
+            </div>
+            <div class="info-section">
+                <div class="info-title">Themes</div>
+                <ul class="info-list">
+                    <li>8 themes: Light (default), Test Mode (dark), Dark Refined, Primeval Forest, Abyssal Ocean, Crimson Dusk, Gilded Obsidian, Violet Haze.</li>
+                    <li>Full UI color token editor with search, presets, randomize, HSL/RGB/A sliders, export/import of theme configurations.</li>
+                </ul>
+            </div>
+            <div class="info-section">
+                <div class="info-title">Ribbon Customization</div>
+                <ul class="info-list">
+                    <li>Right-click the ribbon and choose "Customize Toolbar..." to open the customization panel.</li>
+                    <li>Move ribbon sections between Home and Misc toolbars. Show or hide individual sections.</li>
+                    <li>Reset to default layout at any time.</li>
+                    <li>Layout is persisted and restored across sessions.</li>
+                </ul>
+            </div>
+            <div class="info-section">
+                <div class="info-title">Hotkey Customization</div>
+                <ul class="info-list">
+                    <li>All hotkeys are fully customizable via the Hotkeys ribbon section.</li>
+                    <li>Simple mode: a single key press. Complex mode: up to 3 held modifiers + action key.</li>
+                    <li>Reset defaults, export/import hotkey configurations.</li>
+                    <li>Press F1 to open the hotkey editor.</li>
                 </ul>
             </div>
             <div class="info-section">
                 <div class="info-title">Default hotkeys (customizable)</div>
                 <ul class="info-list">
-                    <li>P Pencil, E Eraser, G Fill, S Select, W Wand, F Rectangle, T Transparent Selection.</li>
+                    <li>P Pencil, E Eraser, G Fill, R Gradient, S Select, W Wand, A Lasso, I Picker, Z Zoom.</li>
+                    <li>L Line, U Curve, Y Polyline, H Freehand Path, F Rectangle, C Circle, V Triangle.</li>
+                    <li>X Swap Colors, T Toggle Transparent Selection, Tab Toggle Toolbar, F1 Open Hotkeys.</li>
                     <li>Ctrl+Z Undo, Ctrl+Y Redo, Ctrl+S Save, Ctrl+O Open, Ctrl+N New.</li>
                     <li>Ctrl+A Select All, Ctrl+C Copy, Ctrl+X Cut, Ctrl+V Paste.</li>
-                    <li>Ctrl+E Image Properties, Ctrl+W Resize, Ctrl+Plus/Minus Brush Size.</li>
+                    <li>Ctrl+E Image Properties, Ctrl+W Resize/Skew, Ctrl+Plus/Minus Brush Size.</li>
                     <li>Escape Cancel/Unselect, Delete Delete Selection.</li>
                 </ul>
             </div>
@@ -1871,80 +1996,157 @@
         <button id="freehand-collapse-btn" title="Collapse sidebar">&#9660;</button>
     </div>
     <div id="freehand-sidebar-body">
-        <div class="fh-row">
-            <label>Size</label>
-            <input type="range" id="fh-size" min="0.5" max="20" step="0.1" value="4">
-            <input type="number" id="fh-size-num" min="0.5" max="20" step="0.1" value="4">
-            <span class="fh-val" id="fh-size-val">4</span>
+        <div class="fh-section">
+            <div class="fh-label">Basic</div>
+            <div class="fh-row">
+                <label>Size</label>
+                <input type="range" id="fh-size" min="0.5" max="20" step="0.1" value="4">
+                <input type="number" id="fh-size-num" min="0.5" max="20" step="0.1" value="4">
+                <span class="fh-val" id="fh-size-val">4</span>
+            </div>
+            <div class="fh-row">
+                <label>Thinning</label>
+                <input type="range" id="fh-thinning" min="0" max="1" step="0.01" value="0.5">
+                <input type="number" id="fh-thinning-num" min="0" max="1" step="0.01" value="0.5">
+                <span class="fh-val" id="fh-thinning-val">0.5</span>
+            </div>
+            <div class="fh-row">
+                <label>Smoothing</label>
+                <input type="range" id="fh-smoothing" min="0.01" max="0.99" step="0.01" value="0.5">
+                <input type="number" id="fh-smoothing-num" min="0.01" max="0.99" step="0.01" value="0.5">
+                <span class="fh-val" id="fh-smoothing-val">0.5</span>
+            </div>
+            <div class="fh-row">
+                <label>Streamline</label>
+                <input type="range" id="fh-streamline" min="0" max="1" step="0.01" value="0.5">
+                <input type="number" id="fh-streamline-num" min="0" max="1" step="0.01" value="0.5">
+                <span class="fh-val" id="fh-streamline-val">0.5</span>
+            </div>
         </div>
-        <div class="fh-row">
-            <label>Thinning</label>
-            <input type="range" id="fh-thinning" min="0" max="1" step="0.01" value="0.65">
-            <input type="number" id="fh-thinning-num" min="0" max="1" step="0.01" value="0.65">
-            <span class="fh-val" id="fh-thinning-val">0.65</span>
+        <div class="fh-section">
+            <div class="fh-label">Taper</div>
+            <div class="fh-row">
+                <label>Start</label>
+                <input type="range" id="fh-taperStart" min="0" max="100" step="1" value="0">
+                <input type="number" id="fh-taperStart-num" min="0" max="100" step="1" value="0">
+                <span class="fh-val" id="fh-taperStart-val">0</span>
+            </div>
+            <div class="fh-row" id="fh-capStart-row">
+                <label>Cap Start</label>
+                <input type="checkbox" id="fh-capStart" checked>
+            </div>
+            <div class="fh-row" id="fh-easingStart-row">
+                <label>Easing Start</label>
+                <select id="fh-easingStart">
+                    <option value="linear">Linear</option>
+                    <option value="easeInQuad">Ease In Quad</option>
+                    <option value="easeOutQuad">Ease Out Quad</option>
+                    <option value="easeInOutQuad">Ease In-Out Quad</option>
+                    <option value="easeInCubic">Ease In Cubic</option>
+                    <option value="easeOutCubic">Ease Out Cubic</option>
+                    <option value="easeInOutCubic">Ease In-Out Cubic</option>
+                    <option value="easeInQuart">Ease In Quart</option>
+                    <option value="easeOutQuart">Ease Out Quart</option>
+                    <option value="easeInOutQuart">Ease In-Out Quart</option>
+                    <option value="easeInQuint">Ease In Quint</option>
+                    <option value="easeOutQuint">Ease Out Quint</option>
+                    <option value="easeInOutQuint">Ease In-Out Quint</option>
+                    <option value="easeInSine">Ease In Sine</option>
+                    <option value="easeOutSine">Ease Out Sine</option>
+                    <option value="easeInOutSine">Ease In-Out Sine</option>
+                    <option value="easeInExpo">Ease In Expo</option>
+                    <option value="easeOutExpo">Ease Out Expo</option>
+                    <option value="easeInOutExpo">Ease In-Out Expo</option>
+                </select>
+            </div>
+            <div class="fh-row">
+                <label>End</label>
+                <input type="range" id="fh-taperEnd" min="0" max="100" step="1" value="0">
+                <input type="number" id="fh-taperEnd-num" min="0" max="100" step="1" value="0">
+                <span class="fh-val" id="fh-taperEnd-val">0</span>
+            </div>
+            <div class="fh-row" id="fh-capEnd-row">
+                <label>Cap End</label>
+                <input type="checkbox" id="fh-capEnd" checked>
+            </div>
+            <div class="fh-row" id="fh-easingEnd-row">
+                <label>Easing End</label>
+                <select id="fh-easingEnd">
+                    <option value="linear">Linear</option>
+                    <option value="easeInQuad">Ease In Quad</option>
+                    <option value="easeOutQuad">Ease Out Quad</option>
+                    <option value="easeInOutQuad">Ease In-Out Quad</option>
+                    <option value="easeInCubic">Ease In Cubic</option>
+                    <option value="easeOutCubic">Ease Out Cubic</option>
+                    <option value="easeInOutCubic">Ease In-Out Cubic</option>
+                    <option value="easeInQuart">Ease In Quart</option>
+                    <option value="easeOutQuart">Ease Out Quart</option>
+                    <option value="easeInOutQuart">Ease In-Out Quart</option>
+                    <option value="easeInQuint">Ease In Quint</option>
+                    <option value="easeOutQuint">Ease Out Quint</option>
+                    <option value="easeInOutQuint">Ease In-Out Quint</option>
+                    <option value="easeInSine">Ease In Sine</option>
+                    <option value="easeOutSine">Ease Out Sine</option>
+                    <option value="easeInOutSine">Ease In-Out Sine</option>
+                    <option value="easeInExpo">Ease In Expo</option>
+                    <option value="easeOutExpo">Ease Out Expo</option>
+                    <option value="easeInOutExpo">Ease In-Out Expo</option>
+                </select>
+            </div>
         </div>
-        <div class="fh-row">
-            <label>Smoothing</label>
-            <input type="range" id="fh-smoothing" min="0" max="100" step="0.5" value="5">
-            <input type="number" id="fh-smoothing-num" min="0" max="100" step="0.5" value="5">
-            <span class="fh-val" id="fh-smoothing-val">5</span>
+        <div class="fh-section">
+            <div class="fh-label">Easing</div>
+            <div class="fh-row">
+                <label>Easing (pressure)</label>
+                <select id="fh-easing">
+                    <option value="linear">Linear</option>
+                    <option value="easeInQuad">Ease In Quad</option>
+                    <option value="easeOutQuad">Ease Out Quad</option>
+                    <option value="easeInOutQuad">Ease In-Out Quad</option>
+                    <option value="easeInCubic">Ease In Cubic</option>
+                    <option value="easeOutCubic">Ease Out Cubic</option>
+                    <option value="easeInOutCubic">Ease In-Out Cubic</option>
+                    <option value="easeInQuart">Ease In Quart</option>
+                    <option value="easeOutQuart">Ease Out Quart</option>
+                    <option value="easeInOutQuart">Ease In-Out Quart</option>
+                    <option value="easeInQuint">Ease In Quint</option>
+                    <option value="easeOutQuint">Ease Out Quint</option>
+                    <option value="easeInOutQuint">Ease In-Out Quint</option>
+                    <option value="easeInSine">Ease In Sine</option>
+                    <option value="easeOutSine">Ease Out Sine</option>
+                    <option value="easeInOutSine">Ease In-Out Sine</option>
+                    <option value="easeInExpo">Ease In Expo</option>
+                    <option value="easeOutExpo">Ease Out Expo</option>
+                    <option value="easeInOutExpo">Ease In-Out Expo</option>
+                </select>
+            </div>
         </div>
-        <div class="fh-row">
-            <label>Streamline</label>
-            <input type="range" id="fh-streamline" min="0" max="1" step="0.01" value="0.5">
-            <input type="number" id="fh-streamline-num" min="0" max="1" step="0.01" value="0.5">
-            <span class="fh-val" id="fh-streamline-val">0.5</span>
-        </div>
-        <div class="fh-separator"></div>
-        <div class="fh-label">Taper</div>
-        <div class="fh-row">
-            <label>Start</label>
-            <input type="range" id="fh-taperStart" min="0" max="100" step="1" value="0">
-            <input type="number" id="fh-taperStart-num" min="0" max="100" step="1" value="0">
-            <span class="fh-val" id="fh-taperStart-val">0</span>
-        </div>
-        <div class="fh-row">
-            <label>End</label>
-            <input type="range" id="fh-taperEnd" min="0" max="100" step="1" value="0">
-            <input type="number" id="fh-taperEnd-num" min="0" max="100" step="1" value="0">
-            <span class="fh-val" id="fh-taperEnd-val">0</span>
-        </div>
-        <div class="fh-row">
-            <label>Taper Power</label>
-            <input type="range" id="fh-taperPower" min="0.1" max="5" step="0.1" value="0.5">
-            <input type="number" id="fh-taperPower-num" min="0.1" max="5" step="0.1" value="0.5">
-            <span class="fh-val" id="fh-taperPower-val">0.5</span>
-        </div>
-        <div class="fh-fh-row">
-            <label>Cap Start</label>
-            <input type="checkbox" id="fh-capStart" checked>
-        </div>
-        <div class="fh-row">
-            <label>Cap End</label>
-            <input type="checkbox" id="fh-capEnd" checked>
-        </div>
-        <div class="fh-row">
-            <label>Sim. Pressure</label>
-            <input type="checkbox" id="fh-simulatePressure">
-        </div>
-        <div class="fh-separator"></div>
-        <div class="fh-label">Style</div>
-        <div class="fh-row">
-            <label>Easing</label>
-            <select id="fh-easing">
-                <option value="linearOut">Linear Out</option>
-                <option value="linear">Linear</option>
-                <option value="easeOutQuad">Ease Out Quad</option>
-                <option value="easeInOutQuad">Ease In-Out Quad</option>
-                <option value="easeOutSine">Ease Out Sine</option>
-                <option value="easeOutCubic">Ease Out Cubic</option>
-            </select>
-        </div>
-        <div class="fh-row">
-            <label>Color</label>
-            <div class="fh-color-wrap">
-                <input type="color" id="fh-color" value="#000000">
-                <button class="fh-color-edit" id="fh-color-edit" title="Edit color">&#9998;</button>
+        <div class="fh-section">
+            <div class="fh-label">Rendering</div>
+            <div class="fh-row">
+                <label>Fill</label>
+                <input type="checkbox" id="fh-fill" checked>
+                <span class="fh-swatch" id="fh-fill-swatch"></span>
+                <span class="fh-swatch-label">Color 1</span>
+            </div>
+            <div class="fh-row">
+                <label>Stroke Width</label>
+                <input type="range" id="fh-strokeWidth" min="0" max="30" step="1" value="0">
+                <input type="number" id="fh-strokeWidth-num" min="0" max="30" step="1" value="0">
+                <span class="fh-val" id="fh-strokeWidth-val">0</span>
+            </div>
+            <div class="fh-row">
+                <label>Stroke Col</label>
+                <span class="fh-swatch" id="fh-stroke-swatch"></span>
+                <span class="fh-swatch-label">Color 2</span>
+            </div>
+            <div class="fh-row">
+                <label>Pixel Mode</label>
+                <input type="checkbox" id="fh-pixelMode" checked>
+            </div>
+            <div class="fh-row">
+                <label>Sim. Pressure</label>
+                <input type="checkbox" id="fh-simulatePressure">
             </div>
         </div>
         <div class="fh-reset-row">
@@ -1956,6 +2158,7 @@
 
 <script src="tauri-shim.js"></script>
 <script src="app.js"></script>
+<script src="js/gradient-engine.js"></script>
 <script src="js/paint-engine.js"></script>
 <script src="freehand-path-engine.js"></script>
 <script src="js/perfect-freehand-bundle.js"></script>

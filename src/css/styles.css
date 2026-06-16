@@ -984,8 +984,8 @@
         }
             display: flex; flex-direction: column; gap: 3px;
         }
-        .fh-row { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--threshold-label-color); }
-        .fh-row label { min-width: 72px; text-align: right; white-space: nowrap; }
+        .fh-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--threshold-label-color); padding: 1px 0; }
+        .fh-row label { min-width: 80px; text-align: right; white-space: nowrap; }
         .fh-row input[type="range"] { flex: 1; height: 14px; cursor: pointer; min-width: 40px; }
         .fh-row input[type="number"] { width: 40px; text-align: center; font-size: 10px; padding: 1px 2px; border: 1px solid var(--btn-small-border); border-radius: 2px; background: var(--dropdown-bg); color: var(--app-text-color); }
         .fh-row select { font-size: 10px; padding: 1px 2px; border: 1px solid var(--btn-small-border); border-radius: 2px; background: var(--dropdown-bg); color: var(--app-text-color); }
@@ -996,7 +996,11 @@
         .fh-color-edit:hover { background: var(--btn-hover-bg); border-color: var(--btn-hover-border); }
         .fh-val { min-width: 24px; text-align: center; }
         .fh-separator { border-top: 1px solid var(--section-divider); margin: 4px 0; }
-        .fh-label { font-size: 10px; color: var(--section-title-color); text-align: center; font-weight: bold; }
+        .fh-label { font-size: 11px; color: var(--section-title-color); text-align: center; font-weight: 600; letter-spacing: 0.3px; padding: 4px 0 2px; }
+        .fh-section { background: rgba(0,0,0,0.02); border-radius: 4px; padding: 4px 6px; margin: 2px 0; border: 1px solid transparent; }
+        .fh-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; border: 1px solid rgba(0,0,0,0.2); flex-shrink: 0; margin-right: 4px; }
+        .fh-swatch-label { font-size: 10px; color: var(--section-title-color); white-space: nowrap; }
+        .fh-hidden { display: none !important; }
 
         #freehand-reopen-btn {
             position: fixed; left: 0; top: 145px;
