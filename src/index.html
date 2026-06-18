@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+<!-- Startup loading bar — shown immediately, removed by JS when ready -->
+<div id="startup-loader"><div class="loader-bar"></div></div>
 
 <!-- app shell starts here (pretend-window stuff + tools) -->
 <div id="title-bar" data-tauri-drag-region>
@@ -185,85 +187,12 @@
         <div class="section-title">Color Mode</div>
     </div>
 
-    <div class="section">
-        <div class="tools-grid">
-
-            <div class="btn btn-icon active" id="pencil-tool-btn" data-tool="pencil" onclick="PaintApp.setTool('pencil')" title="Pencil">
-                <span class="pencil-icon pencil-icon-standard show" aria-hidden="true"><img class="toolbar-icon" alt="" src="assets/toolbar-icons/pencil.png" data-legacy-src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABEAAAATCAYAAAB2pebxAAABhGlDQ1BJQ0MgcHJvZmlsZQAAKJF9kb1Lw1AUxU/TlopUHOwg4pChOtlFRRxLLRbBQmkrtOpg8tIvaNKQpLg4Cq4FBz8Wqw4uzro6uAqC4AeIf4A4KbpIifclhRYxPri8H+e9c7jvPkBo15lqBuKAqllGNpUQC8VVMfQKAUGEqAISM/V0bjEPz/V1Dx/f72I8y/ven2tIKZkM8InEcaYbFvEG8dympXPeJ46wqqQQnxNPGdQg8SPXZZffOFccFnhmxMhnF4gjxGKlj+U+ZlVDJZ4ljiqqRvlCwWWF8xZntd5k3T75C8MlbSXHdapxpLCENDIQIaOJGuqwEKNdI8VEls4THv4xx58hl0yuGhg5kmhAheT4wf/g92zN8sy0mxROAMEX2/6YAEK7QKdl29/Htt05AfzPwJXW8zfawPwn6a2eFj0ChreBi+ueJu8BlzvA6JMuGZIj+amEchl4P6NvKgIjt8Dgmju37jlOH4A8zWr5Bjg4BCYrlL3u8e6B/rn9e6c7vx/8SnJ3TRqVAAAAAAZiS0dEAAAAAAAA+UO7fwAAAAlwSFlzAAAuIwAALiMBeKU/dgAAAAd0SU1FB+oCBQgCE46OQ/IAAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAABeElEQVQ4y9XUTSiDARgH8P9rbnaQokWbbw4uEiU5cEA5rDi4kaN2sBUpSjFlrVaSj4uTchBlyHxLSmrLRxQT8xEHY2t79+59MZe/mzh53+Oe23N4fofnC0jqePb6+DsXtBSLMYlnDge+3l6RWVePio52AQBStAD+qwtkZ6SjSJ+Gh8UF+Nc8BACdGiAqiuyf6oPML1S3dkCKRCAnEqix2QRVSDQq8mnbBmNOPca8i1CCIaQa8mHu6VHXipgU5+FMC+OXDpIH3FqdY1VXLVU3UYrL9IyZGTm1k59uKk9OuiyV6oGoGOOKs5nPe1ZSmef746g2QIrLnB1o4P2GhQyPUwn0awc2J6z0L3eSIRcT192qgD/TaSoThkxZREl5ET7EG0xN+tA7ffzvFH6WbWdrnUa9DsV5pZBvFHiWFFXAD/ISDPLzdh8FhnR4j07hPg+jbXBO9UnoACDXZBwypISxe/KIAAph6RsVNF9lQ2MTR+zDDNzdM7n/yzcsFcHSUWarHQAAAABJRU5ErkJggg==" data-legacy-label="Legacy Pencil icon (inline base64, pre-2026-03-13)"></span>
-                <span class="pencil-icon pencil-icon-smart" aria-hidden="true"><img class="toolbar-icon" alt="" src="assets/toolbar-icons/pencil-smart.png" data-legacy-src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2222%22%20height%3D%2222%22%20viewBox%3D%220%200%2022%2022%22%3E%3Cpath%20d%3D%22M4%2016l1.5-5.5L14%202l6%206-8.5%208.5L6%2018z%22%20fill%3D%22%23f7c873%22%20stroke%3D%22%23111%22%20stroke-width%3D%221%22%2F%3E%3Cpath%20d%3D%22M13%203l6%206%22%20stroke%3D%22%23111%22%20stroke-width%3D%221%22%2F%3E%3Cpath%20d%3D%22M17%203.5l1%202.5%202.5%201-2.5%201-1%202.5-1-2.5-2.5-1%202.5-1z%22%20fill%3D%22%2357b6ff%22%20stroke%3D%22%23111%22%20stroke-width%3D%220.8%22%2F%3E%3C%2Fsvg%3E" data-legacy-label="Legacy Smart Pencil icon (inline SVG data URI, pre-2026-03-13)"></span>
-            </div>
-
-            <div class="btn btn-icon" data-tool="fill" onclick="PaintApp.setTool('fill')" title="Fill"><img class="toolbar-icon" src="assets/toolbar-icons/fill.png" data-legacy-src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABMAAAAUCAYAAABvVQZ0AAABhGlDQ1BJQ0MgcHJvZmlsZQAAKJF9kb9Lw0AcxV9Ta0UqDnYQ6ZChOrWLijiWKhbBQmkrtOpgcukvaGJIUlwcBdeCgz8Wqw4uzro6uAqC4A8Q/wBxUnSREr+XFFrEeHDch3f3HnfvAKFVZ6rZlwBUzTKyqaRYKK6IwVcICKAfEcQkZurp3EIenuPrHj6+3sV5lve5P8eQUjIZ4BOJE0w3LOJ14plNS+e8TxxmVUkhPieOGXRB4keuyy6/ca44LPDMsJHPzhGHicVKD8s9zKqGSjxNHFVUjfKFgssK5y3Oar3BOvfkLwyVtOUc12lGkMIi0shAhIwGaqjDQpxWjRQTWdpPevjHHH+GXDK5amDkmMcGVEiOH/wPfndrlqcm3aRQEgi82PbHOBDcBdpN2/4+tu32CeB/Bq60rn+jBcx+kt7satEjYHgbuLjuavIecLkDjD7pkiE5kp+mUC4D72f0TUVg5BYYXHV76+zj9AHIU1dLN8DBITBRoew1j3cP9Pb275lOfz+WyXK1+DFMDQAAAAZiS0dEABcAAAD/BoEfYAAAAAlwSFlzAAAuIwAALiMBeKU/dgAAAAd0SU1FB+oCBQY3Mx1PjIYAAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAACHElEQVQ4y9XUv2sTYRzH8XdySSg21xp/5IekQgy0AW8xi+JkBv8CnUVrRofO/pgEd3exVXAQwbVqBZEI7dJByFDaxghpeun12sulSZPcPcnjICmNiWK79TM9w8OLz5cvfOHEp1TelLNzr2SpvCn/9sf7P9C6bsulxUWupNN8Xljg2Ni6bsv5lSoAH4odmq3W8bAedPd6DNd1SU3EqMWusrqxI4+E9aAHNy4SDPhpt9tExn2kJmK8Xy4NBQcwMfdYyvtTcn6lys2USt1xAWi2Wmhxlci4j8mJyFCwD5NPb0kl947CtsW1xCgA5d06FWObdrtFcW0NLa4SHfMPbeg93IifeQrbFkuPvmPWu1j7XToSvuVy3JuexjRNggE/ly+oRMaVAdDXw3qNACq7bVzHh+P6cTsQPBNm4eMnplIpLMsiFAqhxceAPbry98h9zex6A4DW8zwbuo5uCXTLwbBdAtEpzk2mESMq+6ILQDDgR4urxE4HqOw0+zGz6QCgJcKebCaJYeps1QSblotuC5reU7jKKLbwHiwF4O3XVbKZJH1jHo6WCHvyRUO++FLAEWEc0cURPoQLzqiC6OxxKazy5M0y2UwSLRH2DGwzeHumD8xmkjRqBkZNUKkK9KrDlu1iNuQABHDwqLx+JqN3Hnr+bNlrqIycZ2xEIaQq/CiVB6A+7F/pgR3fWRSxMxQ6UvJFQ868XJT5oiFP3gH9BcH8JGagiSF7AAAAAElFTkSuQmCC" data-legacy-label="Legacy Fill icon (inline base64, pre-2026-03-13)" alt=""></div>
-
-            <div class="btn btn-icon" id="wand-tool-btn" data-tool="wand" onclick="PaintApp.setTool('wand')" title="Magic Wand">
-                <span class="wand-icon wand-icon-contig" aria-hidden="true"><img class="toolbar-icon" src="assets/toolbar-icons/wand-contig.png" data-legacy-src="assets/fluent-emoji/magic_wand_flat.svg" data-legacy-label="Legacy Wand (contiguous) icon (fluent-emoji SVG, pre-2026-03-13)" alt=""></span>
-                <span class="wand-icon wand-icon-global" aria-hidden="true"><img class="toolbar-icon icon-wand-global" src="assets/toolbar-icons/wand-global.png" data-legacy-src="assets/fluent-emoji/globe_with_meridians_flat.svg" data-legacy-label="Legacy Wand (global) icon (fluent-emoji SVG, pre-2026-03-13)" alt=""></span>
-            </div>
-
-            <div class="btn btn-icon" data-tool="eraser" onclick="PaintApp.setTool('eraser')" title="Eraser"><img class="toolbar-icon" src="assets/toolbar-icons/eraser.png" data-legacy-src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABUAAAAWCAYAAAAvg9c4AAABhGlDQ1BJQ0MgcHJvZmlsZQAAKJF9kb9Lw0AcxV9Ta0UqDnYQ6ZChOrWLijiWKhbBQmkrtOpgcukvaGJIUlwcBdeCgz8Wqw4uzro6uAqC4A8Q/wBxUnSREr+XFFrEeHDch3f3HnfvAKFVZ6rZlwBUzTKyqaRYKK6IwVcICKAfEcQkZurp3EIenuPrHj6+3sV5lve5P8eQUjIZ4BOJE0w3LOJ14plNS+e8TxxmVUkhPieOGXRB4keuyy6/ca44LPDMsJHPzhGHicVKD8s9zKqGSjxNHFVUjfKFgssK5y3Oar3BOvfkLwyVtOUc12lGkMIi0shAhIwGaqjDQpxWjRQTWdpPevjHHH+GXDK5amDkmMcGVEiOH/wPfndrlqcm3aRQEgi82PbHOBDcBdpN2/4+tu32CeB/Bq60rn+jBcx+kt7satEjYHgbuLjuavIecLkDjD7pkiE5kp+mUC4D72f0TUVg5BYYXHV76+zj9AHIU1dLN8DBITBRoew1j3cP9Pb275lOfz+WyXK1+DFMDQAAAAZiS0dEABcAAAD/BoEfYAAAAAlwSFlzAAAuIwAALiMBeKU/dgAAAAd0SU1FB+oCBQY3GLHzdcYAAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAABV0lEQVQ4y+3UvU7CUBQH8H8LVgZCgDTqIhGIEicUDBPGzUHiok7G5yA8gzEKVuNXHHwLB0eHO2B0cACVqTGNNjFQqVhbvA4mxkptIXUx4YwnN7/ce88H0I9/EUwvh0khT6nfj3gsBl9kDIFslnGFkkKepiKjAAC93UZL13H3KIMOcognpzC0tML0hH4HraIsipBUFcvbuwwAsG7Bs+oNvNwAuFD4K8e6BflgABVJwuzqmjPaLQgAoTCPYCJh/6e9gA/1BhZLOyan46bkWKCZuSSuFBmX0r0tKDeUDhAAvD8TrNoAPDxmUpOflb2+BW1qmOZHOsBcUXDuU7JXpJn4sHXbVGrwvbzjtaVBVhTktoRf29H0fNZo2s6eoRuOoGWhyP4G9bTfkB6PmvKn5xfAs4YFB9B2oshRiXo0FemJKMrVGuriE+bXN5k/2Tjk5JCSA4H2d2/X8QH+hZChgG8ZJAAAAABJRU5ErkJggg==" data-legacy-label="Legacy Eraser icon (inline base64, pre-2026-03-13)" alt=""></div>
-
-            <div class="btn btn-icon" id="picker-tool-btn" data-tool="picker" onclick="PaintApp.setTool('picker')" title="Picker"><img class="toolbar-icon" src="assets/toolbar-icons/picker.png" data-legacy-src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABEAAAATCAYAAAB2pebxAAABhGlDQ1BJQ0MgcHJvZmlsZQAAKJF9kb1Lw1AUxU/TlopUHOwg4pChOtlFRRxLLRbBQmkrtOpg8tIvaNKQpLg4Cq4FBz8Wqw4uzro6uAqC4AeIf4A4KbpIifclhRYxPri8H+e9c7jvPkBo15lqBuKAqllGNpUQC8VVMfQKAUGEqAISM/V0bjEPz/V1Dx/f72I8y/ven2tIKZkM8InEcaYbFvEG8dympXPeJ46wqqQQnxNPGdQg8SPXZZffOFccFnhmxMhnF4gjxGKlj+U+ZlVDJZ4ljiqqRvlCwWWF8xZntd5k3T75C8MlbSXHdapxpLCENDIQIaOJGuqwEKNdI8VEls4THv4xx58hl0yuGhg5kmhAheT4wf/g92zN8sy0mxROAMEX2/6YAEK7QKdl29/Htt05AfzPwJXW8zfawPwn6a2eFj0ChreBi+ueJu8BlzvA6JMuGZIj+amEchl4P6NvKgIjt8Dgmju37jlOH4A8zWr5Bjg4BCYrlL3u8e6B/rn9e6c7vx/8SnJ3TRqVAAAAAAZiS0dEAAAAAAAA+UO7fwAAAAlwSFlzAAAuIwAALiMBeKU/dgAAAAd0SU1FB+oCBQgPHdyYELgAAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAABN0lEQVQ4y83SvUsCcRjA8e+VBJFXR29UBBFIgzQIbS1K3VqtLuXSf9Bif0BLIC2uEa0RNLRENzToFBa0hDR4FsHRy53le57xawiFQLvOFp/5eT48b9AtIblJTj/mRDiepFL/LrvYDjI1Ikset8C8b4Yhbz+GlWd5RwPA0ylwqxtUigUAepyKA9HT1kCpzGf+yRkJx5MMynJrwMqS2Nt0RrToEsVqrS0wOzks/Xod08qJ66sUqqri3zpB9Pa1BNp20gCCoRBvhTKHET+VdxPqHwA/gLYdaJomarYtcvmSuLxJi1gsJnTDEtPhXaEblugIeH55FX/62MYIvsAi5arNXeaBTEpjfSPC+Nio5Ij8B2gu1jRNgI6A5tvfZ3Um5hY4O9oHcAU0kQGvzPnxASurayiK4grorvgCLNDjd5EaI+EAAAAASUVORK5CYII=" data-legacy-label="Legacy Picker icon (inline base64, pre-2026-03-13)" alt=""></div>
-
-            <div class="btn btn-icon" data-tool="zoom" onclick="PaintApp.setTool('zoom')" title="Zoom"><img class="toolbar-icon" src="assets/toolbar-icons/zoom.png" data-legacy-src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABUAAAAWCAYAAAAvg9c4AAABhGlDQ1BJQ0MgcHJvZmlsZQAAKJF9kb9Lw0AcxV9Ta0UqDnYQ6ZChOrWLijiWKhbBQmkrtOpgcukvaGJIUlwcBdeCgz8Wqw4uzro6uAqC4A8Q/wBxUnSREr+XFFrEeHDch3f3HnfvAKFVZ6rZlwBUzTKyqaRYKK6IwVcICKAfEcQkZurp3EIenuPrHj6+3sV5lve5P8eQUjIZ4BOJE0w3LOJ14plNS+e8TxxmVUkhPieOGXRB4keuyy6/ca44LPDMsJHPzhGHicVKD8s9zKqGSjxNHFVUjfKFgssK5y3Oar3BOvfkLwyVtOUc12lGkMIi0shAhIwGaqjDQpxWjRQTWdpPevjHHH+GXDK5amDkmMcGVEiOH/wPfndrlqcm3aRQEgi82PbHOBDcBdpN2/4+tu32CeB/Bq60rn+jBcx+kt7satEjYHgbuLjuavIecLkDjD7pkiE5kp+mUC4D72f0TUVg5BYYXHV76+zj9AHIU1dLN8DBITBRoew1j3cP9Pb275lOfz+WyXK1+DFMDQAAAAZiS0dEABcAAAD/BoEfYAAAAAlwSFlzAAAuIwAALiMBeKU/dgAAAAd0SU1FB+oCBQY4F6bUdJgAAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAACRUlEQVQ4y+2US09TURRG17mPPm5vK72UV0NAAoIIVjQSjU6dMREm/gcHxlF/hJo4dm4cOdHoTMrIiQMNJLxauLQqUqAi9Hn7PA7ACbFY1ImJX7IneyfrnP3tfQ7819+WaFZIJNalbdukd7ZpSIFA0hlqp6+/j/GxMXFqaGwuJuMJm86BCMIIkqtptHkaOMUiu6lVwmcUpqdnmoK14wnbTsrZ2Btk302kZTHYZeLSVVRFIZMt01BNttbeMr+wIC9FIqIlaDy+Qs3TgS8UZnLET9mRSAlCQLjdwPD2sloaJpXaaNq+cjyxk96mavYy0Gmyn2+QL0uc2mEUKxJdUwha3exlvtFy+9VaBZe/jYBLYuoC4ZKHxoujAQiJ6TXRXXrrN1VVDaOURgjQFYmugioOT9cUEBIaTg5FUVqHDg4Nkfu4QF024AimK6CrElWRqHVB5ssyXd3drUPPDY9geN28e/0MVW/g9oDhBq9bYOiCT+uLpDc3GB+/eLo93Uim5Fxslv2DA65MXiNkBSk7DqvxdRLL8/T39BDu6eDGrSkATJ8hThwUwMDZfrG9syuXlhbZTNmk7Dq6qhG0glhanq0Pr1iazeANWExMXm/9mf5M+UJRZrNZnkTvoNVLFGo6M/cfMBqZwG/6RFNPT5LpM0QgEGDq3iMqmp82o8bzx1G2PifJ5Qvyt6A/wKOjF7h8+y5ORSPgKvH0YZRqtXqyp7+S3/SJzNc9mVxb4eD9CyqF3J9DAULtlogn1uRL1cPV4fMIIf7Bn/8749XUWIQ+boYAAAAASUVORK5CYII=" data-legacy-label="Legacy Zoom icon (inline base64, pre-2026-03-13)" alt=""></div>
-
-            <div class="btn btn-icon" data-tool="gradient" onclick="PaintApp.setTool('gradient')" title="Gradient (R)"><img class="toolbar-icon" src="assets/Gradient.png" alt=""></div>
-
-            <div class="btn btn-icon toggle-btn" id="anchor-rotate-toggle-btn" onclick="PaintApp.toggleAnchorCanvas()" title="Toggle canvas anchor / free mode">
-                <span class="toggle-icons" aria-hidden="true">
-                    <img class="icon-off toolbar-icon" src="assets/anchor.png" alt="">
-                    <img class="icon-on toolbar-icon" src="assets/Free.png" alt="">
-                </span>
-            </div>
-            <div class="btn btn-icon" data-tool="freehand" onclick="PaintApp.setTool('freehand')" title="Freehand Brush">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#0078d7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3 17 Q5 12 8 14 Q11 16 13 11 Q15 6 18 8"/>
-                    <circle cx="18" cy="8" r="1.5" fill="#0078d7" stroke="none"/>
-                </svg>
-            </div>
-        </div>
+    <div class="section" id="tools-section">
+        <div class="tools-grid" id="dynamic-tools-grid"></div>
         <div class="section-title">Tools</div>
     </div>
-    <div class="section">
-        <div class="shapes-grid">
-
-            <div class="btn btn-icon" data-tool="line" onclick="PaintApp.setTool('line')" title="Line">
-                <img class="toolbar-icon" alt="" src="assets/toolbar-icons/line.png">
-                <!-- Legacy shape icon (pre-2026-03-13): <svg width="20" height="20" viewBox="0 0 24 24"><path d="M21 3L3 21" stroke="black" stroke-width="2"/></svg> -->
-            </div>
-
-            <div class="btn btn-icon" data-tool="curve" onclick="PaintApp.setTool('curve')" title="Curve">
-                <img class="toolbar-icon" alt="" src="assets/toolbar-icons/curve.png">
-                <!-- Legacy shape icon (pre-2026-03-13): <svg width="20" height="20" viewBox="0 0 24 24"><path d="M4 12c0-4.42 3.58-8 8-8s8 3.58 8 8" fill="none" stroke="black" stroke-width="2"/></svg> -->
-            </div>
-            <div class="btn btn-icon" data-tool="poly" onclick="PaintApp.setTool('poly')" title="Polyline">
-                <img class="toolbar-icon" alt="" src="assets/toolbar-icons/poly.png">
-                <!-- Legacy shape icon (pre-2026-03-13): <svg width="20" height="20" viewBox="0 0 24 24"><path d="M4 17L9 7l6 8 5-6" fill="none" stroke="black" stroke-width="2"/></svg> -->
-            </div>
-
-            <div class="btn btn-icon" data-tool="rect" onclick="PaintApp.setTool('rect')" title="Rectangle">
-                <img class="toolbar-icon" alt="" src="assets/toolbar-icons/rect.png">
-                <!-- Legacy shape icon (pre-2026-03-13): <svg width="20" height="20" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" fill="none" stroke="black" stroke-width="2"/></svg> -->
-            </div>
-
-            <div class="btn btn-icon" data-tool="circle" onclick="PaintApp.setTool('circle')" title="Circle">
-                <img class="toolbar-icon" alt="" src="assets/toolbar-icons/circle.png">
-                <!-- Legacy shape icon (pre-2026-03-13): <svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="black" stroke-width="2"/></svg> -->
-            </div>
-
-            <div class="btn btn-icon" data-tool="tri" onclick="PaintApp.setTool('tri')" title="Triangle">
-                <img class="toolbar-icon" alt="" src="assets/toolbar-icons/tri.png">
-                <!-- Legacy shape icon (pre-2026-03-13): <svg width="20" height="20" viewBox="0 0 24 24"><path d="M12 3l10 18H2z" fill="none" stroke="black" stroke-width="2"/></svg> -->
-            </div>
-
-            <div class="btn btn-icon" data-tool="path" onclick="PaintApp.setTool('path')" title="Freehand Path">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0078d7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3 17c2-7 5-9 9-2s4 6 9-4" fill="none"/>
-                    <circle cx="3" cy="17" r="1.5" fill="#0078d7" stroke="none"/>
-                    <circle cx="21" cy="11" r="1.5" fill="#0078d7" stroke="none"/>
-                </svg>
-            </div>
-
-        </div>
+    <div class="section" id="shapes-section">
+        <div class="shapes-grid" id="dynamic-shapes-grid"></div>
         <div class="section-title">Shapes</div>
     </div>
     <div class="section">
@@ -854,6 +783,7 @@
 
 <div id="ribbon-context-menu" class="dropdown-menu">
     <div class="dd-item" onclick="PaintApp.openModal('toolbar'); PaintApp.closeMenus()">Customize Toolbar...</div>
+    <div class="dd-item" id="ribbon-menu-customize-tools" onclick="PaintApp.openModal('tool-customizer'); PaintApp.closeMenus()">Customize Tools...</div>
     <div class="dd-item" id="ribbon-menu-hide-section" onclick="PaintApp.hideContextRibbonSection(); PaintApp.closeMenus()">Hide This Section</div>
 </div>
 
@@ -1838,12 +1768,12 @@
             <div class="channel-area">
                 <div class="channel-label">Channel: <span id="hs-channel-label">Master</span></div>
                 <div class="channel-wheel">
-                    <div class="channel-wrap pos-r" onclick="PaintApp.setHueSatChannel('R')" title="Reds"><div class="channel-ring"><svg viewBox="-1 -1 48 36" xmlns="http://www.w3.org/2000/svg"><polygon class="ring-poly" points="8.0,1.4 38.0,1.4 46.0,17.0 38.0,32.6 8.0,32.6 0.0,17.0" fill="none" stroke="#cc0000" stroke-width="2"/></svg></div><div class="channel-btn"></div></div>
-                    <div class="channel-wrap pos-y" onclick="PaintApp.setHueSatChannel('Y')" title="Yellows"><div class="channel-ring"><svg viewBox="-1 -1 48 36" xmlns="http://www.w3.org/2000/svg"><polygon class="ring-poly" points="8.0,1.4 38.0,1.4 46.0,17.0 38.0,32.6 8.0,32.6 0.0,17.0" fill="none" stroke="#cccc00" stroke-width="2"/></svg></div><div class="channel-btn"></div></div>
-                    <div class="channel-wrap pos-m" onclick="PaintApp.setHueSatChannel('M')" title="Magentas"><div class="channel-ring"><svg viewBox="-1 -1 48 36" xmlns="http://www.w3.org/2000/svg"><polygon class="ring-poly" points="8.0,1.4 38.0,1.4 46.0,17.0 38.0,32.6 8.0,32.6 0.0,17.0" fill="none" stroke="#cc00cc" stroke-width="2"/></svg></div><div class="channel-btn"></div></div>
-                    <div class="channel-wrap pos-g" onclick="PaintApp.setHueSatChannel('G')" title="Greens"><div class="channel-ring"><svg viewBox="-1 -1 48 36" xmlns="http://www.w3.org/2000/svg"><polygon class="ring-poly" points="8.0,1.4 38.0,1.4 46.0,17.0 38.0,32.6 8.0,32.6 0.0,17.0" fill="none" stroke="#00cc00" stroke-width="2"/></svg></div><div class="channel-btn"></div></div>
-                    <div class="channel-wrap pos-b" onclick="PaintApp.setHueSatChannel('B')" title="Blues"><div class="channel-ring"><svg viewBox="-1 -1 48 36" xmlns="http://www.w3.org/2000/svg"><polygon class="ring-poly" points="8.0,1.4 38.0,1.4 46.0,17.0 38.0,32.6 8.0,32.6 0.0,17.0" fill="none" stroke="#0000cc" stroke-width="2"/></svg></div><div class="channel-btn"></div></div>
-                    <div class="channel-wrap pos-c" onclick="PaintApp.setHueSatChannel('C')" title="Cyans"><div class="channel-ring"><svg viewBox="-1 -1 48 36" xmlns="http://www.w3.org/2000/svg"><polygon class="ring-poly" points="8.0,1.4 38.0,1.4 46.0,17.0 38.0,32.6 8.0,32.6 0.0,17.0" fill="none" stroke="#00cccc" stroke-width="2"/></svg></div><div class="channel-btn"></div></div>
+                    <div class="channel-wrap pos-r" onclick="PaintApp.setHueSatChannel('R')" title="Reds"><div class="channel-btn"></div></div>
+                    <div class="channel-wrap pos-y" onclick="PaintApp.setHueSatChannel('Y')" title="Yellows"><div class="channel-btn"></div></div>
+                    <div class="channel-wrap pos-m" onclick="PaintApp.setHueSatChannel('M')" title="Magentas"><div class="channel-btn"></div></div>
+                    <div class="channel-wrap pos-g" onclick="PaintApp.setHueSatChannel('G')" title="Greens"><div class="channel-btn"></div></div>
+                    <div class="channel-wrap pos-b" onclick="PaintApp.setHueSatChannel('B')" title="Blues"><div class="channel-btn"></div></div>
+                    <div class="channel-wrap pos-c" onclick="PaintApp.setHueSatChannel('C')" title="Cyans"><div class="channel-btn"></div></div>
                     <div class="master-btn active" id="hs-master-btn" onclick="PaintApp.setHueSatChannel('Master')">Master</div>
                 </div>
             </div>
@@ -1952,6 +1882,36 @@
         <div class="footer">
             <button class="btn" onclick="PaintApp.resetToolbarLayout()">Reset Defaults</button>
             <button class="btn btn-primary" onclick="PaintApp.closeModals()">Done</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-tool-customizer" class="modal-mask">
+    <div class="window">
+        <div class="title-bar">
+            <span>Customize Tool Grid</span>
+            <div class="close-btn" onclick="PaintApp.closeModals()"><span>&#10005;</span></div>
+        </div>
+        <div class="content">
+            <div class="customizer-tab-row">
+                <div class="btn customizer-tab active" data-tab="tools" onclick="PaintApp._setCustomizerTab('tools')">Tools</div>
+                <div class="btn customizer-tab" data-tab="shapes" onclick="PaintApp._setCustomizerTab('shapes')">Shapes</div>
+            </div>
+            <div class="customizer-body">
+                <div class="customizer-drawer-col">
+                    <div class="customizer-label">Available</div>
+                    <div id="tool-customizer-drawer" class="tool-drawer"></div>
+                    <div class="customizer-hint">Drag tools into the grid. Double-click or right-click to remove.</div>
+                </div>
+                <div class="customizer-grid-col">
+                    <div id="tool-customizer-grid" class="tool-grid-preview"></div>
+                </div>
+            </div>
+        </div>
+        <div class="footer">
+            <button class="btn" onclick="PaintApp.resetToolGridLayout()">Reset Defaults</button>
+            <button class="btn" onclick="PaintApp.closeModals()">Cancel</button>
+            <button class="btn btn-primary" onclick="PaintApp.applyToolGridLayout(); PaintApp.closeModals()">Apply</button>
         </div>
     </div>
 </div>
@@ -2156,11 +2116,132 @@
 </div>
 <button id="freehand-reopen-btn" title="Open freehand brush settings">&#9658;</button>
 
-<script src="tauri-shim.js"></script>
-<script src="app.js"></script>
-<script src="js/gradient-engine.js"></script>
-<script src="js/paint-engine.js"></script>
-<script src="freehand-path-engine.js"></script>
-<script src="js/perfect-freehand-bundle.js"></script>
+<div id="paintbrush-sidebar">
+    <div id="paintbrush-sidebar-header">
+        <span>Paint Brush</span>
+        <button id="paintbrush-collapse-btn" title="Collapse sidebar">&#9660;</button>
+    </div>
+    <div id="paintbrush-sidebar-body">
+        <div class="pb-section">
+            <div class="pb-label">Preset</div>
+            <select id="pb-preset" style="width:100%;font-size:11px;padding:2px 4px;">
+                <option value="Round">Round</option>
+                <option value="Calligraphy">Calligraphy</option>
+                <option value="Airbrush">Airbrush</option>
+                <option value="Ink">Ink</option>
+                <option value="Marker">Marker</option>
+                <option value="Watercolor">Watercolor</option>
+                <option value="Charcoal">Charcoal</option>
+                <option value="Splatter">Splatter</option>
+                <option value="Fan Brush">Fan Brush</option>
+                <option value="Dry Brush">Dry Brush</option>
+            </select>
+        </div>
+        <div class="pb-section">
+            <div class="pb-label">Basic</div>
+            <div class="pb-row">
+                <label>Size</label>
+                <input type="range" id="pb-size" min="1" max="200" step="1" value="12">
+                <span class="pb-val" id="pb-size-val">12</span>
+            </div>
+            <div class="pb-row">
+                <label>Opacity</label>
+                <input type="range" id="pb-opacity" min="0" max="100" step="1" value="100">
+                <span class="pb-val" id="pb-opacity-val">100</span>
+            </div>
+            <div class="pb-row">
+                <label>Flow</label>
+                <input type="range" id="pb-flow" min="0" max="100" step="1" value="100">
+                <span class="pb-val" id="pb-flow-val">100</span>
+            </div>
+            <div class="pb-row">
+                <label>Spacing</label>
+                <input type="range" id="pb-spacing" min="1" max="100" step="1" value="20">
+                <span class="pb-val" id="pb-spacing-val">20</span>
+            </div>
+            <div class="pb-row">
+                <label>Hardness</label>
+                <input type="range" id="pb-hardness" min="0" max="100" step="1" value="80">
+                <span class="pb-val" id="pb-hardness-val">80</span>
+            </div>
+        </div>
+        <div class="pb-section">
+            <div class="pb-label">Shape</div>
+            <div class="pb-row">
+                <label>Tip</label>
+                <select id="pb-shape">
+                    <option value="circle">Circle</option>
+                    <option value="square">Square</option>
+                    <option value="diamond">Diamond</option>
+                    <option value="line">Line</option>
+                    <option value="slash">Slash</option>
+                </select>
+            </div>
+            <div class="pb-row">
+                <label>Angle</label>
+                <input type="range" id="pb-angle" min="0" max="360" step="1" value="0">
+                <span class="pb-val" id="pb-angle-val">0</span>
+            </div>
+            <div class="pb-row">
+                <label>Aspect</label>
+                <input type="range" id="pb-aspect" min="1" max="10" step="0.1" value="1">
+                <span class="pb-val" id="pb-aspect-val">1</span>
+            </div>
+        </div>
+        <div class="pb-section">
+            <div class="pb-label">Smudge</div>
+            <div class="pb-row">
+                <label>Mix</label>
+                <input type="range" id="pb-colorRate" min="0" max="100" step="1" value="100">
+                <span class="pb-val" id="pb-colorRate-val">100</span>
+            </div>
+            <div class="pb-row">
+                <label>Airbrush</label>
+                <input type="checkbox" id="pb-airbrushMode">
+            </div>
+            <div class="pb-row" id="pb-airbrushRate-row">
+                <label>Rate</label>
+                <input type="range" id="pb-airbrushRate" min="1" max="100" step="1" value="40">
+                <span class="pb-val" id="pb-airbrushRate-val">40</span>
+            </div>
+        </div>
+        <div class="pb-section">
+            <div class="pb-label">Bristle</div>
+            <div class="pb-row">
+                <label>Count</label>
+                <input type="range" id="pb-bristleCount" min="1" max="50" step="1" value="1">
+                <span class="pb-val" id="pb-bristleCount-val">1</span>
+            </div>
+            <div class="pb-row">
+                <label>Length</label>
+                <input type="range" id="pb-bristleLength" min="2" max="50" step="1" value="20">
+                <span class="pb-val" id="pb-bristleLength-val">20</span>
+            </div>
+            <div class="pb-row">
+                <label>Width</label>
+                <input type="range" id="pb-bristleWidth" min="1" max="10" step="0.5" value="2">
+                <span class="pb-val" id="pb-bristleWidth-val">2</span>
+            </div>
+            <div class="pb-row">
+                <label>Spread</label>
+                <input type="range" id="pb-bristleSpread" min="0" max="100" step="1" value="60">
+                <span class="pb-val" id="pb-bristleSpread-val">60</span>
+            </div>
+        </div>
+        <div class="pb-section">
+            <div class="pb-label">Preview</div>
+            <canvas id="pb-preview" width="200" height="60" style="width:100%;height:60px;border:1px solid var(--section-divider);border-radius:3px;"></canvas>
+        </div>
+    </div>
+</div>
+
+<script defer src="tauri-shim.js"></script>
+<script defer src="app.js"></script>
+<script defer src="js/gradient-engine.js"></script>
+<script defer src="js/paint-engine.js"></script>
+<script defer src="js/brush-engine.js"></script>
+<script defer src="js/krita-brush-engine.js"></script>
+<script defer src="freehand-path-engine.js"></script>
+<script defer src="js/perfect-freehand-bundle.js"></script>
 </body>
 </html>
