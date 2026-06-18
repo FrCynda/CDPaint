@@ -681,6 +681,28 @@ fn spawn_additional_window(
 }
 
 
+#[tauri::command]
+fn create_popup_window(app: tauri::AppHandle) -> Result<(), String> {
+    let label = format!(
+        "popup-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        label,
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("CDPaint")
+    .inner_size(800.0, 620.0)
+    .resizable(true)
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -723,7 +745,8 @@ pub fn run() {
             write_export_file_with_save_dialog,
             show_current_window,
             toggle_current_window_fullscreen,
-            pick_export_folder
+            pick_export_folder,
+            create_popup_window
         ])
         .setup(|app| {
             if let Some(main_window) = app.get_webview_window("main") {
