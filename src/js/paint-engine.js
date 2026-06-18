@@ -853,6 +853,30 @@
     // Modules (brush engine, layers, hue-sat, etc.) are patched onto this class further down the file.
     class PaintEngine {
         constructor() {
+            // Tool manifest — every clonable item for the customizable grid
+            this.toolManifest = [
+                { id:'pencil',         toolId:'pencil',     label:'Pencil',             iconSrc:'assets/toolbar-icons/pencil.png',       defaultSection:'tools', mode:{pencilMode:'standard'} },
+                { id:'pencil-smart',   toolId:'pencil',     label:'Smart Pencil',       iconSrc:'assets/toolbar-icons/pencil-smart.png',  defaultSection:'tools', mode:{pencilMode:'smart'} },
+                { id:'fill',           toolId:'fill',       label:'Fill',               iconSrc:'assets/toolbar-icons/fill.png',         defaultSection:'tools' },
+                { id:'wand',           toolId:'wand',       label:'Magic Wand (Contiguous)', iconSrc:'assets/toolbar-icons/wand-contig.png',defaultSection:'tools', mode:{wandMode:'contiguous'} },
+                { id:'wand-global',    toolId:'wand',       label:'Magic Wand (Global)', iconSrc:'assets/toolbar-icons/wand-global.png',  defaultSection:'tools', mode:{wandMode:'global'} },
+                { id:'eraser',         toolId:'eraser',     label:'Eraser',             iconSrc:'assets/toolbar-icons/eraser.png',       defaultSection:'tools' },
+                { id:'picker',         toolId:'picker',     label:'Color Picker',       iconSrc:'assets/toolbar-icons/picker.png',       defaultSection:'tools' },
+                { id:'zoom',           toolId:'zoom',       label:'Zoom',               iconSrc:'assets/toolbar-icons/zoom.png',         defaultSection:'tools' },
+                { id:'gradient',       toolId:'gradient',   label:'Gradient',           iconSrc:'assets/Gradient.png',                   defaultSection:'tools' },
+                { id:'freehand',       toolId:'freehand',   label:'Freehand Brush',     iconSvg:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#0078d7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17 Q5 12 8 14 Q11 16 13 11 Q15 6 18 8"/><circle cx="18" cy="8" r="1.5" fill="#0078d7" stroke="none"/></svg>', defaultSection:'tools' },
+                { id:'paintbrush',     toolId:'paintbrush', label:'Paint Brush',        iconSvg:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#0078d7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16 L7 5 L16 3 L17 12 L9 14 Z" fill="rgba(0,120,215,0.15)"/><path d="M7 5 L16 3" stroke="#0078d7" stroke-width="1"/><path d="M9 14 L5 16" stroke="#0078d7" stroke-width="1"/><path d="M11 13 L12 9" stroke="#0078d7" stroke-width="1" stroke-dasharray="1 1"/></svg>', defaultSection:'tools' },
+                { id:'anchor-toggle',  label:'Anchor/Free Toggle', isToggle:true,        iconSvg:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#0078d7" stroke-width="1.5"><circle cx="10" cy="10" r="7"/><line x1="3" y1="10" x2="17" y2="10"/><line x1="10" y1="3" x2="10" y2="17"/></svg>', defaultSection:'tools' },
+                { id:'select-rect',    toolId:'select',     label:'Select (Rectangle)', iconSrc:'assets/toolbar-icons/rect.png',         defaultSection:'tools', mode:{selectTool:'select'} },
+                { id:'select-lasso',   toolId:'lasso',      label:'Lasso Select',       iconSrc:'assets/toolbar-icons/poly.png',          defaultSection:'tools', mode:{selectTool:'lasso'} },
+                { id:'line',           toolId:'line',       label:'Line',               iconSrc:'assets/toolbar-icons/line.png',          defaultSection:'shapes' },
+                { id:'curve',          toolId:'curve',      label:'Curve',              iconSrc:'assets/toolbar-icons/curve.png',         defaultSection:'shapes' },
+                { id:'poly',           toolId:'poly',       label:'Polyline',           iconSrc:'assets/toolbar-icons/poly.png',          defaultSection:'shapes' },
+                { id:'rect',           toolId:'rect',       label:'Rectangle',          iconSrc:'assets/toolbar-icons/rect.png',          defaultSection:'shapes' },
+                { id:'circle',         toolId:'circle',     label:'Circle',             iconSrc:'assets/toolbar-icons/circle.png',        defaultSection:'shapes' },
+                { id:'tri',            toolId:'tri',        label:'Triangle',           iconSrc:'assets/toolbar-icons/tri.png',           defaultSection:'shapes' },
+                { id:'path',           toolId:'path',       label:'Freehand Path',      iconSvg:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0078d7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c2-7 5-9 9-2s4 6 9-4" fill="none"/><circle cx="3" cy="17" r="1.5" fill="#0078d7" stroke="none"/><circle cx="21" cy="11" r="1.5" fill="#0078d7" stroke="none"/></svg>', defaultSection:'shapes' }
+            ];
             this.config = {
                 width: 800, height: 600, zoom: 1.0,
                 tool: 'pencil',
@@ -969,7 +993,8 @@
                 tempSelectionDrawRect: null,
                 exportDir: null,
                 recentFiles: [],
-                freehandActive: false, freehandPoints: []
+                freehandActive: false, freehandPoints: [],
+                paintbrushActive: false
             };
             this.resizeState = { w:0, h:0, ratio: 1 };
             this.hotkeys = {};
@@ -1187,6 +1212,7 @@
             this._prevTileMap = null;          // Map<"x,y", {rle|solid}> for delta diffing
             this._lastAnchorStep = -1;         // step index of last full anchor
             this._canvasResizedSinceLastSave = false;
+            this._dirtyBounds = null;          // tracked dirty region for partial tile readback
             this.historyLimitEnabled = true;
             this.historyLimit = 50;
             this.bounds = { left: 0, top: 0 };
@@ -1928,8 +1954,10 @@
             this._applyMemoryBudget();
             this.initTitleBarControls();
             this.bindFreehandSettings();
-            Promise.resolve(this.initTauriFileOpenListener())
-                .finally(() => this.revealStartupWindow());
+            // Mark app as ready — fades out the startup loading bar
+            document.body.classList.add('app-ready');
+            this.revealStartupWindow();
+            Promise.resolve(this.initTauriFileOpenListener());
             this.setActiveTab('home');
         }
 
@@ -2127,7 +2155,7 @@
             this.hotkeysDrag = null;
         }
         initModalInteractions() {
-            const ids = ['modal-resize', 'modal-depth', 'modal-gapstitch', 'modal-export', 'modal-huesat', 'save-reminder-modal', 'close-confirm-modal', 'modal-info', 'modal-colors', 'modal-confirm-reset', 'modal-toolbar'];
+            const ids = ['modal-resize', 'modal-depth', 'modal-gapstitch', 'modal-export', 'modal-huesat', 'save-reminder-modal', 'close-confirm-modal', 'modal-info', 'modal-colors', 'modal-confirm-reset', 'modal-toolbar', 'modal-tool-customizer'];
             ids.forEach(id => {
                 const modal = document.getElementById(id);
                 if (!modal) return;
@@ -2225,6 +2253,7 @@
             add('tool.circle', 'Tool: Circle', () => this.setTool('circle'));
             add('tool.tri', 'Tool: Triangle', () => this.setTool('tri'));
             add('tool.freehand', 'Tool: Freehand Brush', () => this.setTool('freehand'));
+            add('tool.paintbrush', 'Tool: Paint Brush', () => this.setTool('paintbrush'));
 
             add('edit.undo', 'Edit: Undo', () => this.undo());
             add('edit.redo', 'Edit: Redo', () => this.redo());
@@ -2295,6 +2324,8 @@
                 'tool.rect': { simple: 'F', complex: '' },
                 'tool.circle': { simple: 'C', complex: '' },
                 'tool.tri': { simple: 'V', complex: '' },
+                'tool.freehand': { simple: '', complex: '' },
+                'tool.paintbrush': { simple: 'B', complex: '' },
                 'color.toggleTransparent': { simple: 'T', complex: '' },
                 'color.swap': { simple: 'X', complex: '' },
                 'edit.undo': { simple: '', complex: 'Ctrl+Z' },
@@ -6198,6 +6229,9 @@
             this.state.hueSatSplitRatio = 0.5;
             this.hueSatWorkerBusy = false;
             this.hueSatWorkerPending = false;
+            this.hueSatWorkerFailed = false;
+            this.hueSatGlFailed = false;
+            this.hueSatPreviewBusy = false;
             this.captureHueSatBackup();
             if (this.state.selection) {
                 this.state.selection._disablePalette = true;
@@ -6251,6 +6285,14 @@
             this.state.hueSatWorkerTimeout = null;
             this.resetHueSatUI();
             this.hueSatBackup = null;
+            this.hueSatBaseData = null;
+            this.hueSatWorkerBaseVersion = 0;
+            if (this.hueSatWorker) {
+                this.hueSatWorker.terminate();
+                this.hueSatWorker = null;
+                this.hueSatWorkerCallbacks?.clear();
+            }
+            this.disposeHueSatGL();
             // If the Hue/Sat panel was docked as a sidebar, undock it and restore the
             // floating window state before closing the modal.
             const hsModal = document.getElementById('modal-huesat');
@@ -6323,7 +6365,6 @@
             const label = document.getElementById('hs-channel-label');
             if (label) label.textContent = channel;
             document.querySelectorAll('#modal-huesat .channel-wrap').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('#modal-huesat .ring-label').forEach(b => b.classList.remove('active'));
             const masterBtn = document.getElementById('hs-master-btn');
             if (masterBtn) masterBtn.classList.toggle('active', channel === 'Master');
             const map = { R: '.pos-r', Y: '.pos-y', G: '.pos-g', C: '.pos-c', B: '.pos-b', M: '.pos-m' };
@@ -6399,12 +6440,6 @@
                 const newSat   = Math.max(0, Math.min(100, 100 + sShift));
                 const newLight = Math.max(0, Math.min(100, 50 + lShift * 0.5));
                 btn.style.background = `hsl(${newHue}, ${newSat}%, ${newLight}%)`;
-                const ring = document.querySelector(`#modal-huesat ${btnMap[key]} .channel-ring`);
-                if (ring) {
-                    const poly = ring.querySelector('.ring-poly');
-                    if (poly) poly.setAttribute('stroke', `hsl(${newHue}, ${newSat}%, ${newLight}%)`);
-                    else ring.style.background = `hsl(${newHue}, ${newSat}%, ${newLight}%)`;
-                }
             }
         }
         _hsUpdatePreviewColors() {
@@ -6452,35 +6487,22 @@
             } catch(e) { adj.style.background = `rgb(${origR},${origG},${origB})`; }
         }
         _rgbToHsl(r,g,b) {
-            r/=255;g/=255;b/=255;
-            const max=Math.max(r,g,b),min=Math.min(r,g,b);
-            let h,s,l=(max+min)/2;
-            if(max===min){h=s=0;}else{
-                const d=max-min;
-                s=l>0.5?d/(2-max-min):d/(max+min);
-                switch(max){case r:h=(g-b)/d+(g<b?6:0);break;case g:h=(b-r)/d+2;break;default:h=(r-g)/d+4;}
-                h/=6;
-            }
-            return[h,s,l];
+            const {h,s,l} = this.rgbToHsl(r/255, g/255, b/255);
+            return [h,s,l];
         }
         _hslToRgb(h,s,l) {
-            let r,g,b;
-            if(s===0){r=g=b=l;}else{
-                const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q;
-                const hue2rgb=(p,q,t)=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};
-                r=hue2rgb(p,q,h+1/3);g=hue2rgb(p,q,h);b=hue2rgb(p,q,h-1/3);
-            }
-            return[Math.round(r*255),Math.round(g*255),Math.round(b*255)];
+            const c = this.hslToRgb(h,s,l);
+            return [Math.round(c.r*255), Math.round(c.g*255), Math.round(c.b*255)];
         }
         saveHueSatState() {
             const c = this.hueSatChannels[this.state.hueSatChannel];
             if (!c) return;
-            c.hue = parseFloat(document.getElementById('hs-hue').value) || 0;
-            c.sat = parseFloat(document.getElementById('hs-sat').value) || 0;
-            c.light = parseFloat(document.getElementById('hs-light').value) || 0;
-            c.chroma = parseFloat(document.getElementById('hs-chroma').value);
+            c.hue = parseFloat(document.getElementById('hs-hue')?.value) || 0;
+            c.sat = parseFloat(document.getElementById('hs-sat')?.value) || 0;
+            c.light = parseFloat(document.getElementById('hs-light')?.value) || 0;
+            c.chroma = parseFloat(document.getElementById('hs-chroma')?.value);
             if (!Number.isFinite(c.chroma)) c.chroma = 100;
-            c.overlap = parseFloat(document.getElementById('hs-overlap').value) || 0;
+            c.overlap = parseFloat(document.getElementById('hs-overlap')?.value) || 0;
         }
         loadHueSatState() {
             const c = this.hueSatChannels[this.state.hueSatChannel];
@@ -6519,7 +6541,6 @@
             const label = document.getElementById('hs-channel-label');
             if (label) label.textContent = 'Master';
             document.querySelectorAll('#modal-huesat .channel-wrap').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('#modal-huesat .ring-label').forEach(b => b.classList.remove('active'));
             const masterBtn = document.getElementById('hs-master-btn');
             if (masterBtn) masterBtn.classList.add('active');
             this.setHueSatVal('hs-hue', 'hs-hue-num', 0);
@@ -6542,7 +6563,7 @@
             this.updateHueSatPreview();
         }
         getHueSatTargetRect() {
-            if (!this.bounds) this.updateBounds();
+            this.updateBounds();
             const z = this.config.zoom || 1;
             if (this.state.selection) {
                 const n = this.getNormalizedRect(this.state.selection);
@@ -6591,7 +6612,11 @@ void main() {
 }
 `;
             const fsSrc = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
 precision mediump float;
+#endif
 varying vec2 vTex;
 uniform sampler2D uImage;
 uniform float uHue[7];
@@ -6681,7 +6706,7 @@ vec3 lab2rgb(vec3 lab) {
         clamp(toSrgb(max(0.0, bl)), 0.0, 1.0)
     );
 }
-vec3 applyChannel(vec3 hsl, vec3 rgb, float hue, float sat, float light, float center, float overlap, float chroma) {
+vec3 applyChannel(vec3 hsl, vec3 rgb, float hue, float sat, float light, float center, float overlap, float chroma, bool wasAchromatic) {
     if (hue == 0.0 && sat == 0.0 && light == 0.0 && overlap == 0.0 && chroma == 100.0) return rgb;
     bool useChannel = center >= 0.0;
     if (useChannel) {
@@ -6691,6 +6716,7 @@ vec3 applyChannel(vec3 hsl, vec3 rgb, float hue, float sat, float light, float c
         float range = min(180.0, 20.0 + overlap * 1.6);
         if (deg > range * 0.5) return rgb;
     }
+    if (wasAchromatic && hue == 0.0) sat = 0.0;
     // Apply hue/sat/light in HSL space
     vec3 outRgb = rgb;
     if (hue != 0.0 || sat != 0.0 || light != 0.0) {
@@ -6714,8 +6740,9 @@ void main() {
     vec4 color = texture2D(uImage, vTex);
     vec3 hsl = rgb2hsl(color.rgb);
     vec3 rgb = color.rgb;
+    bool wasAchromatic = (color.r == color.g && color.g == color.b);
     for (int i = 0; i < 7; i++) {
-        rgb = applyChannel(hsl, rgb, uHue[i], uSat[i], uLight[i], uCenter[i], uOverlap[i], uChroma[i]);
+        rgb = applyChannel(hsl, rgb, uHue[i], uSat[i], uLight[i], uCenter[i], uOverlap[i], uChroma[i], wasAchromatic);
         hsl = rgb2hsl(rgb);
     }
     gl_FragColor = vec4(rgb, color.a);
@@ -6731,6 +6758,8 @@ void main() {
             const vs = compile(gl.VERTEX_SHADER, vsSrc);
             const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
             if (!vs || !fs) {
+                if (vs) gl.deleteShader(vs);
+                if (fs) gl.deleteShader(fs);
                 this.hueSatGlFailed = true;
                 return null;
             }
@@ -6784,11 +6813,28 @@ void main() {
             };
             canvas.addEventListener('webglcontextlost', (e) => {
                 e.preventDefault();
-                this.hueSatGl = null;
-                this.hueSatGlCanvas = null;
-                this.hueSatGlFailed = false; // allow re-init on next use
+                this.disposeHueSatGL();
+                this.hueSatGlFailed = false;
             }, { once: true });
             return gl;
+        }
+        disposeHueSatGL() {
+            const gl = this.hueSatGl;
+            if (!gl) return;
+            if (this.hueSatGlTex) gl.deleteTexture(this.hueSatGlTex);
+            if (this.hueSatGlProgram) gl.deleteProgram(this.hueSatGlProgram);
+            if (this.hueSatGlPosBuf) gl.deleteBuffer(this.hueSatGlPosBuf);
+            if (this.hueSatGlTexBuf) gl.deleteBuffer(this.hueSatGlTexBuf);
+            this.hueSatGl = null;
+            this.hueSatGlCanvas = null;
+            this.hueSatGlProgram = null;
+            this.hueSatGlPosBuf = null;
+            this.hueSatGlTexBuf = null;
+            this.hueSatGlTex = null;
+            this.hueSatGlUniforms = null;
+            this.hueSatGlAttribs = null;
+            this.hueSatGlBufs = null;
+            this.hueSatGlMaxTex = null;
         }
         shouldUseHueSatGL(w, h) {
             if (this.hueSatGlFailed || (w * h) < 200000) return false;
@@ -6951,6 +6997,7 @@ self.onmessage = (e) => {
             const r = data[i] / 255;
             const g = data[i + 1] / 255;
             const b = data[i + 2] / 255;
+            const wasAchromatic = (r === g && g === b);
             const hsl = rgbToHsl(r, g, b);
             if (useChannel) {
                 const center = hueCenters[channel] / 360;
@@ -6962,6 +7009,7 @@ self.onmessage = (e) => {
             let nh = hsl.h + hueShift;
             nh = nh - Math.floor(nh);
             let ns = Math.max(0, Math.min(1, hsl.s + satShift));
+            if (wasAchromatic && !hueShift) ns = 0;
             let nl = Math.max(0, Math.min(1, hsl.l + lightShift));
             let or = r, og = g, ob = b;
             if (hueShift || satShift || lightShift) {
@@ -7061,6 +7109,9 @@ self.onmessage = (e) => {
         }
         renderHueSatWork(work) {
             if (this.state.selection) {
+                if (this.state.selection.canvas && this.state.selection.canvas !== this.hueSatBackup) {
+                    this.state.selection.canvas.width = 0;
+                }
                 this.state.selection.canvas = work;
                 this.state.selection._cache = null;
                 this.state.selection._glTexDirty = true;
@@ -7107,6 +7158,11 @@ self.onmessage = (e) => {
         }
         updateHueSatPreview() {
             if (!this.state.hueSatActive || !this.hueSatBackup) return;
+            if (this.hueSatPreviewBusy) {
+                clearTimeout(this.state.hueSatPreviewTimer);
+                this.state.hueSatPreviewTimer = setTimeout(() => this.updateHueSatPreview(), 40);
+                return;
+            }
             // Live preview strip update
             this._hsUpdatePreviewColors();
             const now = performance.now();
@@ -7117,13 +7173,25 @@ self.onmessage = (e) => {
             }
             this.state.hueSatPreviewLast = now;
             this.saveHueSatState();
+            // Early exit if all channels are at default (no adjustment to apply)
+            const allDefault = Object.values(this.hueSatChannels).every(c =>
+                !c || (!c.hue && !c.sat && !c.light && (c.chroma === undefined || c.chroma === 100) && !c.overlap)
+            );
+            if (allDefault) {
+                if (this.hueSatBackup) this.renderHueSatWork(this.hueSatBackup);
+                return;
+            }
+            this.hueSatPreviewBusy = true;
+            const done = () => { this.hueSatPreviewBusy = false; };
             const fallback = () => {
+                done();
                 if (this.hueSatBackup) this.renderHueSatWork(this.hueSatBackup);
             };
             if (this.shouldUseHueSatGL(this.hueSatBackup.width, this.hueSatBackup.height)) {
                 const work = this.applyHueSatGL(this.hueSatBackup);
                 if (work) {
                     this.renderHueSatWork(work);
+                    done();
                     return;
                 }
             }
@@ -7136,6 +7204,7 @@ self.onmessage = (e) => {
             if (this.shouldUseHueSatWorker(bw, bh)) {
                 this.initHueSatWorkerBase();
                 if (this.hueSatWorkerBusy) {
+                    done();
                     this.hueSatWorkerPending = true;
                     return;
                 }
@@ -7146,6 +7215,7 @@ self.onmessage = (e) => {
                 this.runHueSatWorker(bw, bh, reqId).then((buffer) => {
                     this.hueSatWorkerBusy = false;
                     this.endOperation();
+                    done();
                     if (!this.state.hueSatActive) return;
                     if (reqId !== this.hueSatPreviewReq) return;
                     if (!buffer) { fallback(); return; }
@@ -7165,6 +7235,7 @@ self.onmessage = (e) => {
                     this.hueSatWorkerBusy = false;
                     this.hueSatWorkerPending = false;
                     this.endOperation();
+                    done();
                     this.updateHueSatPreview();
                 }, 250);
                 return;
@@ -7175,6 +7246,7 @@ self.onmessage = (e) => {
                 this.applyHueSatAll(imgData);
                 wctx.putImageData(imgData, 0, 0);
                 this.renderHueSatWork(work);
+                done();
             } catch (e) {
                 fallback();
             }
@@ -7189,6 +7261,28 @@ self.onmessage = (e) => {
                 this.applyHueSatToImageData(imgData, c.hue || 0, c.sat || 0, c.light || 0, channel, c.overlap || 0, chroma);
             }
         }
+        _toLinear(v) { return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+        _toSrgb(v)   { return v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1/2.4) - 0.055; }
+        _labF(t)     { return t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16/116; }
+        _labFInv(t)  { return t > 0.206897 ? t*t*t : (t - 16/116) / 7.787; }
+        _rgbToLab(r, g, b) {
+            const Xn = 0.95047, Yn = 1.0, Zn = 1.08883;
+            const rl = this._toLinear(r), gl = this._toLinear(g), bl = this._toLinear(b);
+            const X = (rl*0.4124564 + gl*0.3575761 + bl*0.1804375) / Xn;
+            const Y = (rl*0.2126729 + gl*0.7151522 + bl*0.0721750) / Yn;
+            const Z = (rl*0.0193339 + gl*0.1191920 + bl*0.9503041) / Zn;
+            return { L: 116*this._labF(Y)-16, A: 500*(this._labF(X)-this._labF(Y)), B: 200*(this._labF(Y)-this._labF(Z)) };
+        }
+        _labToRgb(L, A, B) {
+            const Xn = 0.95047, Yn = 1.0, Zn = 1.08883;
+            const fy = (L+16)/116, fx = A/500+fy, fz = fy-B/200;
+            const X = this._labFInv(fx)*Xn, Y = this._labFInv(fy)*Yn, Z = this._labFInv(fz)*Zn;
+            return {
+                r: Math.max(0, Math.min(1, this._toSrgb(Math.max(0, 3.2404542*X - 1.5371385*Y - 0.4985314*Z)))),
+                g: Math.max(0, Math.min(1, this._toSrgb(Math.max(0, -0.9692660*X + 1.8760108*Y + 0.0415560*Z)))),
+                b: Math.max(0, Math.min(1, this._toSrgb(Math.max(0, 0.0556434*X - 0.2040259*Y + 1.0572252*Z))))
+            };
+        }
         applyHueSatToImageData(imgData, hue, sat, light, channel, overlap, chroma) {
             const d = imgData.data;
             const hueShift = hue / 360;
@@ -7198,44 +7292,11 @@ self.onmessage = (e) => {
             const hueCenters = { R: 0, Y: 60, G: 120, C: 180, B: 240, M: 300 };
             const useChannel = channel && channel !== 'Master' && hueCenters[channel] !== undefined;
             const range = Math.min(180, 20 + (overlap || 0) * 1.6);
-            // sRGB gamma-expand to linear light for perceptually accurate colour arithmetic.
-            const toLinear = v => v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-            const toSrgb   = v => v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1/2.4) - 0.055;
-            // D65 illuminant reference white (CIE standard for sRGB).
-            // Used to normalise XYZ tristimulus values before the Lab conversion.
-            const Xn = 0.95047, Yn = 1.00000, Zn = 1.08883;
-            const labF = t => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16/116;
-            const labFInv = t => t > 0.206897 ? t*t*t : (t - 16/116) / 7.787;
-            const rgbToLab = (r, g, b) => {
-                const rl = toLinear(r), gl = toLinear(g), bl = toLinear(b);
-                const X = (rl*0.4124564 + gl*0.3575761 + bl*0.1804375) / Xn;
-                const Y = (rl*0.2126729 + gl*0.7151522 + bl*0.0721750) / Yn;
-                const Z = (rl*0.0193339 + gl*0.1191920 + bl*0.9503041) / Zn;
-                const L = 116 * labF(Y) - 16;
-                const A = 500 * (labF(X) - labF(Y));
-                const B = 200 * (labF(Y) - labF(Z));
-                return { L, A, B };
-            };
-            const labToRgb = (L, A, B) => {
-                const fy = (L + 16) / 116;
-                const fx = A / 500 + fy;
-                const fz = fy - B / 200;
-                const X = labFInv(fx) * Xn;
-                const Y = labFInv(fy) * Yn;
-                const Z = labFInv(fz) * Zn;
-                const rl =  3.2404542*X - 1.5371385*Y - 0.4985314*Z;
-                const gl = -0.9692660*X + 1.8760108*Y + 0.0415560*Z;
-                const bl =  0.0556434*X - 0.2040259*Y + 1.0572252*Z;
-                return {
-                    r: Math.max(0, Math.min(1, toSrgb(Math.max(0, rl)))),
-                    g: Math.max(0, Math.min(1, toSrgb(Math.max(0, gl)))),
-                    b: Math.max(0, Math.min(1, toSrgb(Math.max(0, bl))))
-                };
-            };
             for (let i = 0; i < d.length; i += 4) {
                 const r = d[i] / 255;
                 const g = d[i + 1] / 255;
                 const b = d[i + 2] / 255;
+                const wasAchromatic = (r === g && g === b);
                 const hsl = this.rgbToHsl(r, g, b);
                 if (useChannel) {
                     const center = hueCenters[channel] / 360;
@@ -7247,6 +7308,7 @@ self.onmessage = (e) => {
                 let nh = hsl.h + hueShift;
                 nh = nh - Math.floor(nh);
                 let ns = Math.max(0, Math.min(1, hsl.s + satShift));
+                if (wasAchromatic && !hueShift) ns = 0;
                 let nl = Math.max(0, Math.min(1, hsl.l + lightShift));
                 let or = r, og = g, ob = b;
                 if (hueShift || satShift || lightShift) {
@@ -7254,10 +7316,10 @@ self.onmessage = (e) => {
                     or = c.r; og = c.g; ob = c.b;
                 }
                 if (chromaScale !== 1) {
-                    const lab = rgbToLab(or, og, ob);
+                    const lab = this._rgbToLab(or, og, ob);
                     lab.A *= chromaScale;
                     lab.B *= chromaScale;
-                    const c = labToRgb(lab.L, lab.A, lab.B);
+                    const c = this._labToRgb(lab.L, lab.A, lab.B);
                     or = c.r; og = c.g; ob = c.b;
                 }
                 d[i]     = Math.round(or * 255);
@@ -7272,6 +7334,7 @@ self.onmessage = (e) => {
             this.setupRibbonDrag('ribbon-debug', 'ribbon-order-debug');
             this.applyRibbonLayout();
             this.initRibbonContextMenu();
+            this.initToolGrid();
         }
         initTabScrollSwitch() {
             const tabRow = document.querySelector('.tab-row');
@@ -7615,6 +7678,340 @@ self.onmessage = (e) => {
                 row.appendChild(visibleWrap);
                 list.appendChild(row);
             });
+        }
+        // ─── Tool Grid System (column-major, max 3 rows, unlimited cols) ─────────
+        getToolManifestItem(id) {
+            return this.toolManifest.find(t => t.id === id) || null;
+        }
+        _makeEmptyRow() { return new Array(20).fill(null); }
+        getDefaultToolGrid() {
+            const t = [
+                ['pencil','fill','wand'],
+                ['eraser','picker','zoom'],
+                ['gradient','anchor-toggle','freehand']
+            ].map(arr => { const r = this._makeEmptyRow(); arr.forEach((v,i) => r[i]=v); return r; });
+            const s = [
+                ['line','curve','poly','rect'],
+                ['circle','tri','path',null],
+                []
+            ].map(arr => { const r = this._makeEmptyRow(); arr.forEach((v,i) => r[i]=v); return r; });
+            return { tools: t, shapes: s };
+        }
+        loadToolGridLayout() {
+            const raw = this.lsGet('paint.toolGridLayout');
+            if (raw) {
+                try {
+                    const p = JSON.parse(raw);
+                    if (this.validateToolGridLayout(p)) return p;
+                } catch (e) { /* fall through */ }
+            }
+            const def = this.getDefaultToolGrid();
+            this.saveToolGridLayout(def);
+            return def;
+        }
+        saveToolGridLayout(layout) {
+            this.lsSet('paint.toolGridLayout', JSON.stringify(layout));
+        }
+        validateToolGridLayout(layout) {
+            if (!layout || typeof layout !== 'object') return false;
+            if (!Array.isArray(layout.tools) || !Array.isArray(layout.shapes)) return false;
+            for (const key of ['tools', 'shapes']) {
+                if (layout[key].length !== 3) return false;
+                for (const row of layout[key]) {
+                    if (!Array.isArray(row) || row.length > 20) return false;
+                    for (const cell of row) {
+                        if (cell !== null && !this.getToolManifestItem(cell)) return false;
+                    }
+                }
+            }
+            return true;
+        }
+        _buildSlot(item, id) {
+            const slot = document.createElement('div');
+            slot.className = 'tool-grid-slot btn btn-icon';
+            slot.dataset.toolId = id;
+            slot.title = item.label;
+            if (id === 'anchor-toggle') slot.classList.add('toggle-btn');
+            // Dual-icon tools: render both variants, sync functions toggle visibility
+            if (id === 'pencil') {
+                slot.innerHTML = '<span class="pencil-icon pencil-icon-standard show"><img class="toolbar-icon" alt="" src="assets/toolbar-icons/pencil.png"></span><span class="pencil-icon pencil-icon-smart"><img class="toolbar-icon" alt="" src="assets/toolbar-icons/pencil-smart.png"></span>';
+            } else if (id === 'pencil-smart') {
+                const img = document.createElement('img'); img.className = 'toolbar-icon'; img.alt = ''; img.src = 'assets/toolbar-icons/pencil-smart.png';
+                slot.appendChild(img);
+            } else if (id === 'wand') {
+                slot.innerHTML = '<span class="wand-icon wand-icon-contig show"><img class="toolbar-icon" alt="" src="assets/toolbar-icons/wand-contig.png"></span><span class="wand-icon wand-icon-global"><img class="toolbar-icon icon-wand-global" src="assets/toolbar-icons/wand-global.png"></span>';
+            } else if (id === 'wand-global') {
+                const img = document.createElement('img'); img.className = 'toolbar-icon icon-wand-global'; img.alt = ''; img.src = 'assets/toolbar-icons/wand-global.png';
+                slot.appendChild(img);
+            } else if (id === 'anchor-toggle') {
+                slot.innerHTML = '<span class="toggle-icons"><img class="icon-off toolbar-icon" src="assets/anchor.png"><img class="icon-on toolbar-icon" src="assets/Free.png"></span>';
+            } else if (item.iconSrc) {
+                const img = document.createElement('img');
+                img.className = 'toolbar-icon';
+                img.src = item.iconSrc;
+                img.alt = '';
+                slot.appendChild(img);
+            } else if (item.iconSvg) {
+                slot.insertAdjacentHTML('beforeend', item.iconSvg);
+            }
+            if (item.isToggle) {
+                slot.addEventListener('click', (e) => { e.stopPropagation(); this.toggleAnchorCanvas(); });
+            } else if (item.mode && item.mode.selectTool) {
+                slot.addEventListener('click', (e) => { e.stopPropagation(); this.setSelectTool(item.mode.selectTool); });
+            } else {
+                slot.addEventListener('click', (e) => { e.stopPropagation(); this._activateToolFromGrid(item); });
+            }
+            if (id === 'pencil' || id === 'pencil-smart') {
+                slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); const n = this.config.pencilMode === 'smart' ? 'standard' : 'smart'; this.setPencilMode(n); this.setTool('pencil'); });
+            }
+            if (id === 'wand' || id === 'wand-global') {
+                slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); const n = this.config.wandMode === 'global' ? 'contiguous' : 'global'; this.setWandMode(n); this.setTool('wand'); });
+            }
+            if (id === 'picker') {
+                slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); this.openPickerMenu(e); });
+            }
+            return slot;
+        }
+        _renderSectionGrid(sectionKey, containerId) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            const layout = this.loadToolGridLayout();
+            const rows = layout[sectionKey] || [];
+            let maxCol = -1;
+            for (const row of rows) {
+                for (let ci = row.length - 1; ci >= 0; ci--) {
+                    if (row[ci] !== null) { if (ci > maxCol) maxCol = ci; break; }
+                }
+            }
+            if (maxCol < 0) { container.innerHTML = ''; return; }
+            container.style.gridTemplateColumns = `repeat(${maxCol + 1}, 24px)`;
+            container.innerHTML = '';
+            const bound = maxCol + 1;
+            rows.forEach(row => {
+                let hasAny = false;
+                for (let ci = 0; ci < bound; ci++) {
+                    const id = ci < row.length ? row[ci] : null;
+                    if (id !== null) { hasAny = true; break; }
+                }
+                if (!hasAny) return;
+                for (let ci = 0; ci < bound; ci++) {
+                    const id = ci < row.length ? row[ci] : null;
+                    if (id === null) {
+                        const e = document.createElement('div');
+                        e.className = 'tool-grid-slot tool-slot-empty';
+                        e.style.width = '24px'; e.style.height = '24px';
+                        container.appendChild(e);
+                    } else {
+                        const item = this.getToolManifestItem(id);
+                        if (item) {
+                            container.appendChild(this._buildSlot(item, id));
+                        } else {
+                            const e = document.createElement('div');
+                            e.className = 'tool-grid-slot tool-slot-empty';
+                            e.style.width = '24px'; e.style.height = '24px';
+                            container.appendChild(e);
+                        }
+                    }
+                }
+            });
+        }
+        renderToolGrid() {
+            this._renderSectionGrid('tools', 'dynamic-tools-grid');
+            this._renderSectionGrid('shapes', 'dynamic-shapes-grid');
+            this.syncToolGridActive();
+        }
+        syncToolGridActive() {
+            const t = this.config.tool;
+            const selTool = this.config.selectTool;
+            document.querySelectorAll('.tool-grid-slot.btn-icon').forEach(b => {
+                b.classList.remove('active');
+                const id = b.dataset.toolId;
+                if (!id) return;
+                const item = this.getToolManifestItem(id);
+                if (!item) return;
+                if (item.toolId === t) {
+                    let matched = false;
+                    if (item.mode && item.mode.selectTool && selTool) {
+                        if (item.mode.selectTool === selTool) { b.classList.add('active'); matched = true; }
+                    } else if (item.mode && item.mode.pencilMode) {
+                        if (item.mode.pencilMode === this.config.pencilMode) { b.classList.add('active'); matched = true; }
+                    } else if (item.mode && item.mode.wandMode) {
+                        if (item.mode.wandMode === this.config.wandMode) { b.classList.add('active'); matched = true; }
+                    }
+                    if (!matched) {
+                        const hasModeSpecific = [...document.querySelectorAll('.tool-grid-slot.btn-icon')].some(el => {
+                            const eid = el.dataset.toolId;
+                            if (!eid || eid === id) return false;
+                            const ei = this.getToolManifestItem(eid);
+                            return ei && ei.toolId === t && ei.mode;
+                        });
+                        if (!hasModeSpecific) b.classList.add('active');
+                    }
+                }
+            });
+        }
+        _activateToolFromGrid(item) {
+            if (item.mode) {
+                if (item.mode.pencilMode) this.setPencilMode(item.mode.pencilMode);
+                if (item.mode.wandMode) this.setWandMode(item.mode.wandMode);
+            }
+            if (item.toolId) this.setTool(item.toolId);
+        }
+        initToolGrid() {
+            this.renderToolGrid();
+        }
+        // ─── Tool Customizer (Modal) ──────────────────────────────────────────────
+        buildToolCustomizer() {
+            this._customizerTab = 'tools';
+            this._customizerState = JSON.parse(JSON.stringify(this.loadToolGridLayout()));
+            this._setCustomizerTab('tools');
+        }
+        _setCustomizerTab(tab) {
+            this._customizerTab = tab;
+            document.querySelectorAll('.customizer-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+            this._renderCustomizerGrid();
+            this._renderCustomizerDrawer();
+        }
+        _renderCustomizerGrid() {
+            const list = document.getElementById('tool-customizer-grid');
+            if (!list) return;
+            list.style.gridTemplateColumns = 'repeat(20, 28px)';
+            list.innerHTML = '';
+            const rows = this._customizerState[this._customizerTab];
+            if (!rows) return;
+            for (let ri = 0; ri < 3; ri++) {
+                const row = rows[ri] || [];
+                for (let ci = 0; ci < 20; ci++) {
+                    const id = ci < row.length ? row[ci] : null;
+                    const slot = document.createElement('div');
+                    slot.className = 'customizer-slot';
+                    slot.dataset.row = ri;
+                    slot.dataset.col = ci;
+                    if (id === null) {
+                        slot.classList.add('customizer-slot-empty');
+                    } else {
+                        const item = this.getToolManifestItem(id);
+                        if (item) {
+                            slot.classList.add('customizer-slot-filled');
+                            slot.title = item.label;
+                            if (item.iconSrc) {
+                                const img = document.createElement('img');
+                                img.className = 'toolbar-icon';
+                                img.src = item.iconSrc;
+                                img.alt = '';
+                                slot.appendChild(img);
+                            } else if (item.iconSvg) {
+                                slot.insertAdjacentHTML('beforeend', item.iconSvg);
+                            }
+                        }
+                    }
+                    slot.setAttribute('draggable', 'true');
+                    this._attachDnD(slot, ri, ci);
+                    slot.addEventListener('dblclick', () => { this._removeItem(ri, ci); });
+                    slot.addEventListener('contextmenu', (e) => { e.preventDefault(); this._removeItem(ri, ci); });
+                    list.appendChild(slot);
+                }
+            }
+        }
+        _renderCustomizerDrawer() {
+            const drawer = document.getElementById('tool-customizer-drawer');
+            if (!drawer) return;
+            const used = new Set();
+            ['tools','shapes'].forEach(k => {
+                (this._customizerState[k] || []).forEach(row => row.forEach(id => { if (id) used.add(id); }));
+            });
+            drawer.innerHTML = '';
+            this.toolManifest.forEach(item => {
+                if (used.has(item.id)) return;
+                const el = document.createElement('div');
+                el.className = 'customizer-drawer-item';
+                el.title = item.label;
+                el.setAttribute('draggable', 'true');
+                el.dataset.drawerId = item.id;
+                if (item.iconSrc) {
+                    const img = document.createElement('img');
+                    img.className = 'toolbar-icon';
+                    img.src = item.iconSrc;
+                    img.alt = '';
+                    el.appendChild(img);
+                } else if (item.iconSvg) {
+                    el.insertAdjacentHTML('beforeend', item.iconSvg);
+                }
+                el.addEventListener('dragstart', (e) => {
+                    e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'drawer', id: item.id }));
+                    e.dataTransfer.effectAllowed = 'move';
+                    el.classList.add('customizer-dragging');
+                });
+                el.addEventListener('dragend', () => { el.classList.remove('customizer-dragging'); });
+                drawer.appendChild(el);
+            });
+        }
+        _attachDnD(slot, row, col) {
+            slot.addEventListener('dragstart', (e) => {
+                const tab = this._customizerTab;
+                const arr = this._customizerState[tab];
+                const id = (arr[row] && col < arr[row].length) ? arr[row][col] : null;
+                e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'grid', row, col, id }));
+                e.dataTransfer.effectAllowed = 'move';
+                slot.classList.add('customizer-dragging');
+            });
+            slot.addEventListener('dragend', () => {
+                slot.classList.remove('customizer-dragging');
+                document.querySelectorAll('.customizer-slot').forEach(s => s.classList.remove('customizer-over'));
+            });
+            slot.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                slot.classList.add('customizer-over');
+            });
+            slot.addEventListener('dragleave', () => { slot.classList.remove('customizer-over'); });
+            slot.addEventListener('drop', (e) => {
+                e.preventDefault();
+                slot.classList.remove('customizer-over');
+                try {
+                    const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+                    const tab = this._customizerTab;
+                    const arr = this._customizerState[tab];
+                    while (arr.length < 3) arr.push(this._makeEmptyRow());
+                    while (arr[row].length < 20) arr[row].push(null);
+                    if (data.type === 'drawer') {
+                        arr[row][col] = data.id;
+                    } else if (data.type === 'grid') {
+                        const sr = data.row, sc = data.col;
+                        while (arr[sr].length < 20) arr[sr].push(null);
+                        const tmp = arr[row][col];
+                        arr[row][col] = arr[sr][sc];
+                        arr[sr][sc] = tmp;
+                    }
+                    this._renderCustomizerGrid();
+                    this._renderCustomizerDrawer();
+                } catch (ex) { /* ignore */ }
+            });
+        }
+        _removeItem(row, col) {
+            const arr = this._customizerState[this._customizerTab];
+            if (arr[row] && col < arr[row].length) {
+                arr[row][col] = null;
+                this._renderCustomizerGrid();
+                this._renderCustomizerDrawer();
+            }
+        }
+        applyToolGridLayout() {
+            if (!this._customizerState) return;
+            if (!this.validateToolGridLayout(this._customizerState)) {
+                alert('Invalid layout — some tools were not recognized.');
+                return;
+            }
+            this.saveToolGridLayout(this._customizerState);
+            this.renderToolGrid();
+        }
+        resetToolGridLayout() {
+            const def = this.getDefaultToolGrid();
+            this._customizerState = JSON.parse(JSON.stringify(def));
+            if (this._customizerTab) {
+                this._renderCustomizerGrid();
+                this._renderCustomizerDrawer();
+            }
         }
         captureRibbonRects(ribbon) {
             const map = new Map();
@@ -9734,12 +10131,20 @@ void main() {
 
         syncPencilMode() {
             const btn = document.getElementById('pencil-tool-btn');
-            if (!btn) return;
-            const std = btn.querySelector('.pencil-icon-standard');
-            const smart = btn.querySelector('.pencil-icon-smart');
-            const isSmart = this.config.pencilMode === 'smart';
-            if (std) std.classList.toggle('show', !isSmart);
-            if (smart) smart.classList.toggle('show', isSmart);
+            if (btn) {
+                const std = btn.querySelector('.pencil-icon-standard');
+                const smart = btn.querySelector('.pencil-icon-smart');
+                const isSmart = this.config.pencilMode === 'smart';
+                if (std) std.classList.toggle('show', !isSmart);
+                if (smart) smart.classList.toggle('show', isSmart);
+            }
+            document.querySelectorAll('.tool-grid-slot[data-tool-id="pencil"]').forEach(slot => {
+                const std = slot.querySelector('.pencil-icon-standard');
+                const smart = slot.querySelector('.pencil-icon-smart');
+                const isSmart = this.config.pencilMode === 'smart';
+                if (std) std.classList.toggle('show', !isSmart);
+                if (smart) smart.classList.toggle('show', isSmart);
+            });
         }
 
         syncSmartPencilDebugOptions() {
@@ -10251,6 +10656,16 @@ void main() {
                 return;
             }
 
+            if (this.config.tool === 'paintbrush') {
+                if (e.button !== 0) return;
+                this.state.isDrawing = true;
+                this.state.paintbrushActive = true;
+                if (this.brush && this.brush.beginStroke) {
+                    this.brush.beginStroke(p.x, p.y, e.pressure != null ? e.pressure : 0.5, this.getActiveDrawColor(false));
+                }
+                return;
+            }
+
             const isRight = e.button===2;
             const color = this.getActiveDrawColor(isRight || this.config.tool==='eraser');
 
@@ -10703,6 +11118,25 @@ void main() {
                 this.updateHoverPreview(p.x, p.y);
                 return;
             }
+
+            if (this.config.tool === 'paintbrush' && this.state.isDrawing) {
+                var _color = this.getActiveDrawColor(false);
+                var _coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
+                if (_coalesced && _coalesced.length > 0) {
+                    for (var _ci = 0; _ci < _coalesced.length; _ci++) {
+                        var _cp = this.getMouse(_coalesced[_ci]);
+                        if (this.brush && this.brush.moveStroke) {
+                            this.brush.moveStroke(_cp.x, _cp.y, _coalesced[_ci].pressure != null ? _coalesced[_ci].pressure : 0.5, _color);
+                        }
+                    }
+                } else {
+                    if (this.brush && this.brush.moveStroke) {
+                        this.brush.moveStroke(p.x, p.y, e.pressure != null ? e.pressure : 0.5, _color);
+                    }
+                }
+                this.updateHoverPreview(p.x, p.y);
+                return;
+            }
             if(['pencil','eraser'].includes(this.config.tool)) {
                 const isRight = e.buttons===2;
                 const color = this.getActiveDrawColor(isRight || this.config.tool==='eraser');
@@ -11116,6 +11550,15 @@ void main() {
                 this._freehandInputPoints = [];
                 this._freehandStrokePoints = null;
                 this._fhPreviewing = false;
+                return;
+            }
+
+            if (this.config.tool === 'paintbrush' && this.state.paintbrushActive) {
+                this.state.paintbrushActive = false;
+                this.state.isDrawing = false;
+                if (this.brush && this.brush.endStroke) {
+                    this.brush.endStroke();
+                }
                 return;
             }
 
@@ -13050,6 +13493,12 @@ void main() {
                 if (iconContig) iconContig.classList.toggle('show', this.config.wandMode === 'contiguous');
                 if (iconGlobal) iconGlobal.classList.toggle('show', this.config.wandMode === 'global');
             }
+            document.querySelectorAll('.tool-grid-slot[data-tool-id="wand"]').forEach(slot => {
+                const iconContig = slot.querySelector('.wand-icon-contig');
+                const iconGlobal = slot.querySelector('.wand-icon-global');
+                if (iconContig) iconContig.classList.toggle('show', this.config.wandMode === 'contiguous');
+                if (iconGlobal) iconGlobal.classList.toggle('show', this.config.wandMode === 'global');
+            });
         }
         setWandMode(mode) {
             this.config.wandMode = mode === 'global' ? 'global' : 'contiguous';
@@ -15643,10 +16092,12 @@ void main() {
             const btn = document.getElementById('anchor-toggle-btn');
             const label = document.getElementById('anchor-toggle-status');
             if (btn) btn.classList.toggle('is-on', this.config.anchorCanvas);
-            // Also sync the toolbar toggle button
             const toolBtn = document.getElementById('anchor-rotate-toggle-btn');
             if (toolBtn) toolBtn.classList.toggle('is-on', this.config.anchorCanvas);
             if (label) label.textContent = this.config.anchorCanvas ? 'Anchored' : 'Free';
+            document.querySelectorAll('.tool-grid-slot[data-tool-id="anchor-toggle"]').forEach(slot => {
+                slot.classList.toggle('is-on', this.config.anchorCanvas);
+            });
         }
         toggleDragRotate() {
             this.config.dragRotate = !this.config.dragRotate;
@@ -15740,11 +16191,20 @@ void main() {
                     cancelAnimationFrame(this._freehandPendingFrame);
                     this._freehandPendingFrame = null;
                 }
+                this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+                if (this.ui.cTemp) this.ui.cTemp.style.opacity = '1';
                 this._freehandInputPoints = [];
                 this._freehandStrokePoints = null;
                 this._fhPreviewing = false;
             }
-            if (t === 'pencil' || t === 'eraser' || t === 'fill' || this.isShapeTool(t) || t === 'freehand') this.state.lastDrawTool = t;
+            if (this.state.paintbrushActive && t !== 'paintbrush') {
+                this.state.paintbrushActive = false;
+                if (this.brush && this.brush.endStroke) {
+                    this.brush.endStroke();
+                }
+                this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+            }
+            if (t === 'pencil' || t === 'eraser' || t === 'fill' || this.isShapeTool(t) || t === 'freehand' || t === 'paintbrush') this.state.lastDrawTool = t;
             this.config.tool = t;
             if (t !== 'picker') this.pickerCursorHex = null;
             const _gradPanel = document.getElementById('gradient-options');
@@ -15758,6 +16218,11 @@ void main() {
             }
             const _freehandReopen = document.getElementById('freehand-reopen-btn');
             if (_freehandReopen) _freehandReopen.classList.remove('show');
+            const _pbSidebar = document.getElementById('paintbrush-sidebar');
+            if (_pbSidebar) {
+                _pbSidebar.classList.toggle('open', t === 'paintbrush');
+                _pbSidebar.classList.toggle('hidden', t !== 'paintbrush');
+            }
             document.querySelectorAll('.btn, .btn-icon, .split-btn-container').forEach(b=>b.classList.remove('active'));
             const b = document.querySelector(`[data-tool="${t}"]`);
             if(b) b.classList.add('active');
@@ -15765,6 +16230,7 @@ void main() {
                 const selectBtn = document.querySelector('[data-tool="select"]');
                 if (selectBtn) selectBtn.classList.add('active');
             }
+            this.syncToolGridActive();
             this.state.curvePhase = 0;
             this.ui.sizeInput.value = this.getToolWidth(t);
             this.syncLineWidthMenu();
@@ -16656,6 +17122,14 @@ void main() {
                 // [END THIRD-PARTY ASSET - LICENSED LOGIC RESUMES BELOW]
                 return;
             }
+            if (t === 'paintbrush') {
+                if (this.brush && this.brush.updateCursor) {
+                    this.brush.updateCursor();
+                } else {
+                    this.ui.stage.style.cursor = 'crosshair';
+                }
+                return;
+            }
             this.ui.stage.style.cursor = 'crosshair';
         }
         enqueueStroke(seg) {
@@ -16686,6 +17160,28 @@ void main() {
             const q = this.strokeQueue;
             this.strokeQueue = [];
             this.strokeRaf = null;
+            // Compute dirty bounds from all queued strokes for partial tile readback.
+            if (this.tileHistory.enabled && q.length > 0) {
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                for (let i = 0; i < q.length; i++) {
+                    const s = q[i];
+                    const hw = Math.ceil((s.width || 1) / 2) + 1;
+                    const x0 = Math.min(s.x0, s.x1) - hw;
+                    const x1 = Math.max(s.x0, s.x1) + hw;
+                    const y0 = Math.min(s.y0, s.y1) - hw;
+                    const y1 = Math.max(s.y0, s.y1) + hw;
+                    if (x0 < minX) minX = x0;
+                    if (y0 < minY) minY = y0;
+                    if (x1 > maxX) maxX = x1;
+                    if (y1 > maxY) maxY = y1;
+                }
+                const cw = this.config.width, ch = this.config.height;
+                const x = Math.max(0, Math.floor(minX));
+                const y = Math.max(0, Math.floor(minY));
+                const w = Math.min(cw, Math.ceil(maxX)) - x;
+                const h = Math.min(ch, Math.ceil(maxY)) - y;
+                if (w > 0 && h > 0) this._markDirty(x, y, w, h);
+            }
             const webglGroups = new Map();
             const webglQuadGroups = new Map();
             const cpu = [];
@@ -16893,6 +17389,7 @@ void main() {
             if (t === 'eraser') return this.config.eraserWidth;
             if (this.isShapeTool(t)) return this.config.shapeWidth;
             if (t === 'freehand') return this.config.freehand?.size ?? 4;
+            if (t === 'paintbrush') return this.config.paintbrush?.size ?? 12;
             return this.config.lineWidth;
         }
         setToolWidth(t, val) {
@@ -16901,11 +17398,14 @@ void main() {
             let didUpdateActiveShape = false;
             if (t === 'eraser') {
                 this.config.eraserWidth = n;
-            } else if (t === 'freehand') {
+            } else             if (t === 'freehand') {
                 if (!this.config.freehand) this.config.freehand = { size: 4 };
                 this.config.freehand.size = n;
                 this.updateFreehandPanel();
                 this._saveFreehandConfig();
+            } else if (t === 'paintbrush') {
+                if (!this.config.paintbrush) this.config.paintbrush = { size: 12 };
+                this.config.paintbrush.size = n;
             } else if (this.isShapeTool(t)) {
                 this.config.shapeWidth = n;
                 if(this.state.activeShape) {
@@ -17085,7 +17585,9 @@ void main() {
             this.config.width=w;
             this.config.height=h;
             this.tileHistory.enabled = this.shouldUseTiledHistory(w, h);
+            this.tileHistory.tileSize = this._chooseTileSize(w, h);
             this._canvasResizedSinceLastSave = true;
+            this._markDirty(0, 0, w, h);
             this.ui.cMain.width=w;
             this.ui.cMain.height=h;
             this.ui.cTemp.width=w;
@@ -17116,6 +17618,13 @@ void main() {
         }
         shouldUseTiledHistory(w, h) {
             return (w * h) >= this.tileHistory.thresholdPixels;
+        }
+        _chooseTileSize(w, h) {
+            const totalPixels = w * h;
+            if (totalPixels <= 1024 * 1024) return 128;
+            if (totalPixels <= 4 * 1024 * 1024) return 256;
+            if (totalPixels <= 16 * 1024 * 1024) return 512;
+            return 1024;
         }
         _applyMemoryBudget() {
             const gb = navigator.deviceMemory || 8;
@@ -17165,6 +17674,18 @@ void main() {
             }
             return out;
         }
+        // Expand the dirty rect to include the given region (used by draw ops
+        // to avoid full-canvas readback in captureTiledSnapshot).
+        _markDirty(x, y, w, h) {
+            if (!this._dirtyBounds) {
+                this._dirtyBounds = { x1: x, y1: y, x2: x + w, y2: y + h };
+            } else {
+                if (x < this._dirtyBounds.x1) this._dirtyBounds.x1 = x;
+                if (y < this._dirtyBounds.y1) this._dirtyBounds.y1 = y;
+                if (x + w > this._dirtyBounds.x2) this._dirtyBounds.x2 = x + w;
+                if (y + h > this._dirtyBounds.y2) this._dirtyBounds.y2 = y + h;
+            }
+        }
         captureTiledSnapshot(canvas, prevTiles) {
             const tileSize = this.tileHistory.tileSize;
             const width = canvas.width;
@@ -17172,26 +17693,77 @@ void main() {
             const ctx = canvas.getContext('2d');
             const tiles = [];
             const tileMap = new Map();
+
+            // First saveState (initializeBlankDocument): canvas was just filled with
+            // solid white — skip the 100MB readback entirely.
+            if (!prevTiles && this.state.step < 0) {
+                const bgColor = [255, 255, 255, 255];
+                for (let y = 0; y < height; y += tileSize) {
+                    for (let x = 0; x < width; x += tileSize) {
+                        const tw = Math.min(tileSize, width - x);
+                        const th = Math.min(tileSize, height - y);
+                        tiles.push({ x, y, w: tw, h: th, solid: bgColor });
+                        tileMap.set(x + ',' + y, { solid: bgColor });
+                    }
+                }
+                return { width, height, tileSize, tiles, tileMap };
+            }
+
             // Strip readback: reads tileSize-high bands (~4 MB at 4K) instead of
             // one full-canvas readback (~67 MB at 4K). Each strip contains exactly
             // one row of tiles, so no tile crosses a strip boundary.
+            // When a dirty rect is known (delta save), only read strips that intersect it.
+            const db = prevTiles && this._dirtyBounds;
+            // Reset dirtyBounds after consuming — next draw expands it fresh.
+            this._dirtyBounds = null;
             for (let stripY = 0; stripY < height; stripY += tileSize) {
                 const stripH = Math.min(tileSize, height - stripY);
-                const strip = ctx.getImageData(0, stripY, width, stripH);
+                // Skip the entire strip readback if it doesn't intersect the dirty rect.
+                if (db && (stripY + stripH <= db.y1 || stripY >= db.y2)) {
+                    for (let x = 0; x < width; x += tileSize) {
+                        const key = x + ',' + stripY;
+                        const prev = prevTiles.get(key);
+                        if (prev) {
+                            tileMap.set(key, prev);
+                        } else {
+                            tileMap.set(key, {});
+                        }
+                    }
+                    continue;
+                }
+                const readX0 = db ? Math.max(0, db.x1) : 0;
+                const readX1 = db ? Math.min(width, db.x2) : width;
+                const readW = readX1 - readX0;
+                const strip = ctx.getImageData(readX0, stripY, readW, stripH);
                 const stripData = strip.data;
                 const y = stripY;
                 for (let x = 0; x < width; x += tileSize) {
-                    const w = Math.min(tileSize, width - x);
-                    const h = Math.min(tileSize, height - y);
-                    const tileData = new Uint8ClampedArray(w * h * 4);
-                    for (let row = 0; row < h; row++) {
-                        const srcOffset = (row * width + x) * 4;
-                        tileData.set(stripData.subarray(srcOffset, srcOffset + w * 4), row * w * 4);
+                    const tw = Math.min(tileSize, width - x);
+                    const th = Math.min(tileSize, height - y);
+                    // Outside dirty rect: carry forward from prevTiles
+                    if (db && (x + tw <= db.x1 || x >= db.x2)) {
+                        const key = x + ',' + y;
+                        const prev = prevTiles.get(key);
+                        if (prev) {
+                            tileMap.set(key, prev);
+                            continue;
+                        }
+                    }
+                    const tileData = new Uint8ClampedArray(tw * th * 4);
+                    if (x >= readX0 && x < readX1) {
+                        for (let row = 0; row < th; row++) {
+                            const srcOffset = (row * readW + (x - readX0)) * 4;
+                            tileData.set(stripData.subarray(srcOffset, srcOffset + tw * 4), row * tw * 4);
+                        }
+                    } else {
+                        for (let row = 0; row < th; row++) {
+                            const srcOffset = (row * width + x) * 4;
+                            tileData.set(stripData.subarray(srcOffset, srcOffset + tw * 4), row * tw * 4);
+                        }
                     }
                     const key = x + ',' + y;
                     const solid = this.getSolidTileColor(tileData);
                     const rle = solid ? null : this._rleEncode(tileData);
-                    // Delta: skip if unchanged from previous snapshot
                     if (prevTiles) {
                         const prev = prevTiles.get(key);
                         if (prev) {
@@ -17207,10 +17779,10 @@ void main() {
                         }
                     }
                     if (solid) {
-                        tiles.push({ x, y, w, h, solid });
+                        tiles.push({ x, y, w: tw, h: th, solid });
                         tileMap.set(key, { solid });
                     } else {
-                        tiles.push({ x, y, w, h, rle });
+                        tiles.push({ x, y, w: tw, h: th, rle });
                         tileMap.set(key, { rle });
                     }
                 }
@@ -17220,19 +17792,32 @@ void main() {
         applyTiledSnapshot(snapshot) {
             const ctx = this.ctx;
             const { width, height, tiles } = snapshot;
-            // ── Fixed: per-tile putImageData instead of one giant ImageData ──
-            // The old approach allocated a full-canvas ImageData (up to ~33 MB at
-            // 4K) and used JS loops to copy tile data into it on the main thread,
-            // causing 20-100 ms CPU spikes on large canvases when hitting Undo.
-            // Instead, we call putImageData once per pixel tile and let the
-            // browser's native C++ compositor do the blitting.  The number of
-            // GPU upload calls is the same order of magnitude as before (one per
-            // changed tile) but the JS side does zero byte-copying.
-            for (const tile of tiles) {
-                if (tile.solid) continue;
-                const { x, y, w, h } = tile;
-                const data = tile.rle ? this._rleDecode(tile.rle, w, h) : tile.data;
-                ctx.putImageData(new ImageData(data, w, h), x, y);
+            // ── Batch adjacent non-solid tiles for fewer GPU uploads ──
+            // Adjacent tiles in the same row share the same strip context and can
+            // be merged into a single putImageData call.  At 5000×5000 with 256²
+            // tiles this reduces ~400 calls to ~20-40, significantly cutting GPU
+            // upload overhead on undo/redo.
+            const nonSolid = tiles.filter(t => !t.solid);
+            nonSolid.sort((a, b) => a.y - b.y || a.x - b.x);
+            const merged = [];
+            for (const tile of nonSolid) {
+                const data = tile.rle ? this._rleDecode(tile.rle, tile.w, tile.h) : tile.data;
+                if (merged.length) {
+                    const prev = merged[merged.length - 1];
+                    if (tile.y === prev.y && tile.x === prev.x + prev.w) {
+                        // Merge horizontally: extend width, concatenate pixel data
+                        const comb = new Uint8ClampedArray((prev.w + tile.w) * tile.h * 4);
+                        comb.set(prev.data);
+                        comb.set(data, prev.w * tile.h * 4);
+                        prev.data = comb;
+                        prev.w += tile.w;
+                        continue;
+                    }
+                }
+                merged.push({ x: tile.x, y: tile.y, w: tile.w, h: tile.h, data });
+            }
+            for (const m of merged) {
+                ctx.putImageData(new ImageData(m.data, m.w, m.h), m.x, m.y);
             }
             // Paint solid tiles (clearRect for transparent, fillRect otherwise).
             for (const tile of tiles) {
@@ -17262,17 +17847,17 @@ void main() {
                 while (anchorStep >= 0 && this.state.history[anchorStep].isDelta) anchorStep--;
                 if (anchorStep >= 0) {
                     this.ctx.clearRect(0, 0, entry.width, entry.height);
-                    this.applyTiledSnapshot(this.state.history[anchorStep].tiles);
+                    this.applyTiledSnapshot(this.state.history[anchorStep]);
                     for (let ri = anchorStep + 1; ri <= (stepIdx || 0); ri++) {
-                        this.applyTiledSnapshot(this.state.history[ri].tiles);
+                        this.applyTiledSnapshot(this.state.history[ri]);
                     }
                 } else {
                     this.ctx.clearRect(0, 0, entry.width, entry.height);
-                    this.applyTiledSnapshot(entry.tiles);
+                    this.applyTiledSnapshot(entry);
                 }
             } else if (entry.tiles) {
                 this.ctx.clearRect(0, 0, entry.width, entry.height);
-                this.applyTiledSnapshot(entry.tiles);
+                this.applyTiledSnapshot(entry);
             } else if (entry.bitmap) {
                 this.ctx.clearRect(0, 0, entry.width, entry.height);
                 this.ctx.drawImage(entry.bitmap, 0, 0);
@@ -17367,6 +17952,10 @@ void main() {
                     || this._canvasResizedSinceLastSave
                     || stepsSinceAnchor >= this.tileHistory.maxDeltaWalk;
                 const prevTiles = forceAnchor ? null : this._prevTileMap;
+                // If no dirty rect was set since the last save, default to full canvas.
+                if (prevTiles && !this._dirtyBounds) {
+                    this._markDirty(0, 0, this.config.width, this.config.height);
+                }
                 const snapshot = this.captureTiledSnapshot(this.ui.cMain, prevTiles);
                 this._prevTileMap = snapshot.tileMap;
                 this._canvasResizedSinceLastSave = false;
@@ -17387,35 +17976,40 @@ void main() {
             } else {
                 const w = this.config.width, h = this.config.height;
                 // Eagerly push a canvas snapshot so undo is never blocked on the async path.
-                const snap = document.createElement('canvas');
-                snap.width = w; snap.height = h;
-                const sctx = snap.getContext('2d');
-                this.disableSmoothing(sctx);
-                sctx.drawImage(this.ui.cMain, 0, 0);
-                const entry = { canvas: snap, width: w, height: h };
+                // Use OffscreenCanvas + transferToImageBitmap for zero-copy GPU handles.
+                let entry;
+                if (window.OffscreenCanvas && window.ImageBitmap) {
+                    const oc = new OffscreenCanvas(w, h);
+                    const octx = oc.getContext('2d');
+                    this.disableSmoothing(octx);
+                    octx.drawImage(this.ui.cMain, 0, 0);
+                    const bmp = oc.transferToImageBitmap();
+                    entry = { bitmap: bmp, width: w, height: h };
+                } else {
+                    const snap = document.createElement('canvas');
+                    snap.width = w; snap.height = h;
+                    const sctx = snap.getContext('2d');
+                    this.disableSmoothing(sctx);
+                    sctx.drawImage(this.ui.cMain, 0, 0);
+                    entry = { canvas: snap, width: w, height: h };
+                    if (window.createImageBitmap) {
+                        createImageBitmap(snap).then(bmp => {
+                            if (this.state.history.includes(entry)) {
+                                entry.bitmap = bmp;
+                                if (entry.canvas) { entry.canvas.width = 0; entry.canvas.height = 0; }
+                                entry.canvas = null;
+                            } else {
+                                bmp.close();
+                            }
+                        }).catch(() => {});
+                    }
+                }
                 this.state.history.push(entry);
                 this.state.step++;
                 this.enforceHistoryLimit();
                 this.state.isDirty = true;
                 this.deferColorCounts();
                 this.updateTitleBarActions();
-                // Upgrade to an ImageBitmap in the background — zero-copy GPU handle,
-                // ~10× smaller memory footprint than a canvas backing store.
-                if (window.createImageBitmap) {
-                    createImageBitmap(snap).then(bmp => {
-                        // The entry may have been evicted by the time the promise resolves.
-                        if (this.state.history.includes(entry)) {
-                            entry.bitmap = bmp;
-                            // Zero the dimensions before nulling — in WebKit/Blink this
-                            // synchronously releases the pixel buffer rather than waiting
-                            // for GC to tear down the detached canvas element.
-                            if (entry.canvas) { entry.canvas.width = 0; entry.canvas.height = 0; }
-                            entry.canvas = null; // release the canvas backing store
-                        } else {
-                            bmp.close();
-                        }
-                    }).catch(() => { /* keep canvas fallback */ });
-                }
             }
             // Attach a wand-selection snapshot to the current history entry so that
             // step-by-step undo/redo can restore the exact selection state after each
@@ -17660,6 +18254,10 @@ void main() {
                 this.applyRibbonLayout();
                 this.buildToolbarCustomizer();
                 this.centerModal('modal-' + id);
+            }
+            if(id==='tool-customizer') {
+                this.buildToolCustomizer();
+                this.centerModal('modal-tool-customizer');
             }
             if (id === 'update') {
                 this.prepareUpdateModal();
@@ -20335,6 +20933,10 @@ self.onmessage = function(e) {
                                 this.applyCurrentModeToCanvas(this.ctx, this.config.width, this.config.height, false);
                             }
                             this.resetHueSatUI();
+                            this.hueSatBaseData = null;
+                            this.hueSatWorkerBaseVersion = 0;
+                            if (this.hueSatWorker) { this.hueSatWorker.terminate(); this.hueSatWorker = null; this.hueSatWorkerCallbacks?.clear(); }
+                            this.disposeHueSatGL();
                             this.hueSatBackup = null;
                             return;
                         }
@@ -20372,6 +20974,10 @@ self.onmessage = function(e) {
                     this.applyCurrentModeToCanvas(this.ctx, this.config.width, this.config.height, false);
                 }
                 this.resetHueSatUI();
+                this.hueSatBaseData = null;
+                this.hueSatWorkerBaseVersion = 0;
+                if (this.hueSatWorker) { this.hueSatWorker.terminate(); this.hueSatWorker = null; this.hueSatWorkerCallbacks?.clear(); }
+                this.disposeHueSatGL();
                 this.hueSatBackup = null;
                 return;
             }
@@ -20384,6 +20990,10 @@ self.onmessage = function(e) {
             this.renderSelection();
             this.deferSelectionRenderFinalize(this.state.selection);
             this.resetHueSatUI();
+            this.hueSatBaseData = null;
+            this.hueSatWorkerBaseVersion = 0;
+            if (this.hueSatWorker) { this.hueSatWorker.terminate(); this.hueSatWorker = null; this.hueSatWorkerCallbacks?.clear(); }
+            this.disposeHueSatGL();
             this.hueSatBackup = null;
         }
         rgbToHsl(r, g, b) {
@@ -20700,6 +21310,7 @@ self.onmessage = function(e) {
         renderFreehandPreview() {
             if (!this.state.freehandActive && this._fhPreviewing) {
                 this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+                if (this.ui.cTemp) this.ui.cTemp.style.opacity = '1';
                 this._fhPreviewing = false;
                 return;
             }
@@ -20712,12 +21323,13 @@ self.onmessage = function(e) {
             this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
             const fh = this.config.freehand || {};
             this.renderFreehandOutline(this.ctxTemp, stroke, {
-                alpha: 0.5,
+                alpha: 1,
                 isFilled: fh.fillEnabled !== false,
                 strokeWidth: fh.strokeWidth || 0,
                 fillColor: this.getActiveDrawColor(false),
                 strokeColor: this.getActiveDrawColor(true)
             });
+            if (this.ui.cTemp) this.ui.cTemp.style.opacity = '0.5';
             this._fhPreviewing = true;
         }
 
@@ -20789,6 +21401,7 @@ self.onmessage = function(e) {
                 });
             }
             this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+            if (this.ui.cTemp) this.ui.cTemp.style.opacity = '1';
             this._fhPreviewing = false;
             this.saveState();
         }
@@ -20832,13 +21445,11 @@ self.onmessage = function(e) {
                 prevMp = [mx, my];
             }
             path.closePath();
-            const alpha = opts.alpha != null ? opts.alpha : 1;
             const isFilled = opts.isFilled !== false;
             const strokeWidth = opts.strokeWidth || 0;
             const fillColor = opts.fillColor || '#000000';
             const strokeColor = opts.strokeColor || '#000000';
             ctx.save();
-            ctx.globalAlpha = alpha;
             if (strokeWidth > 0) {
                 ctx.strokeStyle = strokeColor;
                 ctx.lineWidth = strokeWidth * 2;

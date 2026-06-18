@@ -1,10 +1,10 @@
-# Changes Pending
+﻿# Changes Pending
 
 Living release-tracking document for all updates since the latest tag.
 
 - Last tag release: `v1.1.3`
-- Current head: `c934f05`
-- Range: `v1.1.3..HEAD`
+- Current head: `1bc588c`
+- Range: `v1.1.3..HEAD` (+ uncommitted paintbrush engine changes)
 
 ## Release Prerequisite
 
@@ -18,6 +18,20 @@ No release should be considered complete without this document being current.
 
 ## Changes
 
+- Dramatically improved startup performance:
+  - Window now appears immediately from Rust `setup()` hook (no longer waits for JS initialization)
+  - Added animated loading bar (thin blue gradient bar at window top) for immediate visual feedback
+  - Loading bar auto-fades when PaintEngine constructor completes (`body.app-ready` class)
+  - Moved `revealStartupWindow()` earlier in constructor so async file loading doesn't block window show
+  - Changed all `<script>` tags to `defer` so HTML/CSS renders before JS downloads/executes
+  - Added JS minification to the build step via esbuild (reduces JS payload from ~1.5 MB to ~700 KB)
+  - Added Rust release profile optimizations (LTO, strip, codegen-units=1, panic=abort, opt-level=z)
+- Updated `Agents.md` with project architecture, test workflow, minimum-viable-code guidelines, script load order, and CHANGES_PENDING.md discipline.
+- BristleCount default changed from 10 to 1 so non-bristle presets don't render in bristle mode.
+- Rebuilt freehand tool with perfect-freehand path engine â€” preserves prior strokes, adds width ribbon, hides sidebar for other tools, correct options structure with taper/easing, outline rendering, smoothing clamp.
+- Updated info modal content.
+- Removed brush stroke point cap (freehand tool).
+- Added freehand-specific CSS.
 - Reworked and simplified README build/install guidance.
 - Improved README structure and wording for web demo and browser performance expectations.
 - Added automated release asset renaming per version tag.
@@ -49,10 +63,62 @@ No release should be considered complete without this document being current.
   - remembers size
   - restores maximized state on next launch
 - Added release gating in CI to require a valid `CHANGES_PENDING.md` before draft release.
+- Added freehand path engine (`freehand-path-engine.js`) using perfect-freehand for smooth variable-width strokes with pressure-sensitive taper, easing, and outline rendering.
+- Added gradient engine (`src/js/gradient-engine.js`) for gradient fill support.
+- Added layer system (`src/js/layer-system.js`) â€” multi-layer canvas compositing with blend modes, opacity, visibility toggles, alpha lock, and layer reordering.
+- Added smart shape module (`src/js/smart-shape.js`) for shape recognition and stroke straightening.
+- Added opencode configuration (`opencode.json`) with commit-after-changes instructions.
+- Added new toolbar icons, ribbon icons, mode icons, and fluent-emoji SVGs.
+- Added Krita-compatible dab-based paint brush engine (`krita-brush-engine.js`) with:
+  - 10 presets: Round, Calligraphy, Airbrush, Ink, Marker, Watercolor, Charcoal, Splatter, Fan Brush, Dry Brush
+  - Airbrush mode with configurable rate
+  - Bristle rendering (fan, dry brush)
+  - Scatter, texture noise, smudge/color mixing
+  - Taper at stroke ends
+  - Aspect ratio and rotation for ellipse/calligraphy brushes
+  - Dab mask cache with LRU eviction
+  - OffscreenCanvas flow buffer with dirty-rect tracking
+- Added paintbrush sidebar UI: size, opacity, flow, spacing, hardness, shape, angle, aspect ratio, bristle controls, airbrush toggle, texture, color rate sliders.
+- Added paintbrush tool button in toolbar wired to the new engine.
+
+## opencode mode-switch patch
+
+- Patched opencode v1.17.7 source to add `mode` field to custom commands
+- Modified files in opencode source (repo cloned to `%TEMP%\opencode\opencode`):
+  - `packages/core/src/config/command.ts` â€” added `mode` field to ConfigCommand.Info schema
+  - `packages/opencode/src/command/index.ts` â€” added `mode` field to runtime Command.Info and pass-through from config
+  - `packages/opencode/src/acp/service.ts` â€” mode-switching commands now call `session.setMode()` instead of sending to server
+  - `packages/sdk/js/src/v2/gen/types.gen.ts` â€” added `mode` to SDK Command type
+- Built binary replaces installed `opencode.exe`
+- Configured `/p` and `/b` commands in `opencode.json` with `mode: true` + `agent: "plan"` / `agent: "build"` â€” these now actually switch the primary agent instead of just sending a chat message
+- Install script placed on desktop: `install-opencode-mode-switch.ps1` (run this after any opencode upgrade to re-patch)
 
 ## Bug Fixes
 
+- Fixed undo crash in `restoreHistoryEntry` â€” was passing bare `tiles` array to `applyTiledSnapshot` instead of the full entry object (4 call sites). Delta-undo walked back to anchor entries and passed only the tiles array, causing `tiles.filter(...)` to crash on `undefined`.
+- Fixed double-rendering artifacts on stroke end â€” final `_flushPending(true)` re-render now clears the destination area (`_dirtyRect`) on the main canvas via `_flushFlowBuffer(ctx, true)` before flushing, preventing old non-tapered dabs from bleeding through the new tapered ones.
+- Fixed quarter-circle dab clipping â€” added `ctx.translate(rx, ry)` for non-rotated mask generation path. Circle/ellipse masks were centered at the top-left corner of the mask canvas instead of its center â€” only the +x,+y quadrant was visible.
+- Fixed scratch canvas contamination â€” `_colorizeMask` now clears the full scratch canvas (`_scratchCanvas.width Ã— height`) instead of just the current mask dimensions, preventing old pixel data from previous larger dabs bleeding into smaller subsequent dabs.
+- Fixed `app.brush` â†’ `this.brush` references in `paint-engine.js` class methods (6 locations across `onMouseDown`, `onMouseMove`, `onMouseUp`, `setTool`, `updateCursorForTool`) to fix `ReferenceError: app is not defined` when the paintbrush tool is active.
+- Fixed `_sampleCanvasColor` to accept `CanvasRenderingContext2D` directly instead of a canvas element â€” smudge/color-mixing now works.
+- Fixed `_drawCircle` to use `ctx.ellipse()` and `_drawDiamond` with separate sx/sy â€” circle/diamond masks now respect aspect ratio (Calligraphy, Charcoal presets produce ellipses).
+- Fixed airbrush timer to call `_renderDab()` instead of `_paintDab()` directly â€” now gets scatter, taper, bristle support and smudge fixes.
+- Fixed taper to apply only at stroke finalization (`_flushPending(true)` in `endStroke`). Mid-stroke RAF renders without taper â€” no more visible kinks from changing point count mid-stroke.
+- Fixed bristle smudge to sample `app.ctx` (main canvas) instead of `_flowCanvas` flow buffer.
+- Fixed force-dab at segment endpoint (`soFar > 0` check) to prevent cut-off stroke tips without double-dabbing.
+- Fixed dead params (`smoothing`, `stabilize`, `scatterRadius`, `smudgeLength`, `wetness`) removed from DEFAULTS and from Airbrush/Watercolor/Splatter presets.
+- Fixed `_state.isDrawing = false` set before `_stopAirbrush()` â€” prevents extra airbrush dab firing after stroke end.
+- Fixed cursor update to cache by brush size (only calls `toDataURL()` when size changes). Added `devicePixelRatio` scaling for Retina displays.
+- Fixed hex color cache to LRU (reorders key on access instead of FIFO eviction).
+- Fixed dirty rect expansion by 1px on all sides for antialiasing bleed margin.
+- Fixed flow buffer and scratch buffers to shrink when requested size is less than half current size.
+- Fixed `endStroke` AABB restore â€” clamps source rectangle to canvas bounds to prevent `IndexSizeError` from negative `drawImage` source coordinates. Strokes near the canvas edge were silently skipping the final tapered re-render, leaving the stroke nearly invisible.
+- Fixed single-click strokes â€” `_flushPending(true)` now renders a single point directly instead of relying on `_processSegment`, which returns early when `endIdx <= startIdx`.
+- Fixed final pass dropping dabs with closely-spaced points â€” `_flushPending(true)` now iterates each consecutive point pair individually instead of processing the full array in a single `_processSegment` call. The old approach let `soFar` accumulate to exactly 0 by the loop exit, suppressing the endpoint force-dab and losing intermediate dabs for slow strokes.
 - Fixed cross-platform `file://` path handling for launch/open-file flows (Windows/macOS/Linux).
+- Fixed freehand tool to preserve prior strokes after tool switch, wire width ribbon slider, hide sidebar for non-freehand tools.
+- Fixed freehand tool options structure, taper/easing interpolation, outline rendering, and smoothing clamp.
+- Fixed `willReadFrequently` canvas context warning by adding context attribute.
 - Removed startup file-open delay and improved startup file handoff timing.
 - Reduced visible startup race where users could draw before incoming file load completed.
 - Deferred blank-canvas initialization until startup pending-file hydration resolves, eliminating the brief blank flash when opening images by double-click/file association.
@@ -68,7 +134,7 @@ No release should be considered complete without this document being current.
 - Fixed visible-path drift while panning/zooming by converting clip rect from ants-group space into path-local space before segment culling.
 - Updated close-save confirmation dialog to remove full-screen dimming backdrop and keep only the dialog window shadow.
 - Fixed desktop export folder picker fallback: when `__TAURI__.dialog.open` is unavailable, export now calls the dialog plugin via `core.invoke` so folder selection still opens.
-- Updated export flow to open folder selection at the start of export (before PNG generation), preventing “click export does nothing” stalls on desktop.
+- Updated export flow to open folder selection at the start of export (before PNG generation), preventing â€œclick export does nothingâ€ stalls on desktop.
 - Added a native `pick_export_folder` Tauri command and wired export to use it first, so folder selection does not depend on frontend dialog bridge behavior.
 - Added native `write_export_files` command and switched export saves to a single Rust-side batch write, fixing folder-selected-but-no-files-written behavior.
 - Hardened export folder resolution across Windows/macOS/Linux by removing frontend path rewriting and resolving dialog-selected folder paths to absolute filesystem paths in Rust before write.
@@ -120,6 +186,13 @@ No release should be considered complete without this document being current.
 - `a0ceca5` (2026-02-24): Add web demo link and browser performance note to README
 - `e0007cd` (2026-02-24): Improve file-open startup flow, persist window state, and update README demo notes
 - `c934f05` (2026-02-24): Update README wording
+- `d5ebe4d` (2026-03-01): Improve CI workflows and add release gating via CHANGES_PENDING
+- `1424f5d` (2026-03-01): Fix draft-release asset rename race with release polling
+- `d0fe71c` (2026-04-05): Fix Export Studio desktop export flow and dialog timing
+- `e8f7511` (2026-06-09): Fix freehand: preserve prior strokes, wire ribbon width, hide sidebar for other tools â€” massive restructure adding freehand-path-engine, gradient-engine, layer-system, smart-shape, new assets, CSS overhaul
+- `c5620c1` (2026-06-09): Add opencode config with commit-after-changes instructions
+- `2260059` (2026-06-12): Fix freehand: correct options structure, taper/easing, outline rendering, smoothing clamp
+- `1bc588c` (2026-06-16): Update info modal, fix willReadFrequently warning, remove point cap, add freehand CSS
 
 ## Next Cycle Reset
 
@@ -128,3 +201,18 @@ After the next release tag is published:
 1. Update `Last tag release`, `Current head`, and `Range`.
 2. Clear categorized sections for the new cycle.
 3. Start adding new entries immediately for ongoing tracking.
+
+## Customizable Tool Grid
+
+- **Fixed 3×20 grid** — Both Tools and Shapes sections use a fixed 3 rows × 20 columns layout. Every row is exactly 20 cells. `null` entries create visible gaps.
+- **Ribbon trimming** — Ribbon renders columns 0 through the furthest occupied column across all 3 rows. Gaps between tools are preserved as visible empty space. Entirely empty rows are skipped. If no tools in a section, the section is hidden.
+- **Default layout** — Tools: row 0 [pencil, fill, wand, 17×null], row 1 [eraser, picker, zoom, 17×null], row 2 [gradient, anchor-toggle, freehand, 17×null]. Shapes: row 0 [line, curve, poly, rect, 16×null], row 1 [circle, tri, path, null, 16×null], row 2 [20×null].
+- **Customizer** — Always shows all 20 columns × 3 rows. Each cell is 28px. Empty cells show dashed border. Dragging works the same — drawer→grid inserts, grid→grid swaps, right-click/dblclick clears to null.
+- **Apply-based save** — Modal edits are working copy. Apply commits to localStorage and re-renders ribbon. Cancel discards.
+- **Cleaner modal UI** — Wider window (720px), no +/- Row buttons, uses CSS classes instead of inline styles, matches existing app modal patterns.
+- **Auto-migration** — Old flat-array format fails validation and gets replaced with defaults on first load.
+- **Per-tool icon CSS fix** — Added `[data-tool-id]` selectors alongside existing `[data-tool]` / `#id` selectors so per-tool sizing/nudges apply to dynamic grid buttons.
+- **Modified files:**
+  - `src/index.html` — 720px modal, removed +/- Row buttons, cleaner markup with CSS classes
+  - `src/js/paint-engine.js` — fixed 3×20 layout, ribbon maxCol trimming with gap preservation, customizer renders 20×3, removed addRow/removeRow methods
+  - `src/css/styles.css` — dynamic ribbon grid column counts, 20-col customizer preview at 28px, customizer modal layout classes
