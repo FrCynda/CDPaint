@@ -877,6 +877,20 @@
                 { id:'tri',            toolId:'tri',        label:'Triangle',           iconSrc:'assets/toolbar-icons/tri.png',           defaultSection:'shapes' },
                 { id:'path',           toolId:'path',       label:'Freehand Path',      iconSvg:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0078d7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c2-7 5-9 9-2s4 6 9-4" fill="none"/><circle cx="3" cy="17" r="1.5" fill="#0078d7" stroke="none"/><circle cx="21" cy="11" r="1.5" fill="#0078d7" stroke="none"/></svg>', defaultSection:'shapes' }
             ];
+            const _popupModal = localStorage.getItem('paint.popupModal');
+            if (_popupModal) {
+                localStorage.removeItem('paint.popupModal');
+                this._inPopup = true;
+                ['title-bar','huesat-split-handle','ribbon','viewport','status-bar'].forEach(eid => {
+                    const el = document.getElementById(eid);
+                    if (el) el.style.display = 'none';
+                });
+                document.querySelectorAll('.tab-row').forEach(el => el.style.display = 'none');
+                this.buildToolCustomizer();
+                this.centerModal('modal-tool-customizer');
+                document.getElementById('modal-tool-customizer').style.display='flex';
+                return;
+            }
             this.config = {
                 width: 800, height: 600, zoom: 1.0,
                 tool: 'pencil',
@@ -2182,7 +2196,6 @@
             window.addEventListener('storage', (e) => {
                 if (e.key === 'paint.toolGridApplied') {
                     localStorage.removeItem('paint.toolGridApplied');
-                    localStorage.removeItem('paint.toolManifest');
                     this.renderToolGrid();
                 }
             });
@@ -2190,7 +2203,6 @@
                 const applied = localStorage.getItem('paint.toolGridApplied');
                 if (applied) {
                     localStorage.removeItem('paint.toolGridApplied');
-                    localStorage.removeItem('paint.toolManifest');
                     this.renderToolGrid();
                 }
             });
@@ -8019,6 +8031,7 @@ self.onmessage = (e) => {
             }
             this.saveToolGridLayout(this._customizerState);
             this.renderToolGrid();
+            try { localStorage.setItem('paint.toolGridApplied', Date.now().toString()); } catch(e) {}
         }
         resetToolGridLayout() {
             const def = this.getDefaultToolGrid();
@@ -18215,12 +18228,12 @@ void main() {
             if (id === 'tool-customizer') {
                 const tauriInvoke = this.getTauriInvokeFn();
                 if (tauriInvoke) {
-                    localStorage.setItem('paint.toolManifest', JSON.stringify(this.toolManifest));
+                    localStorage.setItem('paint.popupModal', 'tool-customizer');
                     try {
                         await this.tauriInvoke('open_tool_customizer');
                         return;
                     } catch(e) {
-                        localStorage.removeItem('paint.toolManifest');
+                        localStorage.removeItem('paint.popupModal');
                     }
                 }
             }
@@ -18539,6 +18552,12 @@ void main() {
                 this.cancelHueSat();
             }
             this.syncThemeColorsModelessMode();
+            if (this._inPopup) {
+                const tauri = window.__TAURI__;
+                if (tauri && tauri.window && tauri.window.getCurrentWindow) {
+                    tauri.window.getCurrentWindow().close();
+                }
+            }
         }
         // ══════════════════════════════════════════════════════════════════════
         // STRAY PIXEL CLEANER

@@ -703,7 +703,7 @@ fn open_tool_customizer(app: tauri::AppHandle) -> Result<(), String> {
     tauri::WebviewWindowBuilder::new(
         &app,
         label,
-        tauri::WebviewUrl::App("popups/tool-customizer.html".into()),
+        tauri::WebviewUrl::App("index.html".into()),
     )
     .title("Customize Tool Grid")
     .inner_size(pw, ph)
