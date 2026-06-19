@@ -877,20 +877,6 @@
                 { id:'tri',            toolId:'tri',        label:'Triangle',           iconSrc:'assets/toolbar-icons/tri.png',           defaultSection:'shapes' },
                 { id:'path',           toolId:'path',       label:'Freehand Path',      iconSvg:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0078d7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c2-7 5-9 9-2s4 6 9-4" fill="none"/><circle cx="3" cy="17" r="1.5" fill="#0078d7" stroke="none"/><circle cx="21" cy="11" r="1.5" fill="#0078d7" stroke="none"/></svg>', defaultSection:'shapes' }
             ];
-            const _popupModal = localStorage.getItem('paint.popupModal');
-            if (_popupModal) {
-                localStorage.removeItem('paint.popupModal');
-                this._inPopup = true;
-                ['title-bar','huesat-split-handle','ribbon','viewport','status-bar'].forEach(eid => {
-                    const el = document.getElementById(eid);
-                    if (el) el.style.display = 'none';
-                });
-                document.querySelectorAll('.tab-row').forEach(el => el.style.display = 'none');
-                this.buildToolCustomizer();
-                this.centerModal('modal-tool-customizer');
-                document.getElementById('modal-tool-customizer').style.display='flex';
-                return;
-            }
             this.config = {
                 width: 800, height: 600, zoom: 1.0,
                 tool: 'pencil',
@@ -1973,6 +1959,12 @@
             this.revealStartupWindow();
             Promise.resolve(this.initTauriFileOpenListener());
             this.setActiveTab('home');
+            const popupModal = localStorage.getItem('paint.popupModal');
+            if (popupModal) {
+                localStorage.removeItem('paint.popupModal');
+                this._enterPopupMode(popupModal);
+                return;
+            }
         }
 
         deferHeavyInit() {
@@ -2193,18 +2185,8 @@
             });
             window.addEventListener('mousemove', (e) => this.moveModalDrag(e));
             window.addEventListener('mouseup', () => this.endModalDrag());
-            window.addEventListener('storage', (e) => {
-                if (e.key === 'paint.toolGridApplied') {
-                    localStorage.removeItem('paint.toolGridApplied');
-                    this.renderToolGrid();
-                }
-            });
             window.addEventListener('focus', () => {
-                const applied = localStorage.getItem('paint.toolGridApplied');
-                if (applied) {
-                    localStorage.removeItem('paint.toolGridApplied');
-                    this.renderToolGrid();
-                }
+                if (!this._inPopup) this.renderToolGrid();
             });
         }
         startModalDrag(modalId, e) {
@@ -8031,7 +8013,6 @@ self.onmessage = (e) => {
             }
             this.saveToolGridLayout(this._customizerState);
             this.renderToolGrid();
-            try { localStorage.setItem('paint.toolGridApplied', Date.now().toString()); } catch(e) {}
         }
         resetToolGridLayout() {
             const def = this.getDefaultToolGrid();
@@ -18224,13 +18205,22 @@ void main() {
         closeMenus() {
             document.querySelectorAll('.dropdown-menu').forEach(x=>x.style.display='none');
         }
+        _enterPopupMode(id) {
+            this._inPopup = true;
+            ['title-bar','huesat-split-handle','ribbon','viewport','status-bar'].forEach(eid => {
+                const el = document.getElementById(eid);
+                if (el) el.style.display = 'none';
+            });
+            document.querySelectorAll('.tab-row').forEach(el => el.style.display = 'none');
+            this.openModal(id);
+        }
         async openModal(id) {
-            if (id === 'tool-customizer') {
+            if (!this._inPopup && ['tool-customizer'].includes(id)) {
                 const tauriInvoke = this.getTauriInvokeFn();
                 if (tauriInvoke) {
-                    localStorage.setItem('paint.popupModal', 'tool-customizer');
+                    localStorage.setItem('paint.popupModal', id);
                     try {
-                        await this.tauriInvoke('open_tool_customizer');
+                        await this.tauriInvoke('create_popup_window');
                         return;
                     } catch(e) {
                         localStorage.removeItem('paint.popupModal');
