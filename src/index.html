@@ -294,13 +294,13 @@
                 <option value="conic">Conic</option>
                 <option value="spiral">Spiral</option>
                 <option value="staggered">Bands</option>
-                <option value="star">â˜… Stars</option>
-                <option value="pattern">â— Dots</option>
-                <option value="dots_lg">â— Dots HX</option>
-                <option value="diamond">â—† Diamonds</option>
-                <option value="cross">âœš Crosses</option>
-                <option value="checkerboard">â–ª Checker</option>
-                <option value="stripes">â–¬ Stripes</option>
+                <option value="star">✅ Stars</option>
+                <option value="pattern">● Dots</option>
+                <option value="dots_lg">● Dots HX</option>
+                <option value="diamond">◆ Diamonds</option>
+                <option value="cross">✚ Crosses</option>
+                <option value="checkerboard">▪ Checker</option>
+                <option value="stripes">▬ Stripes</option>
             </select>
         </div>
         <div class="ribbon-card tile-compact">
@@ -329,7 +329,7 @@
                 <input type="range" id="grad-midpoint" min="1" max="99" value="50" style="width:68px;height:14px;cursor:pointer;" title="Blend midpoint: controls where 50% mix falls between the two colours">
                 <span id="grad-midpoint-val" style="font-size:10px;color:var(--threshold-values-color);min-width:22px;text-align:right;">50%</span>
             </div>
-            <button id="grad-midpoint-reset" style="font-size:9px;margin-top:2px;padding:0 4px;height:14px;cursor:pointer;border:1px solid var(--btn-small-border);background:var(--btn-small-bg);border-radius:2px;" title="Reset midpoint to centre">â†º Reset</button>
+            <button id="grad-midpoint-reset" style="font-size:9px;margin-top:2px;padding:0 4px;height:14px;cursor:pointer;border:1px solid var(--btn-small-border);background:var(--btn-small-bg);border-radius:2px;" title="Reset midpoint to centre">↺ Reset</button>
         </div>
         <div class="ribbon-card tile-compact" id="grad-apply-card" style="opacity:0.4;pointer-events:none;">
             <span class="card-label">Gradient</span>
@@ -750,9 +750,9 @@
 </div>
 
 <div id="rotate-menu" class="dropdown-menu" style="left: 170px; top: 90px;">
-    <div class="dd-item" onclick="PaintApp.transform('rotate', 90); PaintApp.closeMenus()"><img src="assets/rotate-right.png" alt="" class="pixel-perfect dd-icon">Rotate Right 90Â°</div>
-    <div class="dd-item" onclick="PaintApp.transform('rotate', -90); PaintApp.closeMenus()"><img src="assets/rotate-left.png" alt="" class="pixel-perfect dd-icon">Rotate Left 90Â°</div>
-    <div class="dd-item" onclick="PaintApp.transform('rotate', 180); PaintApp.closeMenus()"><img src="assets/rotate-180.png" alt="" class="pixel-perfect dd-icon">Rotate 180Â°</div>
+    <div class="dd-item" onclick="PaintApp.transform('rotate', 90); PaintApp.closeMenus()"><img src="assets/rotate-right.png" alt="" class="pixel-perfect dd-icon">Rotate Right 90°</div>
+    <div class="dd-item" onclick="PaintApp.transform('rotate', -90); PaintApp.closeMenus()"><img src="assets/rotate-left.png" alt="" class="pixel-perfect dd-icon">Rotate Left 90°</div>
+    <div class="dd-item" onclick="PaintApp.transform('rotate', 180); PaintApp.closeMenus()"><img src="assets/rotate-180.png" alt="" class="pixel-perfect dd-icon">Rotate 180°</div>
     <div class="dd-item" onclick="PaintApp.transform('flip', 'v'); PaintApp.closeMenus()"><img src="assets/flip-vertical.png" alt="" class="pixel-perfect dd-icon">Flip Vertical</div>
     <div class="dd-item" onclick="PaintApp.transform('flip', 'h'); PaintApp.closeMenus()"><img src="assets/flip-horizontal.png" alt="" class="pixel-perfect dd-icon">Flip Horizontal</div>
 </div>
@@ -768,11 +768,11 @@
     <div class="dd-item" onclick="PaintApp.deleteSelection(); PaintApp.closeMenus()">Delete</div>
     <div class="dd-sep"></div>
     <div class="dd-item">
-        Rotate <span class="dd-arrow">â–¶</span>
+        Rotate <span class="dd-arrow">▶</span>
         <div class="submenu">
-            <div class="dd-item" onclick="PaintApp.transform('rotate', 90); PaintApp.closeMenus()"><img src="assets/rotate-right.png" alt="" class="pixel-perfect dd-icon">Rotate Right 90Â°</div>
-            <div class="dd-item" onclick="PaintApp.transform('rotate', -90); PaintApp.closeMenus()"><img src="assets/rotate-left.png" alt="" class="pixel-perfect dd-icon">Rotate Left 90Â°</div>
-            <div class="dd-item" onclick="PaintApp.transform('rotate', 180); PaintApp.closeMenus()"><img src="assets/rotate-180.png" alt="" class="pixel-perfect dd-icon">Rotate 180Â°</div>
+            <div class="dd-item" onclick="PaintApp.transform('rotate', 90); PaintApp.closeMenus()"><img src="assets/rotate-right.png" alt="" class="pixel-perfect dd-icon">Rotate Right 90°</div>
+            <div class="dd-item" onclick="PaintApp.transform('rotate', -90); PaintApp.closeMenus()"><img src="assets/rotate-left.png" alt="" class="pixel-perfect dd-icon">Rotate Left 90°</div>
+            <div class="dd-item" onclick="PaintApp.transform('rotate', 180); PaintApp.closeMenus()"><img src="assets/rotate-180.png" alt="" class="pixel-perfect dd-icon">Rotate 180°</div>
             <div class="dd-item" onclick="PaintApp.transform('flip', 'v'); PaintApp.closeMenus()"><img src="assets/flip-vertical.png" alt="" class="pixel-perfect dd-icon">Flip Vertical</div>
             <div class="dd-item" onclick="PaintApp.transform('flip', 'h'); PaintApp.closeMenus()"><img src="assets/flip-horizontal.png" alt="" class="pixel-perfect dd-icon">Flip Horizontal</div>
         </div>
@@ -837,7 +837,7 @@
         <div class="sel-handle h-s" data-id="s"><img src="assets/handle.png" alt=""></div>
         <div class="sel-handle h-sw" data-id="sw"><img src="assets/handle.png" alt=""></div>
         <div class="sel-handle h-w" data-id="w"><img src="assets/handle.png" alt=""></div>
-        <div class="sel-rotate-handle" data-id="rotate" title="Drag to rotate â€” right-click to anchor at center">
+        <div class="sel-rotate-handle" data-id="rotate" title="Drag to rotate — right-click to anchor at center">
             <img src="assets/rotate selection.png" alt="" class="pixel-perfect">
         </div>
         <div id="sel-rot-center" aria-hidden="true"></div>
@@ -860,7 +860,7 @@
     <div id="status-primary">
         <div class="status-segment" id="status-coords">0, 0px</div>
         <div class="status-segment" id="status-selection-size">-</div>
-        <div class="status-segment" id="status-rotation">Rot: 0.00Â°</div>
+        <div class="status-segment" id="status-rotation">Rot: 0.00°</div>
         <div class="status-segment" id="status-dims">800 x 600px</div>
     </div>
     <div style="flex:1"></div>
@@ -1458,7 +1458,7 @@
                         <span class="param-label">Seed:</span>
                         <div class="param-input-group">
                             <input type="number" id="rngSeed" value="-1" title="-1 = Random" style="width: 100%;">
-                            <button class="btn" id="depth-reuse-seed" style="padding:0 8px;" title="Reuse Last Seed" onclick="PaintApp.reuseSeed()">â†»</button>
+                            <button class="btn" id="depth-reuse-seed" style="padding:0 8px;" title="Reuse Last Seed" onclick="PaintApp.reuseSeed()">↻</button>
                             <input type="text" id="lastSeed" readonly placeholder="Last" title="Last Used Seed" style="width:50px; background:#eee; border:1px solid #ccc; color:#666">
                         </div>
                     </div>
@@ -1561,15 +1561,15 @@
             <div style="width: 260px; display: flex; flex-direction: column; gap: 12px; border-left: 1px solid #ccc; padding-left: 10px;">
 
                 <fieldset>
-                    <legend>PokÃ©mon Asset Details</legend>
+                    <legend>Pokémon Asset Details</legend>
                     <div class="form-group">
-                        <label for="export-pkmn-name">PokÃ©mon Name:</label>
+                        <label for="export-pkmn-name">Pokémon Name:</label>
                         <input type="text" id="export-pkmn-name" placeholder="e.g. bulbasaur" style="width: 100%;" oninput="PaintApp.updateExportOutputInfo()">
                     </div>
 
                     <label class="checkbox-row" style="margin-top: 6px; cursor: pointer;">
                         <input type="checkbox" id="export-use-prefix" onchange="PaintApp.updateExportOutputInfo()">
-                        <span>Prefix files with PokÃ©mon name</span>
+                        <span>Prefix files with Pokémon name</span>
                     </label>
 
                     <label class="checkbox-row" style="margin-top: 6px; cursor: pointer;">
