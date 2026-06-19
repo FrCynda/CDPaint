@@ -1959,12 +1959,6 @@
             this.revealStartupWindow();
             Promise.resolve(this.initTauriFileOpenListener());
             this.setActiveTab('home');
-            const popupModal = localStorage.getItem('paint.popupModal');
-            if (popupModal) {
-                localStorage.removeItem('paint.popupModal');
-                this._enterPopupMode(popupModal);
-                return;
-            }
         }
 
         deferHeavyInit() {
@@ -2185,8 +2179,20 @@
             });
             window.addEventListener('mousemove', (e) => this.moveModalDrag(e));
             window.addEventListener('mouseup', () => this.endModalDrag());
+            window.addEventListener('storage', (e) => {
+                if (e.key === 'paint.toolGridApplied') {
+                    localStorage.removeItem('paint.toolGridApplied');
+                    localStorage.removeItem('paint.toolManifest');
+                    this.renderToolGrid();
+                }
+            });
             window.addEventListener('focus', () => {
-                if (!this._inPopup) this.renderToolGrid();
+                const applied = localStorage.getItem('paint.toolGridApplied');
+                if (applied) {
+                    localStorage.removeItem('paint.toolGridApplied');
+                    localStorage.removeItem('paint.toolManifest');
+                    this.renderToolGrid();
+                }
             });
         }
         startModalDrag(modalId, e) {
@@ -18205,25 +18211,16 @@ void main() {
         closeMenus() {
             document.querySelectorAll('.dropdown-menu').forEach(x=>x.style.display='none');
         }
-        _enterPopupMode(id) {
-            this._inPopup = true;
-            ['title-bar','huesat-split-handle','ribbon','viewport','status-bar'].forEach(eid => {
-                const el = document.getElementById(eid);
-                if (el) el.style.display = 'none';
-            });
-            document.querySelectorAll('.tab-row').forEach(el => el.style.display = 'none');
-            this.openModal(id);
-        }
         async openModal(id) {
-            if (!this._inPopup && ['tool-customizer'].includes(id)) {
+            if (id === 'tool-customizer') {
                 const tauriInvoke = this.getTauriInvokeFn();
                 if (tauriInvoke) {
-                    localStorage.setItem('paint.popupModal', id);
+                    localStorage.setItem('paint.toolManifest', JSON.stringify(this.toolManifest));
                     try {
-                        await this.tauriInvoke('create_popup_window');
+                        await this.tauriInvoke('open_tool_customizer');
                         return;
                     } catch(e) {
-                        localStorage.removeItem('paint.popupModal');
+                        localStorage.removeItem('paint.toolManifest');
                     }
                 }
             }
@@ -18542,12 +18539,6 @@ void main() {
                 this.cancelHueSat();
             }
             this.syncThemeColorsModelessMode();
-            if (this._inPopup) {
-                const tauri = window.__TAURI__;
-                if (tauri && tauri.window && tauri.window.getCurrentWindow) {
-                    tauri.window.getCurrentWindow().close();
-                }
-            }
         }
         // ══════════════════════════════════════════════════════════════════════
         // STRAY PIXEL CLEANER
