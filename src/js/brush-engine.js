@@ -1,6 +1,6 @@
     (function (app) {
 
-        /* â”€â”€ 1. DEFAULTS & PRESETS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 1. DEFAULTS & PRESETS ───────────────────────────────────────── */
 
         const DEFAULTS = {
             shape: 'circle',
@@ -34,7 +34,7 @@
             polyWatercolor: false,
             // Airbrush accumulation: paint builds up even when brush is stationary
             airbrushMode: false,
-            airbrushRate: 40,   // dabs per second while held still (1â€“100)
+            airbrushRate: 40,   // dabs per second while held still (1–100)
             // Phase 3: sensor-curve LUTs (Float32Array[256] or null = linear fallback)
             _sizeLUT:    null,
             _opacityLUT: null,
@@ -58,16 +58,16 @@
         let params = Object.assign({}, DEFAULTS);
         let engineActive = false;
 
-        // Shared math constant â€” avoids recomputing Math.PI * 2 in every hot-path call
+        // Shared math constant — avoids recomputing Math.PI * 2 in every hot-path call
         const TWO_PI = Math.PI * 2;
 
-        /* â”€â”€ 2. STROKE STATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 2. STROKE STATE ─────────────────────────────────────────────── */
 
         let strokeActive = false;
         let lastDabX = 0, lastDabY = 0;
         let residualDist = 0;
         let strokeLength = 0;
-        // â”€â”€ Smudge bucket system (inspired by libmypaint) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Smudge bucket system (inspired by libmypaint) ──────────────────────
         // libmypaint maintains multiple smudge buckets, each capturing a colour
         // sample at a different position.  Blending across buckets creates a
         // spatially-aware smear: colour picked up at the edge of the dab differs
@@ -80,14 +80,14 @@
         // On each sample event, one bucket is updated (round-robin) so the cost
         // is always one getImageData call regardless of bucket count.
         // When computing smudge fill, buckets are averaged with spatial weighting
-        // based on how close they are to the current dab centre â€” buckets sampled
+        // based on how close they are to the current dab centre — buckets sampled
         // recently near the dab contribute more.
         const N_SMUDGE_BUCKETS = 4;
         let smudgeColor = null;   // legacy scalar kept for backwards-compat reads
-        let _smudgeBuckets = [];  // [{r,g,b}]  â€” ring of spatial colour samples
+        let _smudgeBuckets = [];  // [{r,g,b}]  — ring of spatial colour samples
         let _smudgeBucketIdx = 0; // which bucket to update next (round-robin)
 
-        // Clear/init buckets â€” call on strokeBegin
+        // Clear/init buckets — call on strokeBegin
         function _resetSmudgeBuckets() {
             _smudgeBuckets = [];
             _smudgeBucketIdx = 0;
@@ -123,9 +123,9 @@
             return { r: rr/n, g: gg/n, b: bb/n };
         }
 
-        // Catmull-Rom spline: fixed 4-slot circular buffer â€” zero allocation in the hot path.
+        // Catmull-Rom spline: fixed 4-slot circular buffer — zero allocation in the hot path.
         // _crHead is the index of the oldest slot (the one to be overwritten on the next push).
-        // Access order oldestâ†’newest: [_crHead], [_crHead+1], [_crHead+2], [_crHead+3] (all &3).
+        // Access order oldest→newest: [_crHead], [_crHead+1], [_crHead+2], [_crHead+3] (all &3).
         const _crBuf  = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
         let   _crHead = 0;
 
@@ -153,29 +153,29 @@
         // End-taper RAF handle
         let _endTaperRAF = 0;
 
-        // Bristle strand state â€” generated at strokeBegin, persists for the stroke.
+        // Bristle strand state — generated at strokeBegin, persists for the stroke.
         // Each strand has a fixed lateral offset (perpendicular to stroke direction)
         // plus a small random wobble bias so fibers look independent, not cloned.
-        let _bristleStrands = [];  // [{lateralFrac, wFrac, alphaScale}]  â€” rebuilt each stroke
+        let _bristleStrands = [];  // [{lateralFrac, wFrac, alphaScale}]  — rebuilt each stroke
 
-        // â”€â”€ Flow accumulation buffer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Flow accumulation buffer ───────────────────────────────────────────
         // When opacity < 100 or flow < 100, dabs go to _strokeCanvas first,
         // then composite to the real canvas at params.opacity each dab group.
         // This prevents dabs stacking within a single stroke past the opacity
-        // ceiling â€” a fundamental difference from how Photoshop-style brushes feel.
+        // ceiling — a fundamental difference from how Photoshop-style brushes feel.
         let _flowBufActive   = false;
         let _strokeCanvas    = null, _strokeCtx    = null;
         let _preStrokeCanvas = null, _preStrokeCtx = null;
         let _strokeBufW      = 0,    _strokeBufH    = 0;
 
-        // â”€â”€ Flow buffer dirty-rect batching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Flow buffer dirty-rect batching ────────────────────────────────────
         // Instead of compositing on every dab in the hot path, we accumulate the
         // union of all dab dirty regions during a frame and flush exactly once in
         // the next requestAnimationFrame.  _syncFlowBuf is still called directly
         // (synchronously) for the first dab in strokeBegin, the end-taper RAF
-        // loop, and the airbrush timer â€” those fire at most once per tick and
+        // loop, and the airbrush timer — those fire at most once per tick and
         // need an immediate update.  Only the strokeMove inner loop is batched.
-        let _flowDirtyRect      = null;   // { x, y, w, h } â€” union of pending dab regions
+        let _flowDirtyRect      = null;   // { x, y, w, h } — union of pending dab regions
         let _flowRAFPending     = false;  // true when a flush RAF is already queued
         let _flowRAFCtx         = null;   // realCtx captured when the RAF was scheduled
 
@@ -239,7 +239,7 @@
             const rad  = strokeAngleDeg * Math.PI / 180;
             const ca   = Math.cos(rad), sa = Math.sin(rad);
 
-            /* â”€â”€ Phase 4: Krita texture tile path â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            /* ── Phase 4: Krita texture tile path ────────────────────────── */
             const tile = params._kritaTextureTile;
             if (tile) {
                 const TW = tile.width  || 128;
@@ -270,7 +270,7 @@
                     }
                 }
             } else {
-                /* â”€â”€ Procedural noise path (original) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+                /* ── Procedural noise path (original) ──────────────────────── */
                 if (!_noiseData) _buildNoise();
                 for (let py = 0; py < iSz; py++) {
                     for (let px = 0; px < iSz; px++) {
@@ -295,9 +295,9 @@
             return oc;
         }
 
-        /* â”€â”€ 4. COLOR UTILITIES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 4. COLOR UTILITIES ──────────────────────────────────────────── */
 
-        /* Local hexToRgb with a small map cache â€” the same hex string recurs on
+        /* Local hexToRgb with a small map cache — the same hex string recurs on
            every dab of a stroke, so we avoid repeated parseInt calls. */
         const _hexRgbCache = new Map();
         function hexToRgb(hex) {
@@ -310,7 +310,7 @@
             return v;
         }
 
-        /* Soft-circle gradient cache â€” the gradient only depends on r, hardness,
+        /* Soft-circle gradient cache — the gradient only depends on r, hardness,
            and RGB colour. Within a single stroke those almost never change, so we
            recreate it only when the key differs from the last call.
            NOTE: a CanvasGradient is bound to the context it was created on, so we
@@ -336,26 +336,26 @@
             return grad;
         }
 
-        /* Module-level constant for the white stamp â€” hoisted so the tinted
+        /* Module-level constant for the white stamp — hoisted so the tinted
            stamp path never allocates a new object literal per dab. */
         const _WHITE_RGB = { r: 255, g: 255, b: 255 };
 
-        /* â”€â”€ 5. DAB STAMP CACHE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        /* ── 5. DAB STAMP CACHE ──────────────────────────────────────────────
            For the common case of a plain circle/square/diamond/etc. brush with
            no grain, no jitter, and no angle, the dab shape is identical for every
            stamp along the stroke.  We pre-render it once into a cached
-           OffscreenCanvas and then reuse it via drawImage â€” a single GPU blit is
-           5-10Ã— faster than arc + gradient fill for large brushes.
+           OffscreenCanvas and then reuse it via drawImage — a single GPU blit is
+           5-10× faster than arc + gradient fill for large brushes.
 
            Phase 5 upgrade: memory-bounded LRU.
-           Each cached canvas costs width Ã— height Ã— 4 bytes (RGBA).  For a
-           256Ã—256 custom tip that is 256 KB â€” 8 entries would be 2 MB.  With
+           Each cached canvas costs width × height × 4 bytes (RGBA).  For a
+           256×256 custom tip that is 256 KB — 8 entries would be 2 MB.  With
            rotation variants the pool could balloon to crash-territory.
 
            New policy:
-             â€¢ _DAB_STAMP_BUDGET: max total bytes across all cached stamps (4 MB).
-             â€¢ _DAB_STAMP_MAX:    hard cap on entry count (remains at 8).
-             â€¢ On each new stamp build, evict LRU entries until both constraints
+             • _DAB_STAMP_BUDGET: max total bytes across all cached stamps (4 MB).
+             • _DAB_STAMP_MAX:    hard cap on entry count (remains at 8).
+             • On each new stamp build, evict LRU entries until both constraints
                are satisfied.
            The budget is checked every time we add a new stamp, not per-blit,
            so there is zero extra cost on the hot path (drawImage).
@@ -367,7 +367,7 @@
 
         // _buildDabStamp always renders at angle=0.  Rotation is applied at
         // drawImage time via ctx.setTransform so the stamp is reused across all
-        // angle-jittered dabs â€” the previous design baked rad into the cache key,
+        // angle-jittered dabs — the previous design baked rad into the cache key,
         // guaranteeing a miss on every jittered dab.
         // MRU-1 slot for _buildDabStamp: stores the raw numeric values of the last
         // returned stamp so we can confirm a hit without building a string at all.
@@ -375,10 +375,10 @@
         let _stampMRU = null;   // { iSz, hardness, r, g, b, shape, canvas }
 
         function _buildDabStamp(sz, hardness, rgb, shape) {
-            // Quantize to nearest even integer â€” absorbs sub-pixel size jitter
+            // Quantize to nearest even integer — absorbs sub-pixel size jitter
             const iSz = Math.max(2, Math.round((Math.ceil(sz) + 4) / 2) * 2);
 
-            // MRU-1 check â€” avoids string construction + findIndex on every dab
+            // MRU-1 check — avoids string construction + findIndex on every dab
             // during a steady stroke (most common case by far).
             if (_stampMRU &&
                 _stampMRU.iSz      === iSz     &&
@@ -421,7 +421,7 @@
             const fill = 'rgb(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ')';
 
             sctx.clearRect(0, 0, iSz, iSz);
-            // No rotation here â€” stamp is always axis-aligned.
+            // No rotation here — stamp is always axis-aligned.
             // Asymmetric shapes (slash, line) are rotated at draw time.
             // Delegate shape rendering to the tip abstraction layer.
             // useSoftGradient=true so circles get the radial gradient at stamp-build time.
@@ -448,11 +448,11 @@
             return { h: h * 360, s: s * 100, l: l * 100 };
         }
 
-        // Static hex lookup table and helpers for hslToHex â€” hoisted outside the
+        // Static hex lookup table and helpers for hslToHex — hoisted outside the
         // function so no closure or array is allocated on each color-jitter dab.
         const _HEX16 = '0123456789abcdef';
 
-        /* Hue channel helper for HSLâ†’RGB (CSS spec algorithm). */
+        /* Hue channel helper for HSL→RGB (CSS spec algorithm). */
         function _hslHue(p, q, t) {
             if (t < 0) t += 1; else if (t > 1) t -= 1;
             if (t < 1/6) return p + (q - p) * 6 * t;
@@ -461,7 +461,7 @@
             return p;
         }
 
-        /* Convert a 0â€“1 float to a two-character hex string without toString/padStart. */
+        /* Convert a 0–1 float to a two-character hex string without toString/padStart. */
         function _toHex2(v) {
             const n = v <= 0 ? 0 : v >= 1 ? 255 : (v * 255 + 0.5) | 0;
             return _HEX16[n >> 4] + _HEX16[n & 15];
@@ -504,7 +504,7 @@
             return hslToHex(h, s, l);
         }
 
-        /* â”€â”€ 4b. WET LAYER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 4b. WET LAYER ───────────────────────────────────────────────── */
 
         /* Ensure the wet canvas matches the current document size */
         function _ensureWetCanvas() {
@@ -541,7 +541,7 @@
         function _feedWetLayer(cx, cy, sz, angleDeg, colorHex, alpha) {
             if (!_wetCtx) return;
             const wet = params.wetness / 100;
-            // Throttled full-canvas decay â€” simulates gentle drying without a
+            // Throttled full-canvas decay — simulates gentle drying without a
             // per-dab arc path fill on every stamp.
             const now = performance.now();
             if (now - _wetDecayLastT >= 1000) {
@@ -566,12 +566,12 @@
             _wetCtx.restore();
         }
 
-        /* â”€â”€ 4b-ii. POLYGON-GROWTH WATERCOLOR BLOOM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        /* ── 4b-ii. POLYGON-GROWTH WATERCOLOR BLOOM ─────────────────────────
            Runs once on strokeEnd when params.polyWatercolor is true.
            Algorithm:
              1. Sample strokePoints to build an outline polygon around the stroke path.
              2. Iteratively expand each polygon vertex outward with noise-perturbed
-                displacement â€” the polygon "grows" organically outward.
+                displacement — the polygon "grows" organically outward.
              3. Each growth pass composites the polygon at very low opacity with
                 colour shifted slightly toward the edge (warm/cool tinting).
              4. A final innermost pass adds a stronger core deposit.
@@ -582,11 +582,11 @@
             const ctx = getDrawCtx();
             const rgb = hexToRgb(colorHex);
 
-            // â”€â”€ 1. Build stroke outline polygon â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── 1. Build stroke outline polygon ──────────────────────────────
             // For each stroke point emit two vertices perpendicular to the path,
             // offset left and right by half the brush width.
             const halfW   = Math.max(6, brushSz * 0.55);
-            const poly    = [];   // [{x,y}] â€” the outline polygon (closed loop)
+            const poly    = [];   // [{x,y}] — the outline polygon (closed loop)
             const left    = [];
             const right   = [];
 
@@ -606,7 +606,7 @@
             for (let i = 0;            i < left.length;  i++) poly.push(left[i]);
             for (let i = right.length - 1; i >= 0; i--) poly.push(right[i]);
 
-            // â”€â”€ 2. Growth passes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── 2. Growth passes ──────────────────────────────────────────────
             // Each pass expands each vertex outward by a noise-perturbed amount
             // and renders the polygon at low opacity.
             const PASSES       = 7;
@@ -615,7 +615,7 @@
             const NOISE_SEED_X = Math.random() * 1000;
             const NOISE_SEED_Y = Math.random() * 1000;
 
-            // Working polygon â€” we mutate this across passes
+            // Working polygon — we mutate this across passes
             let wpoly = poly.map(v => ({ x: v.x, y: v.y }));
 
             for (let pass = 0; pass < PASSES; pass++) {
@@ -628,7 +628,7 @@
                 const newPoly = wpoly.map(v => {
                     const dx  = v.x - cx, dy = v.y - cy;
                     const len = Math.sqrt(dx*dx + dy*dy) || 1;
-                    // Noise-based perturbation â€” sample from the pre-built noise grid
+                    // Noise-based perturbation — sample from the pre-built noise grid
                     const n = sampleNoise(v.x + NOISE_SEED_X, v.y + NOISE_SEED_Y, NOISE_SCALE);
                     const jitter = (n - 0.5) * growAmt * 2.2;
                     const outward = growAmt + jitter;
@@ -638,7 +638,7 @@
                     };
                 });
 
-                // â”€â”€ 3. Render this pass â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── 3. Render this pass ───────────────────────────────────────
                 // Opacity ramps down for outer passes (more transparent at edges)
                 // and colour tints toward a slightly cooled/warm edge tone.
                 const passAlpha = (1 - t) * 0.055 + 0.008;   // inner=5.5%, outer=0.8%
@@ -662,7 +662,7 @@
                 wpoly = newPoly;
             }
 
-            // â”€â”€ 4. Strong inner core deposit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── 4. Strong inner core deposit ─────────────────────────────────
             // One final pass with the original (un-grown) polygon at slightly higher
             // opacity to reinforce the stroke centre the way real watercolor darkens
             // at the edge of a bead of paint.
@@ -684,19 +684,19 @@
             ctx.restore();
         }
 
-        /* â”€â”€ 4c. CATMULL-ROM HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 4c. CATMULL-ROM HELPERS ─────────────────────────────────────── */
 
         /* Centripetal Catmull-Rom spline (alpha=0.5).
            Parameterises knots by sqrt(chord distance), preventing cusps and loops
-           when control points are unevenly spaced â€” exactly what happens with
+           when control points are unevenly spaced — exactly what happens with
            event coalescing on fast strokes.
            Zero-allocation: writes into out (or _crOut).
 
-           âš ï¸  ZERO-ALLOCATION TRAP â€” READ BEFORE MODIFYING âš ï¸
+           ⚠️  ZERO-ALLOCATION TRAP — READ BEFORE MODIFYING ⚠️
            _crOut is a single, globally-shared object.  Every call to _crPoint()
            that does NOT pass an explicit `out` argument overwrites the SAME {x,y}.
            This means if you ever store the return value in an array:
-               points.push(_crPoint(t))   // â† BUG: every element is the same ref!
+               points.push(_crPoint(t))   // ← BUG: every element is the same ref!
            every entry in that array will silently update to the last calculated
            coordinate and your entire stroke will collapse to a single dot.
            ALWAYS clone before storing:
@@ -707,7 +707,7 @@
 
         /* Pre-computed knot intervals shared across _crPoint and _crSegLen.
            Computing them once per segment (instead of once per _crPoint call)
-           eliminates 3Ã—(stepsâˆ’1) redundant sqrt(sqrt()) evaluations per strokeMove. */
+           eliminates 3×(steps−1) redundant sqrt(sqrt()) evaluations per strokeMove. */
         const _crPrecomp = { t1: 0, t2: 0, t3: 0 };
 
         function _crPrecompute(p0, p1, p2, p3) {
@@ -756,7 +756,7 @@
             return ox;
         }
 
-        /* Arc-length approximation â€” zero heap allocation via two reusable slots.
+        /* Arc-length approximation — zero heap allocation via two reusable slots.
            Accepts an optional precomp from _crPrecompute() so the knot-interval
            sqrt(sqrt()) calls are paid once per segment, not once per sub-step. */
         const _crLenA = { x: 0, y: 0 }, _crLenB = { x: 0, y: 0 };
@@ -780,7 +780,7 @@
             return len;
         }
 
-        /* â”€â”€ 4d. FLOW ACCUMULATION BUFFER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 4d. FLOW ACCUMULATION BUFFER ───────────────────────────────────── */
 
         /* Lazily create / resize the two full-document OffscreenCanvases used
            for the flow buffer.  Called once per stroke (if needed). */
@@ -803,7 +803,7 @@
         /* After every scatter-dab group, composite the stroke canvas onto the
            real canvas in the dirty region around (cx, cy, sz).
            Steps:
-             1. Restore the pre-stroke snapshot in the dirty rect  â†’  undo any
+             1. Restore the pre-stroke snapshot in the dirty rect  →  undo any
                 raw dabs that went to ctx via modes that bypass the buffer (wet,
                 smudge etc. are minor exceptions and OK on ctx directly).
              2. Re-draw the accumulated stroke canvas at params.opacity.
@@ -855,7 +855,7 @@
 
         /* Schedule a single RAF-batched flow buffer flush.  All dabs stamped
            during the current JS turn are folded into one composite call.
-           Safe to call multiple times per turn â€” only one RAF is queued. */
+           Safe to call multiple times per turn — only one RAF is queued. */
         function _scheduleFlowBufFlush(realCtx) {
             if (!_flowBufActive || !_preStrokeCanvas) return;
             _flowRAFCtx = realCtx;
@@ -878,7 +878,7 @@
             });
         }
 
-        /* â”€â”€ 5. ACTIVE DRAWING CONTEXT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 5. ACTIVE DRAWING CONTEXT ───────────────────────────────────── */
 
         function getDrawCtx() {
             const mgr = app.layerMgr;
@@ -889,16 +889,16 @@
             return app.ctx;
         }
 
-        /* â”€â”€ 6. DAB RENDERER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 6. DAB RENDERER ─────────────────────────────────────────────── */
 
-        /* â”€â”€ DAB CANVAS POOL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        /* ── DAB CANVAS POOL ─────────────────────────────────────────────────
            Instead of allocating a new OffscreenCanvas on every dab (which
            triggers GPU memory allocation each time), we keep a pool of
            reusable canvases bucketed by pixel size.  Borrow before a dab,
            return immediately after drawImage.  Pool is capped at 8 per size
            bucket to avoid unbounded growth.
-           â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-        const _dabPool = new Map(); // (w<<16)|h  â†’  {canvas, ctx}[]
+           ─────────────────────────────────────────────────────────────────── */
+        const _dabPool = new Map(); // (w<<16)|h  →  {canvas, ctx}[]
 
         function _borrowScratch(w, h) {
             const key  = (w << 16) | h;
@@ -922,7 +922,7 @@
             const pool = _dabPool.get(key);
             if (pool.length < 8) pool.push({ canvas: sc, ctx: sc._poolCtx || sc.getContext('2d') });
         }
-        /* Legacy alias â€” used by a few non-hot-path helpers (custom tip invert,
+        /* Legacy alias — used by a few non-hot-path helpers (custom tip invert,
            layer merge, etc.) that don't need pooling.  New hot-path code should
            use _borrowScratch / _returnScratch instead. */
         function _makeScratch(w, h) {
@@ -930,27 +930,27 @@
             const c = document.createElement('canvas'); c.width = w; c.height = h; return c;
         }
 
-        /* â”€â”€ TIP SOURCE ABSTRACTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        /* ── TIP SOURCE ABSTRACTION ──────────────────────────────────────────
            All knowledge about *what shape to stamp* lives here.
            _getTipCanvas(sz, rgb, hardness) returns a pre-rendered OffscreenCanvas
            that is already colour-baked, greyscale-masked, or gradient-filled.
-           The canvas is always iSzÃ—iSz, centred, angle=0 (rotation applied at
+           The canvas is always iSz×iSz, centred, angle=0 (rotation applied at
            drawImage time by the callers that need it).
 
            Supported tip types (params.shape):
-             'circle'  â€” soft or hard circle (gradient when hardness < 0.98)
-             'square'  â€” axis-aligned square
-             'diamond' â€” rotated square
-             'slash'   â€” wide flat rectangle (calligraphy nib, angled at draw time)
-             'line'    â€” thin flat rectangle (horizontal, angled at draw time)
-             'custom'  â€” greyscale PNG mask; luminanceâ†’alpha, hardness falloff,
+             'circle'  — soft or hard circle (gradient when hardness < 0.98)
+             'square'  — axis-aligned square
+             'diamond' — rotated square
+             'slash'   — wide flat rectangle (calligraphy nib, angled at draw time)
+             'line'    — thin flat rectangle (horizontal, angled at draw time)
+             'custom'  — greyscale PNG mask; luminance→alpha, hardness falloff,
                          and invert are baked at load time by _rebakeTip() so
                          _renderTipOntoCtx is a plain two-drawImage composite.
-             'bristle' â€” handled entirely by _paintBristleDabs; never reaches here
+             'bristle' — handled entirely by _paintBristleDabs; never reaches here
 
            Steps 2-5 of the upgrade plan add new tip types here without touching
            paintDab, _drawShape, or any other caller.
-           â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+           ─────────────────────────────────────────────────────────────────── */
 
         /* Resolve which tip type is currently active.
            Returns a string matching the cases in _getTipCanvas. */
@@ -960,15 +960,15 @@
         }
 
         /* Build (or return cached) a colour-baked tip stamp at the given size.
-           rgb  â€” {r,g,b} for primitive shapes; ignored for 'custom' (colour applied
+           rgb  — {r,g,b} for primitive shapes; ignored for 'custom' (colour applied
                   later via source-in in the stamp-cache fast path).
-           Returns the pool canvas â€” callers must NOT return it to the pool; the
+           Returns the pool canvas — callers must NOT return it to the pool; the
            stamp LRU owns it.  Use _getTipCanvasDirect for one-shot scratch use. */
         function _getTipCanvas(sz, rgb, hardness) {
             const tipType = _activeTipType();
 
             // Delegate to the existing LRU stamp cache for all primitive shapes.
-            // Custom tips skip the cache â€” they are already baked at load time and
+            // Custom tips skip the cache — they are already baked at load time and
             // are trivially cheap to drawImage at any size.
             if (tipType !== 'custom') {
                 return _buildDabStamp(sz, hardness, rgb, tipType);
@@ -1018,7 +1018,7 @@
             dctx.fill();
         }
 
-        /* â”€â”€ END TIP SOURCE ABSTRACTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── END TIP SOURCE ABSTRACTION ───────────────────────────────────── */
 
         /* Helper: draw the dab shape onto any ctx, centred at (ox,oy).
            Shape selection is fully delegated to _renderTipOntoCtx so this
@@ -1060,9 +1060,9 @@
             const useGrain       = params.texture > 0;
             const useSoft        = !binaryMode && !smartBrush;   // soft gradients only in normal mode
 
-            // â”€â”€ Smudge colour mix â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Smudge colour mix ─────────────────────────────────────────────
             // The smudge buffer (smudgeColor) carries picked-up canvas colour.
-            // _smudgeAccum ramps from 0â†’1 as you drag, making the effect build
+            // _smudgeAccum ramps from 0→1 as you drag, making the effect build
             // progressively like a finger dragging wet paint.  The user's chosen
             // smudge % is the maximum influence when fully accumulated.
             let fill = colorHex;
@@ -1074,23 +1074,23 @@
                                 Math.round(base.b*(1-f)+smudgeColor.b*f) + ')';
             }
 
-            // â”€â”€ Wet layer (before dab) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Wet layer (before dab) ────────────────────────────────────────
             if (!smartBrush && params.wetness > 0) {
                 _ensureWetCanvas();
                 _applyWetLayer(ctx, cx, cy, sz);
             }
 
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ═══════════════════════════════════════════════════════════════════
             // MODE A: SMART BRUSH
             // Paint two concentric layers onto a scratch canvas:
-            //   1. Outer ring  â†’ c1 (outline colour)
-            //   2. Inner fill  â†’ c2 (fill colour)
+            //   1. Outer ring  → c1 (outline colour)
+            //   2. Inner fill  → c2 (fill colour)
             // The ring is produced by drawing the larger shape then punching out
             // the inner region with destination-out, leaving only the ring pixels.
-            // We stamp fill first, then ring on top with source-over â€” the ring
+            // We stamp fill first, then ring on top with source-over — the ring
             // is always the topmost paint and can never be covered by fill pixels
             // from subsequent overlapping dabs because ring pixels are fully opaque.
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ═══════════════════════════════════════════════════════════════════
             if (smartBrush) {
                 const thick     = Math.max(1, params.outlineThick || 3);
                 const outerSz   = sz + thick * 2;
@@ -1102,20 +1102,20 @@
                 const c1        = (app.config && app.config.c1) ? app.config.c1 : '#000000';
                 const c2        = (app.config && app.config.c2) ? app.config.c2 : '#ffffff';
 
-                // â”€â”€ Ring scratch canvas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Ring scratch canvas ────────────────────────────────────────
                 const ringScratch = _borrowScratch(padded, padded);
                 const ringCtx     = ringScratch._poolCtx;
                 // Draw full outer shape in c1
                 ringCtx.globalAlpha = 1;
                 _drawShape(ringCtx, mid, mid, outerR, outerSz, rad, c1, 1, false);
-                // Punch out inner region with destination-out â†’ leaves only ring
+                // Punch out inner region with destination-out → leaves only ring
                 ringCtx.save();
                 ringCtx.globalCompositeOperation = 'destination-out';
                 ringCtx.globalAlpha = 1;
                 _drawShape(ringCtx, mid, mid, r, sz, rad, '#000', hardness, false);
                 ringCtx.restore();
 
-                // â”€â”€ Fill scratch canvas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Fill scratch canvas ────────────────────────────────────────
                 const fillScratch = _borrowScratch(padded, padded);
                 const fillCtx     = fillScratch._poolCtx;
                 _drawShape(fillCtx, mid, mid, r, sz, rad, c2, hardness, false);
@@ -1130,8 +1130,8 @@
                     fillCtx.putImageData(fi, 0, 0);
                 }
 
-                // â”€â”€ Stamp onto main canvas: fill first, then ring on top â”€â”€â”€â”€â”€â”€â”€
-                // Using source-over for both â€” the ring paints over fill pixels
+                // ── Stamp onto main canvas: fill first, then ring on top ───────
+                // Using source-over for both — the ring paints over fill pixels
                 // it overlaps, and because it's always stamped last it permanently
                 // owns those pixels. A subsequent dab's fill is also stamped before
                 // its own ring, so it can never overwrite a prior ring pixel because
@@ -1147,7 +1147,7 @@
                 _returnScratch(fillScratch);
                 _returnScratch(ringScratch);
 
-                // Smudge pickup after smart dab â€” throttled to 50 ms like the normal path.
+                // Smudge pickup after smart dab — throttled to 50 ms like the normal path.
                 // Previously unthrottled: every dab fired getImageData, stalling the GPU pipeline.
                 if (params.smudge > 0) {
                     const _smudgeNow = performance.now();
@@ -1155,7 +1155,7 @@
                         _lastSmudgeTime = _smudgeNow;
                         try {
                             const W = app.config.width, H = app.config.height;
-                            // Cap at 20px: reduces max read from 64Ã—64=4096 px to 40Ã—40=1600 px.
+                            // Cap at 20px: reduces max read from 64×64=4096 px to 40×40=1600 px.
                             const sampleR = Math.max(4, Math.min(20, Math.round(sz * 0.45)));
                             const sampleD = sampleR * 2;
                             const sx = Math.max(0, Math.min(W-sampleD, Math.round(cx)-sampleR));
@@ -1163,7 +1163,7 @@
                             const smudgeSrc = (_flowBufActive && _preStrokeCtx) ? _preStrokeCtx : ctx;
                             const d  = smudgeSrc.getImageData(sx, sy, sampleD, sampleD).data;
                             let rr=0,gg=0,bb=0,cnt=0;
-                            // Sample every other pixel (stride 8) â€” halves loop iterations with
+                            // Sample every other pixel (stride 8) — halves loop iterations with
                             // negligible colour accuracy loss on an averaged region.
                             for (let i=0;i<d.length;i+=8) { if(d[i+3]>8){rr+=d[i];gg+=d[i+1];bb+=d[i+2];cnt++;} }
                             if (cnt>0) {
@@ -1178,21 +1178,21 @@
                 return;
             }
 
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ═══════════════════════════════════════════════════════════════════
             // MODE B: BINARY (no smart brush)
             // GPU-only path: two compositing passes produce hard on/off edges
             // without any CPU readback (no getImageData / putImageData).
             //
-            // Pass 1 â€“ draw the shape with hardness=1 (fully hard arc, no gradient).
+            // Pass 1 – draw the shape with hardness=1 (fully hard arc, no gradient).
             //          Sub-pixel AA fringe pixels will have partial alpha.
-            // Pass 2 â€“ source-in fill: paint the target colour over every pixel
+            // Pass 2 – source-in fill: paint the target colour over every pixel
             //          that landed inside the shape, preserving its alpha exactly.
-            // Pass 3 â€“ destination-in with a solid white rect drawn at threshold
+            // Pass 3 – destination-in with a solid white rect drawn at threshold
             //          alpha (0.5): the '2d' canvas spec rounds destination alpha
             //          multiplied by source alpha, so pixels below ~50% alpha are
             //          zeroed and pixels above survive at full colour.  This snaps
             //          the AA fringe to hard 0 or 255 entirely on the GPU.
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ═══════════════════════════════════════════════════════════════════
             if (binaryMode) {
                 const iSz      = Math.max(1, Math.ceil(sz) + 4);
                 const scratchX = Math.round(cx - iSz / 2);
@@ -1211,10 +1211,10 @@
                 sctx.fillRect(0, 0, iSz, iSz);
                 sctx.restore();
 
-                // Pass 3: snap partial-alpha AA fringe â€” destination-in with a rect
+                // Pass 3: snap partial-alpha AA fringe — destination-in with a rect
                 // drawn at exactly 0.502 globalAlpha.  The compositing formula
                 // (dst.a * src.a) means fringe pixels with alpha < 0.498 collapse
-                // to 0, pixels fully inside (alpha â‰ˆ 1) survive at â‰ˆ 1.  This is
+                // to 0, pixels fully inside (alpha ≈ 1) survive at ≈ 1.  This is
                 // a pure GPU threshold with no CPU stall.
                 sctx.save();
                 sctx.globalCompositeOperation = 'destination-in';
@@ -1225,7 +1225,7 @@
 
                 ctx.drawImage(sc, scratchX, scratchY);
                 _returnScratch(sc);
-                // Smudge pickup â€” throttled to 50 ms like the normal path.
+                // Smudge pickup — throttled to 50 ms like the normal path.
                 // Previously unthrottled: every binary-mode dab fired getImageData.
                 if (params.smudge > 0) {
                     const _smudgeNow = performance.now();
@@ -1254,23 +1254,23 @@
             }
 
 
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ═══════════════════════════════════════════════════════════════════
             // MODE C: NORMAL (original AA path)
             // Render shape + grain onto a scratch canvas so destination-out grain
             // only erodes the fresh dab, not existing canvas content.
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ═══════════════════════════════════════════════════════════════════
 
-            // â”€â”€ MODE C FAST PATH (stamp cache) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── MODE C FAST PATH (stamp cache) ───────────────────────────────
             // When grain is off and the shape is a standard primitive (no custom
             // tip, no jitter that mutates fill mid-stroke), the dab bitmap is
             // identical for every stamp.  We build a color-baked stamp once per
-            // distinct (size Ã— hardness Ã— color Ã— shape) combination â€” a single
+            // distinct (size × hardness × color × shape) combination — a single
             // drawImage blit per dab with no scratch allocation at all.
             //
             // COLOR STRATEGY:
-            //   â€¢ No color jitter (_baseHsl null): fill is constant for the whole
-            //     stroke â€” bake it directly into the stamp (rgb variant).
-            //   â€¢ Color jitter active: fill changes per dab â€” bake a white stamp
+            //   • No color jitter (_baseHsl null): fill is constant for the whole
+            //     stroke — bake it directly into the stamp (rgb variant).
+            //   • Color jitter active: fill changes per dab — bake a white stamp
             //     and composite fill via source-in onto a per-dab scratch canvas
             //     (two blits vs arc+gradient, still a big win over mode C slow path).
             {
@@ -1285,14 +1285,14 @@
                     const originY = Math.round(cy - half);
 
                     if (!_baseHsl) {
-                        // â”€â”€ ULTRA FAST PATH: baked-color single-blit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-                        // No jitter â†’ same rgb every dab â†’ stamp carries the real colour.
+                        // ── ULTRA FAST PATH: baked-color single-blit ─────────────
+                        // No jitter → same rgb every dab → stamp carries the real colour.
                         // One drawImage to ctx (and _strokeCtx). Zero scratch allocation.
                         const _tipType = _activeTipType();
                         const stamp = _buildDabStamp(sz, hardness, rgb, _tipType);
 
                         if (rad !== 0 && _tipType !== 'circle') {
-                            // Asymmetric shape: need a rotated copy â€” borrow a scratch,
+                            // Asymmetric shape: need a rotated copy — borrow a scratch,
                             // rotate-blit the stamp, draw, return. Still only one blit to ctx.
                             const tsc  = _borrowScratch(iSz, iSz);
                             const tctx = tsc._poolCtx;
@@ -1315,7 +1315,7 @@
                             }
                             _returnScratch(tsc);
                         } else {
-                            // Circle or angle=0: stamp is already correct â€” pure single blit.
+                            // Circle or angle=0: stamp is already correct — pure single blit.
                             const _pa = ctx.globalAlpha;
                             ctx.globalAlpha = effectiveAlpha;
                             ctx.drawImage(stamp, originX, originY);
@@ -1331,7 +1331,7 @@
                         }
 
                     } else {
-                        // â”€â”€ JITTER PATH: white stamp + per-dab source-in tint â”€â”€â”€â”€
+                        // ── JITTER PATH: white stamp + per-dab source-in tint ────
                         // Color changes each dab; tint a white stamp with source-in.
                         const _tipType = _activeTipType();
                         const stamp = _buildDabStamp(sz, hardness, _WHITE_RGB, _tipType);
@@ -1391,10 +1391,10 @@
                     sctx.globalCompositeOperation = _gc;
                 }
 
-                // â”€â”€ 2c-2: Per-dab grain modulator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── 2c-2: Per-dab grain modulator ────────────────────────────────
                 // Sample the noise field at the dab's world-space coordinates and
                 // scale the entire dab's globalAlpha by the result.  This creates
-                // macro-level breakup â€” some dabs land dimmer, others brighter â€”
+                // macro-level breakup — some dabs land dimmer, others brighter —
                 // that compounds with the intra-dab pixel erosion from 2c-1 for a
                 // genuinely organic paper-grain feel.  Strength is proportional to
                 // params.texture so the effect is zero when grain is off and
@@ -1413,7 +1413,7 @@
                 ctx.drawImage(sc, originX, originY);
                 ctx.globalAlpha = _pa;
 
-                // â”€â”€ Flow buffer: also stamp dab onto the stroke accumulation canvas â”€â”€
+                // ── Flow buffer: also stamp dab onto the stroke accumulation canvas ──
                 // When active, the real composite to ctx happens in _syncFlowBuf().
                 // Here we put the dab on _strokeCtx at flow-only alpha (opacity is
                 // applied later as the ceiling during composite).
@@ -1432,18 +1432,18 @@
                 } // end else (full scratch path)
             }
 
-            // â”€â”€ Feed wet layer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Feed wet layer ────────────────────────────────────────────────
             if (params.wetness > 0) {
                 _feedWetLayer(cx, cy, sz, angleDeg, fill, alpha);
             }
 
-            // â”€â”€ Smudge pickup â€” multi-bucket spatial system â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Smudge pickup — multi-bucket spatial system ───────────────────
             // Inspired by libmypaint's smudge bucket array.  We maintain N_SMUDGE_BUCKETS
             // spatial samples taken at evenly-spaced offsets across the brush width,
             // perpendicular to the local stroke direction (_dirDX/_dirDY).
             // One bucket is updated per dab-group (round-robin, throttled to 50ms)
             // so cost is always one getImageData, regardless of bucket count.
-            // The bucket average is used in paintDab's fill mix â€” giving the illusion
+            // The bucket average is used in paintDab's fill mix — giving the illusion
             // that different parts of the brush edge pick up different canvas colours.
             if (params.smudge > 0) {
                 const _smudgeNow = performance.now();
@@ -1454,11 +1454,11 @@
                     const sampleR = Math.max(4, Math.min(20, Math.round(sz * 0.45)));
 
                     // Compute offset for this bucket slot along the perpendicular axis.
-                    // Buckets span [-spread, +spread] across brush width (0.4 Ã— sz).
+                    // Buckets span [-spread, +spread] across brush width (0.4 × sz).
                     const spread    = sz * 0.4;
                     const bidx      = _smudgeBucketIdx % N_SMUDGE_BUCKETS;
                     const bucketT   = N_SMUDGE_BUCKETS > 1
-                        ? (bidx / (N_SMUDGE_BUCKETS - 1)) * 2 - 1   // âˆ’1..+1
+                        ? (bidx / (N_SMUDGE_BUCKETS - 1)) * 2 - 1   // −1..+1
                         : 0;
                     // Perpendicular direction from filtered stroke angle
                     const dirLen = Math.sqrt(_dirDX * _dirDX + _dirDY * _dirDY) || 1;
@@ -1500,13 +1500,13 @@
                     _sBaseHsl = rgbToHsl(_sRgb.r, _sRgb.g, _sRgb.b);
                 }
 
-                // â”€â”€ SCATTER BATCH PATH â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── SCATTER BATCH PATH ────────────────────────────────────────────
                 // When grain is active every per-dab scatter call goes through Mode C:
                 // scratch canvas + destination-out composite = one GPU pipeline flush
                 // per sub-dab.  Instead, composite all scatter sub-dabs into a single
                 // group canvas, apply destination-out grain ONCE across the group, then
                 // blit the whole thing with two drawImage calls.
-                // GPU flushes: scatter Ã— Mode-C  â†’  1, regardless of scatter count.
+                // GPU flushes: scatter × Mode-C  →  1, regardless of scatter count.
                 const useGrain = params.texture > 0;
                 if (useGrain) {
                     const hardness   = params.hardness / 100;
@@ -1548,7 +1548,7 @@
                         const drad = dang * Math.PI / 180;
                         const sc   = _sBaseHsl ? _jitterFromHsl(_sBaseHsl, t_fade) : smudgedFill;
 
-                        // Macro noise modulator â€” world-space coords of this sub-dab
+                        // Macro noise modulator — world-space coords of this sub-dab
                         const noiseVal = sampleNoise(cx + Math.cos(a) * d, cy + Math.sin(a) * d, params.grainScale);
                         const noiseMod = 1 - tFrac + tFrac * noiseVal;
 
@@ -1560,7 +1560,7 @@
                             hardness, !binaryMode && hardness < 0.98);
                     }
 
-                    // â”€â”€ Apply grain destination-out ONCE to the whole group â”€â”€â”€â”€â”€â”€â”€
+                    // ── Apply grain destination-out ONCE to the whole group ───────
                     const grainCanvas = _getGrainCanvas(sz, params.grainScale, angleDeg);
                     const _gc = bctx.globalCompositeOperation;
                     bctx.globalAlpha = tFrac * 0.85;
@@ -1569,13 +1569,13 @@
                     bctx.globalCompositeOperation = _gc;
                     bctx.globalAlpha = 1;
 
-                    // â”€â”€ Single blit to ctx (dab alphas baked into group canvas) â”€â”€
+                    // ── Single blit to ctx (dab alphas baked into group canvas) ──
                     const _pa = ctx.globalAlpha;
                     ctx.globalAlpha = 1;
                     ctx.drawImage(bc, originX, originY);
                     ctx.globalAlpha = _pa;
 
-                    // â”€â”€ Single blit to flow buffer if active â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    // ── Single blit to flow buffer if active ─────────────────────
                     // Multiply by 1/opacityScale to strip the opacity ceiling component,
                     // matching the per-dab flowAlpha logic in paintDab.
                     if (_flowBufActive && _strokeCtx) {
@@ -1590,13 +1590,13 @@
                     return;
                 }
 
-                // â”€â”€ NO-GRAIN SCATTER BATCH PATH â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── NO-GRAIN SCATTER BATCH PATH ───────────────────────────────────
                 // Previously: called paintDab() for each sub-dab, which ran the full
                 // mode-dispatch, wet-layer, and smudge-pickup pipeline N times.
                 // Now: composite all sub-dabs onto a single group canvas (same approach
                 // as the grain-batch path above), then blit once to ctx and _strokeCtx.
-                // GPU flushes: N Ã— paintDab overhead  â†’  1 drawImage each.
-                // Smudge pickup: N Ã— throttle check â†’ 0 (the main dab above already
+                // GPU flushes: N × paintDab overhead  →  1 drawImage each.
+                // Smudge pickup: N × throttle check → 0 (the main dab above already
                 // handles pickup; sub-dabs carry the already-mixed fill colour).
                 const nbatchPad = Math.ceil(sz / 2 + params.scatterRadius + sz / 2) + 6;
                 const nbatchSz  = nbatchPad * 2;
@@ -1661,7 +1661,7 @@
            (perpendicular to the stroke direction) by its baked-in lateralFrac,
            scaled by bristleSpread and the current brush size.
 
-           FAST PATH â€” strands are drawn directly onto ctx as thin fillRects with
+           FAST PATH — strands are drawn directly onto ctx as thin fillRects with
            a single save/restore per strand.  We never call paintDab here, which
            previously allocated a full scratch OffscreenCanvas for every strand
            (up to 20 allocations per dab group).  fillStyle is set once outside
@@ -1670,17 +1670,17 @@
             if (!_bristleStrands.length) return;
             const spread  = (params.bristleSpread / 100) * sz * 0.5;
             const rad     = angleDeg * Math.PI / 180;
-            // Precompute once â€” reused for both perpendicular offset AND strand transforms.
+            // Precompute once — reused for both perpendicular offset AND strand transforms.
             const cosRad  = Math.cos(rad);
             const sinRad  = Math.sin(rad);
-            // Perpendicular direction (rotate stroke angle 90Â°)
+            // Perpendicular direction (rotate stroke angle 90°)
             const perpX   = -sinRad;
             const perpY   =  cosRad;
             const N       = _bristleStrands.length;
             const strandW = Math.max(1, sz / N * 1.6);
 
             // Resolve fill colour once per dab group (jitter shifts hue/sat/bri
-            // per group, not per strand â€” individual strands get alpha variation
+            // per group, not per strand — individual strands get alpha variation
             // from their baked-in alphaScale instead).
             const groupColor = jitterColor(colorHex, 0);
 
@@ -1695,9 +1695,9 @@
                 const sw        = strandW * s.sizeScale;
                 const sh        = Math.max(2, sw * 0.56);
 
-                // Per-strand angular jitter, capped at Â±0.0525 rad (Â±3Â°).
+                // Per-strand angular jitter, capped at ±0.0525 rad (±3°).
                 // At such small angles the linear approximation
-                //   cos(Î¸+Î´) â‰ˆ cos(Î¸) âˆ’ Î´Â·sin(Î¸)
+                //   cos(θ+δ) ≈ cos(θ) − δ·sin(θ)
                 // has error < 0.0001 (well below sub-pixel) so we avoid two
                 // Math.cos/sin calls per strand without sacrificing visual quality.
                 const delta     = (Math.random() - 0.5) * 0.105;
@@ -1712,28 +1712,28 @@
             ctx.restore();
         }
 
-        /* â”€â”€ 7. SIZE COMPUTATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 7. SIZE COMPUTATION ─────────────────────────────────────────── */
 
-        /* â”€â”€ 7b. SMOOTH SPEED STATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 7b. SMOOTH SPEED STATE ──────────────────────────────────────── */
 
-        // â”€â”€ Libmypaint-style lowpass filter states â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Libmypaint-style lowpass filter states ────────────────────────────
         // libmypaint uses:  fac = exp(-dt/T);  output = fac*output + (1-fac)*input
         // This is time-correct: a 16ms frame and a 32ms frame produce the same
-        // filtered result for the same T, unlike a fixed Î± EMA which doesn't.
+        // filtered result for the same T, unlike a fixed α EMA which doesn't.
         //
-        // speed1: fine (short time constant) â€” reacts quickly to bursts
-        // speed2: gross (long time constant)  â€” tracks overall stroke pace
+        // speed1: fine (short time constant) — reacts quickly to bursts
+        // speed2: gross (long time constant)  — tracks overall stroke pace
         // These mirror libmypaint's NORM_SPEED1_SLOW / NORM_SPEED2_SLOW states.
-        let _speed1Slow   = 0;   // lowpass of normalised speed (T1 â‰ˆ 0.04 s)
-        let _speed2Slow   = 0;   // lowpass of normalised speed (T2 â‰ˆ 0.20 s)
-        let _smoothSpeed  = 0;   // legacy alias kept for computeSize() â€” mirrors _speed1Slow
-        // direction filter â€” prevents abrupt 180Â° angle flips on tiny wiggles
+        let _speed1Slow   = 0;   // lowpass of normalised speed (T1 ≈ 0.04 s)
+        let _speed2Slow   = 0;   // lowpass of normalised speed (T2 ≈ 0.20 s)
+        let _smoothSpeed  = 0;   // legacy alias kept for computeSize() — mirrors _speed1Slow
+        // direction filter — prevents abrupt 180° angle flips on tiny wiggles
         // libmypaint calls this DIRECTION_ANGLE with its own filter time constant
-        let _dirDX        = 0;   // lowpass of stroke delta-X (T â‰ˆ 0.10 s)
+        let _dirDX        = 0;   // lowpass of stroke delta-X (T ≈ 0.10 s)
         let _dirDY        = 0;   // lowpass of stroke delta-Y
-        // pressure filter â€” raw stylus pressure is noisy; libmypaint filters it
-        let _pressureSlow = 1;   // lowpass of pressure (T â‰ˆ 0.05 s)
-        // stroke progress input (0â†’1) â€” libmypaint's STROKE state.
+        // pressure filter — raw stylus pressure is noisy; libmypaint filters it
+        let _pressureSlow = 1;   // lowpass of pressure (T ≈ 0.05 s)
+        // stroke progress input (0→1) — libmypaint's STROKE state.
         // Unlike _strokeDist/2000 this is dab-count-relative, not distance-relative,
         // so it saturates at the same rate regardless of brush size or spacing.
         let _strokeDabCount = 0;
@@ -1744,7 +1744,7 @@
         let _strokeEndDist = -1;  // distance at mouseup (-1 = still drawing)
         let _strokePoints  = [];  // lightweight ring of recent (x,y,t) for smooth end-taper
 
-        // â”€â”€ Lazy Needle Stabilizer state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Lazy Needle Stabilizer state ─────────────────────────────────────
         let _lazyX        = 0;   // current position of the "lazy" trailing point
         let _lazyY        = 0;
         let _realX        = 0;   // actual cursor position (target the lazy point chases)
@@ -1753,9 +1753,9 @@
         let _lazyActive   = false; // true while a stabilized stroke is in progress
 
         /* Compute dab size at a given point in the stroke.
-           - progressT : 0â†’1 over the full stroke distance, drives startSizeâ†’endSize blend
-           - taperT    : 0â†’1 over just the taper-in phase at stroke start
-           - endTaperT : 0â†’1 for the tail taper triggered on mouse-up (0 while drawing)
+           - progressT : 0→1 over the full stroke distance, drives startSize→endSize blend
+           - taperT    : 0→1 over just the taper-in phase at stroke start
+           - endTaperT : 0→1 for the tail taper triggered on mouse-up (0 while drawing)
            - speed     : smoothed px/ms                                           */
         function computeSize(progressT, taperT, endTaperT, speed) {
             // Base: blend from startSize at stroke start toward endSize at stroke end
@@ -1766,12 +1766,12 @@
                 sz *= taperT;
             }
 
-            // Taper-out: commissioned on mouse-up â€” size shrinks back toward 1px at tip
+            // Taper-out: commissioned on mouse-up — size shrinks back toward 1px at tip
             if (endTaperT > 0) {
                 sz *= Math.max(0.04, 1 - endTaperT);
             }
 
-            // Speed â†’ Size: smoothed speed drives size up or down
+            // Speed → Size: smoothed speed drives size up or down
             if (params.speedSize !== 0) {
                 // Normalise speed: 0 = stopped, 1 = "normal" (~0.3 px/ms), 2+ = fast
                 const normSpeed = Math.min(4, speed / 0.3);
@@ -1786,7 +1786,7 @@
             return Math.max(0.5, sz);
         }
 
-        /* â”€â”€ 8. STROKE LIFECYCLE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 8. STROKE LIFECYCLE ─────────────────────────────────────────── */
 
         function strokeBegin(x, y, hexColor) {
             // Cancel any in-flight end-taper animation from a previous stroke
@@ -1825,13 +1825,13 @@
             _gradCacheCtx = null;
             _gradCacheVal = null;
 
-            // Clear the dab stamp LRU â€” colour / size / shape may all change between
+            // Clear the dab stamp LRU — colour / size / shape may all change between
             // strokes, so we flush entirely to avoid stale stamps.
             while (_dabStampLRU.length) { _returnScratch(_dabStampLRU.pop().canvas); }
             _dabStampBytes = 0;
-            _stampMRU = null;   // MRU entry now points to a returned canvas â€” must clear
+            _stampMRU = null;   // MRU entry now points to a returned canvas — must clear
 
-            // Seed Catmull-Rom ring buffer â€” fill all 4 slots with the start point
+            // Seed Catmull-Rom ring buffer — fill all 4 slots with the start point
             // so p0=p1=p2=start gives zero-length phantom segments until real moves arrive.
             _crBuf[0].x = _crBuf[1].x = _crBuf[2].x = _crBuf[3].x = x;
             _crBuf[0].y = _crBuf[1].y = _crBuf[2].y = _crBuf[3].y = y;
@@ -1840,7 +1840,7 @@
             // Ensure wet canvas exists at current document size
             if (params.wetness > 0) { _ensureWetCanvas(); _wetDecayLastT = 0; }
 
-            // â”€â”€ Flow accumulation buffer setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Flow accumulation buffer setup ────────────────────────────────
             // Active when opacity or flow < 100% and we're in single-canvas mode.
             // Layers have their own compositing pass so we skip it there.
             {
@@ -1858,19 +1858,19 @@
                 }
             }
 
-            // â”€â”€ Build bristle strand layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Build bristle strand layout ───────────────────────────────────
             // Even-spread N strands across [-1, +1] in lateral axis, each with a
             // tiny random wobble and alpha variation baked in for the whole stroke.
             if (params.shape === 'bristle') {
                 const N = Math.max(2, Math.round(params.bristleCount));
                 _bristleStrands = [];
                 for (let i = 0; i < N; i++) {
-                    const frac = N > 1 ? (i / (N - 1)) * 2 - 1 : 0;  // âˆ’1 to +1
+                    const frac = N > 1 ? (i / (N - 1)) * 2 - 1 : 0;  // −1 to +1
                     _bristleStrands.push({
                         lateralFrac: frac,
                         wobble:      (Math.random() - 0.5) * 0.18,   // small per-strand bias
-                        alphaScale:  0.6 + Math.random() * 0.4,      // 60â€“100% opacity variation
-                        sizeScale:   0.55 + Math.random() * 0.45,    // 55â€“100% size variation
+                        alphaScale:  0.6 + Math.random() * 0.4,      // 60–100% opacity variation
+                        sizeScale:   0.55 + Math.random() * 0.45,    // 55–100% size variation
                     });
                 }
             } else {
@@ -1922,59 +1922,59 @@
             const dt     = Math.max(1, now - prevT);
             prevT        = now;
 
-            // â”€â”€ Update Catmull-Rom ring buffer (zero allocation) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Update Catmull-Rom ring buffer (zero allocation) ─────────────
             // The ring buffer holds 4 points: p0, p1, p2, p3.
             // Write the new point into the oldest slot, then advance the head pointer.
             _crBuf[_crHead].x = x;
             _crBuf[_crHead].y = y;
             _crHead = (_crHead + 1) & 3;
-            // Read oldestâ†’newest in order: head, head+1, head+2, head+3 (all &3)
+            // Read oldest→newest in order: head, head+1, head+2, head+3 (all &3)
             const p0 = _crBuf[_crHead];
             const p1 = _crBuf[(_crHead + 1) & 3];
             const p2 = _crBuf[(_crHead + 2) & 3];
             const p3 = _crBuf[(_crHead + 3) & 3];
 
-            // â”€â”€ Pre-compute CR knot intervals once for this segment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Pre-compute CR knot intervals once for this segment ──────────
             // Shared by _crSegLen (arc-length integration) and every _crPoint
-            // call in the dab loop, saving 3Ã—sqrt(sqrt()) per integration step.
+            // call in the dab loop, saving 3×sqrt(sqrt()) per integration step.
             const segPrecomp = _crPrecompute(p0, p1, p2, p3);
 
-            // Chord length from p1â†’p2 (the segment we are about to render)
+            // Chord length from p1→p2 (the segment we are about to render)
             const chordDx  = p2.x - p1.x, chordDy = p2.y - p1.y;
             const chordLen = Math.sqrt(chordDx*chordDx + chordDy*chordDy);
             if (chordLen < 0.01) return;
-            const rawSpeed = chordLen / dt;   // px/ms â€” fed into lowpass filters below
+            const rawSpeed = chordLen / dt;   // px/ms — fed into lowpass filters below
 
-            // â”€â”€ Libmypaint-style time-correct lowpass filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Libmypaint-style time-correct lowpass filters ────────────────
             // fac = exp(-dt/T);  out = fac*out + (1-fac)*input
             // dt is in seconds. T is the time constant in seconds.
             // This is frame-rate-independent: the same T produces the same
-            // frequency response at 30fps and 120fps, unlike a fixed-Î± EMA.
+            // frequency response at 30fps and 120fps, unlike a fixed-α EMA.
             const dtSec = dt / 1000;
 
             // Normalise speed so 1.0 = "comfortable brushing pace" (~0.3 px/ms).
             // Capped at 4.0 so extreme flicks don't blow out the filter state.
             const normRawSpeed = Math.min(4, rawSpeed / 0.3);
 
-            // speed1: fine filter, T â‰ˆ 40 ms  â€” reacts to bursts quickly
+            // speed1: fine filter, T ≈ 40 ms  — reacts to bursts quickly
             const fac1   = Math.exp(-dtSec / 0.04);
             _speed1Slow  = fac1 * _speed1Slow + (1 - fac1) * normRawSpeed;
 
-            // speed2: gross filter, T â‰ˆ 200 ms â€” tracks overall stroke pace
+            // speed2: gross filter, T ≈ 200 ms — tracks overall stroke pace
             const fac2   = Math.exp(-dtSec / 0.20);
             _speed2Slow  = fac2 * _speed2Slow + (1 - fac2) * normRawSpeed;
 
             // Keep legacy alias in sync (computeSize uses _smoothSpeed)
             _smoothSpeed = _speed1Slow;
 
-            // Direction filter, T â‰ˆ 100 ms â€” smooths stroke angle, prevents
+            // Direction filter, T ≈ 100 ms — smooths stroke angle, prevents
             // abrupt flips on tiny wiggles. Uses raw dx/dy, not normalised.
             // libmypaint filters DX and DY separately then derives the angle.
             const facDir = Math.exp(-dtSec / 0.10);
             _dirDX = facDir * _dirDX + (1 - facDir) * chordDx;
             _dirDY = facDir * _dirDY + (1 - facDir) * chordDy;
 
-            // Pressure filter, T â‰ˆ 50 ms â€” smooths jittery stylus pressure
+            // Pressure filter, T ≈ 50 ms — smooths jittery stylus pressure
             const facP    = Math.exp(-dtSec / 0.05);
             _pressureSlow = facP * _pressureSlow + (1 - facP) * pressure;
             const smoothPressure = _pressureSlow;
@@ -1983,7 +1983,7 @@
             const taperZone  = Math.max(10, params.startSize * 6 * (params.taper / 100));
             const endZone    = Math.max(8,  params.startSize * 4 * (params.taper / 100));
 
-            // Approximate arc-length of the CR segment (reuses segPrecomp â€” no extra sqrt)
+            // Approximate arc-length of the CR segment (reuses segPrecomp — no extra sqrt)
             const segArcLen = _crSegLen(p0, p1, p2, p3, undefined, segPrecomp);
             residualDist   += segArcLen;
             _strokeDist    += segArcLen;
@@ -2001,16 +2001,16 @@
                 _baseHsl = rgbToHsl(_rgb.r, _rgb.g, _rgb.b);
             }
 
-            // â”€â”€ Hoist per-move-event constants out of the dab loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Hoist per-move-event constants out of the dab loop ───────────
             // progressT and taperT change very little across a single move event
             // (a few px of travel vs 2000px ramp), so compute them once here.
             // endTaperT is 0 during normal drawing and only non-zero during the
-            // end-taper RAF, which is a separate code path â€” safe to hoist.
+            // end-taper RAF, which is a separate code path — safe to hoist.
             //
             // progressT now uses _strokeDabCount / STROKE_INPUT_DABS (libmypaint's
             // "stroke" input), which is dab-count-relative rather than pixel-distance-
             // relative.  This makes the start/end size ramp consistent regardless of
-            // how large or small the brush is â€” a small brush no longer needs to travel
+            // how large or small the brush is — a small brush no longer needs to travel
             // 2000px to finish its taper in.
             const progressT   = Math.min(1, _strokeDabCount / STROKE_INPUT_DABS);
             const taperT      = params.taper > 0
@@ -2022,7 +2022,7 @@
             }
 
             // Use filtered pressure (smoothPressure) rather than the raw, noisy
-            // value.  Raw pressure can jump Â±0.1 on cheap styli causing visible
+            // value.  Raw pressure can jump ±0.1 on cheap styli causing visible
             // size/opacity flicker per dab; the filtered value is perceptibly cleaner.
             //
             // Phase 3 + Phase 5: Quantise to the nearest 1% before LUT lookup.
@@ -2041,12 +2041,12 @@
             const pressFactor    = 0.3 + _pressSize    * 0.7;
             const _pressFactorAl = 0.3 + _pressOpacity * 0.7;
 
-            // â”€â”€ Auto-angle from filtered stroke direction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Auto-angle from filtered stroke direction ──────────────────────
             // When params.angle is 0 and the brush is asymmetric (slash, line,
             // bristle), libmypaint drives angle from DIRECTION_ANGLE.  We do the
             // same: if params.angle === 0 and the shape benefits from alignment,
             // replace the fixed angle with the lowpass-filtered stroke direction.
-            // The filtered _dirDX/_dirDY already handles the 180Â° flip problem.
+            // The filtered _dirDX/_dirDY already handles the 180° flip problem.
             let _autoAngle = params.angle;
             if (params.angle === 0 && (params.shape === 'slash' || params.shape === 'line' || params.shape === 'bristle')) {
                 if (_dirDX !== 0 || _dirDY !== 0) {
@@ -2058,7 +2058,7 @@
             // stable across dabs (jitter is still applied per-dab to sz only).
             const _baseSz  = computeSize(progressT, taperT, endTaperT, _smoothSpeed) * pressFactor;
             const step     = Math.max(0.5, _baseSz * params.spacing / 100);
-            // speedOpacity uses _speed2Slow (gross speed) â€” libmypaint uses the
+            // speedOpacity uses _speed2Slow (gross speed) — libmypaint uses the
             // slower-filtered speed for opacity so it tracks overall stroke energy,
             // not momentary jitter.  Fine speed (_speed1Slow) is better for size.
             const _baseAl  = (params.opacity / 100) * (params.flow / 100) * _pressFactorAl *
@@ -2070,9 +2070,9 @@
             //
             // At tight spacing a fast stroke can produce 500+ dabs per pointermove event.
             // Each drawImage() is a separate GPU flush; Chrome's Canvas 2D command buffer
-            // saturates quickly and the call starts blocking the main thread â€” visible stutter.
+            // saturates quickly and the call starts blocking the main thread — visible stutter.
             //
-            // When the brush is a hard circle with no per-dab variation (hardness â‰¥ 98,
+            // When the brush is a hard circle with no per-dab variation (hardness ≥ 98,
             // no grain/scatter/smudge/wetness/colour jitter), every dab arc is
             // accumulated into a single shared Path2D and flushed with one ctx.fill().
             // This collapses N GPU draw calls into 1 regardless of dab count.
@@ -2091,14 +2091,14 @@
                 !params.binaryMode           &&
                 !_baseHsl;   // constant fill colour for this whole move event
 
-            // One Path2D shared across both ctx and _strokeCtx â€” fill() only reads
+            // One Path2D shared across both ctx and _strokeCtx — fill() only reads
             // geometry, so the same object is safe to pass to multiple contexts.
             let _batchPath    = canBatchPath2D ? new Path2D() : null;
             let _batchHadDabs = false;
 
             // Walk along the CR curve planting dabs at `step` intervals
             let walked = 0;
-            const _dabPos = { x: 0, y: 0 };   // reused each iteration â€” zero alloc
+            const _dabPos = { x: 0, y: 0 };   // reused each iteration — zero alloc
             while (residualDist >= step) {
                 // Current dab position along this CR segment (zero-alloc _crPoint)
                 // Correct t_seg: distance along this segment = total segment len minus
@@ -2113,7 +2113,7 @@
                     ? Math.max(0.5, _baseSz * (1 + (Math.random() - 0.5) * (params.sizeJitter / 50)))
                     : _baseSz;
 
-                // Position jitter â€” still per-dab even in batch mode
+                // Position jitter — still per-dab even in batch mode
                 const jx = params.posJitter
                     ? _dabPos.x + (Math.random() - 0.5) * 2 * params.posJitter
                     : _dabPos.x;
@@ -2124,7 +2124,7 @@
                 if (canBatchPath2D) {
                     // moveTo() is required before each arc().
                     // Without it the Canvas 2D spec implicitly draws a lineTo() from
-                    // the previous sub-path's end point to this arc's start â€” connecting
+                    // the previous sub-path's end point to this arc's start — connecting
                     // all circles into one giant self-intersecting polygon. The winding-
                     // rule fill then produces unexpected filled blobs between dabs.
                     // moveTo(cx + r, cy) starts a fresh sub-path so each circle is independent.
@@ -2134,7 +2134,7 @@
                     _batchHadDabs = true;
                 } else {
                     const color = _baseHsl ? _jitterFromHsl(_baseHsl, progressT) : hexColor;
-                    // Skip Math.random() entirely when jitter params are zero â€” the call
+                    // Skip Math.random() entirely when jitter params are zero — the call
                     // is cheap but not free, and it fires on every dab at low spacing.
                     const ang = params.angleJitter
                         ? _autoAngle + (Math.random() - 0.5) * 2 * params.angleJitter
@@ -2148,10 +2148,10 @@
                 residualDist     -= step;
                 walked           += step;
                 _strokeDabCount  += 1;   // libmypaint-style stroke-progress counter
-                if (walked > segArcLen + 2) break;  // safety â€” don't loop forever
+                if (walked > segArcLen + 2) break;  // safety — don't loop forever
             }
 
-            // â”€â”€ Flush Path2D batch (1 fill call replaces N drawImage calls) â”€â”€â”€â”€
+            // ── Flush Path2D batch (1 fill call replaces N drawImage calls) ────
             if (canBatchPath2D && _batchHadDabs) {
                 const rgb  = hexToRgb(hexColor);
                 const fill = 'rgb(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ')';
@@ -2163,7 +2163,7 @@
                 ctx.fill(_batchPath);
                 ctx.globalAlpha = _pa;
 
-                // Flow accumulation canvas â€” same Path2D geometry, different context.
+                // Flow accumulation canvas — same Path2D geometry, different context.
                 // opacity ceiling is applied later at the RAF flush.
                 if (_flowBufActive && _strokeCtx) {
                     const opacityScale = Math.max(0.01, params.opacity / 100);
@@ -2287,7 +2287,7 @@
             app.saveState();
         }
 
-        /* â”€â”€ 9. MOUSE HOOK â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 9. MOUSE HOOK ───────────────────────────────────────────────── */
 
         const _origDown = app.onMouseDown.bind(app);
         const _origMove = app.onMouseMove.bind(app);
@@ -2345,7 +2345,7 @@
             // Process coalesced pointer events, subsampling the interior when the
             // backlog is large.
             //
-            // At 120 Hz stylus input the browser batches up to 10â€“20 coalesced events
+            // At 120 Hz stylus input the browser batches up to 10–20 coalesced events
             // per pointermove callback. Running all of them through the full
             // Catmull-Rom + dab pipeline is expensive and delivers no visible quality
             // improvement beyond ~6 events per frame. Strategy: always keep the first
@@ -2354,7 +2354,7 @@
             const coalesced = (e.getCoalescedEvents ? e.getCoalescedEvents() : null) || [e];
             let events = coalesced.length ? coalesced : [e];
             if (events.length > 8) {
-                const step = (events.length - 1) / 5;   // 5 interior slots â†’ 6 total incl. first
+                const step = (events.length - 1) / 5;   // 5 interior slots → 6 total incl. first
                 const sub  = [events[0]];
                 for (let k = 1; k <= 4; k++) sub.push(events[Math.round(k * step)]);
                 sub.push(events[events.length - 1]);
@@ -2399,7 +2399,7 @@
             const color = this.getActiveDrawColor(right || this.config.tool === 'eraser');
             this.state.isDrawing = false;
 
-            // â”€â”€ Lazy Needle: cancel the RAF catch-up loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Lazy Needle: cancel the RAF catch-up loop ─────────────────────
             if (_lazyRAF) { cancelAnimationFrame(_lazyRAF); _lazyRAF = 0; }
             _lazyActive = false;
 
@@ -2407,7 +2407,7 @@
             strokeEnd(color);
         };
 
-        /* â”€â”€ 10. PREVIEW CANVAS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 10. PREVIEW CANVAS ──────────────────────────────────────────── */
 
         function _drawDabOnCtx(ctx, cx, cy, sz, angleDeg, color, alpha) {
             const hardness = params.hardness / 100;
@@ -2497,22 +2497,22 @@
             window.addEventListener('pointerup', () => { _pDown = false; _pLast = null; });
         }
 
-        /* â”€â”€ 10b. LAZY NEEDLE STABILIZER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 10b. LAZY NEEDLE STABILIZER ───────────────────────────────────── */
 
         /* Move the lazy point one step toward the real cursor and call strokeMove.
-           The lazy radius in pixels is derived from params.stabilize (0â€“100).
+           The lazy radius in pixels is derived from params.stabilize (0–100).
            At 0 the feature is bypassed entirely.
-           At 100 the radius is ~200 px â€” very long leash, very smooth. */
+           At 100 the radius is ~200 px — very long leash, very smooth. */
         function _stepLazyNeedle(color, pressure) {
             if (!strokeActive || !_lazyActive) return;
 
-            const radius = params.stabilize * 2;   // 0â€“200 px leash
+            const radius = params.stabilize * 2;   // 0–200 px leash
             const dx = _realX - _lazyX;
             const dy = _realY - _lazyY;
             const dist = Math.sqrt(dx * dx + dy * dy);
 
             if (dist <= radius) {
-                // Real cursor is within the dead zone â€” lazy point stays put
+                // Real cursor is within the dead zone — lazy point stays put
                 return;
             }
 
@@ -2538,11 +2538,11 @@
             _lazyRAF = requestAnimationFrame(tick);
         }
 
-        /* â”€â”€ Airbrush Accumulation Timer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        /* ── Airbrush Accumulation Timer ────────────────────────────────────
            When airbrushMode is enabled, we fire dabs on a setInterval even
            when the pointer is not moving.  Each tick places one dab at the
            current cursor position (_airbrushX/Y) using the normal scatterDabs
-           path so all other params (scatter, texture, smudgeâ€¦) keep working. */
+           path so all other params (scatter, texture, smudge…) keep working. */
         function _startAirbrushTimer() {
             _stopAirbrushTimer();
             const rate     = Math.max(1, Math.min(100, params.airbrushRate));
@@ -2564,7 +2564,7 @@
             if (_airbrushInterval) { clearInterval(_airbrushInterval); _airbrushInterval = 0; }
         }
 
-        /* â”€â”€ 11. PUBLIC API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 11. PUBLIC API ──────────────────────────────────────────────── */
 
         const SLIDER_MAP = [
             ['startSize',     'bs-startSize',     function(v){ return v+'px'; }],
@@ -2728,7 +2728,7 @@
                 var newP = {
                     shape:        rShape,
                     startSize:    startSz,
-                    endSize:      ri(1, Math.max(1, startSz)),   /* endSize â‰¤ startSize for natural taper */
+                    endSize:      ri(1, Math.max(1, startSz)),   /* endSize ≤ startSize for natural taper */
                     spacing:      ri(5, 60),
                     angle:        ri(0, 180),
                     speedSize:    ri(-60, 60),
@@ -2812,12 +2812,12 @@
             refreshPreview();
         };
 
-        /* â”€â”€ TIP BAKING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        /* ── TIP BAKING ──────────────────────────────────────────────────────
            The "baked" tip canvas is a greyscale-alpha mask at its native
            resolution with three transforms applied:
-             1. Luminance â†’ alpha  (dark pixels become opaque)
-             2. Invert    â†’ flip alpha if params.tipInvert is set
-             3. Hardness  â†’ radial falloff multiplied into alpha so the tip
+             1. Luminance → alpha  (dark pixels become opaque)
+             2. Invert    → flip alpha if params.tipInvert is set
+             3. Hardness  → radial falloff multiplied into alpha so the tip
                             edge feathers like a soft brush.  tipHardness=100
                             means no falloff (sharp mask edge), tipHardness=0
                             means a full radial gradient from centre to edge.
@@ -2825,7 +2825,7 @@
            We store the RAW luminance mask (step 1 only) in params.customTipRaw
            so we can cheaply rebake when invert or tipHardness changes without
            re-reading the image file.
-           â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+           ─────────────────────────────────────────────────────────────────── */
 
         /* Build a baked tip canvas from the raw mask already in params.customTipRaw.
            Called by loadCustomTip (initial load) and setTipHardness / setTipInvert. */
@@ -2857,7 +2857,7 @@
                 // Hardness radial falloff:
                 // At hardness=1 the multiplier is 1 everywhere (sharp mask).
                 // At hardness=0 the multiplier is a linear gradient from 1 at
-                // centre to 0 at the corner â€” full feather.
+                // centre to 0 at the corner — full feather.
                 // Between: lerp so mid-values give a partial feather.
                 if (hardness < 0.999) {
                     var px = (i / 4) % W;
@@ -2899,7 +2899,7 @@
                 refreshPreview();
             };
             img.onload = function() {
-                // Step 1: build raw luminanceâ†’alpha mask (no hardness, no invert)
+                // Step 1: build raw luminance→alpha mask (no hardness, no invert)
                 var rawOc  = _makeScratch(img.width, img.height);
                 var rawCtx = rawOc.getContext('2d');
                 rawCtx.drawImage(img, 0, 0);
@@ -2959,7 +2959,7 @@
             }
         };
 
-        /* Toggle tip invert â€” rebakes instead of allocating at draw time */
+        /* Toggle tip invert — rebakes instead of allocating at draw time */
         app.brush.setTipInvert = function(v) {
             params.tipInvert = !!v;
             if (params.customTipRaw) _rebakeTip();
@@ -2995,14 +2995,14 @@
             refreshPreview();
         };
 
-        /* â”€â”€ BUILT-IN TIP LIBRARY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-           Six procedurally-generated tip masks, each 64Ã—64px, drawn once and
+        /* ── BUILT-IN TIP LIBRARY ─────────────────────────────────────────────
+           Six procedurally-generated tip masks, each 64×64px, drawn once and
            stored as data URLs.  No external files needed.
-           â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+           ─────────────────────────────────────────────────────────────────── */
         (function _initTipLibrary() {
             var TIPS = [
                 { name: 'Soft round',  draw: function(ctx, S) {
-                    // Radial gradient: black centre, white edge â†’ inverted luminance mask
+                    // Radial gradient: black centre, white edge → inverted luminance mask
                     var g = ctx.createRadialGradient(S/2,S/2,0,S/2,S/2,S/2);
                     g.addColorStop(0,   '#000');
                     g.addColorStop(0.6, '#333');
@@ -3097,7 +3097,7 @@
             if (!library) return;
 
             TIPS.forEach(function(tip) {
-                // Render to an offscreen canvas â†’ data URL â†’ img element for display
+                // Render to an offscreen canvas → data URL → img element for display
                 var oc = document.createElement('canvas');
                 oc.width = oc.height = TIP_SIZE;
                 var octx = oc.getContext('2d');
@@ -3123,7 +3123,7 @@
 
         setTimeout(refreshPreview, 120);
 
-        /* â”€â”€ 12. SAVED BRUSHES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── 12. SAVED BRUSHES ───────────────────────────────────────────── */
 
         var _SAVED_KEY = 'paint.savedBrushes.v1';
         var _pendingSaveThumb = null; // data URL captured from preview canvas
@@ -3161,7 +3161,7 @@
                 ctx.translate(cx, cy);
                 ctx.rotate((p.angle||0) * Math.PI/180);
                 if (p.shape === 'custom' && p.customTipCanvas) {
-                    // Baked tip â€” colour fill then destination-in mask
+                    // Baked tip — colour fill then destination-in mask
                     ctx.fillStyle = color;
                     ctx.fillRect(-r, -r, sz, sz);
                     ctx.save();
@@ -3216,7 +3216,7 @@
                 var del = document.createElement('div');
                 del.className = 'rbc-delete';
                 del.title = 'Remove';
-                del.textContent = 'Ã—';
+                del.textContent = '×';
                 del.onclick = function(e) {
                     e.stopPropagation();
                     var l = _loadSavedBrushes();
@@ -3306,47 +3306,47 @@
         // Build ribbon on load
         _rebuildRibbonBrushes();
 
-        /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        /* ══════════════════════════════════════════════════════════════════════
          * KRITA PRESET COMPATIBILITY LAYER
-         * â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+         * ══════════════════════════════════════════════════════════════════════
          *
          * Adds support for loading Krita .kpp preset files and maps the David
          * Revoy "Krita 4 Extras" brush pack (davidrevoy.com/article742) to this
          * engine's parameters.
          *
          * Architecture overview
-         * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+         * ─────────────────────
          * Krita presets are XML files.  Each <param> element carries a name and
          * value that together define one property of the brush (opacity, size,
          * spacing, smudge rate, etc.).  The mapping to this engine's params is
          * done in two steps:
          *
-         *   1. _parseKppXml(xmlText)  â†’ raw key/value map of all Krita params
-         *   2. _kritaParamsToEngine(rawMap) â†’ engine params object
+         *   1. _parseKppXml(xmlText)  → raw key/value map of all Krita params
+         *   2. _kritaParamsToEngine(rawMap) → engine params object
          *
          * The second step handles the non-trivial conversions:
-         *   â€¢ Krita spacing is 0â€“2 (fraction of diameter); engine spacing is
-         *     0â€“200 (percentage of brush size).  Multiply by 100.
-         *   â€¢ Krita opacity/flow are 0â€“1 (qreal); engine uses 0â€“100 integers.
-         *   â€¢ Krita brush size (diameter) is in device pixels.  The engine uses
+         *   • Krita spacing is 0–2 (fraction of diameter); engine spacing is
+         *     0–200 (percentage of brush size).  Multiply by 100.
+         *   • Krita opacity/flow are 0–1 (qreal); engine uses 0–100 integers.
+         *   • Krita brush size (diameter) is in device pixels.  The engine uses
          *     startSize/endSize in the same pixel units, so we pass it through.
-         *   â€¢ Krita smudge ("smudge_rate") is mapped to engine smudge (0â€“100).
-         *   â€¢ Krita colorRate pigments the picked-up smudge colour with the
+         *   • Krita smudge ("smudge_rate") is mapped to engine smudge (0–100).
+         *   • Krita colorRate pigments the picked-up smudge colour with the
          *     foreground colour; translated to engine colorFade.
-         *   â€¢ Krita scatter ("Scatter", "scatter_x", "scatter_y") maps to the
+         *   • Krita scatter ("Scatter", "scatter_x", "scatter_y") maps to the
          *     engine's scatter + scatterRadius.
-         *   â€¢ Krita texture options map to engine texture + grainScale.
-         *   â€¢ Krita "use_pressure_opacity" / "use_pressure_size" sensor curves
+         *   • Krita texture options map to engine texture + grainScale.
+         *   • Krita "use_pressure_opacity" / "use_pressure_size" sensor curves
          *     translate into speedOpacity / speedSize influences.
-         *   â€¢ Krita softness / hardness are equivalent to engine hardness.
-         *   â€¢ The "color smudge" paintop uses dulling mode: engine smudge is set
+         *   • Krita softness / hardness are equivalent to engine hardness.
+         *   • The "color smudge" paintop uses dulling mode: engine smudge is set
          *     to smudgeRate * 100, and colorFade is set to colorRate * 100.
-         *   â€¢ Bristle brush maps to the engine's bristle shape.
-         *   â€¢ Predefined (image) tips load as customTip when a dataURL is
+         *   • Bristle brush maps to the engine's bristle shape.
+         *   • Predefined (image) tips load as customTip when a dataURL is
          *     embedded; otherwise the engine falls back to the nearest primitive.
          *
          * David Revoy preset definitions
-         * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+         * ──────────────────────────────
          * The 25 presets are defined below as pre-mapped engine param objects so
          * they load instantly without parsing XML.  The naming follows the
          * filenames in the Krita 4 Extras zip (e.g. "c_pencil-1_sketch-update",
@@ -3355,8 +3355,8 @@
          * h=hardpainting, b=basic, j=inking, u=pixel, v=dashed, y=texture).
          */
 
-        /* â”€â”€ KPP XML parser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-           Parses a Krita .kpp XML string into a flat keyâ†’value map.
+        /* ── KPP XML parser ──────────────────────────────────────────────────
+           Parses a Krita .kpp XML string into a flat key→value map.
            Handles both <param name="key" value="val"/> and nested <params> trees.
            Returns an object; all values are strings (convert as needed). */
         function _parseKppXml(xmlText) {
@@ -3388,7 +3388,7 @@
             return map;
         }
 
-        /* â”€â”€ Krita â†’ engine param converter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        /* ── Krita → engine param converter ─────────────────────────────────
            Takes a raw kpp param map and returns an engine params delta that can
            be merged with DEFAULTS via Object.assign({}, DEFAULTS, delta).
 
@@ -3400,7 +3400,7 @@
                 var v = parseFloat(kpp[key]);
                 return isNaN(v) ? def : v;
             }
-            // Helper: bool string ('true'/'1'/'yes') â†’ boolean
+            // Helper: bool string ('true'/'1'/'yes') → boolean
             function b(key, def) {
                 var v = kpp[key];
                 if (v === undefined) return def;
@@ -3409,52 +3409,52 @@
 
             var out = {};
 
-            // â”€â”€ Brush size (Krita: "PaintOp/size" in pixels) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Brush size (Krita: "PaintOp/size" in pixels) ──────────────
             var diameter = f('PaintOp/size', f('brush_definition/brush_size', 0));
             if (diameter > 0) {
                 out.startSize = Math.round(diameter);
                 out.endSize   = Math.round(diameter);
             }
 
-            // â”€â”€ Spacing (Krita: 0.01â€“2.0 fraction; engine: 5â€“200%) â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Spacing (Krita: 0.01–2.0 fraction; engine: 5–200%) ────────
             var spacing = f('Spacing/spacing', f('spacing', -1));
             if (spacing >= 0) out.spacing = Math.round(Math.max(5, spacing * 100));
             if (b('Spacing/isotropic', false)) out.spacing = Math.max(5, out.spacing || 20);
 
-            // â”€â”€ Angle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Angle ─────────────────────────────────────────────────────
             var angleDeg = f('brush_definition/angle', f('Angle/angle', 0)) * 180 / Math.PI;
             // Krita angle is in radians in XML
             if (Math.abs(angleDeg) < 0.001) angleDeg = f('brush_definition/angle', 0); // might already be degrees
             if (Math.abs(angleDeg) > 360) angleDeg = angleDeg * 180 / Math.PI;
             out.angle = Math.round(angleDeg) % 360;
 
-            // â”€â”€ Opacity & Flow (Krita: 0â€“1 â†’ engine: 0â€“100) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Opacity & Flow (Krita: 0–1 → engine: 0–100) ──────────────
             var op = f('Opacity/opacity', f('opacity', -1));
             if (op >= 0) out.opacity = Math.round(Math.min(100, op * 100));
             var fl = f('Flow/flow', f('flow', -1));
             if (fl >= 0) out.flow = Math.round(Math.min(100, fl * 100));
 
-            // â”€â”€ Hardness / Softness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Hardness / Softness ───────────────────────────────────────
             // Krita softness is inverted (0=sharp, 1=soft); engine hardness same direction
             var softness = f('MaskGenerator/softness', -1);
             if (softness >= 0) out.hardness = Math.round((1 - softness) * 100);
             var hardness = f('hardness', -1);
             if (hardness >= 0) out.hardness = Math.round(hardness * 100);
 
-            // â”€â”€ Shape â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Shape ─────────────────────────────────────────────────────
             var generatorType = kpp['MaskGenerator/type'] || kpp['brush_type'] || '';
             var predefinedFile = kpp['brush_definition/filename'] || kpp['filename'] || '';
             if (generatorType === 'rect' || generatorType === 'rectangle') {
                 out.shape = 'square';
             } else if (predefinedFile) {
-                // Predefined image tip â€” leave shape as circle (will be overridden by tip load)
+                // Predefined image tip — leave shape as circle (will be overridden by tip load)
                 out.shape = 'circle';
             } else {
                 out.shape = 'circle'; // 'circle' is the Krita default
             }
 
-            // â”€â”€ Smudge / Color Smudge (colorsmudge paintop) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            // Krita "smudgeRate" = how much canvas colour is picked up (0â€“1)
+            // ── Smudge / Color Smudge (colorsmudge paintop) ───────────────
+            // Krita "smudgeRate" = how much canvas colour is picked up (0–1)
             // Krita "colorRate"  = how much the foreground colour tints the smudge
             var smudgeRate = f('SmudgeLength/smudge_rate', f('smudge_rate', -1));
             if (smudgeRate >= 0) out.smudge = Math.round(smudgeRate * 100);
@@ -3469,7 +3469,7 @@
                 out.wetness = Math.round(Math.min(60, (out.smudge || 0) * 0.6));
             }
 
-            // â”€â”€ Scatter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Scatter ───────────────────────────────────────────────────
             var scatterOn = b('Scatter/scatter_enabled', false);
             if (scatterOn) {
                 var scatterX = f('Scatter/scatter_x', 0);
@@ -3479,7 +3479,7 @@
                 out.scatterRadius = Math.round(Math.min(40, (scatterX + scatterY) * 0.5 * 20 + 6));
             }
 
-            // â”€â”€ Texture / Grain â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Texture / Grain ───────────────────────────────────────────
             var textureOn = b('Texture/texture_enabled', false) || b('textureEnabled', false);
             if (textureOn) {
                 var textureStrength = f('Texture/texture_strength', 0.5);
@@ -3488,7 +3488,7 @@
                 out.grainScale = Math.max(1, Math.round(textureScale * 4));
             }
 
-            // â”€â”€ Pressure â†’ Size sensor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Pressure → Size sensor ────────────────────────────────────
             var sizeUsePressure = b('Size/size_sensor_pressure', false) ||
                                   b('use_pressure_size', false) ||
                                   kpp['Size/size_pressure_enabled'] === 'true';
@@ -3498,21 +3498,21 @@
                 out.speedSize = 20;
             }
 
-            // â”€â”€ Pressure â†’ Opacity sensor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Pressure → Opacity sensor ─────────────────────────────────
             var opUsePressure = b('Opacity/opacity_sensor_pressure', false) ||
                                 b('use_pressure_opacity', false);
             if (opUsePressure) {
                 out.speedOpacity = 25;
             }
 
-            // â”€â”€ Airbrush accumulation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Airbrush accumulation ─────────────────────────────────────
             var airbrush = b('airbrush_enabled', false);
             if (airbrush) {
                 out.airbrushMode = true;
                 out.airbrushRate = Math.round(f('airbrush_rate', 0.25) * 100);
             }
 
-            // â”€â”€ Bristle brush â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Bristle brush ─────────────────────────────────────────────
             var paintopId = kpp['_paintopid'] || kpp['paintopid'] || '';
             if (paintopId === 'bristle' || paintopId.indexOf('bristle') !== -1) {
                 out.shape = 'bristle';
@@ -3520,7 +3520,7 @@
                 out.bristleSpread = Math.round(f('bristle_spread', 40));
             }
 
-            // â”€â”€ Taper (Krita: fade-out via sensor curves) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Taper (Krita: fade-out via sensor curves) ─────────────────
             var taperFadeOut = b('Size/size_fade_enabled', false);
             if (taperFadeOut) out.taper = 50;
 
@@ -3528,7 +3528,7 @@
             return out;
         }
 
-        /* â”€â”€ Phase 3: Krita sensor-curve parser and LUT generator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        /* ── Phase 3: Krita sensor-curve parser and LUT generator ────────────
          *
          * Krita pressure curves live in XML like:
          *   <param name="Size/size_sensor_pressure">
@@ -3543,8 +3543,8 @@
          * a single integer lookup instead of evaluating the spline live.
          *
          * LUTs are stored as:
-         *   params._sizeLUT    â€” Float32Array[256]  (0â†’1 output) or null
-         *   params._opacityLUT â€” Float32Array[256]  (0â†’1 output) or null
+         *   params._sizeLUT    — Float32Array[256]  (0→1 output) or null
+         *   params._opacityLUT — Float32Array[256]  (0→1 output) or null
          *
          * A null LUT means "use the default linear ramp" (current behaviour).
          */
@@ -3566,12 +3566,12 @@
                 }
                 /* Sort ascending by x so the spline is well-behaved */
                 pts.sort(function(a, b) { return a.x - b.x; });
-            } catch (e) { /* ignore â€” returns empty array */ }
+            } catch (e) { /* ignore — returns empty array */ }
             return pts;
         }
 
         /* Monotone cubic (Fritsch-Carlson) spline evaluation.
-         * pts: [{x,y}] sorted ascending, length â‰¥ 2.
+         * pts: [{x,y}] sorted ascending, length ≥ 2.
          * t:   query value in [0,1].
          * Returns interpolated y clamped to [0,1]. */
         function _evalMonotoneCubic(pts, t) {
@@ -3654,7 +3654,7 @@
             params._opacityLUT = _buildSensorLUT(_parseCurvePoints(opCurveXml));
         }
 
-        /* â”€â”€ Phase 4: Krita texture pattern loader â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        /* ── Phase 4: Krita texture pattern loader ────────────────────────────
          * Loads a PNG (from the ZIP's pattern section) into an OffscreenCanvas,
          * then stores it on params._kritaTextureTile.  _getGrainCanvas() checks
          * for this tile and uses it instead of the procedural noise when present.
@@ -3681,7 +3681,7 @@
         }
 
 
-        /* â”€â”€ Public API: load a .kpp file â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        /* ── Public API: load a .kpp file ───────────────────────────────────
          * We load JSZip on demand (CDN, cached on window._JSZipLib), unzip in
          * memory, extract maindoc.xml for the param parser, and collect any
          * PNG files under brush_tips/ for Phase 2 tip injection.
@@ -3702,7 +3702,7 @@
             });
         }
 
-        /* Apply a parsed XML string + an optional map of { filename â†’ Uint8Array }
+        /* Apply a parsed XML string + an optional map of { filename → Uint8Array }
          * for any PNG tip files found in the ZIP. */
         function _applyKppXml(xmlText, tipPngs, presetName) {
             var raw   = _parseKppXml(xmlText);
@@ -3776,7 +3776,7 @@
         }
 
         app.brush.loadKritaPreset = function(kppTextOrFile, name) {
-            /* Plain XML string â€” legacy fast path */
+            /* Plain XML string — legacy fast path */
             if (typeof kppTextOrFile === 'string' && kppTextOrFile.trim().startsWith('<')) {
                 _applyKppXml(kppTextOrFile, null, name || 'Krita Preset');
                 return;
@@ -3825,7 +3825,7 @@
                 }).then(function(data) {
                     _applyKppXml(data.xmlText, data.tipMap, presetName);
                 }).catch(function(zipErr) {
-                    /* Not a ZIP (or JSZip unavailable) â€” try reading as plain text */
+                    /* Not a ZIP (or JSZip unavailable) — try reading as plain text */
                     console.warn('[KritaCompat] ZIP extraction failed, trying plain text:', zipErr.message);
                     try {
                         var text = new TextDecoder().decode(new Uint8Array(buf));
@@ -3849,9 +3849,9 @@
             }
         };
 
-        /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        /* ══════════════════════════════════════════════════════════════════════
          * DAVID REVOY "KRITA 4 EXTRAS" PRESET DEFINITIONS
-         * â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+         * ══════════════════════════════════════════════════════════════════════
          *
          * 25 presets mapped from the CC-BY 4.0 pack at:
          * https://www.davidrevoy.com/article742/krita-4-extras-brush-presets-pack
@@ -3866,7 +3866,7 @@
          */
         const REVOY_PRESETS = {
 
-            // â”€â”€ DRAWING TOOLS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── DRAWING TOOLS ───────────────────────────────────────────────
 
             /* c_pencil-1_sketch-update
                Soft pressure-sensitive pencil for sketching.  Krita original:
@@ -3922,7 +3922,7 @@
                 scatter: 2, scatterRadius: 8, smudge: 0, wetness: 0,
             },
 
-            // â”€â”€ PAINTING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── PAINTING ────────────────────────────────────────────────────
 
             /* f_soft-painting-small
                Revoy's most-used brush for smoothing + details.  Krita: soft
@@ -4002,7 +4002,7 @@
                 smudge: 3, wetness: 0, scatter: 0,
             },
 
-            // â”€â”€ HARDPAINTING SERIES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── HARDPAINTING SERIES ─────────────────────────────────────────
 
             /* h_hardpainting-01-details
                Inking-style detail brush with subtle ghosting.  Krita: predefined
@@ -4156,7 +4156,7 @@
                 smudge: 0, wetness: 0,
             },
 
-            // â”€â”€ MISC â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── MISC ────────────────────────────────────────────────────────
 
             /* b_basic-5_size-fill
                Full-opacity fill with friction at pressure start.  Krita: auto
@@ -4217,7 +4217,7 @@
             PRESETS['revoy:' + key] = REVOY_PRESETS[key];
         });
 
-        /* â”€â”€ Public convenience API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        /* ── Public convenience API ─────────────────────────────────────────
            PaintApp.brush.loadRevoyPreset('h_hardpainting-06-wet-on-wet-canvas')
            Loads one of the 25 Revoy presets by short name (without 'revoy:').
            Returns true on success, false if the name is unknown. */
@@ -4236,7 +4236,7 @@
             return true;
         };
 
-        /* â”€â”€ List all Revoy presets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        /* ── List all Revoy presets ─────────────────────────────────────────
            PaintApp.brush.listRevoyPresets()
            Returns an array of short names (without the 'revoy:' prefix) for
            all 25 presets, suitable for building a picker UI. */
@@ -4244,7 +4244,7 @@
             return Object.keys(REVOY_PRESETS);
         };
 
-        /* â”€â”€ Extend loadPreset() to handle 'revoy:*' keys â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+        /* ── Extend loadPreset() to handle 'revoy:*' keys ─────────────────── */
         (function() {
             var _originalLoadPreset = app.brush.loadPreset.bind(app.brush);
             app.brush.loadPreset = function(name) {
