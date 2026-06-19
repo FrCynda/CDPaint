@@ -682,9 +682,19 @@ fn spawn_additional_window(
 
 
 #[tauri::command]
-fn create_popup_window(app: tauri::AppHandle) -> Result<(), String> {
+fn open_tool_customizer(app: tauri::AppHandle) -> Result<(), String> {
+    let (x, y, pw, ph) = if let Some(main_window) = app.get_webview_window("main") {
+        let pos = main_window.outer_position().map_err(|e| e.to_string())?;
+        let size = main_window.outer_size().map_err(|e| e.to_string())?;
+        let pw = 800.0; let ph = 620.0;
+        let x = pos.x as f64 + (size.width as f64 - pw) / 2.0;
+        let y = pos.y as f64 + (size.height as f64 - ph) / 2.0;
+        (x, y, pw, ph)
+    } else {
+        (100.0, 100.0, 800.0, 620.0)
+    };
     let label = format!(
-        "popup-{}",
+        "tool-customizer-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -693,10 +703,11 @@ fn create_popup_window(app: tauri::AppHandle) -> Result<(), String> {
     tauri::WebviewWindowBuilder::new(
         &app,
         label,
-        tauri::WebviewUrl::App("index.html".into()),
+        tauri::WebviewUrl::App("popups/tool-customizer.html".into()),
     )
-    .title("CDPaint")
-    .inner_size(800.0, 620.0)
+    .title("Customize Tool Grid")
+    .inner_size(pw, ph)
+    .position(x, y)
     .resizable(true)
     .build()
     .map_err(|e| e.to_string())?;
@@ -746,7 +757,7 @@ pub fn run() {
             show_current_window,
             toggle_current_window_fullscreen,
             pick_export_folder,
-            create_popup_window
+            open_tool_customizer
         ])
         .setup(|app| {
             if let Some(main_window) = app.get_webview_window("main") {

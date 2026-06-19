@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Customize Tool Grid</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;font-family:Segoe UI,Tahoma,sans-serif;font-size:12px;background:#f0f0f0}
+:root{--bg:#f0f0f0;--surface:#fff;--border:#999;--border-light:#cfcfcf;--border-btn:#adadad;--text:#111;--text-dim:#666;--text-section:#444;--panel-bg:#fff;--panel-border:#d9d9d9;--btn-hover-bg:#e5f1fb;--btn-hover-border:#0078d7;--accent:#0078d7;--tab-active-bg:#e5f1fb;--tab-active-border:#0078d7;--close-hover-bg:#e81123;--slot-empty:rgba(128,128,128,0.08)}
+[data-theme="dark"]{--bg:#2d2d30;--surface:#3c3c41;--border:#666;--border-light:#555;--border-btn:#555;--text:#e8e8e8;--text-dim:#999;--text-section:#bbb;--panel-bg:#252527;--panel-border:#444;--btn-hover-bg:#505050;--btn-hover-border:#0078d7;--tab-active-bg:#505050;--slot-empty:rgba(255,255,255,0.06)}
+.window{width:780px;background:var(--bg);border:1px solid var(--border);box-shadow:0 0 15px rgba(0,0,0,0.35);display:flex;flex-direction:column;margin:0 auto;position:relative;top:50%;transform:translateY(-50%)}
+.title-bar{height:26px;background:var(--surface);display:flex;align-items:center;justify-content:space-between;padding:0 8px;font-size:11px;border-bottom:1px solid var(--border-light);user-select:none;color:var(--text)}
+.close-btn{width:36px;height:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text)}
+.close-btn:hover{background:var(--close-hover-bg);color:#fff}
+.content{padding:6px 8px 8px;display:flex;flex-direction:column;gap:6px}
+.customizer-tab-row{display:flex;gap:0;border-bottom:1px solid var(--panel-border)}
+.customizer-tab-row .customizer-tab{flex:1;border-radius:0;padding:4px 8px;font-size:11px;cursor:pointer;border:1px solid transparent;border-bottom:none;background:transparent;color:var(--text);text-align:center;font-family:inherit}
+.customizer-tab-row .customizer-tab.active{background:var(--tab-active-bg);border-color:var(--tab-active-border);border-bottom-color:var(--bg);font-weight:bold}
+.customizer-body{display:flex;gap:12px}
+.customizer-drawer-col{width:130px;flex-shrink:0}
+.customizer-grid-col{flex:1;min-width:0}
+.customizer-label{font-size:11px;color:var(--text-section);margin-bottom:6px}
+.tool-drawer{display:flex;flex-wrap:wrap;gap:2px;padding:4px;background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:3px;min-height:40px;align-content:flex-start}
+.customizer-drawer-item{width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:grab;border:1px solid transparent;border-radius:2px}
+.customizer-drawer-item:hover{background:var(--btn-hover-bg);border-color:var(--btn-hover-border)}
+.customizer-drawer-item img,.customizer-slot img{width:20px;height:20px;display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+.customizer-drawer-item svg,.customizer-slot svg{display:block;pointer-events:none}
+.tool-grid-preview{display:grid;grid-template-columns:repeat(20,28px);gap:2px;padding:4px;background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:3px;min-height:94px}
+.customizer-slot{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:1px solid var(--panel-border);border-radius:2px;cursor:grab;background:transparent}
+.customizer-slot-empty{background:var(--slot-empty);border-style:dashed !important}
+.customizer-slot-filled:hover{background:var(--btn-hover-bg);border-color:var(--btn-hover-border)}
+.customizer-over{border-color:var(--accent) !important;background:rgba(0,120,215,0.1) !important}
+.customizer-dragging{opacity:0.4}
+.customizer-hint{font-size:10px;color:var(--text-dim);margin-top:6px}
+.footer{display:flex;justify-content:flex-end;gap:8px;padding:8px 10px 10px;border-top:1px solid var(--panel-border);background:var(--bg)}
+.footer .btn{height:22px;padding:0 12px;border:1px solid var(--border-btn);background:var(--surface);color:var(--text);font-size:11px;border-radius:2px;cursor:pointer;font-family:inherit}
+.footer .btn:hover{background:var(--btn-hover-bg);border-color:var(--btn-hover-border)}
+.footer .btn.btn-primary{border:2px solid var(--accent)}
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="title-bar">
+    <span>Customize Tool Grid</span>
+    <div class="close-btn" id="close-btn"><span>&#10005;</span></div>
+  </div>
+  <div class="content">
+    <div class="customizer-tab-row">
+      <button class="customizer-tab active" data-tab="tools">Tools</button>
+      <button class="customizer-tab" data-tab="shapes">Shapes</button>
+    </div>
+    <div class="customizer-body">
+      <div class="customizer-drawer-col">
+        <div class="customizer-label">Available</div>
+        <div id="tool-customizer-drawer" class="tool-drawer"></div>
+        <div class="customizer-hint">Drag tools into the grid. Double-click or right-click to remove.</div>
+      </div>
+      <div class="customizer-grid-col">
+        <div id="tool-customizer-grid" class="tool-grid-preview"></div>
+      </div>
+    </div>
+  </div>
+  <div class="footer">
+    <button class="btn" id="reset-btn">Reset Defaults</button>
+    <button class="btn" id="cancel-btn">Cancel</button>
+    <button class="btn btn-primary" id="apply-btn">Apply</button>
+  </div>
+</div>
+<script>
+(function(){var t=localStorage.getItem('paint.themeMode');if(t&&t!=='light')document.documentElement.dataset.theme='dark'})();
+
+var toolManifest=[];
+function getToolManifestItem(id){return toolManifest.find(function(t){return t.id===id})||null}
+function loadToolManifest(){try{var r=localStorage.getItem('paint.toolManifest');if(r){toolManifest=JSON.parse(r);if(Array.isArray(toolManifest))return}}catch(e){}toolManifest=[]}
+
+function makeEmptyRow(){return new Array(20).fill(null)}
+function getDefaultToolGrid(){
+function f(a){var r=makeEmptyRow();a.forEach(function(v,i){r[i]=v});return r}
+return{tools:[['pencil','fill','wand'],['eraser','picker','zoom'],['gradient','anchor-toggle','freehand']].map(f),shapes:[['line','curve','poly','rect'],['circle','tri','path',null],[null,null,null,null]].map(f)}}
+
+function validateToolGridLayout(l){if(!l||typeof l!=='object')return false;if(!Array.isArray(l.tools)||!Array.isArray(l.shapes))return false;for(var k=0;k<2;k++){var key=k===0?'tools':'shapes';if(l[key].length!==3)return false;for(var ri=0;ri<3;ri++){var row=l[key][ri];if(!Array.isArray(row)||row.length>20)return false;for(var ci=0;ci<row.length;ci++){if(row[ci]!==null&&!getToolManifestItem(row[ci]))return false}}}return true}
+
+function loadToolGridLayout(){try{var r=localStorage.getItem('paint.toolGridLayout');if(r){var p=JSON.parse(r);if(validateToolGridLayout(p))return p}}catch(e){}var d=getDefaultToolGrid();saveToolGridLayout(d);return d}
+function saveToolGridLayout(l){try{localStorage.setItem('paint.toolGridLayout',JSON.stringify(l))}catch(e){}}
+
+var state=null,currentTab='tools';
+var gridEl=document.getElementById('tool-customizer-grid');
+var drawerEl=document.getElementById('tool-customizer-drawer');
+
+function renderCustomizerGrid(){
+gridEl.innerHTML='';var rows=state[currentTab];if(!rows)return;
+for(var ri=0;ri<3;ri++){var row=rows[ri]||[];
+for(var ci=0;ci<20;ci++){var id=ci<row.length?row[ci]:null;
+var slot=document.createElement('div');slot.className='customizer-slot';slot.dataset.row=ri;slot.dataset.col=ci;
+if(id===null){slot.classList.add('customizer-slot-empty')}else{var item=getToolManifestItem(id);
+if(item){slot.classList.add('customizer-slot-filled');slot.title=item.label;
+if(item.iconSrc){var img=document.createElement('img');img.src='../'+item.iconSrc;img.alt='';slot.appendChild(img)}
+else if(item.iconSvg){slot.insertAdjacentHTML('beforeend',item.iconSvg)}}}
+slot.setAttribute('draggable','true');attachDnD(slot,ri,ci);
+slot.addEventListener('dblclick',function(r,c){return function(){removeItem(r,c)}}(ri,ci));
+slot.addEventListener('contextmenu',function(r,c){return function(e){e.preventDefault();removeItem(r,c)}}(ri,ci));
+gridEl.appendChild(slot)}}
+renderDrawer();}
+
+function renderDrawer(){var used=new Set();
+['tools','shapes'].forEach(function(k){(state[k]||[]).forEach(function(row){row.forEach(function(id){if(id)used.add(id)})})});
+drawerEl.innerHTML='';
+toolManifest.forEach(function(item){if(used.has(item.id))return;
+var el=document.createElement('div');el.className='customizer-drawer-item';el.title=item.label;el.setAttribute('draggable','true');el.dataset.drawerId=item.id;
+if(item.iconSrc){var img=document.createElement('img');img.src='../'+item.iconSrc;img.alt='';el.appendChild(img)}
+else if(item.iconSvg){el.insertAdjacentHTML('beforeend',item.iconSvg)}
+el.addEventListener('dragstart',function(e){e.dataTransfer.setData('text/plain',JSON.stringify({type:'drawer',id:item.id}));e.dataTransfer.effectAllowed='move';el.classList.add('customizer-dragging')});
+el.addEventListener('dragend',function(){el.classList.remove('customizer-dragging')});
+drawerEl.appendChild(el)})}
+
+function attachDnD(slot,row,col){
+slot.addEventListener('dragstart',function(e){var arr=state[currentTab];var id=(arr[row]&&col<arr[row].length)?arr[row][col]:null;e.dataTransfer.setData('text/plain',JSON.stringify({type:'grid',row:row,col:col,id:id}));e.dataTransfer.effectAllowed='move';slot.classList.add('customizer-dragging')});
+slot.addEventListener('dragend',function(){slot.classList.remove('customizer-dragging');document.querySelectorAll('.customizer-slot').forEach(function(s){s.classList.remove('customizer-over')})});
+slot.addEventListener('dragover',function(e){e.preventDefault();e.dataTransfer.dropEffect='move';slot.classList.add('customizer-over')});
+slot.addEventListener('dragleave',function(){slot.classList.remove('customizer-over')});
+slot.addEventListener('drop',function(e){e.preventDefault();slot.classList.remove('customizer-over');
+try{var data=JSON.parse(e.dataTransfer.getData('text/plain'));var arr=state[currentTab];
+while(arr.length<3)arr.push(makeEmptyRow());while(arr[row].length<20)arr[row].push(null);
+if(data.type==='drawer'){arr[row][col]=data.id}else if(data.type==='grid'){var sr=data.row,sc=data.col;while(arr[sr].length<20)arr[sr].push(null);var tmp=arr[row][col];arr[row][col]=arr[sr][sc];arr[sr][sc]=tmp}
+renderCustomizerGrid();renderDrawer()}catch(ex){}})}
+
+function removeItem(row,col){var arr=state[currentTab];if(arr[row]&&col<arr[row].length){arr[row][col]=null;renderCustomizerGrid();renderDrawer()}}
+
+function setTab(tab){currentTab=tab;document.querySelectorAll('.customizer-tab').forEach(function(t){t.classList.toggle('active',t.dataset.tab===tab)});renderCustomizerGrid();renderDrawer()}
+
+loadToolManifest();
+if(!toolManifest.length){document.body.innerHTML='<div style="padding:40px;text-align:center;color:#888;font-size:13px;">Error: Tool manifest not available. Open this from the main application.</div>';throw new Error('No tool manifest')}
+state=JSON.parse(JSON.stringify(loadToolGridLayout()));
+renderCustomizerGrid();
+renderDrawer();
+
+document.querySelectorAll('.customizer-tab').forEach(function(btn){btn.addEventListener('click',function(){setTab(btn.dataset.tab)})});
+document.getElementById('close-btn').addEventListener('click',function(){window.close()});
+document.getElementById('cancel-btn').addEventListener('click',function(){window.close()});
+document.getElementById('apply-btn').addEventListener('click',function(){
+if(!validateToolGridLayout(state)){alert('Invalid layout — some tools were not recognized.');return}
+saveToolGridLayout(state);try{localStorage.setItem('paint.toolGridApplied',Date.now().toString())}catch(e){}window.close()});
+document.getElementById('reset-btn').addEventListener('click',function(){state=JSON.parse(JSON.stringify(getDefaultToolGrid()));renderCustomizerGrid();renderDrawer()});
+</script>
+</body>
+</html>
