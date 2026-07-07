@@ -1,3 +1,4 @@
+// @ts-check
     class CompressionCompat {
         static toBytes(input) {
             if (input instanceof Uint8Array) return input;

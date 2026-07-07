@@ -48,6 +48,7 @@
     const LUT_SIZE  = 512;
     const LUT1      = LUT_SIZE - 1;       // 511 — used in every fill fn
     const TWO_PI    = Math.PI * 2;
+    const PI        = Math.PI;
 
     // Hex→rgba result cache — avoids repeated parseInt / string ops
     const _hexRgbaCache = new Map();
@@ -83,12 +84,15 @@
 
             if (t <= 0) {
                 const c = _gradientHexToRgba(stops[0].color);
-                lut[o]=c[0]; lut[o+1]=c[1]; lut[o+2]=c[2]; lut[o+3]=255;
+                const a = stops[0].alpha != null ? stops[0].alpha * 255 : 255;
+                lut[o]=c[0]; lut[o+1]=c[1]; lut[o+2]=c[2]; lut[o+3]=a | 0;
                 continue;
             }
             if (t >= 1) {
-                const c = _gradientHexToRgba(stops[stops.length-1].color);
-                lut[o]=c[0]; lut[o+1]=c[1]; lut[o+2]=c[2]; lut[o+3]=255;
+                const s = stops[stops.length-1];
+                const c = _gradientHexToRgba(s.color);
+                const a = s.alpha != null ? s.alpha * 255 : 255;
+                lut[o]=c[0]; lut[o+1]=c[1]; lut[o+2]=c[2]; lut[o+3]=a | 0;
                 continue;
             }
 
@@ -100,10 +104,38 @@
 
             const c1 = _gradientHexToRgba(s1.color);
             const c2 = _gradientHexToRgba(s2.color);
+            const a1 = s1.alpha != null ? s1.alpha : 1;
+            const a2 = s2.alpha != null ? s2.alpha : 1;
             lut[o]   = (c1[0] + (c2[0]-c1[0])*lt + 0.5) | 0;
             lut[o+1] = (c1[1] + (c2[1]-c1[1])*lt + 0.5) | 0;
             lut[o+2] = (c1[2] + (c2[2]-c1[2])*lt + 0.5) | 0;
-            lut[o+3] = 255;
+            lut[o+3] = ((a1 + (a2-a1)*lt) * 255 + 0.5) | 0;
+        }
+    }
+
+    // ─── Offset LUT remap ───────────────────────────────────────────────────────────
+    function _applyOffsetToLUT(lut, offset) {
+        if (offset === 0) return;
+        const tmp = new Uint8Array(lut);
+        const range = 1 - Math.abs(offset);
+        if (range <= 0) {
+            const baseIdx = offset > 0 ? 0 : (LUT_SIZE - 1) * 4;
+            for (let i = 0; i < LUT_SIZE; i++) {
+                const o = i * 4;
+                lut[o] = tmp[baseIdx]; lut[o+1] = tmp[baseIdx+1];
+                lut[o+2] = tmp[baseIdx+2]; lut[o+3] = tmp[baseIdx+3];
+            }
+            return;
+        }
+        for (let i = 0; i < LUT_SIZE; i++) {
+            const t = i / LUT1;
+            const srcT = offset >= 0
+                ? (t < offset ? 0 : (t - offset) / range)
+                : (t > 1 + offset ? 1 : t / range);
+            const srcIdx = Math.round(srcT * LUT1);
+            const di = i * 4, si = srcIdx * 4;
+            lut[di] = tmp[si]; lut[di+1] = tmp[si+1];
+            lut[di+2] = tmp[si+2]; lut[di+3] = tmp[si+3];
         }
     }
 
@@ -118,9 +150,12 @@
     // ─── Render-cache key ─────────────────────────────────────────────────────────
 
     function _gradCacheKey(g, W, H, c1hex, c2hex) {
+        const stopsKey = g.stops && g.stops.length >= 2
+            ? g.stops.map(s=>`${s.offset}:${s.color}:${s.alpha ?? 1}`).join(',')
+            : `${c1hex}|${c2hex}`;
         return `${W}x${H}|${g.type}|${g.startX},${g.startY},${g.endX},${g.endY}`
-             + `|${g.midpoint ?? 0.5}|${g.repeat ?? 'clamp'}|${g.reverse ? 1:0}`
-             + `|${g.staggerLevels ?? 256}|${c1hex}|${c2hex}`;
+             + `|${g.midpoint ?? 0.5}|${g.offset ?? 0}|${g.repeat ?? 'clamp'}|${g.reverse ? 1:0}`
+             + `|${g.staggerLevels ?? 256}|${g.aspectRatio ?? 1}|${stopsKey}`;
     }
 
     // ─── Shared CPU offscreen canvas ──────────────────────────────────────────────
@@ -252,6 +287,7 @@
         uniform float u_sinA;
         uniform float u_midpoint;
         uniform int   u_repeat;   // 0=clamp  1=repeat  2=mirror
+        uniform bool  u_dither;
 
         float applyRepeat(float t) {
             if (u_repeat == 1) {
@@ -271,9 +307,14 @@
             float lutF = clamp(t, 0.0, 1.0) * float(${LUT_SIZE - 1});
             float lo   = floor(lutF);
             float frac = lutF - lo;
-            // Bayer UV: fract maps pixel coords into [0,1)² repeating over 8px tiles
-            float thr = texture(u_bayer, fract(gl_FragCoord.xy / 8.0)).r;
-            float idx = lo + (frac > thr ? 1.0 : 0.0);
+            float idx;
+            if (u_dither) {
+                // Bayer UV: fract maps pixel coords into [0,1)² repeating over 8px tiles
+                float thr = texture(u_bayer, fract(gl_FragCoord.xy / 8.0)).r;
+                idx = lo + (frac > thr ? 1.0 : 0.0);
+            } else {
+                idx = lo + round(frac);
+            }
             return texture(u_lut, vec2((idx + 0.5) / float(${LUT_SIZE}), 0.5));
         }`;
 
@@ -296,7 +337,9 @@
 
         radial: /* glsl */`
             void main() {
-                float t = length(v_px - u_start) / u_dist;
+                vec2 dp = v_px - u_start;
+                dp.y /= u_aspectRatio;
+                float t = length(dp) / u_dist;
                 fragColor = sampleLUT(applyRepeat(t));
             }`,
 
@@ -307,6 +350,17 @@
                 float a = atan(p.y, p.x) - baseA;
                 float t = fract(a / (2.0 * 3.14159265358979));
                 if (t < 0.0) t += 1.0;
+                fragColor = sampleLUT(t);
+            }`,
+
+        conic_sym: /* glsl */`
+            void main() {
+                vec2 p = v_px - u_start;
+                float baseA = atan(u_end.y - u_start.y, u_end.x - u_start.x);
+                float a = atan(p.y, p.x) - baseA;
+                if (a < -3.14159265358979) a += 6.28318530717959;
+                if (a > 3.14159265358979) a -= 6.28318530717959;
+                float t = abs(a) / 3.14159265358979;
                 fragColor = sampleLUT(t);
             }`,
 
@@ -461,7 +515,7 @@
         gl.useProgram(prog);
         prog._u = {};
         for (const n of ['u_res','u_start','u_end','u_dist','u_cosA','u_sinA',
-                          'u_midpoint','u_repeat','u_lut','u_bayer']) {
+                          'u_midpoint','u_repeat','u_aspectRatio','u_lut','u_bayer','u_dither']) {
             prog._u[n] = gl.getUniformLocation(prog, n);
         }
         // Cache attribute location — avoids a driver round-trip on every draw call
@@ -518,7 +572,9 @@
         gl.uniform1f(u.u_cosA,     Math.cos(-baseAngle));
         gl.uniform1f(u.u_sinA,     Math.sin(-baseAngle));
         gl.uniform1f(u.u_midpoint, g.midpoint ?? 0.5);
+        gl.uniform1f(u.u_aspectRatio, g.aspectRatio ?? 1);
         gl.uniform1i(u.u_repeat,   repeatMode);
+        gl.uniform1i(u.u_dither,   g.dither ? 1 : 0);
 
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, _glLutTex);
@@ -551,7 +607,7 @@
     // Improvements vs original: running index (no rowOff+x*4 multiply), bitwise round.
 
     function _gradientStaggeredRender(ctx, g, W, H, stops) {
-        const { startX: sx, startY: sy, endX: ex, endY: ey, staggerLevels } = g;
+        const { startX: sx, startY: sy, endX: ex, endY: ey, staggerLevels, offset: _off } = g;
         const c1 = _gradientHexToRgba(stops[0].color);
         const c2 = _gradientHexToRgba(stops[1].color);
         if (!c1 || !c2) return;
@@ -561,6 +617,8 @@
         // Precompute reciprocals to replace all per-pixel divisions
         const invMaxR = 255 / maxR, invMaxG = 255 / maxG, invMaxB = 255 / maxB;
         const normR   = maxR / 255,  normG   = maxG / 255,  normB   = maxB / 255;
+        const off     = _off ?? 0;
+        const offRange = 1 - Math.abs(off);
 
         const sr = c1[0], sg = c1[1], sb = c1[2], sa = c1[3];
         const dR = c2[0]-sr, dG = c2[1]-sg, dB = c2[2]-sb, dA = c2[3]-sa;
@@ -578,6 +636,12 @@
             for (let x = 0; x < W; x++, idx += 4) {
                 let t = ((x-sx)*dx + py*dy) * invLenSq;
                 if (t < 0) t = 0; else if (t > 1) t = 1;
+                if (off >= 0) {
+                    t = t < off ? 0 : (t - off) / offRange;
+                } else {
+                    t = t > 1 + off ? 1 : t / offRange;
+                }
+                t = t < 0 ? 0 : t > 1 ? 1 : t;
 
                 // Bitwise round via +0.5|0  (safe for non-negative values)
                 data[idx]   = (Math.round(sr + dR*t) * normR + 0.5 | 0) * invMaxR + 0.5 | 0;
@@ -600,7 +664,7 @@
     //   const o        = (_BAYER8[bayerRow+(x&7)]/64 < lutPos-li ? li+1 : li) * 4;
     //   data[idx]=lut[o]; data[idx+1]=lut[o+1]; ...
 
-    function _cpuFillLinear(data, W, H, sx, sy, dist, cosA, sinA, lut, repeat) {
+    function _cpuFillLinear(data, W, H, sx, sy, dist, cosA, sinA, lut, repeat, dither) {
         const invDist  = 1 / dist;
         const isRepeat = repeat === 'repeat';
         const isMirror = repeat === 'mirror';
@@ -615,13 +679,16 @@
                 else               { t = t < 0 ? 0 : t > 1 ? 1 : t; }
                 const lutPos = t * LUT1;
                 const li = lutPos < LUT1 ? lutPos|0 : LUT1-1;
-                const o  = (_BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li) * 4;
+                let li2;
+                if (dither) li2 = _BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li;
+                else li2 = Math.round(lutPos);
+                const o  = li2 * 4;
                 data[idx]=lut[o]; data[idx+1]=lut[o+1]; data[idx+2]=lut[o+2]; data[idx+3]=lut[o+3];
             }
         }
     }
 
-    function _cpuFillBilinear(data, W, H, sx, sy, dist, cosA, sinA, lut) {
+    function _cpuFillBilinear(data, W, H, sx, sy, dist, cosA, sinA, lut, dither) {
         const invDist = 1 / dist;
         let   idx = 0;
         for (let y = 0; y < H; y++) {
@@ -632,19 +699,23 @@
                 const t    = Math.abs(rx % 2 - 1);
                 const lutPos = t * LUT1;
                 const li = lutPos < LUT1 ? lutPos|0 : LUT1-1;
-                const o  = (_BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li) * 4;
+                let li2;
+                if (dither) li2 = _BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li;
+                else li2 = Math.round(lutPos);
+                const o  = li2 * 4;
                 data[idx]=lut[o]; data[idx+1]=lut[o+1]; data[idx+2]=lut[o+2]; data[idx+3]=lut[o+3];
             }
         }
     }
 
-    function _cpuFillRadial(data, W, H, sx, sy, dist, lut, repeat) {
+    function _cpuFillRadial(data, W, H, sx, sy, dist, lut, repeat, invRatio, dither) {
         const invDist  = 1 / dist;
         const isRepeat = repeat === 'repeat';
         const isMirror = repeat === 'mirror';
+        const r2       = invRatio * invRatio;
         let   idx = 0;
         for (let y = 0; y < H; y++) {
-            const py       = y - sy;
+            const py       = (y - sy) * invRatio;
             const py2      = py * py;
             const bayerRow = (y & 7) * 8;
             for (let x = 0; x < W; x++, idx += 4) {
@@ -655,13 +726,16 @@
                 else               { t = t < 0 ? 0 : t > 1 ? 1 : t; }
                 const lutPos = t * LUT1;
                 const li = lutPos < LUT1 ? lutPos|0 : LUT1-1;
-                const o  = (_BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li) * 4;
+                let li2;
+                if (dither) li2 = _BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li;
+                else li2 = Math.round(lutPos);
+                const o  = li2 * 4;
                 data[idx]=lut[o]; data[idx+1]=lut[o+1]; data[idx+2]=lut[o+2]; data[idx+3]=lut[o+3];
             }
         }
     }
 
-    function _cpuFillConic(data, W, H, sx, sy, baseAngle, lut) {
+    function _cpuFillConic(data, W, H, sx, sy, baseAngle, lut, dither) {
         let idx = 0;
         for (let y = 0; y < H; y++) {
             const py       = y - sy;
@@ -672,13 +746,37 @@
                 const t      = ((a / TWO_PI) % 1 + 1) % 1;
                 const lutPos = t * LUT1;
                 const li = lutPos < LUT1 ? lutPos|0 : LUT1-1;
-                const o  = (_BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li) * 4;
+                let li2;
+                if (dither) li2 = _BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li;
+                else li2 = Math.round(lutPos);
+                const o  = li2 * 4;
                 data[idx]=lut[o]; data[idx+1]=lut[o+1]; data[idx+2]=lut[o+2]; data[idx+3]=lut[o+3];
             }
         }
     }
 
-    function _cpuFillSquare(data, W, H, sx, sy, dist, cosA, sinA, lut, repeat) {
+    function _cpuFillConicSym(data, W, H, sx, sy, baseAngle, lut, dither) {
+        let idx = 0;
+        for (let y = 0; y < H; y++) {
+            const py       = y - sy;
+            const bayerRow = (y & 7) * 8;
+            for (let x = 0; x < W; x++, idx += 4) {
+                let a = Math.atan2(py, x-sx) - baseAngle;
+                if (a < -PI) a += TWO_PI;
+                if (a > PI) a -= TWO_PI;
+                const t      = Math.abs(a) / PI;
+                const lutPos = t * LUT1;
+                const li = lutPos < LUT1 ? lutPos|0 : LUT1-1;
+                let li2;
+                if (dither) li2 = _BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li;
+                else li2 = Math.round(lutPos);
+                const o  = li2 * 4;
+                data[idx]=lut[o]; data[idx+1]=lut[o+1]; data[idx+2]=lut[o+2]; data[idx+3]=lut[o+3];
+            }
+        }
+    }
+
+    function _cpuFillSquare(data, W, H, sx, sy, dist, cosA, sinA, lut, repeat, dither) {
         const invDist  = 1 / dist;
         const isRepeat = repeat === 'repeat';
         const isMirror = repeat === 'mirror';
@@ -696,13 +794,16 @@
                 else               { t = t < 0 ? 0 : t > 1 ? 1 : t; }
                 const lutPos = t * LUT1;
                 const li = lutPos < LUT1 ? lutPos|0 : LUT1-1;
-                const o  = (_BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li) * 4;
+                let li2;
+                if (dither) li2 = _BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li;
+                else li2 = Math.round(lutPos);
+                const o  = li2 * 4;
                 data[idx]=lut[o]; data[idx+1]=lut[o+1]; data[idx+2]=lut[o+2]; data[idx+3]=lut[o+3];
             }
         }
     }
 
-    function _cpuFillSpiral(data, W, H, sx, sy, dist, baseAngle, lut) {
+    function _cpuFillSpiral(data, W, H, sx, sy, dist, baseAngle, lut, dither) {
         const invDist = 1 / dist;
         let   idx = 0;
         for (let y = 0; y < H; y++) {
@@ -718,7 +819,10 @@
                 const t       = 0.5 - 0.5 * Math.cos(phi * TWO_PI);
                 const lutPos  = t * LUT1;
                 const li = lutPos < LUT1 ? lutPos|0 : LUT1-1;
-                const o  = (_BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li) * 4;
+                let li2;
+                if (dither) li2 = _BAYER8F[bayerRow+(x&7)] < lutPos-li ? li+1 : li;
+                else li2 = Math.round(lutPos);
+                const o  = li2 * 4;
                 data[idx]=lut[o]; data[idx+1]=lut[o+1]; data[idx+2]=lut[o+2]; data[idx+3]=lut[o+3];
             }
         }
@@ -873,14 +977,15 @@
 
     // ─── CPU dispatch table ───────────────────────────────────────────────────────
 
-    function _cpuDispatch(type, data, W, H, sx, sy, dist, cosA, sinA, baseAngle, midpoint, lut, repeat) {
+    function _cpuDispatch(type, data, W, H, sx, sy, dist, cosA, sinA, baseAngle, midpoint, lut, repeat, invRatio, dither) {
         switch (type) {
-            case 'linear':       _cpuFillLinear(data,W,H,sx,sy,dist,cosA,sinA,lut,repeat); break;
-            case 'bilinear':     _cpuFillBilinear(data,W,H,sx,sy,dist,cosA,sinA,lut); break;
-            case 'radial':       _cpuFillRadial(data,W,H,sx,sy,dist,lut,repeat); break;
-            case 'conic':        _cpuFillConic(data,W,H,sx,sy,baseAngle,lut); break;
-            case 'square':       _cpuFillSquare(data,W,H,sx,sy,dist,cosA,sinA,lut,repeat); break;
-            case 'spiral':       _cpuFillSpiral(data,W,H,sx,sy,dist,baseAngle,lut); break;
+            case 'linear':       _cpuFillLinear(data,W,H,sx,sy,dist,cosA,sinA,lut,repeat,dither); break;
+            case 'bilinear':     _cpuFillBilinear(data,W,H,sx,sy,dist,cosA,sinA,lut,dither); break;
+            case 'radial':       _cpuFillRadial(data,W,H,sx,sy,dist,lut,repeat,invRatio,dither); break;
+            case 'conic':        _cpuFillConic(data,W,H,sx,sy,baseAngle,lut,dither); break;
+            case 'conic_sym':    _cpuFillConicSym(data,W,H,sx,sy,baseAngle,lut,dither); break;
+            case 'square':       _cpuFillSquare(data,W,H,sx,sy,dist,cosA,sinA,lut,repeat,dither); break;
+            case 'spiral':       _cpuFillSpiral(data,W,H,sx,sy,dist,baseAngle,lut,dither); break;
             case 'star':         _cpuFillStar(data,W,H,sx,sy,dist,midpoint,cosA,sinA,lut); break;
             case 'pattern':      _cpuFillPattern(data,W,H,sx,sy,dist,midpoint,cosA,sinA,lut); break;
             case 'dots_lg':      _cpuFillDotsLg(data,W,H,sx,sy,dist,midpoint,cosA,sinA,lut); break;
@@ -899,9 +1004,11 @@
         const midpoint = g.midpoint ?? 0.5;
 
         // Build stop list (respects reverse flag)
-        const stops = reverse
-            ? [{ offset: 0, color: c2hex }, { offset: 1, color: c1hex }]
-            : [{ offset: 0, color: c1hex }, { offset: 1, color: c2hex }];
+        const stops = g.stops && g.stops.length >= 2
+            ? g.stops
+            : (reverse
+                ? [{ offset: 0, color: c2hex }, { offset: 1, color: c1hex }]
+                : [{ offset: 0, color: c1hex }, { offset: 1, color: c2hex }]);
 
         const dx   = ex - sx, dy = ey - sy;
         const dist = Math.hypot(dx, dy);
@@ -911,8 +1018,8 @@
             return;
         }
 
-        // ── Staggered — dedicated CPU path, no LUT ─────────────────────────────
-        if (type === 'staggered') {
+        // ── Staggered — dedicated CPU path, no LUT (only for 2-color) ──────────
+        if (type === 'staggered' && stops.length <= 2) {
             _gradientStaggeredRender(ctx, g, W, H, stops);
             return;
         }
@@ -931,6 +1038,7 @@
         // ── Build LUT (flat Uint8Array — zero object allocs) ──────────────────
         const lut = new Uint8Array(LUT_SIZE * 4);
         _gradientBuildLUT(lut, stops, midpoint);
+        _applyOffsetToLUT(lut, g.offset ?? 0);
 
         const baseAngle = Math.atan2(dy, dx);
         const cosA      = Math.cos(-baseAngle);
@@ -943,7 +1051,7 @@
         const imageData = ctx.createImageData(W, H);
         const data      = imageData.data;
 
-        _cpuDispatch(type, data, W, H, sx, sy, dist, cosA, sinA, baseAngle, midpoint, lut, repeat);
+        _cpuDispatch(type, data, W, H, sx, sy, dist, cosA, sinA, baseAngle, midpoint, lut, repeat, 1 / (g.aspectRatio ?? 1), g.dither);
 
         // Store in render cache — keep both raw buf and the ImageData to avoid re-wrapping
         _cacheSet(key, data, imageData);

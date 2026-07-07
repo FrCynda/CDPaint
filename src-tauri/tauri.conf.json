@@ -14,9 +14,11 @@
     "windows": [
       {
         "decorations": false,
+        "devtools": true,
+        "dragDropEnabled": false,
         "fullscreen": false,
         "height": 800,
-        "shadow": false,
+        "shadow": true,
         "resizable": true,
         "title": "CDPaint",
         "visible": false,
@@ -24,7 +26,8 @@
       }
     ],
     "security": {
-      "csp": null
+      "dangerousDisableAssetCspModification": true,
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://ipc.localhost https://github.com; worker-src 'self' blob:"
     }
   },
   "bundle": {

@@ -1,3 +1,4 @@
+// @ts-check
     // PNG chunk builder used during export. Manually constructs sRGB and pHYs ancillary chunks
     // so exported files carry correct colour-space and DPI metadata.
     class PngMetadata {

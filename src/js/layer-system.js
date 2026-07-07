@@ -21,6 +21,9 @@
         };
         app.layerMgr = mgr;
 
+        // Public panel toggle — called from ribbon tool click.
+        mgr.openPanel = function(v) { _openPanel(v); };
+
         // Preserve original context reference so the engine can still reassign ctx freely.
         const _holder = { ctx: app.ctx };
 
@@ -87,15 +90,6 @@
 /* ── LAYER SYSTEM ──────────────────────────────────────── */
 #canvas-stage.layers-active {
     background: repeating-conic-gradient(#b0b0b0 0% 25%, #e8e8e8 0% 50%) 0 0 / 16px 16px;
-}
-#lsys-hover{
-    position:fixed;right:0;top:145px;width:18px;height:calc(100vh - 145px - 24px);
-    z-index:9990;cursor:pointer;
-}
-#lsys-hover:hover #lsys-arr{opacity:1;}
-#lsys-arr{
-    position:absolute;right:2px;top:50%;transform:translateY(-50%);
-    width:14px;height:28px;opacity:0;transition:opacity .18s;pointer-events:none;
 }
 #lsys-panel{
     position:fixed;top:145px;bottom:24px;right:-336px;width:320px;
@@ -298,20 +292,8 @@
         document.head.appendChild(_css);
 
         /* ──────────────────────────────────────────────────────────────────
-         * 4.  HTML  — hover zone + slide-out panel
+         * 4.  HTML  — slide-out panel
          * ────────────────────────────────────────────────────────────────── */
-        const _hoverEl = document.createElement('div');
-        _hoverEl.id = 'lsys-hover';
-        _hoverEl.title = 'Open Layers panel';
-        _hoverEl.innerHTML =
-            '<svg id="lsys-arr" viewBox="0 0 14 28" fill="none" aria-hidden="true">' +
-            '<rect x="0" y="0" width="14" height="28" rx="3"' +
-            '  fill="var(--bg-ribbon,#f0f0f0)"' +
-            '  stroke="var(--border-ribbon,#ddd)" stroke-width="1"/>' +
-            '<path d="M5 10L9 14L5 18" stroke="#0078d7" stroke-width="2"' +
-            '  stroke-linecap="round" stroke-linejoin="round"/></svg>';
-        document.body.appendChild(_hoverEl);
-
         const _panelEl = document.createElement('div');
         _panelEl.id = 'lsys-panel';
         _panelEl.setAttribute('aria-label', 'Layers panel');
@@ -489,7 +471,7 @@
             const c = document.createElement('canvas');
             c.width = w; c.height = h;
             c.style.cssText =
-                'position:absolute;left:0;top:0;pointer-events:none;image-rendering:pixelated;';
+                'position:absolute;left:0;top:0;pointer-events:none;';
             return c;
         }
 
@@ -525,6 +507,7 @@
             }
             return mgr._compositeCanvas;
         }
+        mgr.getCompositeCanvas = function() { return _composite(); };
 
         /* Strip C2 (background colour) pixels from a canvas — makes them transparent.
          * Used when stamping a floating selection onto a transparent layer so we don't
@@ -1100,7 +1083,9 @@
 
             const entry = {
                 _lsys: true, snaps,
-                activeIdx: mgr.activeIdx,
+                // activeIdx intentionally omitted — layer selection is a
+                // navigation action, not a document edit. Krita, CSP and
+                // modern Photoshop all keep it outside the undo/redo stack.
                 width:  this.config.width,
                 height: this.config.height
             };
@@ -1164,7 +1149,7 @@
                 return;
             }
             // ── Multi-layer restore ─────────────────────────────────────
-            const { snaps, activeIdx, width, height } = entry;
+            const { snaps, width, height } = entry;
             // Remove surplus layers.
             while (mgr.layers.length > snaps.length) {
                 const l = mgr.layers.pop();
@@ -1210,7 +1195,10 @@
                 }
             }
             mgr.active    = true;
-            mgr.activeIdx = Math.min(activeIdx, mgr.layers.length - 1);
+            // Do NOT restore activeIdx — layer selection is a navigation
+            // action, not a content edit.  Clamp it against the current
+            // array size so undo/redo can never push it out of bounds.
+            mgr.activeIdx = Math.min(mgr.activeIdx, Math.max(0, mgr.layers.length - 1));
             this.requestGlobalOverlayUpdate();
             this.deferColorCounts();
             _refreshList(); _syncBtns(); _syncOpacity();
@@ -1333,7 +1321,7 @@
             if (!s) { _origStampSel(); return; }
             const renderC  = this.getRenderedSelectionCanvas();
             if (!renderC)  { _origStampSel(); return; }
-            const metrics = this.getSelectionDrawMetrics(s, renderC);
+            const metrics = this.getSelectionDrawMetrics(s, renderC, true);
             if (!metrics)  { _origStampSel(); return; }
             const stripped = _stripC2(renderC, this.config.c2);
             const ctx = mgr.layers[mgr.activeIdx].ctx;
@@ -1780,7 +1768,7 @@
                 this.requestGlobalOverlayUpdate();
 
             } catch (err) {
-                alert('Failed to open ORA file:\n' + err.message);
+                showToast('Failed to open ORA file: ' + err.message, 'error');
                 console.error('[ORA load]', err);
             }
         };
@@ -1851,7 +1839,6 @@
         /* ──────────────────────────────────────────────────────────────────
          * 16. EVENT WIRING
          * ────────────────────────────────────────────────────────────────── */
-        _hoverEl.addEventListener('click', () => _openPanel(true));
         document.getElementById('lsys-xbtn')
             .addEventListener('click', () => _openPanel(false));
         document.getElementById('lsys-add')
