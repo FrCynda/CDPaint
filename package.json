@@ -1,4 +1,5 @@
 {
+  "type": "module",
   "name": "CDPaint",
   "version": "1.1.6",
   "description": "",
@@ -6,12 +7,14 @@
   "scripts": {
     "tauri": "cd src-tauri && cargo tauri",
     "tauri:build": "cd src-tauri && cargo tauri build",
-    "dev": "node scripts/dev.js",
-    "build": "node scripts/build.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "node scripts/dev.cjs",
+    "build": "node scripts/build.cjs",
+    "test": "node scripts/smoke-test.mjs",
+    "test:wand": "node test/wand-algorithms.test.mjs"
   },
   "private": true,
   "dependencies": {
+    "canvas": "^3.2.3",
     "perfect-freehand": "^1.2.3"
   },
   "devDependencies": {

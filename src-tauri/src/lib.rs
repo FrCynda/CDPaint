@@ -1,6 +1,5 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
@@ -165,7 +164,7 @@ fn install_maximized_resizable_guard(window: &tauri::WebviewWindow, _startup_max
 
 fn install_window_state_persistence(app: &tauri::AppHandle, window: &tauri::WebviewWindow) {
     let saved = read_saved_window_state(app);
-    let should_restore_maximized = apply_startup_window_state(window, saved.as_ref(), false);
+    let should_restore_maximized = apply_startup_window_state(window, saved.as_ref(), true);
     install_maximized_resizable_guard(window, should_restore_maximized);
 
     let initial = saved
@@ -258,15 +257,23 @@ fn file_url_to_path(input: &str) -> Option<String> {
 
     #[cfg(windows)]
     {
-        // Fallback for non-standard "file://C:/..." style inputs.
+        // Fallback for non-standard "file://C:/..." style inputs where
+        // url::Url::to_file_path() couldn't parse the path.
+        // Normalize to file:///C:/... and re-parse through the url crate.
         let raw = input.trim_start_matches("file://");
         let bytes = raw.as_bytes();
         let looks_like_drive = bytes.len() >= 3
             && bytes[0] == b'/'
             && bytes[1].is_ascii_alphabetic()
             && bytes[2] == b':';
-        let trimmed = if looks_like_drive { &raw[1..] } else { raw };
-        return Some(trimmed.replace('/', "\\"));
+        if looks_like_drive {
+            if let Ok(url2) = Url::parse(&format!("file:///{}", &raw[1..])) {
+                if let Ok(path) = url2.to_file_path() {
+                    return Some(path.to_string_lossy().to_string());
+                }
+            }
+        }
+        None
     }
 
     #[cfg(not(windows))]
@@ -324,11 +331,10 @@ fn is_current_exe(path: &str) -> bool {
 }
 
 struct PendingFiles(Mutex<HashMap<String, String>>);
-static WINDOW_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[tauri::command]
 fn get_pending_file(window: tauri::Window, state: tauri::State<'_, PendingFiles>) -> Option<String> {
-    let mut guard = state.0.lock().unwrap();
+    let mut guard = state.0.lock().ok()?;
     let label = window.label().to_string();
     guard.remove(&label)
 }
@@ -341,7 +347,7 @@ fn is_image_path(path: &str) -> bool {
 fn is_image_extension(ext: Option<&str>) -> bool {
     matches!(
         ext.unwrap_or("").to_ascii_lowercase().as_str(),
-        "png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp"
+        "png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp" | "ora"
     )
 }
 
@@ -366,7 +372,33 @@ fn normalize_to_absolute_path(path: &str) -> Result<PathBuf, String> {
     if !p.is_absolute() {
         return Err("path must be absolute".into());
     }
-    Ok(p)
+    // Resolve `.` and `..` components logically so the OS cannot be tricked into
+    // writing/reading outside the directory implied by the (possibly malicious) string.
+    // `..` at the root is dropped, so the path can never escape the absolute root.
+    Ok(resolve_path_dots(&p))
+}
+
+/// Logically resolve `.` and `..` in an absolute path without touching the filesystem.
+/// A `..` that would climb above the root is simply dropped, preventing traversal escape.
+fn resolve_path_dots(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut stack: Vec<Component> = Vec::new();
+    for comp in path.components() {
+        match comp {
+            Component::ParentDir => {
+                if let Some(Component::Normal(_)) = stack.last() {
+                    stack.pop();
+                }
+            }
+            Component::CurDir => {}
+            other => stack.push(other),
+        }
+    }
+    let mut out = PathBuf::new();
+    for c in stack {
+        out.push(c.as_os_str());
+    }
+    out
 }
 
 fn is_allowed_write_extension(ext: Option<&str>) -> bool {
@@ -620,15 +652,7 @@ fn normalize_candidate(path: &str) -> String {
 }
 
 fn next_window_label() -> String {
-    let n = WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(
-        "file-{}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(),
-        n
-    )
+    format!("file-{}", uuid::Uuid::new_v4())
 }
 
 fn collect_image_paths<I>(args: I) -> Vec<String>
@@ -667,7 +691,7 @@ fn spawn_additional_window(
     .title("cdpaint")
     .visible(false)
     .decorations(false)
-    .shadow(false)
+    .shadow(true)
     .resizable(true)
     .inner_size(1920.0, 1057.0)
     .min_inner_size(MIN_WINDOW_WIDTH as f64, MIN_WINDOW_HEIGHT as f64)
@@ -680,28 +704,6 @@ fn spawn_additional_window(
     }
 }
 
-
-#[tauri::command]
-fn create_popup_window(app: tauri::AppHandle) -> Result<(), String> {
-    let label = format!(
-        "popup-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-    );
-    tauri::WebviewWindowBuilder::new(
-        &app,
-        label,
-        tauri::WebviewUrl::App("index.html".into()),
-    )
-    .title("CDPaint")
-    .inner_size(800.0, 620.0)
-    .resizable(true)
-    .build()
-    .map_err(|e| e.to_string())?;
-    Ok(())
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -745,8 +747,7 @@ pub fn run() {
             write_export_file_with_save_dialog,
             show_current_window,
             toggle_current_window_fullscreen,
-            pick_export_folder,
-            create_popup_window
+            pick_export_folder
         ])
         .setup(|app| {
             if let Some(main_window) = app.get_webview_window("main") {
@@ -765,4 +766,34 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_path_dots_removes_dot_and_dotdot() {
+        let p = Path::new(r"C:\Users\me\Pictures\..\..\evil.png");
+        let resolved = resolve_path_dots(p);
+        assert_eq!(resolved, Path::new(r"C:\Users\evil.png"));
+    }
+
+    #[test]
+    fn resolve_path_dots_cannot_climb_above_root() {
+        // All `..` that would climb above the drive root are dropped, so the
+        // path can never escape the absolute root via traversal.
+        let p = Path::new(r"C:\a\b\c\..\..\..\..\evil.png");
+        let resolved = resolve_path_dots(p);
+        assert_eq!(resolved, Path::new(r"C:\evil.png"));
+        assert!(resolved.is_absolute());
+        assert!(!resolved.to_string_lossy().contains(".."));
+    }
+
+    #[test]
+    fn normalize_to_absolute_path_blocks_traversal() {
+        let p = normalize_to_absolute_path(r"C:\Users\me\Pictures\..\..\evil.png")
+            .expect("should normalize");
+        assert_eq!(p, Path::new(r"C:\Users\evil.png"));
+    }
 }

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -221,16 +221,10 @@
     </div>
 
     <div class="section section-hidden" id="wand-threshold-section">
-        <div class="threshold-controls">
-            <div class="threshold-label">Threshold</div>
-            <div class="threshold-row">
-                <input type="range" id="wand-threshold" min="0" max="255" step="0.1" value="0">
-            </div>
-            <div class="threshold-values">
-                <span>0</span>
-                <span id="wand-threshold-val">0</span>
-                <span>255</span>
-            </div>
+        <div class="pb-slider-wrap" style="width:120px; margin:8px auto 4px; flex:none;">
+            <input type="range" id="wand-threshold" min="0" max="255" step="0.1" value="0">
+            <span class="pb-label-inner">Threshold</span>
+            <span class="pb-val" id="wand-threshold-val">0</span>
         </div>
         <div class="section-title">Wand</div>
     </div>
@@ -282,61 +276,6 @@
             <span>Hue/Sat</span>
         </div>
         <div class="section-title">Adjustments</div>
-    </div>
-    <div class="section section-hidden" id="gradient-options">
-        <div class="ribbon-card tile-compact">
-            <span class="card-label">Shape</span>
-            <select id="grad-type" class="compact-input" style="width:82px;height:20px;">
-                <option value="linear">Linear</option>
-                <option value="bilinear">Bilinear</option>
-                <option value="radial">Radial</option>
-                <option value="square">Square</option>
-                <option value="conic">Conic</option>
-                <option value="spiral">Spiral</option>
-                <option value="staggered">Bands</option>
-                <option value="star">✅ Stars</option>
-                <option value="pattern">● Dots</option>
-                <option value="dots_lg">● Dots HX</option>
-                <option value="diamond">◆ Diamonds</option>
-                <option value="cross">✚ Crosses</option>
-                <option value="checkerboard">▪ Checker</option>
-                <option value="stripes">▬ Stripes</option>
-            </select>
-        </div>
-        <div class="ribbon-card tile-compact">
-            <span class="card-label">Repeat</span>
-            <select id="grad-repeat" class="compact-input" style="width:68px;height:20px;">
-                <option value="none">None</option>
-                <option value="repeat">Repeat</option>
-                <option value="mirror">Mirror</option>
-            </select>
-        </div>
-        <div class="ribbon-card tile-compact">
-            <span class="card-label">Options</span>
-            <label id="grad-dither-label" style="font-size:10px;cursor:pointer;display:block;"><input type="checkbox" id="grad-dither" checked> Dither</label>
-            <label style="font-size:10px;cursor:pointer;display:block;"><input type="checkbox" id="grad-reverse"> Reverse</label>
-        </div>
-        <div class="ribbon-card tile-compact" id="grad-stagger-card" style="display:none;">
-            <span class="card-label">Bands</span>
-            <div style="display:flex;align-items:center;gap:4px;">
-                <input type="range" id="grad-stagger-levels" min="2" max="256" value="256" style="width:68px;height:14px;cursor:pointer;" title="Number of quantization levels per channel">
-                <span id="grad-stagger-val" style="font-size:10px;color:var(--threshold-values-color);min-width:24px;text-align:right;">256</span>
-            </div>
-        </div>
-        <div class="ribbon-card tile-compact">
-            <span class="card-label">Midpoint</span>
-            <div style="display:flex;align-items:center;gap:4px;">
-                <input type="range" id="grad-midpoint" min="1" max="99" value="50" style="width:68px;height:14px;cursor:pointer;" title="Blend midpoint: controls where 50% mix falls between the two colours">
-                <span id="grad-midpoint-val" style="font-size:10px;color:var(--threshold-values-color);min-width:22px;text-align:right;">50%</span>
-            </div>
-            <button id="grad-midpoint-reset" style="font-size:9px;margin-top:2px;padding:0 4px;height:14px;cursor:pointer;border:1px solid var(--btn-small-border);background:var(--btn-small-bg);border-radius:2px;" title="Reset midpoint to centre">↺ Reset</button>
-        </div>
-        <div class="ribbon-card tile-compact" id="grad-apply-card" style="opacity:0.4;pointer-events:none;">
-            <span class="card-label">Gradient</span>
-            <button class="btn btn-small" id="grad-apply-btn" onclick="PaintApp.gradientApply()" title="Apply gradient to canvas (Enter)" style="width:52px;margin-bottom:2px;">Apply</button>
-            <button class="btn btn-small" id="grad-discard-btn" onclick="PaintApp.gradientDiscard()" title="Discard gradient (Escape)" style="width:52px;">Discard</button>
-        </div>
-        <div class="section-title">Gradient</div>
     </div>
     <div class="section">
         <div class="btn-large" onclick="PaintApp.openInfoModal()">
@@ -432,6 +371,9 @@
             <div class="card-controls">
                 <label class="compact-toggle">
                     <input type="checkbox" id="history-limit-toggle" checked> Limit
+                </label>
+                <label class="compact-toggle" title="Auto-scale undo depth to canvas size">
+                    <input type="checkbox" id="history-limit-adaptive"> Adaptive
                 </label>
                 <input type="number" id="history-limit-input" min="1" step="1" value="50" class="compact-input">
                 <span class="mini-label">states</span>
@@ -734,6 +676,9 @@
     </div>
 </div>
 
+<div id="paintbrush-menu" class="dropdown-menu" style="left: 0; top: 0;">
+</div>
+
 <div id="line-width-menu" class="dropdown-menu line-width-menu">
     <div class="line-width-item selected" data-width="1" onclick="PaintApp.setLineWidthPreset(1)">
         <div class="line-width-preview line-width-1"></div>
@@ -897,7 +842,7 @@
             <div class="close-btn" onclick="PaintApp.dismissCloseConfirm()">&#10005;</div>
         </div>
         <div class="message-area">
-            <div class="body-text">Do you want to save changes to <span id="close-confirm-filename">your file</span>?</div>
+            <div class="body-text">Do you want to save changes to <span id="close-confirm-filename">your file</span><span id="close-confirm-context"> before closing</span>?</div>
         </div>
         <div class="separator"></div>
         <div class="button-area">
@@ -1283,43 +1228,31 @@
                 <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1"/><rect x="7" y="4" width="8" height="1.5" rx="0.75"/><rect x="7" y="7.25" width="8" height="1.5" rx="0.75"/><rect x="7" y="10.5" width="8" height="1.5" rx="0.75"/></svg>
             </div>
             <span>Resize and Skew</span>
-            <div class="close-btn" onclick="PaintApp.closeModals()">&#10005;</div>
+            <div class="close-btn" onclick="PaintApp.cancelResize()">&#10005;</div>
         </div>
 
         <div class="content">
-            <fieldset>
+            <fieldset class="rz-fieldset">
                 <legend>Resize</legend>
 
-                <div class="row">
-                    <div class="col-icon"></div> <div class="col-label rz-by-label">By:</div>
-                    <div class="col-input radio-container">
-                        <label class="radio-label">
-                            <input type="radio" name="rz-mode" value="percent" checked onchange="PaintApp.updateResizeInputs()"> Percentage
-                        </label>
-                        <label class="radio-label">
-                            <input type="radio" name="rz-mode" value="pixels" onchange="PaintApp.updateResizeInputs()"> Pixels
-                        </label>
-                    </div>
-                </div>
-
-                <div class="row">
+                <div class="row rz-icon-row">
                     <div class="col-icon">
                         <img class="resize-icon-img" alt="Resize icon" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADQAAABUCAYAAADNjBSxAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsIAAA7CARUoSoAAAAGHaVRYdFhNTDpjb20uYWRvYmUueG1wAAAAAAA8P3hwYWNrZXQgYmVnaW49J++7vycgaWQ9J1c1TTBNcENlaGlIenJlU3pOVGN6a2M5ZCc/Pg0KPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyI+PHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj48cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0idXVpZDpmYWY1YmRkNS1iYTNkLTExZGEtYWQzMS1kMzNkNzUxODJmMWIiIHhtbG5zOnRpZmY9Imh0dHA6Ly9ucy5hZG9iZS5jb20vdGlmZi8xLjAvIj48dGlmZjpPcmllbnRhdGlvbj4xPC90aWZmOk9yaWVudGF0aW9uPjwvcmRmOkRlc2NyaXB0aW9uPjwvcmRmOlJERj48L3g6eG1wbWV0YT4NCjw/eHBhY2tldCBlbmQ9J3cnPz4slJgLAAABW0lEQVR4Xu3aUa6DIBCF4eFuoOxYl+BS6QrufbqNmUhhmGk5kvMnPkhiwxdJU4uplPIrC/WjB+4eQVc9ctZDzUau6ckN8kzMc20tFyhiQhGfcS6NfstFT+RZih4aahgkCmWdkOfad7mWXMREIj7jnAskzgl5rq3lWnKIue8QWs07dByHHvpa+75LMS7LLtC2bXr4K6WUzKDllhxB6BGEHkHoEYQeQegRhB5B6BGEXvOJNQf/oWjN+sTaBN2t5ZYcQegRhB5B6BGEHkHoEYTecqCux4fIbcmRbUZL3aCobcmRbUZLyy05gtAj6JNFvLIGA/rHeFEQII3Q55amg2qTr423mg56lvI6rs6tTQdFRxB6BKFHEHoEoUcQetNBj5xfx9W5temg2o/Q2nir6SC5mLw+twQBkhPCgxEkkARgBA0UEUHoLQfq2n2IfsXsk7sPXaA7tdySIwi95UB/K5+Iry0FCRkAAAAASUVORK5CYII=">
                     </div>
                 </div>
                 <div class="row rz-h-row">
-                    <div class="col-icon"></div>
                     <div class="col-label">Horizontal:</div>
-                    <div class="col-input">
-                        <input type="text" id="rz-h-val" value="100" oninput="PaintApp.onResizeInput('h')">
+                    <div class="col-input rz-dual rz-h-dual">
+                        <span class="rz-pair"><span class="rz-unit">%</span><input type="text" id="rz-h-pct" class="rz-num" value="100" oninput="PaintApp.onResizeInput('h','pct')"></span>
+                        <span class="rz-pair"><span class="rz-unit">px</span><input type="text" id="rz-h-px" class="rz-num" value="100" oninput="PaintApp.onResizeInput('h','px')"></span>
                     </div>
                 </div>
 
                 <div class="row rz-v-row">
-                    <div class="col-icon"></div>
                     <div class="col-label">Vertical:</div>
-                    <div class="col-input">
-                        <input type="text" id="rz-v-val" value="100" oninput="PaintApp.onResizeInput('v')">
+                    <div class="col-input rz-dual">
+                        <input type="text" id="rz-v-pct" class="rz-num" value="100" oninput="PaintApp.onResizeInput('v','pct')">
+                        <input type="text" id="rz-v-px" class="rz-num" value="100" oninput="PaintApp.onResizeInput('v','px')">
                     </div>
                 </div>
                 <div class="checkbox-row rz-ratio-row">
@@ -1359,7 +1292,7 @@
 
         <div class="footer">
             <button class="btn btn-ok" onclick="PaintApp.applyResize()">OK</button>
-            <button class="btn" onclick="PaintApp.closeModals()">Cancel</button>
+            <button class="btn" onclick="PaintApp.cancelResize()">Cancel</button>
         </div>
     </div>
 </div>
@@ -1396,7 +1329,7 @@
                 <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1"/><rect x="7" y="4" width="8" height="1.5" rx="0.75"/><rect x="7" y="7.25" width="8" height="1.5" rx="0.75"/><rect x="7" y="10.5" width="8" height="1.5" rx="0.75"/></svg>
             </div>
             <span>Decrease Color Depth</span>
-            <div class="close-btn" onclick="PaintApp.closeModals()"><span>&#10005;</span></div>
+            <div class="close-btn" onclick="PaintApp.cancelDepth()"><span>&#10005;</span></div>
         </div>
         <div class="content">
             <div>
@@ -1466,9 +1399,9 @@
             </div>
         </div>
 
-        <div class="footer" onkeydown="if(event.key==='Enter'){var t=event.target;if(!(t.tagName==='INPUT'&&(t.type==='radio'||t.type==='checkbox'))){{PaintApp.applyDepth().then(()=>PaintApp.closeModals());event.preventDefault();}}}">
-            <button class="btn btn-primary" id="depth-apply-btn" onclick="PaintApp.applyDepth().then(() => PaintApp.closeModals());">Apply</button>
-            <button class="btn" onclick="PaintApp.closeModals()">Cancel</button>
+        <div class="footer" onkeydown="if(event.key==='Enter'){var t=event.target;if(!(t.tagName==='INPUT'&&(t.type==='radio'||t.type==='checkbox'))){{PaintApp.applyDepth().then(()=>PaintApp.cancelDepth());event.preventDefault();}}}">
+            <button class="btn btn-primary" id="depth-apply-btn" onclick="PaintApp.applyDepth().then(() => PaintApp.cancelDepth());">Apply</button>
+            <button class="btn" onclick="PaintApp.cancelDepth()">Cancel</button>
         </div>
     </div>
 </div>
@@ -1953,43 +1886,53 @@
 <div id="freehand-sidebar">
     <div id="freehand-sidebar-header">
         <span>Freehand Brush</span>
-        <button id="freehand-collapse-btn" title="Collapse sidebar">&#9660;</button>
+        <button id="freehand-collapse-btn" title="Collapse sidebar"><svg viewBox="0 0 16 16" width="11" height="11"><path d="M8 14 L2 8 L14 8 Z" fill="#000000"/></svg></button>
     </div>
     <div id="freehand-sidebar-body">
         <div class="fh-section">
             <div class="fh-label">Basic</div>
             <div class="fh-row">
-                <label>Size</label>
-                <input type="range" id="fh-size" min="0.5" max="20" step="0.1" value="4">
-                <input type="number" id="fh-size-num" min="0.5" max="20" step="0.1" value="4">
-                <span class="fh-val" id="fh-size-val">4</span>
+                <div class="pb-slider-wrap">
+                <input type="range" id="fh-size" min="1" max="100" step="1" value="4">
+                <span class="pb-label-inner">Size</span>
+                <span class="pb-val">4</span>
+                </div>
+
             </div>
             <div class="fh-row">
-                <label>Thinning</label>
-                <input type="range" id="fh-thinning" min="0" max="1" step="0.01" value="0.5">
-                <input type="number" id="fh-thinning-num" min="0" max="1" step="0.01" value="0.5">
-                <span class="fh-val" id="fh-thinning-val">0.5</span>
+                <div class="pb-slider-wrap">
+                <input type="range" id="fh-thinning" min="-1" max="1" step="0.01" value="0">
+                <span class="pb-label-inner">Thinning</span>
+                <span class="pb-val">0</span>
+                </div>
+
             </div>
             <div class="fh-row">
-                <label>Smoothing</label>
+                <div class="pb-slider-wrap">
                 <input type="range" id="fh-smoothing" min="0.01" max="0.99" step="0.01" value="0.5">
-                <input type="number" id="fh-smoothing-num" min="0.01" max="0.99" step="0.01" value="0.5">
-                <span class="fh-val" id="fh-smoothing-val">0.5</span>
+                <span class="pb-label-inner">Smoothing</span>
+                <span class="pb-val">0.5</span>
+                </div>
+
             </div>
             <div class="fh-row">
-                <label>Streamline</label>
+                <div class="pb-slider-wrap">
                 <input type="range" id="fh-streamline" min="0" max="1" step="0.01" value="0.5">
-                <input type="number" id="fh-streamline-num" min="0" max="1" step="0.01" value="0.5">
-                <span class="fh-val" id="fh-streamline-val">0.5</span>
+                <span class="pb-label-inner">Streamline</span>
+                <span class="pb-val">0.5</span>
+                </div>
+
             </div>
         </div>
         <div class="fh-section">
             <div class="fh-label">Taper</div>
             <div class="fh-row">
-                <label>Start</label>
+                <div class="pb-slider-wrap">
                 <input type="range" id="fh-taperStart" min="0" max="100" step="1" value="0">
-                <input type="number" id="fh-taperStart-num" min="0" max="100" step="1" value="0">
-                <span class="fh-val" id="fh-taperStart-val">0</span>
+                <span class="pb-label-inner">Start</span>
+                <span class="pb-val">0</span>
+                </div>
+
             </div>
             <div class="fh-row" id="fh-capStart-row">
                 <label>Cap Start</label>
@@ -2020,10 +1963,12 @@
                 </select>
             </div>
             <div class="fh-row">
-                <label>End</label>
+                <div class="pb-slider-wrap">
                 <input type="range" id="fh-taperEnd" min="0" max="100" step="1" value="0">
-                <input type="number" id="fh-taperEnd-num" min="0" max="100" step="1" value="0">
-                <span class="fh-val" id="fh-taperEnd-val">0</span>
+                <span class="pb-label-inner">End</span>
+                <span class="pb-val">0</span>
+                </div>
+
             </div>
             <div class="fh-row" id="fh-capEnd-row">
                 <label>Cap End</label>
@@ -2086,19 +2031,20 @@
             <div class="fh-row">
                 <label>Fill</label>
                 <input type="checkbox" id="fh-fill" checked>
-                <span class="fh-swatch" id="fh-fill-swatch"></span>
-                <span class="fh-swatch-label">Color 1</span>
+                <div class="big-swatch" id="fh-fill-swatch" style="background:black"></div>
             </div>
             <div class="fh-row">
-                <label>Stroke Width</label>
-                <input type="range" id="fh-strokeWidth" min="0" max="30" step="1" value="0">
-                <input type="number" id="fh-strokeWidth-num" min="0" max="30" step="1" value="0">
-                <span class="fh-val" id="fh-strokeWidth-val">0</span>
+                <div class="pb-slider-wrap">
+                <input type="range" id="fh-strokeWidth" min="0" max="200" step="1" value="0">
+                <span class="pb-label-inner">Stroke Width</span>
+                <span class="pb-val">0</span>
+                </div>
+
             </div>
             <div class="fh-row">
                 <label>Stroke Col</label>
-                <span class="fh-swatch" id="fh-stroke-swatch"></span>
-                <span class="fh-swatch-label">Color 2</span>
+                <input type="checkbox" id="fh-strokeEnabled" checked>
+                <div class="big-swatch" id="fh-stroke-swatch" style="background:white"></div>
             </div>
             <div class="fh-row">
                 <label>Pixel Mode</label>
@@ -2114,134 +2060,371 @@
         </div>
     </div>
 </div>
-<button id="freehand-reopen-btn" title="Open freehand brush settings">&#9658;</button>
+<button id="freehand-reopen-btn" title="Open freehand brush settings"><div style="width:0;height:0;border-top:5.5px solid transparent;border-bottom:5.5px solid transparent;border-left:5.5px solid #000;"></div></button>
 
 <div id="paintbrush-sidebar">
     <div id="paintbrush-sidebar-header">
         <span>Paint Brush</span>
-        <button id="paintbrush-collapse-btn" title="Collapse sidebar">&#9660;</button>
+        <button id="paintbrush-collapse-btn" title="Collapse sidebar"><svg viewBox="0 0 16 16" width="11" height="11"><path d="M8 14 L2 8 L14 8 Z" fill="#000000"/></svg></button>
     </div>
     <div id="paintbrush-sidebar-body">
-        <div class="pb-section">
-            <div class="pb-label">Preset</div>
-            <select id="pb-preset" style="width:100%;font-size:11px;padding:2px 4px;">
-                <option value="Round">Round</option>
-                <option value="Calligraphy">Calligraphy</option>
-                <option value="Airbrush">Airbrush</option>
-                <option value="Ink">Ink</option>
-                <option value="Marker">Marker</option>
-                <option value="Watercolor">Watercolor</option>
-                <option value="Charcoal">Charcoal</option>
-                <option value="Splatter">Splatter</option>
-                <option value="Fan Brush">Fan Brush</option>
-                <option value="Dry Brush">Dry Brush</option>
-            </select>
+        <div id="pb-brush-grid"></div>
+        <div id="pb-active-name">Round</div>
+        <div id="pb-key-settings">
+            <div class="pb-section">
+                <div class="pb-label">Basic</div>
+                <div class="pb-row" data-setting="size">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-size" min="1" max="200" step="1" value="12">
+                    <span class="pb-label-inner">Size</span>
+                    <span class="pb-val" id="pb-size-val">12</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="opacity">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-opacity" min="0" max="100" step="1" value="100">
+                    <span class="pb-label-inner">Opacity</span>
+                    <span class="pb-val" id="pb-opacity-val">100</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="flow">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-flow" min="0" max="100" step="1" value="100">
+                    <span class="pb-label-inner">Flow</span>
+                    <span class="pb-val" id="pb-flow-val">100</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="spacing">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-spacing" min="1" max="100" step="1" value="20">
+                    <span class="pb-label-inner">Spacing</span>
+                    <span class="pb-val" id="pb-spacing-val">20</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Smoothing</div>
+                <div class="pb-row" data-setting="smoothingMode">
+                    <label>Mode</label>
+                    <div class="pb-smode-btns" id="pb-smoothingMode">
+                        <button data-mode="basic" class="pb-smode-btn">Basic</button>
+                        <button data-mode="weighted" class="pb-smode-btn">Weighted</button>
+                        <button data-mode="rope" class="pb-smode-btn">Rope</button>
+                        <button data-mode="stabilizer" class="pb-smode-btn">Stabilizer</button>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="smoothing">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-smoothing" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Smooth</span>
+                    <span class="pb-val" id="pb-smoothing-val">0</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Tip</div>
+                <div class="pb-row" data-setting="hardness">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-hardness" min="0" max="100" step="1" value="80">
+                    <span class="pb-label-inner">Hardness</span>
+                    <span class="pb-val" id="pb-hardness-val">80</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="shape">
+                    <label>Tip</label>
+                    <select id="pb-shape">
+                        <option value="circle">Circle</option>
+                        <option value="square">Square</option>
+                        <option value="diamond">Diamond</option>
+                        <option value="line">Line</option>
+                        <option value="slash">Slash</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="angle">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-angle" min="0" max="360" step="1" value="0">
+                    <span class="pb-label-inner">Angle</span>
+                    <span class="pb-val" id="pb-angle-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="dynamicsMode">
+                    <label>Dynamics</label>
+                    <select id="pb-dynamics">
+                        <option value="off">Off</option>
+                        <option value="direction">Direction</option>
+                        <option value="angle">Angle</option>
+                        <option value="size">Size</option>
+                        <option value="opacity">Opacity</option>
+                        <option value="flow">Flow</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="aspectRatio">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-aspect" min="1" max="10" step="0.1" value="1">
+                    <span class="pb-label-inner">Aspect</span>
+                    <span class="pb-val" id="pb-aspect-val">1</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Color</div>
+                <div class="pb-row" data-setting="colorRate">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-colorRate" min="0" max="100" step="1" value="100">
+                    <span class="pb-label-inner">Mix</span>
+                    <span class="pb-val" id="pb-colorRate-val">100</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Airbrush</div>
+                <div class="pb-row" data-setting="airbrushMode">
+                    <label>Airbrush</label>
+                    <input type="checkbox" id="pb-airbrushMode">
+                </div>
+                <div class="pb-row" id="pb-airbrushRate-row">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-airbrushRate" min="1" max="100" step="1" value="40">
+                    <span class="pb-label-inner">Rate</span>
+                    <span class="pb-val" id="pb-airbrushRate-val">40</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Bristle</div>
+                <div class="pb-row" data-setting="bristleCount">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-bristleCount" min="1" max="50" step="1" value="1">
+                    <span class="pb-label-inner">Count</span>
+                    <span class="pb-val" id="pb-bristleCount-val">1</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="bristleLength">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-bristleLength" min="2" max="50" step="1" value="20">
+                    <span class="pb-label-inner">Length</span>
+                    <span class="pb-val" id="pb-bristleLength-val">20</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="bristleWidth">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-bristleWidth" min="1" max="10" step="0.5" value="2">
+                    <span class="pb-label-inner">Width</span>
+                    <span class="pb-val" id="pb-bristleWidth-val">2</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="bristleSpread">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-bristleSpread" min="0" max="100" step="1" value="60">
+                    <span class="pb-label-inner">Spread</span>
+                    <span class="pb-val" id="pb-bristleSpread-val">60</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="scatter">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-scatter" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Scatter</span>
+                    <span class="pb-val" id="pb-scatter-val">0</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Taper</div>
+                <div class="pb-row" data-setting="taperStart">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-taperStart" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Taper Start</span>
+                    <span class="pb-val" id="pb-taperStart-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="taperEnd">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-taperEnd" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Taper End</span>
+                    <span class="pb-val" id="pb-taperEnd-val">0</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Texture</div>
+                <div class="pb-row" data-setting="texture">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-texture" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Texture</span>
+                    <span class="pb-val" id="pb-texture-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="textureScale">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-textureScale" min="1" max="10" step="0.5" value="4">
+                    <span class="pb-label-inner">Tex Scale</span>
+                    <span class="pb-val" id="pb-textureScale-val">4</span>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div class="pb-section">
-            <div class="pb-label">Basic</div>
-            <div class="pb-row">
-                <label>Size</label>
-                <input type="range" id="pb-size" min="1" max="200" step="1" value="12">
-                <span class="pb-val" id="pb-size-val">12</span>
+        <div id="pb-more-settings" class="pb-more-collapsed">
+            <button id="pb-more-toggle" aria-expanded="false">Advanced <svg class="pb-arrow" viewBox="0 0 16 16" width="11" height="11"><path d="M2 5 L8 13 L14 5 Z" fill="#000000"/></svg></button>
+            <div id="pb-more-body">
+            <div class="pb-reset-row">
+                <button id="pb-reset-btn">Reset to preset defaults</button>
             </div>
-            <div class="pb-row">
-                <label>Opacity</label>
-                <input type="range" id="pb-opacity" min="0" max="100" step="1" value="100">
-                <span class="pb-val" id="pb-opacity-val">100</span>
             </div>
-            <div class="pb-row">
-                <label>Flow</label>
-                <input type="range" id="pb-flow" min="0" max="100" step="1" value="100">
-                <span class="pb-val" id="pb-flow-val">100</span>
-            </div>
-            <div class="pb-row">
-                <label>Spacing</label>
-                <input type="range" id="pb-spacing" min="1" max="100" step="1" value="20">
-                <span class="pb-val" id="pb-spacing-val">20</span>
-            </div>
-            <div class="pb-row">
-                <label>Hardness</label>
-                <input type="range" id="pb-hardness" min="0" max="100" step="1" value="80">
-                <span class="pb-val" id="pb-hardness-val">80</span>
-            </div>
-        </div>
-        <div class="pb-section">
-            <div class="pb-label">Shape</div>
-            <div class="pb-row">
-                <label>Tip</label>
-                <select id="pb-shape">
-                    <option value="circle">Circle</option>
-                    <option value="square">Square</option>
-                    <option value="diamond">Diamond</option>
-                    <option value="line">Line</option>
-                    <option value="slash">Slash</option>
-                </select>
-            </div>
-            <div class="pb-row">
-                <label>Angle</label>
-                <input type="range" id="pb-angle" min="0" max="360" step="1" value="0">
-                <span class="pb-val" id="pb-angle-val">0</span>
-            </div>
-            <div class="pb-row">
-                <label>Aspect</label>
-                <input type="range" id="pb-aspect" min="1" max="10" step="0.1" value="1">
-                <span class="pb-val" id="pb-aspect-val">1</span>
-            </div>
-        </div>
-        <div class="pb-section">
-            <div class="pb-label">Smudge</div>
-            <div class="pb-row">
-                <label>Mix</label>
-                <input type="range" id="pb-colorRate" min="0" max="100" step="1" value="100">
-                <span class="pb-val" id="pb-colorRate-val">100</span>
-            </div>
-            <div class="pb-row">
-                <label>Airbrush</label>
-                <input type="checkbox" id="pb-airbrushMode">
-            </div>
-            <div class="pb-row" id="pb-airbrushRate-row">
-                <label>Rate</label>
-                <input type="range" id="pb-airbrushRate" min="1" max="100" step="1" value="40">
-                <span class="pb-val" id="pb-airbrushRate-val">40</span>
-            </div>
-        </div>
-        <div class="pb-section">
-            <div class="pb-label">Bristle</div>
-            <div class="pb-row">
-                <label>Count</label>
-                <input type="range" id="pb-bristleCount" min="1" max="50" step="1" value="1">
-                <span class="pb-val" id="pb-bristleCount-val">1</span>
-            </div>
-            <div class="pb-row">
-                <label>Length</label>
-                <input type="range" id="pb-bristleLength" min="2" max="50" step="1" value="20">
-                <span class="pb-val" id="pb-bristleLength-val">20</span>
-            </div>
-            <div class="pb-row">
-                <label>Width</label>
-                <input type="range" id="pb-bristleWidth" min="1" max="10" step="0.5" value="2">
-                <span class="pb-val" id="pb-bristleWidth-val">2</span>
-            </div>
-            <div class="pb-row">
-                <label>Spread</label>
-                <input type="range" id="pb-bristleSpread" min="0" max="100" step="1" value="60">
-                <span class="pb-val" id="pb-bristleSpread-val">60</span>
-            </div>
-        </div>
-        <div class="pb-section">
-            <div class="pb-label">Preview</div>
-            <canvas id="pb-preview" width="200" height="60" style="width:100%;height:60px;border:1px solid var(--section-divider);border-radius:3px;"></canvas>
         </div>
     </div>
 </div>
+<button id="pb-reopen-btn" title="Open paintbrush settings"><div style="width:0;height:0;border-top:5.5px solid transparent;border-bottom:5.5px solid transparent;border-left:5.5px solid #000;"></div></button>
+
+<div id="gradient-sidebar">
+    <div id="gradient-sidebar-header">
+        <span>Gradient</span>
+        <button id="gradient-collapse-btn" title="Collapse sidebar"><svg viewBox="0 0 16 16" width="11" height="11"><path d="M8 14 L2 8 L14 8 Z" fill="#000000"/></svg></button>
+    </div>
+    <div id="gradient-sidebar-body">
+        <div id="gradient-options">
+            <div class="pb-section">
+                <div class="pb-label">Type</div>
+                <div class="pb-row">
+                    <select id="grad-presets" class="compact-input" style="flex:1;height:22px;"></select>
+                    <button id="grad-preset-save" class="btn-small" style="white-space:nowrap;">Save</button>
+                </div>
+                <div class="pb-row">
+                    <select id="grad-type" class="compact-input" style="flex:1;height:22px;">
+                        <option value="linear">Linear</option>
+                        <option value="bilinear">Bilinear</option>
+                        <option value="radial">Radial</option>
+                        <option value="square">Square</option>
+                        <option value="conic">Conic (asymmetric)</option>
+                        <option value="conic_sym">Conic (symmetric)</option>
+                        <option value="spiral">Spiral</option>
+                        <option value="staggered">Bands</option>
+                        <option value="star">✅ Stars</option>
+                        <option value="pattern">● Dots</option>
+                        <option value="dots_lg">● Dots HX</option>
+                        <option value="diamond">◆ Diamonds</option>
+                        <option value="cross">✚ Crosses</option>
+                        <option value="checkerboard">▪ Checker</option>
+                        <option value="stripes">▬ Stripes</option>
+                    </select>
+                </div>
+                <div class="pb-row">
+                    <select id="grad-repeat" class="compact-input" style="flex:1;height:22px;">
+                        <option value="none">None</option>
+                        <option value="repeat">Repeat</option>
+                        <option value="mirror">Mirror</option>
+                    </select>
+                </div>
+                <div class="pb-row" style="gap:12px;">
+                    <label><input type="checkbox" id="grad-dither" checked> Dither</label>
+                    <label><input type="checkbox" id="grad-reverse"> Reverse</label>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Adjust</div>
+                <div class="pb-row">
+                    <div class="pb-slider-wrap">
+                        <input type="range" id="grad-midpoint" min="1" max="99" value="50">
+                        <span class="pb-label-inner">Midpoint</span>
+                        <span class="pb-val" id="grad-midpoint-val">50%</span>
+                    </div>
+                </div>
+                <div class="pb-row" style="justify-content:flex-end;">
+                    <button id="grad-midpoint-reset" class="btn-small">Reset midpoint</button>
+                </div>
+                <div class="pb-row">
+                    <div class="pb-slider-wrap">
+                        <input type="range" id="grad-offset" min="-99" max="99" value="0" title="Shifts the gradient transition along the drawn vector">
+                        <span class="pb-label-inner">Offset</span>
+                        <span class="pb-val" id="grad-offset-val">0%</span>
+                    </div>
+                </div>
+                <div class="pb-row" style="justify-content:flex-end;">
+                    <button id="grad-offset-reset" class="btn-small">Reset offset</button>
+                </div>
+                <div class="pb-row" id="grad-aspect-card" style="display:none;">
+                    <div class="pb-slider-wrap">
+                        <input type="range" id="grad-aspect" min="1" max="500" value="100" title="Ellipse stretch: 0.01–5.00">
+                        <span class="pb-label-inner">Aspect</span>
+                        <span class="pb-val" id="grad-aspect-val">1.00</span>
+                    </div>
+                </div>
+                <div class="pb-row" id="grad-stagger-card" style="display:none;">
+                    <div class="pb-slider-wrap">
+                        <input type="range" id="grad-stagger-levels" min="2" max="256" value="256" title="Number of quantization levels per channel">
+                        <span class="pb-label-inner">Bands</span>
+                        <span class="pb-val" id="grad-stagger-val">256</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Stops</div>
+                <div class="pb-row" style="flex-direction:column;align-items:stretch;">
+                    <canvas id="grad-bar" width="200" height="28" style="width:100%;height:28px;border-radius:3px;cursor:pointer;border:1px solid var(--btn-small-border);background:#fff;" title="Click to select stop, drag to move, double-click to change color"></canvas>
+                </div>
+                <div class="pb-row" style="gap:4px;">
+                    <button id="grad-stop-add" class="btn-small">＋ Add</button>
+                    <button id="grad-stop-del" class="btn-small">✕ Delete</button>
+                    <button id="grad-stop-reset" class="btn-small" title="Reset to FG/BG">Reset</button>
+                </div>
+                <div class="pb-row">
+                    <div class="pb-slider-wrap">
+                        <input type="range" id="grad-stop-alpha" min="0" max="100" value="100" title="Opacity of the selected stop">
+                        <span class="pb-label-inner">Alpha</span>
+                        <span class="pb-val" id="grad-stop-alpha-val">100%</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section" id="grad-apply-card" style="opacity:0.4;pointer-events:none;">
+                <div class="pb-label">Apply</div>
+                <div class="pb-row" style="gap:6px;">
+                    <button class="btn btn-small" id="grad-apply-btn" onclick="PaintApp.gradientApply()" title="Apply gradient to canvas (Enter)" style="flex:1;">Apply</button>
+                    <button class="btn btn-small" id="grad-discard-btn" onclick="PaintApp.gradientDiscard()" title="Discard gradient (Escape)" style="flex:1;">Discard</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<button id="gradient-reopen-btn" title="Open gradient settings"><svg viewBox="0 0 16 16" width="11" height="11"><path d="M4 2 L12 8 L4 14 Z" fill="#000000"/></svg></button>
+
+<div id="toast-container"></div>
+<div id="unified-sidebar" class="hidden">
+    <div class="sidebar-title">
+        <span class="sidebar-title-text">Tools</span>
+        <div class="sidebar-title-buttons">
+            <button class="sidebar-title-btn" id="sidebar-float-btn" title="Undock to floating window">⬈</button>
+            <button class="sidebar-title-btn" id="sidebar-close-btn" title="Close sidebar">✕</button>
+        </div>
+    </div>
+    <div class="sidebar-modes">
+        <button data-modal="depth">Color Depth</button>
+        <button data-modal="huesat">Hue/Sat</button>
+        <button data-modal="resize">Resize</button>
+    </div>
+    <div class="sidebar-content"></div>
+</div>
 
 <script defer src="tauri-shim.js"></script>
-<script defer src="app.js"></script>
 <script defer src="js/gradient-engine.js"></script>
+<script type="module">import * as __wandAlgorithms from './js/wand-algorithms.js'; window.__wandAlgorithms = __wandAlgorithms;</script>
 <script defer src="js/paint-engine.js"></script>
-<script defer src="js/brush-engine.js"></script>
 <script defer src="js/krita-brush-engine.js"></script>
 <script defer src="freehand-path-engine.js"></script>
 <script defer src="js/perfect-freehand-bundle.js"></script>
+<script>
+function showToast(message, type, duration) {
+    var container = document.getElementById('toast-container');
+    if (!container) return;
+    var el = document.createElement('div');
+    el.className = 'toast toast--' + (type || 'info');
+    el.textContent = message;
+    container.appendChild(el);
+    setTimeout(function () {
+        el.style.opacity = '0';
+        el.style.transition = 'opacity 0.3s ease';
+        setTimeout(function () { el.remove(); }, 300);
+    }, duration || 3500);
+}
+</script>
 </body>
 </html>

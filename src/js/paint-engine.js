@@ -1,3 +1,10 @@
+    // Wand mask algorithms imported from ./wand-algorithms.js (single source of truth).
+    // Loaded as an ES module via an inline bootstrap in index.html, which sets window.__wandAlgorithms.
+    const _wandMod = (typeof window !== 'undefined' && window.__wandAlgorithms) || {};
+    const buildSortedDiffIndex = _wandMod.buildSortedDiffIndex;
+    const applyToleranceIncremental = _wandMod.applyToleranceIncremental;
+    const buildPriorityFlood = _wandMod.buildPriorityFlood;
+
     // Minimal seeded LCG (linear congruential generator) used for repeatable brush jitter and noise patterns.
     // Not cryptographically secure — only used for visual randomness.
     class SeededRNG {
@@ -635,6 +642,7 @@
             if (candidates.length === 0) return null;
 
             candidates.sort((a, b) => b.score - a.score);
+
             const best = candidates[0];
 
             const isOpenStroke = best.kind === 'line' || best.kind === 'curve' || best.kind.endsWith('-segment');
@@ -855,18 +863,19 @@
         constructor() {
             // Tool manifest — every clonable item for the customizable grid
             this.toolManifest = [
-                { id:'pencil',         toolId:'pencil',     label:'Pencil',             iconSrc:'assets/toolbar-icons/pencil.png',       defaultSection:'tools', mode:{pencilMode:'standard'} },
+                { id:'pencil',         toolId:'pencil',     label:'Pencil',             iconSrc:'assets/toolbar-icons/pencil.png',       defaultSection:'tools' },
                 { id:'pencil-smart',   toolId:'pencil',     label:'Smart Pencil',       iconSrc:'assets/toolbar-icons/pencil-smart.png',  defaultSection:'tools', mode:{pencilMode:'smart'} },
                 { id:'fill',           toolId:'fill',       label:'Fill',               iconSrc:'assets/toolbar-icons/fill.png',         defaultSection:'tools' },
-                { id:'wand',           toolId:'wand',       label:'Magic Wand (Contiguous)', iconSrc:'assets/toolbar-icons/wand-contig.png',defaultSection:'tools', mode:{wandMode:'contiguous'} },
+                { id:'wand',           toolId:'wand',       label:'Magic Wand (Contiguous)', iconSrc:'assets/toolbar-icons/wand-contig.png',defaultSection:'tools' },
                 { id:'wand-global',    toolId:'wand',       label:'Magic Wand (Global)', iconSrc:'assets/toolbar-icons/wand-global.png',  defaultSection:'tools', mode:{wandMode:'global'} },
                 { id:'eraser',         toolId:'eraser',     label:'Eraser',             iconSrc:'assets/toolbar-icons/eraser.png',       defaultSection:'tools' },
                 { id:'picker',         toolId:'picker',     label:'Color Picker',       iconSrc:'assets/toolbar-icons/picker.png',       defaultSection:'tools' },
                 { id:'zoom',           toolId:'zoom',       label:'Zoom',               iconSrc:'assets/toolbar-icons/zoom.png',         defaultSection:'tools' },
                 { id:'gradient',       toolId:'gradient',   label:'Gradient',           iconSrc:'assets/Gradient.png',                   defaultSection:'tools' },
-                { id:'freehand',       toolId:'freehand',   label:'Freehand Brush',     iconSvg:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#0078d7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17 Q5 12 8 14 Q11 16 13 11 Q15 6 18 8"/><circle cx="18" cy="8" r="1.5" fill="#0078d7" stroke="none"/></svg>', defaultSection:'tools' },
-                { id:'paintbrush',     toolId:'paintbrush', label:'Paint Brush',        iconSvg:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#0078d7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16 L7 5 L16 3 L17 12 L9 14 Z" fill="rgba(0,120,215,0.15)"/><path d="M7 5 L16 3" stroke="#0078d7" stroke-width="1"/><path d="M9 14 L5 16" stroke="#0078d7" stroke-width="1"/><path d="M11 13 L12 9" stroke="#0078d7" stroke-width="1" stroke-dasharray="1 1"/></svg>', defaultSection:'tools' },
+                { id:'freehand',       toolId:'freehand',   label:'Freehand Brush',     iconSrc:'assets/Freehand.png', iconSvg:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#0078d7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17 Q5 12 8 14 Q11 16 13 11 Q15 6 18 8"/><circle cx="18" cy="8" r="1.5" fill="#0078d7" stroke="none"/></svg>', defaultSection:'tools' },
+                { id:'paintbrush',     toolId:'paintbrush', label:'Paint Brush',        iconSrc:'assets/Paintbrush.png', iconSvg:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#0078d7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16 L7 5 L16 3 L17 12 L9 14 Z" fill="rgba(0,120,215,0.15)"/><path d="M7 5 L16 3" stroke="#0078d7" stroke-width="1"/><path d="M9 14 L5 16" stroke="#0078d7" stroke-width="1"/><path d="M11 13 L12 9" stroke="#0078d7" stroke-width="1" stroke-dasharray="1 1"/></svg>', defaultSection:'tools' },
                 { id:'anchor-toggle',  label:'Anchor/Free Toggle', isToggle:true,        iconSvg:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#0078d7" stroke-width="1.5"><circle cx="10" cy="10" r="7"/><line x1="3" y1="10" x2="17" y2="10"/><line x1="10" y1="3" x2="10" y2="17"/></svg>', defaultSection:'tools' },
+                { id:'layers-toggle',  label:'Layers',           isToggle:true,        iconSrc:'assets/layers.png',                      defaultSection:'tools' },
                 { id:'select-rect',    toolId:'select',     label:'Select (Rectangle)', iconSrc:'assets/toolbar-icons/rect.png',         defaultSection:'tools', mode:{selectTool:'select'} },
                 { id:'select-lasso',   toolId:'lasso',      label:'Lasso Select',       iconSrc:'assets/toolbar-icons/poly.png',          defaultSection:'tools', mode:{selectTool:'lasso'} },
                 { id:'line',           toolId:'line',       label:'Line',               iconSrc:'assets/toolbar-icons/line.png',          defaultSection:'shapes' },
@@ -891,28 +900,32 @@
                 anchorCanvas: true,
                 wandMode: 'contiguous',
                 wandTolerance: 0,
+                debugWandPerf: false,
                 lassoSelectMode: 'free',
                 selectTool: 'select',
                 pickerHoverPreview: true,
                 pencilMode: 'standard',
                 smartPencilCurveOnly: false,
                 gradient: {
-                    type: 'linear', repeat: 'none', reverse: false, dither: true, midpoint: 0.5,
+                    type: 'linear', repeat: 'none', reverse: false, dither: true, midpoint: 0.5, offset: 0, aspectRatio: 1,
                     staggerLevels: 256,
                     active: false,        // handles have been placed (live, not yet committed)
                     isPlacing: false,     // currently dragging to place a NEW gradient
                     draggingHandle: null, // 'start' | 'end' | null — which handle is being moved
                     startX: 0, startY: 0,
-                    endX: 0,   endY: 0
+                    endX: 0,   endY: 0,
+                    stops: null
                 },
                 freehand: {
-                    size: 4, smoothing: 0.5, thinning: 0.5, streamline: 0.5,
+                    size: 4, thinning: 0,
+                    smoothing: 0.5, streamline: 0.5,
                     taperStart: 0, taperEnd: 0,
                     capStart: false, capEnd: false,
                     simulatePressure: true, easing: 'linear',
                     easingStart: 'linear', easingEnd: 'linear',
                     fillEnabled: true,
                     strokeWidth: 0,
+                    strokeEnabled: true,
                     pixelMode: true
                 }
             };
@@ -968,6 +981,7 @@
                 shapeResizeAnchor: null,
                 shapeResizeBase: null,
                 canvasOffset: { x: 0, y: 0 },
+                savedFreeOffset: null,
                 ribbonDrag: null,
                 hueSatActive: false,
                 hueSatApplied: false,
@@ -997,6 +1011,7 @@
                 paintbrushActive: false
             };
             this.resizeState = { w:0, h:0, ratio: 1 };
+            this.resizeRatioState = true;
             this.hotkeys = {};
             this.hotkeyDefaults = {};
             this.hotkeyActions = [];
@@ -1019,7 +1034,6 @@
             this._colorCountMinIntervalMs = 120;
             this._colorCountJobId = 0;
             this._colorCountWorker = null;
-            this._colorCountWorkerUrl = null;
             this._colorCountWorkerFailed = false;
             this._overlayRaf = null;
             this._smartPencilRaf = null;
@@ -1034,6 +1048,7 @@
             this._tileOverlayCacheKey = '';
             this._activeShapeBoundsCache = null;
             this._activeShapeBoundsCacheShape = null;
+            this._activeSidebarModalId = null;
             this._antsOverlayCache = {
                 selection: null,
                 path: '',
@@ -1064,6 +1079,12 @@
             this._wandPreviewBuffer = null;
             this._wandPreviewImageData = null;
             this._wandStack = null;
+            this._wandSelectRaf = null;
+            this._wandPerfLog = null;
+            this._wandSortedIdx = null;
+            this._wandSelectedCutoff = -1;
+            this._wandMaskBuf = null;
+            this._wandEntered = null;
             this.saveReminderMinutes = 60;
             this.saveReminderEnabled = true;
             this.saveReminderTimer = null;
@@ -1205,16 +1226,14 @@
                 // Tiled history breaks the canvas into independently-compressed tiles.
                 // Threshold set low enough that typical working sizes (> 512×512) benefit;
                 // anything smaller than a small sprite is stored as a flat snapshot instead.
-                thresholdPixels: 512 * 512,
-                anchorInterval: 10,        // store full anchor every N steps
-                maxDeltaWalk: 30           // force anchor if delta chain exceeds this
+                thresholdPixels: 200 * 200,
+                anchorInterval: 10,        // store full anchor every N steps (dead config)
+                maxDeltaWalk: 30           // force anchor if delta chain exceeds this (dead config)
             };
-            this._prevTileMap = null;          // Map<"x,y", {rle|solid}> for delta diffing
-            this._lastAnchorStep = -1;         // step index of last full anchor
-            this._canvasResizedSinceLastSave = false;
-            this._dirtyBounds = null;          // tracked dirty region for partial tile readback
             this.historyLimitEnabled = true;
             this.historyLimit = 50;
+            this._historyAdaptive = false;
+            this._tileCopyBuf = null;
             this.bounds = { left: 0, top: 0 };
             this.zoomLevels = [6.25, 12.5, 25, 50];
             for(let i=100; i<=1000; i+=100) this.zoomLevels.push(i);
@@ -1226,6 +1245,20 @@
             this._fhPreviewing = false;
             this._loadFreehandConfig();
             this.init();
+        }
+
+        // --- perf instrumentation (debug-only, near-zero cost when disabled) ---
+        _wandPerfMark(label) {
+            if (!this.config.debugWandPerf) return;
+            (this._wandPerfLog ||= []).push({ label, t: performance.now() });
+        }
+        _wandPerfFlush(tag) {
+            if (!this.config.debugWandPerf || !this._wandPerfLog?.length) return;
+            const log = this._wandPerfLog;
+            const total = log[log.length - 1].t - log[0].t;
+            console.debug(`[wand-perf:${tag}] total=${total.toFixed(2)}ms`,
+                log.map((e, i) => i === 0 ? e.label : `${e.label}=+${(e.t - log[i - 1].t).toFixed(2)}ms`));
+            this._wandPerfLog = [];
         }
 
         get2dContext(canvas) {
@@ -1317,43 +1350,58 @@
             });
         }
 
-        async decodeImageVariants(blob) {
-            const variants = [];
-            const addVariant = (source, label) => {
-                if (!source || !source.width || !source.height) return;
-                const c = document.createElement('canvas');
-                c.width = source.width;
-                c.height = source.height;
-                const ctx = this.get2dContext(c);
-                this.disableSmoothing(ctx);
-                ctx.drawImage(source, 0, 0);
-                variants.push({ canvas: c, label });
+        async evaluateDecodedImageVariants(blob, evaluate) {
+            let reusableCanvas = null;
+            let reusableCtx = null;
+
+            const evaluateSource = async (source, label) => {
+                if (!source || !source.width || !source.height) return false;
+                if (!reusableCanvas) {
+                    reusableCanvas = document.createElement('canvas');
+                }
+                if (reusableCanvas.width !== source.width) reusableCanvas.width = source.width;
+                if (reusableCanvas.height !== source.height) reusableCanvas.height = source.height;
+                reusableCtx = this.get2dContext(reusableCanvas);
+                this.disableSmoothing(reusableCtx);
+                reusableCtx.clearRect(0, 0, reusableCanvas.width, reusableCanvas.height);
+                reusableCtx.drawImage(source, 0, 0);
+                await evaluate(reusableCanvas, reusableCtx, label);
+                return true;
             };
+
             if (window.createImageBitmap) {
                 try {
                     const bmp = await createImageBitmap(blob);
-                    addVariant(bmp, 'bitmap-default');
-                    if (bmp.close) bmp.close();
+                    try { await evaluateSource(bmp, 'bitmap-default'); }
+                    finally { if (bmp.close) bmp.close(); }
                 } catch (e) {}
+
                 try {
                     const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none' });
-                    addVariant(bmp, 'bitmap-no-color-conv');
-                    if (bmp.close) bmp.close();
+                    try { await evaluateSource(bmp, 'bitmap-no-color-conv'); }
+                    finally { if (bmp.close) bmp.close(); }
                 } catch (e) {}
+
                 try {
                     const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none' });
-                    addVariant(bmp, 'bitmap-unpremul');
-                    if (bmp.close) bmp.close();
+                    try { await evaluateSource(bmp, 'bitmap-unpremul'); }
+                    finally { if (bmp.close) bmp.close(); }
                 } catch (e) {}
+
                 try {
                     const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
-                    addVariant(bmp, 'bitmap-no-color-conv-unpremul');
-                    if (bmp.close) bmp.close();
+                    try { await evaluateSource(bmp, 'bitmap-no-color-conv-unpremul'); }
+                    finally { if (bmp.close) bmp.close(); }
                 } catch (e) {}
             }
-            try { addVariant(await this.loadImageFromBlob(blob), 'img-object-url'); } catch (e) {}
-            try { addVariant(await this.loadImageFromDataUrl(blob), 'img-data-url'); } catch (e) {}
-            return variants;
+
+            try {
+                await evaluateSource(await this.loadImageFromBlob(blob), 'img-object-url');
+            } catch (e) {}
+
+            try {
+                await evaluateSource(await this.loadImageFromDataUrl(blob), 'img-data-url');
+            } catch (e) {}
         }
 
         disableSmoothing(ctx) {
@@ -1387,6 +1435,14 @@
                 const pending = this._pendingOverlayOverride;
                 this._pendingOverlayOverride = null;
                 this.updateGlobalOverlays(pending);
+            });
+        }
+
+        requestBoundsUpdate() {
+            if (this._boundsRaf) return;
+            this._boundsRaf = requestAnimationFrame(() => {
+                this._boundsRaf = null;
+                this.updateBounds();
             });
         }
 
@@ -1445,7 +1501,13 @@
                 const blob = new Blob([code], { type: 'application/javascript' });
                 const url = URL.createObjectURL(blob);
                 const worker = new Worker(url);
-                URL.revokeObjectURL(url);
+                const revokeUrl = () => {
+                    URL.revokeObjectURL(url);
+                    worker.removeEventListener('message', revokeUrl);
+                    worker.removeEventListener('error', revokeUrl);
+                };
+                worker.addEventListener('error', revokeUrl);
+                worker.addEventListener('message', revokeUrl);
                 worker.onmessage = (event) => {
                     const payload = event && event.data ? event.data : null;
                     if (!payload) return;
@@ -1456,18 +1518,283 @@
                     this._colorCountWorkerFailed = true;
                     try { worker.terminate(); } catch (e) {}
                     this._colorCountWorker = null;
-                    if (this._colorCountWorkerUrl) {
-                        URL.revokeObjectURL(this._colorCountWorkerUrl);
-                        this._colorCountWorkerUrl = null;
-                    }
                 };
                 this._colorCountWorker = worker;
-                this._colorCountWorkerUrl = url;
                 return worker;
             } catch (e) {
                 this._colorCountWorkerFailed = true;
                 return null;
             }
+        }
+
+        /**
+         * Blob-URL worker that computes the magic-wand threshold-drag preview
+         * (mask + SVG boundary path) off the main thread, following the same
+         * pattern as ensureColorCountWorker — no build changes, no separate
+         * file, no SharedArrayBuffer/cross-origin-isolation requirement.
+         *
+         * The per-drag diff buffer (immutable for the life of the drag) is sent
+         * once via _initWandPreviewWorker(); every subsequent frame only sends
+         * a tiny {tolerance} message, so the main thread never blocks on mask
+         * compute or boundary tracing — it only receives a finished path string
+         * and writes it to the DOM, exactly as it did synchronously before.
+         * Output is byte-for-byte identical to the synchronous fallback, so the
+         * committed/marching-ants visuals are unaffected.
+         */
+        ensureWandPreviewWorker() {
+            if (this._wandPreviewWorkerFailed) return null;
+            if (this._wandPreviewWorker) return this._wandPreviewWorker;
+            if (typeof Worker === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined' || !URL.createObjectURL) {
+                this._wandPreviewWorkerFailed = true;
+                return null;
+            }
+            const code = `
+                ${applyToleranceIncremental.toString()}
+                let gKeyArr = null, gSortedIdx = null, gW = 0, gH = 0, gMaskBuf = null, gPrevCutoff = 0;
+                const gBufs = {};
+
+                function growI32(bufs, key, minLen) {
+                    let buf = bufs[key];
+                    if (!buf || buf.length < minLen) {
+                        let newLen = buf ? buf.length * 2 : 1024;
+                        while (newLen < minLen) newLen *= 2;
+                        buf = new Int32Array(newLen);
+                        bufs[key] = buf;
+                    }
+                    return buf;
+                }
+
+                function ensureTraceBuffers(bufs, w, h) {
+                    const stride = w + 1;
+                    const vertexCount = stride * (h + 1);
+                    if (!bufs.head || bufs.head.length < vertexCount) {
+                        bufs.head = new Int32Array(vertexCount).fill(-1);
+                        bufs.touchedCount = 0;
+                    } else if (bufs.touchedCount) {
+                        const head = bufs.head, touched = bufs.touched;
+                        for (let i = 0; i < bufs.touchedCount; i++) head[touched[i]] = -1;
+                        bufs.touchedCount = 0;
+                    }
+                    return stride;
+                }
+
+                function maskToSvgPath(mask, w, h, bufs) {
+                    const edges = [];
+                    for (let y = 0; y < h; y++) {
+                        const row = y * w, rowP = (y - 1) * w, rowN = (y + 1) * w;
+                        for (let x = 0; x < w; x++) {
+                            if (!mask[row + x]) continue;
+                            const x1 = x + 1, y1 = y + 1;
+                            if (y === 0 || !mask[rowP + x]) { edges.push(x, y, x1, y); }
+                            if (x === w - 1 || !mask[row + x + 1]) { edges.push(x1, y, x1, y1); }
+                            if (y === h - 1 || !mask[rowN + x]) { edges.push(x1, y1, x, y1); }
+                            if (x === 0 || !mask[row + x - 1]) { edges.push(x, y1, x, y); }
+                        }
+                    }
+                    const nEdges = edges.length >> 2;
+                    if (!nEdges) return '';
+                    const stride = ensureTraceBuffers(bufs, w, h);
+                    const vertexCount = stride * (h + 1);
+                    const head = bufs.head;
+                    const entryCap = nEdges * 2;
+                    const entryNext = growI32(bufs, 'entryNext', entryCap);
+                    const entryEdge = growI32(bufs, 'entryEdge', entryCap);
+                    const entryTail = growI32(bufs, 'entryTail', vertexCount);
+                    const touched = growI32(bufs, 'touched', entryCap);
+                    let touchedCount = 0, entryCount = 0;
+                    for (let i = 0; i < nEdges; i++) {
+                        const b = i * 4;
+                        const ka = edges[b + 1] * stride + edges[b];
+                        const kb = edges[b + 3] * stride + edges[b + 2];
+                        entryEdge[entryCount] = i; entryNext[entryCount] = -1;
+                        if (head[ka] === -1) head[ka] = entryCount; else entryNext[entryTail[ka]] = entryCount;
+                        entryTail[ka] = entryCount;
+                        touched[touchedCount++] = ka; entryCount++;
+                        entryEdge[entryCount] = i; entryNext[entryCount] = -1;
+                        if (head[kb] === -1) head[kb] = entryCount; else entryNext[entryTail[kb]] = entryCount;
+                        entryTail[kb] = entryCount;
+                        touched[touchedCount++] = kb; entryCount++;
+                    }
+                    bufs.touchedCount = touchedCount;
+                    const used = growI32(bufs, 'used', nEdges);
+                    used.fill(0, 0, nEdges);
+                    const parts = [];
+                    for (let si = 0; si < nEdges; si++) {
+                        if (used[si]) continue;
+                        used[si] = 1;
+                        const b0 = si * 4;
+                        const sx = edges[b0], sy = edges[b0 + 1];
+                        const startKey = sy * stride + sx;
+                        let prevKey = startKey;
+                        let cx = edges[b0 + 2], cy = edges[b0 + 3];
+                        let currKey = cy * stride + cx;
+                        const ptx = [sx, cx], pty = [sy, cy];
+                        while (currKey !== startKey) {
+                            let entry = head[currKey];
+                            if (entry === -1) break;
+                            let nextIdx = -1, nxtX = 0, nxtY = 0;
+                            let fbIdx = -1, fbX = 0, fbY = 0;
+                            while (entry !== -1) {
+                                const ei = entryEdge[entry];
+                                entry = entryNext[entry];
+                                if (used[ei]) continue;
+                                const nb = ei * 4;
+                                const naKey = edges[nb + 1] * stride + edges[nb];
+                                const isA = (naKey === currKey);
+                                const ox = isA ? edges[nb + 2] : edges[nb];
+                                const oy = isA ? edges[nb + 3] : edges[nb + 1];
+                                const ok = oy * stride + ox;
+                                if (ok !== prevKey) { nextIdx = ei; nxtX = ox; nxtY = oy; break; }
+                                if (fbIdx === -1) { fbIdx = ei; fbX = ox; fbY = oy; }
+                            }
+                            if (nextIdx === -1) {
+                                if (fbIdx === -1) break;
+                                nextIdx = fbIdx; nxtX = fbX; nxtY = fbY;
+                            }
+                            used[nextIdx] = 1;
+                            prevKey = currKey;
+                            cx = nxtX; cy = nxtY;
+                            currKey = cy * stride + cx;
+                            ptx.push(cx); pty.push(cy);
+                        }
+                        let n = ptx.length;
+                        if (n < 2) continue;
+                        const isClosed = n > 2 && currKey === startKey;
+                        if (isClosed) {
+                            // BUGFIX: drop duplicate closing point (== start point)
+                            // before the cyclic collinearity check below.
+                            ptx.pop();
+                            pty.pop();
+                            n = ptx.length;
+                            if (n < 3) continue;
+                        }
+                        const keep = new Uint8Array(n);
+                        if (!isClosed) {
+                            keep[0] = 1; keep[n - 1] = 1;
+                            for (let i = 1; i < n - 1; i++) {
+                                const px = ptx[i - 1], py = pty[i - 1];
+                                const qx = ptx[i], qy = pty[i];
+                                const rx = ptx[i + 1], ry = pty[i + 1];
+                                if (!((px === qx && qx === rx) || (py === qy && qy === ry))) keep[i] = 1;
+                            }
+                        } else {
+                            for (let i = 0; i < n; i++) {
+                                const pi = (i - 1 + n) % n, ni = (i + 1) % n;
+                                const px = ptx[pi], py = pty[pi];
+                                const qx = ptx[i], qy = pty[i];
+                                const rx = ptx[ni], ry = pty[ni];
+                                if (!((px === qx && qx === rx) || (py === qy && qy === ry))) keep[i] = 1;
+                            }
+                        }
+                        let first = true;
+                        for (let i = 0; i < n; i++) {
+                            if (!keep[i]) continue;
+                            parts.push(first ? ('M' + ptx[i] + ' ' + pty[i]) : ('L' + ptx[i] + ' ' + pty[i]));
+                            first = false;
+                        }
+                        if (isClosed && !first) parts.push('Z');
+                    }
+                    return parts.join('');
+                }
+
+                self.onmessage = function (e) {
+                    const msg = e.data || {};
+                    if (msg.type === 'init') {
+                        gKeyArr = new Uint8Array(msg.keyArr);
+                        gSortedIdx = new Uint32Array(msg.sortedIdx);
+                        gW = msg.w; gH = msg.h;
+                        gMaskBuf = new Uint8Array(gW * gH);
+                        gPrevCutoff = 0;
+                        return;
+                    }
+                    if (msg.type === 'update') {
+                        if (!gKeyArr) return;
+                        const mask = gMaskBuf;
+                        const result = applyToleranceIncremental(gKeyArr, gSortedIdx, gPrevCutoff, msg.tolerance, mask, gW);
+                        gPrevCutoff = result.cutoff;
+                        const pathStr = maskToSvgPath(mask, gW, gH, gBufs);
+                        self.postMessage({ jobId: msg.jobId, pathStr: pathStr });
+                    }
+                };
+            `;
+            try {
+                const blob = new Blob([code], { type: 'application/javascript' });
+                const url = URL.createObjectURL(blob);
+                const worker = new Worker(url);
+                const revokeUrl = () => {
+                    URL.revokeObjectURL(url);
+                    worker.removeEventListener('message', revokeUrl);
+                    worker.removeEventListener('error', revokeUrl);
+                };
+                worker.addEventListener('error', revokeUrl);
+                worker.addEventListener('message', revokeUrl);
+                worker.onmessage = (event) => {
+                    const payload = event && event.data ? event.data : null;
+                    if (!payload) return;
+                    // Stale job (superseded by a newer tolerance/drag) — drop it.
+                    if (this.state.wandJobId !== payload.jobId) return;
+                    if (!this.state.wandActive) return;
+                    const w = this.config.width, h = this.config.height;
+                    this.ctxTemp.clearRect(0, 0, w, h);
+                    this._applyWandSvgPreview(payload.pathStr);
+                };
+                worker.onerror = () => {
+                    this._wandPreviewWorkerFailed = true;
+                    this._wandWorkerReady = false;
+                    try { worker.terminate(); } catch (e) {}
+                    this._wandPreviewWorker = null;
+                };
+                this._wandPreviewWorker = worker;
+                return worker;
+            } catch (e) {
+                this._wandPreviewWorkerFailed = true;
+                return null;
+            }
+        }
+
+        /**
+         * Send the (immutable-for-the-drag) diff buffer to the wand preview
+         * worker once, at the start of a wand drag/threshold session. Only a
+         * cloned copy's buffer is transferred (zero-copy) — the original
+         * this.state.wandDiff is left untouched for the main-thread fallback
+         * path and for the exact commit-time computation on pointer-up.
+         */
+        _initWandPreviewWorker(diff, keyArr, sortedIdx, w, h) {
+            this._wandWorkerReady = false;
+            const worker = this.ensureWandPreviewWorker();
+            if (!worker || !diff) return;
+            try {
+                const diffCopy = new Uint8Array(diff);
+                const keyCopy = new Uint8Array(keyArr);
+                const idxCopy = new Uint32Array(sortedIdx);
+                worker.postMessage({
+                    type: 'init',
+                    mode: this.config.wandMode === 'global' ? 'global' : 'contig',
+                    diff: diffCopy.buffer,
+                    keyArr: keyCopy.buffer,
+                    sortedIdx: idxCopy.buffer,
+                    w, h
+                }, [diffCopy.buffer, keyCopy.buffer, idxCopy.buffer]);
+                this._wandWorkerReady = true;
+            } catch (e) {
+                // Leave _wandWorkerReady false — _processWandDrag will use the
+                // synchronous main-thread fallback for this drag session.
+            }
+        }
+
+        /**
+         * Ask the wand preview worker to recompute the mask + boundary path for
+         * the given tolerance. Returns true if the request was dispatched (the
+         * result will arrive asynchronously via the worker's onmessage above),
+         * or false if the worker isn't available/ready — in which case the
+         * caller should fall back to the synchronous _lightweightWandUpdate.
+         */
+        _postWandWorkerUpdate(tolerance, jobId) {
+            if (!this._wandWorkerReady) return false;
+            const worker = this._wandPreviewWorker;
+            if (!worker) return false;
+            worker.postMessage({ type: 'update', jobId, tolerance });
+            return true;
         }
 
         shouldUseCanvasMaskAnts() {
@@ -1605,7 +1932,7 @@
                 }
                 // When gradient tool is active, forward left-click to onMouseDown
                 // so handles outside the canvas bounds remain clickable.
-                if (e.button === 0 && this.config.tool === 'gradient') {
+                if (this.config.tool === 'gradient' && (e.button === 0 || e.button === 2)) {
                     this.onMouseDown(e);
                 }
             });
@@ -1712,6 +2039,7 @@
                 this.changeSize(dir);
             }, { passive: false });
             this.syncLineWidthMenu();
+            // initDock removed — using single-slot exclusive sidebars
 
             // Apply initial tool UI state (panel visibility, active button, etc.)
             this.setTool(this.config.tool);
@@ -1765,6 +2093,7 @@
             if (storedPickerPreview !== null) {
                 this.config.pickerHoverPreview = storedPickerPreview === 'true';
             }
+            this.lsRemove('paint.smoothZoom');
             this.syncPickerMenu();
             const pickerBtn = document.getElementById('picker-tool-btn');
             if (pickerBtn) {
@@ -1774,6 +2103,398 @@
                 });
             }
             this.initGapStitcherUI();
+            // Gradient presets
+            const _presetSelect = document.getElementById('grad-presets');
+            const _presetSave   = document.getElementById('grad-preset-save');
+            const _builtinPresets = [
+                { name: 'FG→BG Linear', config: { type: 'linear', repeat: 'none', reverse: false, dither: true, midpoint: 0.5, offset: 0, staggerLevels: 256 } },
+                { name: 'FG→BG Radial', config: { type: 'radial', repeat: 'none', reverse: false, dither: true, midpoint: 0.5, offset: 0, staggerLevels: 256 } },
+                { name: 'FG→BG Conic', config: { type: 'conic', repeat: 'none', reverse: false, dither: true, midpoint: 0.5, offset: 0, staggerLevels: 256 } },
+                { name: 'Black→White Linear', config: { type: 'linear', repeat: 'none', reverse: false, dither: true, midpoint: 0.5, offset: 0, staggerLevels: 256 } },
+                { name: 'Reverse FG→BG', config: { type: 'linear', repeat: 'none', reverse: true, dither: true, midpoint: 0.5, offset: 0, staggerLevels: 256 } },
+            ];
+            const _loadUserPresets = () => {
+                try { return JSON.parse(localStorage.getItem('cdpaint.gradPresets')) || []; }
+                catch { return []; }
+            };
+            const _saveUserPresets = (presets) => {
+                try { localStorage.setItem('cdpaint.gradPresets', JSON.stringify(presets)); } catch (e) {}
+            };
+            const _populatePresets = () => {
+                if (!_presetSelect) return;
+                _presetSelect.innerHTML = '';
+                for (const p of _builtinPresets) {
+                    const opt = document.createElement('option');
+                    opt.value = 'builtin:' + _builtinPresets.indexOf(p);
+                    opt.textContent = p.name;
+                    _presetSelect.appendChild(opt);
+                }
+                const userPresets = _loadUserPresets();
+                if (userPresets.length) {
+                    const sep = document.createElement('option');
+                    sep.disabled = true; sep.textContent = 'ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ'; sep.style.fontSize = '9px';
+                    _presetSelect.appendChild(sep);
+                }
+                for (const p of userPresets) {
+                    const opt = document.createElement('option');
+                    opt.value = 'user:' + userPresets.indexOf(p);
+                    opt.textContent = p.name;
+                    _presetSelect.appendChild(opt);
+                }
+            };
+            const _applyPreset = (config) => {
+                const _g = this.config.gradient;
+                for (const k of Object.keys(config)) {
+                    if (k in _g) _g[k] = config[k];
+                }
+                _g.stops = null;
+                const typeEl = document.getElementById('grad-type');
+                if (typeEl && typeEl.value !== config.type) { typeEl.value = config.type;
+                    const isStaggered = config.type === 'staggered';
+                    const isRadial    = config.type === 'radial';
+                    const _staggerCard = document.getElementById('grad-stagger-card');
+                    const _aspectCard  = document.getElementById('grad-aspect-card');
+                    const _ditherEl = document.getElementById('grad-dither');
+                    const _ditherLabel = document.getElementById('grad-dither-label');
+                    if (_staggerCard) _staggerCard.style.display = isStaggered ? 'flex' : 'none';
+                    if (_aspectCard) _aspectCard.style.display = isRadial ? 'flex' : 'none';
+                    if (_ditherEl) {
+                        if (isStaggered) { _ditherEl.checked = false; _ditherEl.disabled = true; _g.dither = false; }
+                        else { _ditherEl.disabled = false; }
+                    }
+                }
+                const repeatEl = document.getElementById('grad-repeat');
+                if (repeatEl) repeatEl.value = config.repeat || 'none';
+                const ditherEl = document.getElementById('grad-dither');
+                if (ditherEl && config.type !== 'staggered') ditherEl.checked = config.dither;
+                const revEl = document.getElementById('grad-reverse');
+                if (revEl) revEl.checked = config.reverse;
+                const midEl = document.getElementById('grad-midpoint');
+                if (midEl) midEl.value = Math.round((config.midpoint ?? 0.5) * 100);
+                const midValEl = document.getElementById('grad-midpoint-val');
+                if (midValEl) midValEl.textContent = Math.round((config.midpoint ?? 0.5) * 100) + '%';
+                if (midEl) {
+                    const pct = Math.round((midEl.value-1)/98*100) + '%';
+                    midEl.style.setProperty('--pct', pct);
+                    const wrap = midEl.parentElement;
+                    if (wrap && wrap.classList.contains('pb-slider-wrap')) wrap.style.setProperty('--pct', pct);
+                }
+                const offEl = document.getElementById('grad-offset');
+                if (offEl) offEl.value = Math.round((config.offset ?? 0) * 100);
+                const offValEl = document.getElementById('grad-offset-val');
+                if (offValEl) offValEl.textContent = (config.offset ?? 0) === 0 ? '0%' : (((config.offset ?? 0) * 100) > 0 ? '+' : '') + Math.round((config.offset ?? 0) * 100) + '%';
+                if (offEl) {
+                    const v = parseInt(offEl.value, 10);
+                    const pct = Math.round((v+99)/198*100) + '%';
+                    offEl.style.setProperty('--pct', pct);
+                    const wrap = offEl.parentElement;
+                    if (wrap && wrap.classList.contains('pb-slider-wrap')) wrap.style.setProperty('--pct', pct);
+                }
+                const aspectEl = document.getElementById('grad-aspect');
+                const aspectValEl = document.getElementById('grad-aspect-val');
+                if (aspectEl) aspectEl.value = Math.round((config.aspectRatio ?? 1) * 100);
+                if (aspectValEl) aspectValEl.textContent = (config.aspectRatio ?? 1).toFixed(2);
+                if (aspectEl) {
+                    const v = parseInt(aspectEl.value, 10);
+                    const pct = Math.round((v-1)/499*100) + '%';
+                    aspectEl.style.setProperty('--pct', pct);
+                    const wrap = aspectEl.parentElement;
+                    if (wrap && wrap.classList.contains('pb-slider-wrap')) wrap.style.setProperty('--pct', pct);
+                }
+                const stagEl = document.getElementById('grad-stagger-levels');
+                if (stagEl) stagEl.value = config.staggerLevels ?? 256;
+                const stagValEl = document.getElementById('grad-stagger-val');
+                if (stagValEl) stagValEl.textContent = config.staggerLevels ?? 256;
+                if (stagEl) {
+                    const v = parseInt(stagEl.value, 10);
+                    const pct = Math.round((v-2)/254*100) + '%';
+                    stagEl.style.setProperty('--pct', pct);
+                    const wrap = stagEl.parentElement;
+                    if (wrap && wrap.classList.contains('pb-slider-wrap')) wrap.style.setProperty('--pct', pct);
+                }
+                _gradRefresh();
+            };
+            _populatePresets();
+            if (_presetSelect) {
+                _presetSelect.addEventListener('change', () => {
+                    const val = _presetSelect.value;
+                    if (!val) return;
+                    const [source, idxStr] = val.split(':');
+                    const idx = parseInt(idxStr, 10);
+                    let presets;
+                    if (source === 'builtin') {
+                        presets = _builtinPresets;
+                    } else {
+                        presets = _loadUserPresets();
+                    }
+                    if (idx >= 0 && idx < presets.length) {
+                        _applyPreset(presets[idx].config);
+                    }
+                });
+            }
+            if (_presetSave) {
+                _presetSave.addEventListener('click', () => {
+                    this._promptName('Preset name:', (name) => {
+                        if (!name) return;
+                        const config = { ...this.config.gradient };
+                    // Only save render-relevant keys, not state
+                    const keys = ['type','repeat','reverse','dither','midpoint','offset','staggerLevels','aspectRatio'];
+                    const entry = { name: name.trim(), config: {} };
+                    for (const k of keys) entry.config[k] = config[k];
+                    const userPresets = _loadUserPresets();
+                    userPresets.push(entry);
+                    _saveUserPresets(userPresets);
+                    _populatePresets();
+                    if (_presetSelect) _presetSelect.value = 'user:' + (userPresets.length - 1);
+                    });
+                });
+            }
+            // ÔöÇÔöÇ Gradient color bar (multi-stop editor) ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+            const _gradBar = document.getElementById('grad-bar');
+            const _gradStopAdd  = document.getElementById('grad-stop-add');
+            const _gradStopDel  = document.getElementById('grad-stop-del');
+            const _gradStopReset = document.getElementById('grad-stop-reset');
+            const _gradStopColor = document.createElement('input');
+            _gradStopColor.type = 'color';
+            _gradStopColor.style.display = 'none';
+            document.body.appendChild(_gradStopColor);
+            let _gradStopSel = 0;
+            let _dragStopIdx = -1;
+
+            const _ensureGradStops = () => {
+                const _g = this.config.gradient;
+                if (!_g.stops || _g.stops.length < 2) {
+                    _g.stops = [
+                        { offset: 0, color: this.config.c1, alpha: 1 },
+                        { offset: 1, color: this.config.c2, alpha: 1 }
+                    ];
+                }
+                if (_gradStopSel >= _g.stops.length) _gradStopSel = _g.stops.length - 1;
+            };
+
+            const _hexToRgbaStr = (hex, alpha) => {
+                let h = hex.replace('#','');
+                if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+                const r = parseInt(h.slice(0,2),16);
+                const g = parseInt(h.slice(2,4),16);
+                const b = parseInt(h.slice(4,6),16);
+                return `rgba(${r},${g},${b},${alpha})`;
+            };
+
+            const _renderGradBar = () => {
+                if (!_gradBar) return;
+                const _g = this.config.gradient;
+                _ensureGradStops();
+                const stops = _g.stops;
+
+                const w = Math.max(1, _gradBar.offsetWidth || 200);
+                const h = 28;
+                if (_gradBar.width !== w) _gradBar.width = w;
+                if (_gradBar.height !== h) _gradBar.height = h;
+
+                const ctx = _gradBar.getContext('2d', { willReadFrequently: true });
+                ctx.fillStyle = '#f0f0f0';
+                ctx.fillRect(0, 0, w, h);
+
+                const grad = ctx.createLinearGradient(0, 0, w, 0);
+                for (const s of stops) {
+                    grad.addColorStop(s.offset, _hexToRgbaStr(s.color, s.alpha ?? 1));
+                }
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, w, h);
+
+                for (let i = 0; i < stops.length; i++) {
+                    const x = stops[i].offset * w;
+                    ctx.beginPath();
+                    ctx.moveTo(x - 5, h);
+                    ctx.lineTo(x, h - 7);
+                    ctx.lineTo(x + 5, h);
+                    ctx.closePath();
+                    ctx.fillStyle = i === _gradStopSel ? '#fff' : '#000';
+                    ctx.fill();
+                    ctx.strokeStyle = i === _gradStopSel ? '#000' : '#fff';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
+
+                // Sync alpha slider to selected stop
+                if (_gradStopAlpha) {
+                    const a = Math.round((stops[_gradStopSel].alpha ?? 1) * 100);
+                    _gradStopAlpha.value = a;
+                    if (_gradStopAlphaVal) _gradStopAlphaVal.textContent = a + '%';
+                    const pct = a + '%';
+                    _gradStopAlpha.style.setProperty('--pct', pct);
+                    const wrap = _gradStopAlpha.parentElement;
+                    if (wrap && wrap.classList.contains('pb-slider-wrap')) wrap.style.setProperty('--pct', pct);
+                }
+            };
+            this._renderGradBar = _renderGradBar;
+            this._gradStopEditTarget = null;
+            this._gradStopEditBackup = null;
+
+            const _getStopAtX = (clientX) => {
+                const rect = _gradBar.getBoundingClientRect();
+                const x = (clientX - rect.left) / rect.width;
+                const stops = this.config.gradient.stops;
+                let closest = 0;
+                let minDist = Infinity;
+                for (let i = 0; i < stops.length; i++) {
+                    const d = Math.abs(stops[i].offset - x);
+                    if (d < minDist) { minDist = d; closest = i; }
+                }
+                return { index: closest, offset: x, distance: minDist };
+            };
+
+            if (_gradBar) {
+                _gradBar.addEventListener('mousedown', (e) => {
+                    _ensureGradStops();
+                    const hit = _getStopAtX(e.clientX);
+                    const stops = this.config.gradient.stops;
+                    if (hit.distance < 0.04) {
+                        _gradStopSel = hit.index;
+                        _dragStopIdx = hit.index;
+                        _renderGradBar();
+                        return;
+                    }
+                    if (hit.distance < 0.08) {
+                        _gradStopSel = hit.index;
+                        _renderGradBar();
+                        return;
+                    }
+                    // Click on blank area → insert a stop at this position
+                    const clamped = Math.max(0, Math.min(1, hit.offset));
+                    const px = Math.round(clamped * _gradBar.width);
+                    const imgData = _gradBar.getContext('2d').getImageData(Math.max(0, Math.min(px, _gradBar.width - 1)), 14, 1, 1).data;
+                    const hex = '#' + [imgData[0],imgData[1],imgData[2]].map(v => v.toString(16).padStart(2,'0')).join('');
+                    stops.push({ offset: clamped, color: hex, alpha: 1 });
+                    stops.sort((a, b) => a.offset - b.offset);
+                    _gradStopSel = stops.findIndex(s => s.offset >= clamped);
+                    _renderGradBar();
+                    _gradRefresh();
+                });
+
+                document.addEventListener('mousemove', (e) => {
+                    if (_dragStopIdx < 0) return;
+                    const hit = _getStopAtX(e.clientX);
+                    const stops = this.config.gradient.stops;
+                    let o = Math.max(0, Math.min(1, hit.offset));
+                    if (_dragStopIdx === 0) o = 0;
+                    if (_dragStopIdx === stops.length - 1) o = 1;
+                    if (_dragStopIdx > 0) o = Math.max(o, stops[_dragStopIdx - 1].offset + 0.001);
+                    if (_dragStopIdx < stops.length - 1) o = Math.min(o, stops[_dragStopIdx + 1].offset - 0.001);
+                    stops[_dragStopIdx].offset = o;
+                    _renderGradBar();
+                    _gradRefresh();
+                });
+
+                document.addEventListener('mouseup', () => {
+                    if (_dragStopIdx >= 0) {
+                        _dragStopIdx = -1;
+                        _gradRefresh();
+                    }
+                });
+
+                _gradBar.addEventListener('dblclick', (e) => {
+                    const hit = _getStopAtX(e.clientX);
+                    if (hit.distance < 0.08) {
+                        _gradStopSel = hit.index;
+                        const stop = this.config.gradient.stops[hit.index];
+                        this._gradStopEditTarget = hit.index;
+                        this._gradStopEditBackup = stop.color;
+                        this.updateWinFromHex(stop.color);
+                        this.openWinColor();
+                    }
+                });
+            }
+
+            if (_gradStopAdd) {
+                _gradStopAdd.addEventListener('click', () => {
+                    _ensureGradStops();
+                    const stops = this.config.gradient.stops;
+                    const sel = stops[_gradStopSel];
+                    const nxt = stops[Math.min(_gradStopSel + 1, stops.length - 1)];
+                    const off = sel.offset + (nxt.offset - sel.offset) * 0.5;
+                    stops.push({ offset: off, color: '#808080', alpha: 1 });
+                    stops.sort((a, b) => a.offset - b.offset);
+                    _gradStopSel = stops.findIndex(s => s.offset >= off);
+                    _renderGradBar();
+                    _gradRefresh();
+                });
+            }
+
+            if (_gradStopDel) {
+                _gradStopDel.addEventListener('click', () => {
+                    _ensureGradStops();
+                    const stops = this.config.gradient.stops;
+                    if (stops.length <= 2) return;
+                    stops.splice(_gradStopSel, 1);
+                    if (_gradStopSel >= stops.length) _gradStopSel = stops.length - 1;
+                    _renderGradBar();
+                    _gradRefresh();
+                });
+            }
+
+            if (_gradStopReset) {
+                _gradStopReset.addEventListener('click', () => {
+                    this.config.gradient.stops = null;
+                    _ensureGradStops();
+                    _renderGradBar();
+                    _gradRefresh();
+                });
+            }
+
+            // ÔöÇÔöÇ Alpha slider ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+            const _gradStopAlpha    = document.getElementById('grad-stop-alpha');
+            const _gradStopAlphaVal = document.getElementById('grad-stop-alpha-val');
+            if (_gradStopAlpha) {
+                _gradStopAlpha.addEventListener('input', () => {
+                    _ensureGradStops();
+                    const v = parseInt(_gradStopAlpha.value, 10);
+                    if (_gradStopAlphaVal) _gradStopAlphaVal.textContent = v + '%';
+                    this.config.gradient.stops[_gradStopSel].alpha = v / 100;
+                    _renderGradBar();
+                    _gradRefresh();
+                    const pct = v + '%';
+                    _gradStopAlpha.style.setProperty('--pct', pct);
+                    const wrap = _gradStopAlpha.parentElement;
+                    if (wrap && wrap.classList.contains('pb-slider-wrap')) wrap.style.setProperty('--pct', pct);
+                });
+            }
+
+            // ÔöÇÔöÇ Keyboard shortcuts for stop editor ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+            window.addEventListener('keydown', (e) => {
+                const sidebar = document.getElementById('gradient-sidebar');
+                if (!sidebar || !sidebar.classList.contains('open')) return;
+                if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
+                _ensureGradStops();
+                const stops = this.config.gradient.stops;
+                if ((e.key === 'Delete' || e.key === 'Backspace') && stops.length > 2) {
+                    stops.splice(_gradStopSel, 1);
+                    if (_gradStopSel >= stops.length) _gradStopSel = stops.length - 1;
+                    _renderGradBar();
+                    _gradRefresh();
+                    e.preventDefault();
+                }
+                if (e.key === 'Tab') {
+                    _gradStopSel = (_gradStopSel + 1) % stops.length;
+                    _renderGradBar();
+                    e.preventDefault();
+                }
+                if (e.key === 'ArrowLeft' && _gradStopSel > 0) {
+                    const prev = stops[_gradStopSel - 1];
+                    stops[_gradStopSel].offset = Math.max(prev.offset + 0.003, stops[_gradStopSel].offset - 0.01);
+                    _renderGradBar();
+                    _gradRefresh();
+                    e.preventDefault();
+                }
+                if (e.key === 'ArrowRight' && _gradStopSel < stops.length - 1) {
+                    const nxt = stops[_gradStopSel + 1];
+                    stops[_gradStopSel].offset = Math.min(nxt.offset - 0.003, stops[_gradStopSel].offset + 0.01);
+                    _renderGradBar();
+                    _gradRefresh();
+                    e.preventDefault();
+                }
+            });
             // Gradient tool ribbon listeners
             const _gradTypeEl   = document.getElementById('grad-type');
             const _gradRepeatEl = document.getElementById('grad-repeat');
@@ -1787,15 +2508,20 @@
                     this._clipGradientToSelection();
                     this._gradientDrawVectorSVG();
                 }
+                _renderGradBar();
             };
+            this._gradRefresh = _gradRefresh;
             if (_gradTypeEl)   _gradTypeEl.addEventListener('change',   () => {
                 this.config.gradient.type   = _gradTypeEl.value;
                 // Show/hide staggered levels card, disable dither in staggered mode
                 const isStaggered = _gradTypeEl.value === 'staggered';
+                const isRadial    = _gradTypeEl.value === 'radial';
                 const _staggerCard = document.getElementById('grad-stagger-card');
+                const _aspectCard  = document.getElementById('grad-aspect-card');
                 const _ditherEl     = document.getElementById('grad-dither');
                 const _ditherLabel  = document.getElementById('grad-dither-label');
                 if (_staggerCard) _staggerCard.style.display = isStaggered ? 'flex' : 'none';
+                if (_aspectCard) _aspectCard.style.display = isRadial ? 'flex' : 'none';
                 if (_ditherEl && _ditherLabel) {
                     if (isStaggered) {
                         _ditherEl.checked = false;
@@ -1820,6 +2546,10 @@
                     if (_gradStaggerVal) _gradStaggerVal.textContent = v;
                     this.config.gradient.staggerLevels = v;
                     _gradRefresh();
+                    const pct = Math.round((v-2)/254*100) + '%';
+                    _gradStaggerEl.style.setProperty('--pct', pct);
+                    const wrap = _gradStaggerEl.parentElement;
+                    if (wrap && wrap.classList.contains('pb-slider-wrap')) wrap.style.setProperty('--pct', pct);
                 });
             }
             const _gradMidEl    = document.getElementById('grad-midpoint');
@@ -1831,16 +2561,92 @@
                     if (_gradMidValEl) _gradMidValEl.textContent = v + '%';
                     this.config.gradient.midpoint = v / 100;
                     _gradRefresh();
+                    const pct = Math.round((v-1)/98*100) + '%';
+                    _gradMidEl.style.setProperty('--pct', pct);
+                    const wrap = _gradMidEl.parentElement;
+                    if (wrap && wrap.classList.contains('pb-slider-wrap')) wrap.style.setProperty('--pct', pct);
                 });
             }
             if (_gradMidReset) {
                 _gradMidReset.addEventListener('click', () => {
-                    if (_gradMidEl) { _gradMidEl.value = 50; }
-                    if (_gradMidValEl) { _gradMidValEl.textContent = '50%'; }
+                    if (_gradMidEl) { _gradMidEl.value = 50; _gradMidEl.dispatchEvent(new Event('input')); return; }
                     this.config.gradient.midpoint = 0.5;
                     _gradRefresh();
                 });
             }
+            const _gradOffEl    = document.getElementById('grad-offset');
+            const _gradOffValEl = document.getElementById('grad-offset-val');
+            const _gradOffReset = document.getElementById('grad-offset-reset');
+            if (_gradOffEl) {
+                _gradOffEl.addEventListener('input', () => {
+                    const v = parseInt(_gradOffEl.value, 10);
+                    if (_gradOffValEl) _gradOffValEl.textContent = (v > 0 ? '+' : '') + v + '%';
+                    this.config.gradient.offset = v / 100;
+                    _gradRefresh();
+                    const pct = Math.round((v+99)/198*100) + '%';
+                    _gradOffEl.style.setProperty('--pct', pct);
+                    const wrap = _gradOffEl.parentElement;
+                    if (wrap && wrap.classList.contains('pb-slider-wrap')) wrap.style.setProperty('--pct', pct);
+                });
+            }
+            if (_gradOffReset) {
+                _gradOffReset.addEventListener('click', () => {
+                    if (_gradOffEl) { _gradOffEl.value = 0; _gradOffEl.dispatchEvent(new Event('input')); return; }
+                    this.config.gradient.offset = 0;
+                    _gradRefresh();
+                });
+            }
+            const _gradAspectEl    = document.getElementById('grad-aspect');
+            const _gradAspectValEl = document.getElementById('grad-aspect-val');
+            if (_gradAspectEl) {
+                _gradAspectEl.addEventListener('input', () => {
+                    const v = parseInt(_gradAspectEl.value, 10);
+                    const ratio = v / 100;
+                    if (_gradAspectValEl) _gradAspectValEl.textContent = ratio.toFixed(2);
+                    this.config.gradient.aspectRatio = ratio;
+                    _gradRefresh();
+                    const pct = Math.round((v-1)/499*100) + '%';
+                    _gradAspectEl.style.setProperty('--pct', pct);
+                    const wrap = _gradAspectEl.parentElement;
+                    if (wrap && wrap.classList.contains('pb-slider-wrap')) wrap.style.setProperty('--pct', pct);
+                });
+            }
+            // Attach custom mousedown handlers to gradient sidebar sliders
+            // so clicking anywhere on the wrap tracks the slider (thumb is hidden).
+            const _attachGradSliderWrap = (id) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                const wrap = el.parentElement;
+                if (!wrap || !wrap.classList.contains('pb-slider-wrap')) return;
+                wrap.addEventListener('mousedown', function (e) {
+                    e.preventDefault();
+                    const min = parseFloat(el.min) || 0;
+                    const max = parseFloat(el.max) || 100;
+                    const step = parseFloat(el.step) || 1;
+                    function updateFromClientX(cx) {
+                        const rect = wrap.getBoundingClientRect();
+                        const pct = Math.max(0, Math.min(1, (cx - rect.left) / rect.width));
+                        let val = min + pct * (max - min);
+                        val = Math.round(val / step) * step;
+                        val = Math.max(min, Math.min(max, val));
+                        el.value = val;
+                        el.dispatchEvent(new Event('input'));
+                    }
+                    updateFromClientX(e.clientX);
+                    function onMove(me) { updateFromClientX(me.clientX); }
+                    function onUp() {
+                        document.removeEventListener('mousemove', onMove);
+                        document.removeEventListener('mouseup', onUp);
+                    }
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
+                });
+            };
+            _attachGradSliderWrap('grad-midpoint');
+            _attachGradSliderWrap('grad-offset');
+            _attachGradSliderWrap('grad-aspect');
+            _attachGradSliderWrap('grad-stagger-levels');
+            _attachGradSliderWrap('grad-stop-alpha');
             document.getElementById('file-upload').onchange = e => {
                 const f = e.target.files[0];
                 if (f && /\.ora$/i.test(f.name)) { this.loadORAFile(f); }
@@ -1854,14 +2660,15 @@
                 let file = files.find(f => f && f.type === 'image/png');
                 if (!file) file = files.find(f => f && f.type && f.type.startsWith('image/'));
                 if (!file) file = files.find(f => f && f.name && /\.png$/i.test(f.name));
+                if (!file) file = files.find(f => f && f.name && /\.ora$/i.test(f.name));
                 if (!file && dt.items) {
                     for (const item of dt.items) {
                         if (item.kind !== 'file') continue;
                         const f = item.getAsFile();
                         if (!f) continue;
-                        if (f.type === 'image/png' || (f.type && f.type.startsWith('image/')) || /\.png$/i.test(f.name)) {
+                        if (f.type === 'image/png' || (f.type && f.type.startsWith('image/')) || /\.png$/i.test(f.name) || /\.ora$/i.test(f.name)) {
                             file = f;
-                            if (f.type === 'image/png' || /\.png$/i.test(f.name)) break;
+                            if (f.type === 'image/png' || /\.png$/i.test(f.name) || /\.ora$/i.test(f.name)) break;
                         }
                     }
                 }
@@ -1887,14 +2694,13 @@
                 if (dropDepth === 0) this.ui.stage.classList.remove('drop-highlight');
             });
             this.ui.stage.addEventListener('drop', (e) => {
-                const hasFiles = e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
-                if (!hasFiles) return;
                 e.preventDefault();
                 dropDepth = 0;
                 this.ui.stage.classList.remove('drop-highlight');
                 const file = pickDroppedImage(e.dataTransfer);
                 if (!file) return;
-                this.handleFile(file, false);
+                if (/\.ora$/i.test(file.name)) { this.loadORAFile(file); }
+                else { this.handleFile(file, false); }
             });
             window.addEventListener('dragover', (e) => {
                 const hasFiles = e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
@@ -1935,8 +2741,14 @@
             this.ui.viewport.addEventListener('scroll', () => {
                 this.clampViewportScroll();
                 this.requestGlobalOverlayUpdate();
-                this.updateBounds();
+                this.requestBoundsUpdate();
                 this.requestGridOverlayUpdate();
+            });
+            this.ui.viewport.addEventListener('transitionend', (e) => {
+                if (e.propertyName === 'padding-left') {
+                    this.updateBounds();
+                    this.requestGlobalOverlayUpdate();
+                }
             });
             this.initThemeSelectMode();
             this.initColorCustomizer();
@@ -1945,6 +2757,28 @@
             this.setTool(this.config.tool);
             this.updateModeButtons();
             this.initModalInteractions();
+            document.getElementById('sidebar-close-btn')?.addEventListener('click', () => {
+                if (this._activeSidebarModalId) this._closeUnifiedSidebar(true);
+            });
+            document.getElementById('sidebar-float-btn')?.addEventListener('click', () => {
+                if (this._activeSidebarModalId) {
+                    this._floatCurrentModal();
+                }
+            });
+            document.querySelector('#unified-sidebar .sidebar-modes')?.addEventListener('click', (e) => {
+                const btn = e.target.closest('button');
+                if (!btn) return;
+                const id = btn.dataset.modal;
+                if (!id) return;
+                this._trackFloated();
+                if (this._activeSidebarModalId === id) return;
+                // Skip hidden tabs — panels not in Docked Sidebar mode
+                if (this._loadSidebarUIMode(id) !== 'sidebar') return;
+                if (this._activeSidebarModalId) this._closeUnifiedSidebar(true);
+                if (id === 'huesat') this.openHueSat();
+                this._openUnifiedSidebar(id);
+            });
+            this._updateSidebarTabVisibility();
             this.initRibbonCustomization();
             this.initTabScrollSwitch();
             this.initSaveReminder();
@@ -1959,9 +2793,10 @@
             this.revealStartupWindow();
             Promise.resolve(this.initTauriFileOpenListener());
             this.setActiveTab('home');
-            const popupModal = localStorage.getItem('paint.popupModal');
+            let popupModal;
+            try { popupModal = localStorage.getItem('paint.popupModal'); } catch (e) {}
             if (popupModal) {
-                localStorage.removeItem('paint.popupModal');
+                try { localStorage.removeItem('paint.popupModal'); } catch (e) {}
                 this._enterPopupMode(popupModal);
                 return;
             }
@@ -2171,6 +3006,8 @@
                         if (id === 'modal-export') return;
                         if (id === 'modal-colors') return;
                         if (id === 'modal-huesat') this.cancelHueSat();
+                        else if (id === 'modal-resize') this.cancelResize();
+                        else if (id === 'modal-depth') this.cancelDepth();
                         else if (id === 'save-reminder-modal') this.dismissSaveReminder();
                         else if (id === 'close-confirm-modal') this.dismissCloseConfirm();
                         else if (id === 'modal-info') this.closeInfoModal();
@@ -2192,7 +3029,7 @@
         startModalDrag(modalId, e) {
             if (e.button !== 0) return;
             const modal = document.getElementById(modalId);
-            if (modalId === 'modal-huesat' && modal && modal.classList.contains('hs-sidebar-mode')) return;
+            if (modalId === 'modal-huesat' && this._activeSidebarModalId === 'huesat') return;
             const win = modal ? modal.querySelector('.window') : null;
             if (!win) return;
             const rect = win.getBoundingClientRect();
@@ -2922,47 +3759,82 @@
         initHistoryLimitControls() {
             const savedEnabled = this.lsGet('paint.history.limit.enabled');
             const savedLimit = parseInt(this.lsGet('paint.history.limit.value') || '', 10);
+            const savedAdaptive = this.lsGet('paint.history.limit.adaptive');
             if (savedEnabled !== null) this.historyLimitEnabled = savedEnabled === 'true';
             if (Number.isFinite(savedLimit) && savedLimit >= 1) this.historyLimit = savedLimit;
+            this._historyAdaptive = savedAdaptive === null ? false : savedAdaptive === 'true';
 
             const toggle = document.getElementById('history-limit-toggle');
             const input = document.getElementById('history-limit-input');
+            const adaptiveCb = document.getElementById('history-limit-adaptive');
 
             if (toggle) {
                 toggle.checked = this.historyLimitEnabled;
                 toggle.addEventListener('change', () => this.setHistoryLimitEnabled(toggle.checked));
             }
+            if (adaptiveCb) {
+                adaptiveCb.checked = this._historyAdaptive;
+                adaptiveCb.addEventListener('change', () => this.setHistoryAdaptive(adaptiveCb.checked));
+            }
             if (input) {
                 input.value = this.historyLimit;
-                input.addEventListener('change', () => this.setHistoryLimit(input.value));
+                input.addEventListener('change', () => {
+                    if (!this._historyAdaptive) this.setHistoryLimit(input.value, true, true);
+                });
             }
 
             this.setHistoryLimitEnabled(this.historyLimitEnabled, false);
-            this.setHistoryLimit(this.historyLimit, false);
+            if (this._historyAdaptive) this._applyMemoryBudget();
         }
         setHistoryLimitEnabled(enabled, trimNow = true) {
             this.historyLimitEnabled = !!enabled;
             this.lsSet('paint.history.limit.enabled', this.historyLimitEnabled ? 'true' : 'false');
             const toggle = document.getElementById('history-limit-toggle');
-            const input = document.getElementById('history-limit-input');
             if (toggle) toggle.checked = this.historyLimitEnabled;
-            if (input) input.disabled = !this.historyLimitEnabled;
+            this._syncHistoryLimitInput();
             if (trimNow) this.enforceHistoryLimit();
         }
-        setHistoryLimit(value, trimNow = true) {
+        setHistoryLimit(value, trimNow = true, fromUser = false) {
             let limit = parseInt(value, 10);
             if (!Number.isFinite(limit) || limit < 1) limit = this.historyLimit;
             this.historyLimit = limit;
-            this.lsSet('paint.history.limit.value', String(limit));
+            if (fromUser) this.lsSet('paint.history.limit.value', String(limit));
             const input = document.getElementById('history-limit-input');
-            if (input) input.value = limit;
+            if (input && !input.disabled) input.value = limit;
             if (trimNow) this.enforceHistoryLimit();
         }
+        _syncHistoryLimitInput() {
+            const input = document.getElementById('history-limit-input');
+            const adaptiveCb = document.getElementById('history-limit-adaptive');
+            if (adaptiveCb) adaptiveCb.disabled = !this.historyLimitEnabled;
+            if (input) {
+                const adaptiveOn = this._historyAdaptive && this.historyLimitEnabled;
+                input.disabled = !this.historyLimitEnabled || adaptiveOn;
+                if (adaptiveOn) input.value = this.historyLimit;
+            }
+        }
+        setHistoryAdaptive(on) {
+            this._historyAdaptive = !!on;
+            this.lsSet('paint.history.limit.adaptive', this._historyAdaptive ? 'true' : 'false');
+            if (this._historyAdaptive) {
+                this._applyMemoryBudget();
+            } else {
+                this.lsSet('paint.history.limit.value', String(this.historyLimit));
+                this._syncHistoryLimitInput();
+            }
+        }
         enforceHistoryLimit() {
-            // Hard safety cap: even with the user limit disabled, never exceed 500 entries.
-            // At 4K canvas size (~32 MB/entry) that is already ~16 GB of retained data;
-            // 500 is a generous ceiling that prevents tab OOM while preserving deep undo.
-            const HARD_CAP = 500;
+            // Hard safety cap: even with the user limit disabled, never retain unbounded
+            // history. Scale the ceiling by canvas size so a "limit disabled" footgun on an
+            // 8000² doc can't hold 500 × ~256 MB (~128 GB). Modeled per-entry cost is the
+            // worst-case full-canvas snapshot (W*H*4); tiled entries are typically far smaller,
+            // so this estimate is conservative (smaller cap) in the safe direction.
+            const px = (this.config.width || 0) * (this.config.height || 0);
+            let HARD_CAP = 500;
+            if (px > 0) {
+                const estEntry = px * 4;
+                HARD_CAP = Math.max(8, Math.min(500, Math.floor((2 * 1024 * 1024 * 1024) / estEntry)));
+            }
             if (!this.historyLimitEnabled) {
                 if (this.state.history.length <= HARD_CAP) return;
                 const overflow = this.state.history.length - HARD_CAP;
@@ -2973,7 +3845,6 @@
                     this.state.selectionCutStep -= overflow;
                     if (this.state.selectionCutStep < 0) this.state.selectionCutStep = null;
                 }
-                this._repairDeltaAnchors(overflow);
                 this.updateTitleBarActions();
                 return;
             }
@@ -2987,22 +3858,7 @@
                 this.state.selectionCutStep -= overflow;
                 if (this.state.selectionCutStep < 0) this.state.selectionCutStep = null;
             }
-            this._repairDeltaAnchors(overflow);
             this.updateTitleBarActions();
-        }
-        _repairDeltaAnchors(evictedCount) {
-            // After evicting entries from the front, delta entries with _anchorStep
-            // pointing to evicted entries become orphaned. Reset _lastAnchorStep so
-            // the next saveState() creates a fresh anchor.
-            const firstRemaining = this.state.history.length > 0 ? evictedCount : -1;
-            for (let i = 0; i < this.state.history.length; i++) {
-                const e = this.state.history[i];
-                if (e.isDelta && e._anchorStep < firstRemaining) {
-                    this._lastAnchorStep = -1;
-                    return;
-                }
-            }
-            if (this._lastAnchorStep >= 0) this._lastAnchorStep -= evictedCount;
         }
         initTauriFileOpenListener() {
             const tauri = window.__TAURI__;
@@ -3042,7 +3898,15 @@
             this.initializeBlankDocument();
             return Promise.resolve();
         }
-        async openFileFromPath(path) {
+        async openFileFromPath(path, _skipUnsavedCheck = false) {
+            if (!_skipUnsavedCheck && this.hasUnsavedChanges()) {
+                return new Promise((resolve) => {
+                    this.showOpenConfirm(async () => {
+                        const result = await this.openFileFromPath(path, true);
+                        resolve(result);
+                    }, 'Opening a new file');
+                });
+            }
             const tauri = window.__TAURI__;
             if (!tauri || !this.getTauriInvokeFn() || !path) {
                 if (!this.state.hasDocument) this.initializeBlankDocument();
@@ -3059,7 +3923,7 @@
             /* Route .ora files through the layer loader */
             if (/\.ora$/i.test(normalizedPath)) {
                 try {
-                    const bytes = await this.getTauriInvokeFn()('read_file', { path: normalizedPath });
+                    const bytes = await this.getTauriInvokeFn()('read_image_file', { path: normalizedPath });
                     const file = new File([new Uint8Array(bytes)], this.getFilenameFromPath(normalizedPath), { type: 'image/openraster' });
                     await this.loadORAFile(file);
                     this.addRecentFile({ name: this.state.fileName, path: normalizedPath });
@@ -3199,10 +4063,13 @@
             this._closeConfirmKeydown = null;
         }
         showCloseConfirm() {
+            this._pendingOpenAction = null;
             const modal = this.ui.closeConfirmModal;
             if (!modal) return;
             const label = document.getElementById('close-confirm-filename');
             if (label) label.textContent = this.getCurrentFilename();
+            const ctx = document.getElementById('close-confirm-context');
+            if (ctx) ctx.textContent = ' before closing';
             modal.style.display = 'flex';
             this.centerModal('close-confirm-modal');
             this.setupCloseConfirmKeyNav();
@@ -3214,10 +4081,19 @@
             if (!modal) return;
             this.teardownCloseConfirmKeyNav();
             modal.style.display = 'none';
+            this._pendingOpenAction = null;
             this.isForceClosing = false;
         }
         async confirmCloseSave() {
+            const pendingAction = this._pendingOpenAction;
             this.dismissCloseConfirm();
+            if (pendingAction) {
+                try {
+                    await this.saveFile();
+                    await pendingAction();
+                } catch (e) {}
+                return;
+            }
             try {
                 await this.saveFile();
                 if (this._unlistenCloseEvent) {
@@ -3231,13 +4107,33 @@
             }
         }
         confirmCloseDiscard() {
+            const pendingAction = this._pendingOpenAction;
             this.dismissCloseConfirm();
+            if (pendingAction) {
+                this.state.isDirty = false;
+                pendingAction();
+                return;
+            }
             if (this._unlistenCloseEvent) {
                 this._unlistenCloseEvent();
                 this._unlistenCloseEvent = null;
             }
             this.isForceClosing = true;
             this.forceCloseWindow();
+        }
+        showOpenConfirm(action, context) {
+            this._pendingOpenAction = action;
+            const modal = this.ui.closeConfirmModal;
+            if (!modal) return;
+            const label = document.getElementById('close-confirm-filename');
+            if (label) label.textContent = this.getCurrentFilename();
+            const ctx = document.getElementById('close-confirm-context');
+            if (ctx) ctx.textContent = context || ' opening a new file';
+            modal.style.display = 'flex';
+            this.centerModal('close-confirm-modal');
+            this.setupCloseConfirmKeyNav();
+            const saveBtn = modal.querySelector('.btn-row .btn-primary');
+            if (saveBtn) requestAnimationFrame(() => saveBtn.focus());
         }
         openMiscTab() {
             this.setActiveTab('view');
@@ -3307,8 +4203,10 @@
             try {
                 await this.tauriInvoke('plugin:opener|open_url', { url });
             } catch (e) {
-                // Fallback: best-effort.
-                window.open(url, '_blank');
+                // Fallback: only open known-good URLs
+                if (url.startsWith('https://github.com/FrCynda/CDPaint/releases/')) {
+                    window.open(url, '_blank');
+                }
             }
         }
         async checkForUpdates() {
@@ -4365,7 +5263,7 @@
             this.state.recentFiles = (this.state.recentFiles || []).filter((_, i) => i !== index);
             this.saveRecentFiles();
             this.renderFileMenuRecentFiles();
-            alert('Could not open this recent file. It may have been moved or removed.');
+            showToast('Could not open this recent file. It may have been moved or removed.', 'error');
         }
         markSaved(filename = null) {
             if (filename) this.state.fileName = filename;
@@ -6266,8 +7164,9 @@
                 this.hueSatWorkerBaseVersion = (this.hueSatWorkerBaseVersion || 0) + 1;
                 this.initHueSatWorkerBase();
             } catch (e) {
-                this.hueSatBaseData = null;
                 this.hueSatWorkerFailed = true;
+            } finally {
+                this.hueSatBaseData = null;
             }
         }
         cancelHueSat() {
@@ -6286,6 +7185,10 @@
                     this.ctx.drawImage(this.hueSatBackup, 0, 0);
                 }
             }
+            const huesatDocked = this._activeSidebarModalId === 'huesat';
+            if (huesatDocked) {
+                this._closeUnifiedSidebar(true);
+            }
             this.state.hueSatActive = false;
             this.hideHueSatSplitHandle();
             clearTimeout(this.state.hueSatPreviewTimer);
@@ -6302,71 +7205,192 @@
                 this.hueSatWorkerCallbacks?.clear();
             }
             this.disposeHueSatGL();
-            // If the Hue/Sat panel was docked as a sidebar, undock it and restore the
-            // floating window state before closing the modal.
-            const hsModal = document.getElementById('modal-huesat');
-            if (hsModal && hsModal.classList.contains('hs-sidebar-mode')) {
-                hsModal.classList.remove('hs-sidebar-mode');
-                document.body.classList.remove('huesat-sidebar-open');
-                const btn = document.getElementById('hs-sidebar-toggle-btn');
-                if (btn) { btn.title = 'Dock as sidebar'; btn.innerHTML = '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1"/><rect x="7" y="4" width="8" height="1.5" rx="0.75"/><rect x="7" y="7.25" width="8" height="1.5" rx="0.75"/><rect x="7" y="10.5" width="8" height="1.5" rx="0.75"/></svg>'; }
+            if (!huesatDocked) {
+                const m = document.getElementById('modal-huesat');
+                if (m) m.style.display = 'none';
             }
-            this.closeModals();
+        }
+        cancelResize() {
+            const resizeDocked = this._activeSidebarModalId === 'resize';
+            if (resizeDocked) {
+                this._closeUnifiedSidebar(true);
+            }
+            this.state.resizePreviewActive = false;
+            this.state.resizePreviewRect = null;
+            this.state.resizePreviewGhost = null;
+            if (!resizeDocked) {
+                const m = document.getElementById('modal-resize');
+                if (m) m.style.display = 'none';
+            }
+        }
+        cancelDepth() {
+            const depthDocked = this._activeSidebarModalId === 'depth';
+            if (depthDocked) {
+                this._closeUnifiedSidebar(true);
+            }
+            this.depthBackup = null;
+            if (!depthDocked) {
+                const m = document.getElementById('modal-depth');
+                if (m) m.style.display = 'none';
+            }
+        }
+        _openUnifiedSidebar(id) {
+            const modal = document.getElementById('modal-' + id);
+            if (!modal) return;
+            const sidebar = document.getElementById('unified-sidebar');
+            if (!sidebar) return;
+            if (id === 'huesat' || id === 'resize' || id === 'depth') {
+                const content = sidebar.querySelector('.sidebar-content');
+                const existing = content.querySelector('.modal-mask');
+                if (existing && existing !== modal) {
+                    document.body.appendChild(existing);
+                    existing.style.display = 'none';
+                }
+                content.appendChild(modal);
+                modal.style.display = '';
+                this._saveSidebarUIMode(id, 'sidebar');
+            }
+            sidebar.classList.remove('hidden');
+            this._updateSidebarViewportShift(true);
+            this._trackFloated();
+            delete this._floatedModals[id];
+            this._updateSidebarTabVisibility();
+            this._activeSidebarModalId = id;
+            const btnId = id === 'huesat' ? 'hs-sidebar-toggle-btn' : id + '-sidebar-toggle-btn';
+            const btn = document.getElementById(btnId);
+            if (btn) { btn.title = 'Undock to floating window'; btn.innerHTML = this.getSidebarUndockIcon(); }
+            this._updateSidebarModeButtons(id);
+        }
+        _closeUnifiedSidebar(quiet = false) {
+            const id = this._activeSidebarModalId;
+            if (!id) return;
+            const modal = document.getElementById('modal-' + id);
+            const sidebar = document.getElementById('unified-sidebar');
+            if ((id === 'huesat' || id === 'resize' || id === 'depth') && sidebar) {
+                if (modal && modal.parentNode !== document.body) {
+                    document.body.appendChild(modal);
+                }
+                if (!quiet) {
+                    modal.style.display = 'flex';
+                    this.centerModal('modal-' + id);
+                } else {
+                    modal.style.display = 'none';
+                }
+            }
+            if (sidebar) sidebar.classList.add('hidden');
+            this._updateSidebarViewportShift(true);
+            const btnId = id === 'huesat' ? 'hs-sidebar-toggle-btn' : id + '-sidebar-toggle-btn';
+            const btn = document.getElementById(btnId);
+            if (btn) { btn.title = 'Dock as sidebar'; btn.innerHTML = this.getSidebarDockIcon(); }
+            this._activeSidebarModalId = null;
+            this._updateSidebarModeButtons(null);
+            this._updateSidebarTabVisibility();
+        }
+        _floatCurrentModal() {
+            const id = this._activeSidebarModalId;
+            if (!id) return;
+            const modal = document.getElementById('modal-' + id);
+            const sidebar = document.getElementById('unified-sidebar');
+            // Move modal to body and show as floating window
+            if ((id === 'huesat' || id === 'resize' || id === 'depth') && sidebar) {
+                if (modal && modal.parentNode !== document.body) {
+                    document.body.appendChild(modal);
+                }
+                modal.style.display = 'flex';
+                this.centerModal('modal-' + id);
+            }
+            // Mark floated and hide its tab button
+            this._trackFloated();
+            this._floatedModals[id] = true;
+            this._saveSidebarUIMode(id, 'floating');
+            // Update toggle button on the modal itself
+            const btnId = id === 'huesat' ? 'hs-sidebar-toggle-btn' : id + '-sidebar-toggle-btn';
+            const btn = document.getElementById(btnId);
+            if (btn) { btn.title = 'Dock as sidebar'; btn.innerHTML = this.getSidebarDockIcon(); }
+            this._updateSidebarTabVisibility();
+            // Find next available tab
+            const order = ['depth', 'huesat', 'resize'];
+            let nextId = null;
+            for (const c of order) {
+                if (this._loadSidebarUIMode(c) === 'sidebar') { nextId = c; break; }
+            }
+            if (nextId) {
+                if (nextId === 'huesat') this.openHueSat();
+                // Close current quietly (no DOM manipulation since modal already moved)
+                const oldId = this._activeSidebarModalId;
+                this._activeSidebarModalId = null;
+                this._openUnifiedSidebar(nextId);
+            } else {
+                // All floated — close sidebar
+                sidebar.classList.add('hidden');
+                this._activeSidebarModalId = null;
+                this._updateSidebarModeButtons(null);
+            }
+        }
+        _trackFloated() {
+            if (!this._floatedModals) this._floatedModals = {};
+        }
+        _updateSidebarTabVisibility() {
+            const modes = document.querySelector('#unified-sidebar .sidebar-modes');
+            if (!modes) return;
+            this._trackFloated();
+            modes.querySelectorAll('button[data-modal]').forEach(b => {
+                const mid = b.dataset.modal;
+                b.style.display = this._loadSidebarUIMode(mid) !== 'sidebar' ? 'none' : '';
+            });
+        }
+        _closeHueSatSidebarIfActive() {
+            if (this._activeSidebarModalId === 'huesat') {
+                this._closeUnifiedSidebar(true);
+            }
+        }
+        _closeActiveSidebar(quiet = false) {
+            if (this._activeSidebarModalId) {
+                this._closeUnifiedSidebar(quiet);
+            }
+        }
+        _saveSidebarUIMode(id, mode) {
+            try { localStorage.setItem('paint.sidebar.' + id + '.uiMode', mode); } catch(e) {}
+        }
+        _loadSidebarUIMode(id) {
+            try { return localStorage.getItem('paint.sidebar.' + id + '.uiMode') || 'floating'; } catch(e) { return 'floating'; }
+        }
+        _updateSidebarModeButtons(activeId) {
+            document.querySelectorAll('#unified-sidebar .sidebar-modes button').forEach(b => {
+                b.classList.toggle('active', b.dataset.modal === activeId);
+            });
         }
         toggleHueSatSidebar() {
-            const modal = document.getElementById('modal-huesat');
-            const btn = document.getElementById('hs-sidebar-toggle-btn');
-            const isSidebar = modal.classList.toggle('hs-sidebar-mode');
-            document.body.classList.toggle('huesat-sidebar-open', isSidebar);
-            if (isSidebar) {
-                // Clear any inline top/left/right set by the drag-to-move code so the
-                // CSS fixed-position sidebar layout takes over.
-                modal.style.display = 'flex';
-                const win = modal.querySelector('.window');
-                if (win) { win.style.top = ''; win.style.left = ''; win.style.right = ''; }
-                btn.title = 'Undock to floating window';
-                btn.innerHTML = '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1" opacity="0.4"/><path d="M8 3l4 4-4 4V8H5V7h3V3z"/></svg>';
+            const sidebar = document.getElementById('unified-sidebar');
+            if (!sidebar) return;
+            if (this._activeSidebarModalId === 'huesat') {
+                this._closeUnifiedSidebar();
             } else {
-                btn.title = 'Dock as sidebar';
-                btn.innerHTML = '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1"/><rect x="7" y="4" width="8" height="1.5" rx="0.75"/><rect x="7" y="7.25" width="8" height="1.5" rx="0.75"/><rect x="7" y="10.5" width="8" height="1.5" rx="0.75"/></svg>';
-                this.centerModal('modal-huesat');
+                if (this._activeSidebarModalId) this._closeUnifiedSidebar(true);
+                this._openUnifiedSidebar('huesat');
             }
-        }
-        getSidebarDockIcon() {
-            return '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1"/><rect x="7" y="4" width="8" height="1.5" rx="0.75"/><rect x="7" y="7.25" width="8" height="1.5" rx="0.75"/><rect x="7" y="10.5" width="8" height="1.5" rx="0.75"/></svg>';
-        }
-        getSidebarUndockIcon() {
-            return '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1" opacity="0.4"/><path d="M8 3l4 4-4 4V8H5V7h3V3z"/></svg>';
         }
         toggleUtilitySidebar(id) {
             if (id !== 'resize' && id !== 'depth') return;
-            const modal = document.getElementById('modal-' + id);
-            const btn = document.getElementById(id + '-sidebar-toggle-btn');
-            if (!modal || !btn) return;
-            const isSidebar = modal.classList.toggle('utility-sidebar-mode');
-            if (isSidebar) {
-                modal.style.display = 'flex';
-                const win = modal.querySelector('.window');
-                if (win) { win.style.top = ''; win.style.left = ''; win.style.right = ''; }
-                btn.title = 'Undock to floating window';
-                btn.innerHTML = this.getSidebarUndockIcon();
+            const sidebar = document.getElementById('unified-sidebar');
+            if (!sidebar) return;
+            if (this._activeSidebarModalId === id) {
+                this._closeUnifiedSidebar();
             } else {
-                btn.title = 'Dock as sidebar';
-                btn.innerHTML = this.getSidebarDockIcon();
-                this.centerModal('modal-' + id);
+                if (this._activeSidebarModalId) this._closeUnifiedSidebar(true);
+                this._openUnifiedSidebar(id);
             }
         }
         resetUtilitySidebars() {
-            for (const id of ['resize', 'depth']) {
-                const modal = document.getElementById('modal-' + id);
-                const btn = document.getElementById(id + '-sidebar-toggle-btn');
-                if (modal) modal.classList.remove('utility-sidebar-mode');
-                if (btn) {
-                    btn.title = 'Dock as sidebar';
-                    btn.innerHTML = this.getSidebarDockIcon();
-                }
+            for (const id of ['resize', 'depth', 'huesat']) {
+                const btnId = id === 'huesat' ? 'hs-sidebar-toggle-btn' : id + '-sidebar-toggle-btn';
+                const btn = document.getElementById(btnId);
+                if (btn) { btn.title = 'Dock as sidebar'; btn.innerHTML = this.getSidebarDockIcon(); }
             }
         }
+        getSidebarDockIcon() { return '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1"/><rect x="7" y="4" width="8" height="1.5" rx="0.75"/><rect x="7" y="7.25" width="8" height="1.5" rx="0.75"/><rect x="7" y="10.5" width="8" height="1.5" rx="0.75"/></svg>'; }
+        getSidebarUndockIcon() { return '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1" opacity="0.4"/><path d="M8 3l4 4-4 4V8H5V7h3V3z"/></svg>'; }
+
         setHueSatChannel(channel) {
             if (!this.hueSatChannels[channel]) return;
             this.saveHueSatState();
@@ -7060,10 +8084,17 @@ self.onmessage = (e) => {
                 URL.revokeObjectURL(url);
                 return null;
             }
-            // Revoke the object URL immediately after the Worker is constructed.
-            // The browser has already parsed the script at this point; revoking frees
-            // the blob memory without affecting the running Worker.
-            URL.revokeObjectURL(url);
+            // Revoke the object URL after the Worker has actually loaded the
+            // script (first message or error), not synchronously — some browsers
+            // fetch the worker script lazily and revoking too early aborts it.
+            const _hsWorker = this.hueSatWorker;
+            const revokeUrl = () => {
+                URL.revokeObjectURL(url);
+                _hsWorker.removeEventListener('message', revokeUrl);
+                _hsWorker.removeEventListener('error', revokeUrl);
+            };
+            _hsWorker.addEventListener('error', revokeUrl);
+            _hsWorker.addEventListener('message', revokeUrl);
             this.hueSatWorker.onmessage = (e) => {
                 const { id, buffer } = e.data || {};
                 const cb = this.hueSatWorkerCallbacks.get(id);
@@ -7085,15 +8116,19 @@ self.onmessage = (e) => {
             return !this.hueSatWorkerFailed && (w * h) >= 200000;
         }
         initHueSatWorkerBase() {
-            if (!this.hueSatBaseData) return;
+            if (!this.hueSatBackup) return;
             const worker = this.getHueSatWorker();
             if (!worker) return;
             const version = this.hueSatWorkerBaseVersion || 0;
-            const copy = this.hueSatBaseData.data.slice();
+            if (this._hueSatWorkerLastInitVersion === version) return;
+            this._hueSatWorkerLastInitVersion = version;
+            const bctx = this.hueSatBackup.getContext('2d');
+            const baseData = bctx.getImageData(0, 0, this.hueSatBackup.width, this.hueSatBackup.height);
+            const copy = baseData.data.slice();
             worker.postMessage({
                 type: 'init',
-                width: this.hueSatBaseData.width,
-                height: this.hueSatBaseData.height,
+                width: baseData.width,
+                height: baseData.height,
                 buffer: copy.buffer,
                 version: version
             }, [copy.buffer]);
@@ -7697,7 +8732,7 @@ self.onmessage = (e) => {
             const t = [
                 ['pencil','fill','wand'],
                 ['eraser','picker','zoom'],
-                ['gradient','anchor-toggle','freehand']
+                ['gradient','anchor-toggle','freehand','layers-toggle']
             ].map(arr => { const r = this._makeEmptyRow(); arr.forEach((v,i) => r[i]=v); return r; });
             const s = [
                 ['line','curve','poly','rect'],
@@ -7743,20 +8778,31 @@ self.onmessage = (e) => {
             if (id === 'anchor-toggle') slot.classList.add('toggle-btn');
             // Dual-icon tools: render both variants, sync functions toggle visibility
             if (id === 'pencil') {
-                slot.innerHTML = '<span class="pencil-icon pencil-icon-standard show"><img class="toolbar-icon" alt="" src="assets/toolbar-icons/pencil.png"></span><span class="pencil-icon pencil-icon-smart"><img class="toolbar-icon" alt="" src="assets/toolbar-icons/pencil-smart.png"></span>';
+                const isSmart = this.config.pencilMode === 'smart';
+                slot.innerHTML = '<span class="pencil-icon pencil-icon-standard' + (isSmart ? '' : ' show') + '"><img class="toolbar-icon" alt="" src="assets/toolbar-icons/pencil.png"></span><span class="pencil-icon pencil-icon-smart' + (isSmart ? ' show' : '') + '"><img class="toolbar-icon" alt="" src="assets/toolbar-icons/pencil-smart.png"></span>';
             } else if (id === 'pencil-smart') {
                 const img = document.createElement('img'); img.className = 'toolbar-icon'; img.alt = ''; img.src = 'assets/toolbar-icons/pencil-smart.png';
                 slot.appendChild(img);
             } else if (id === 'wand') {
-                slot.innerHTML = '<span class="wand-icon wand-icon-contig show"><img class="toolbar-icon" alt="" src="assets/toolbar-icons/wand-contig.png"></span><span class="wand-icon wand-icon-global"><img class="toolbar-icon icon-wand-global" src="assets/toolbar-icons/wand-global.png"></span>';
+                const isContig = this.config.wandMode === 'contiguous';
+                slot.innerHTML = '<span class="wand-icon wand-icon-contig' + (isContig ? ' show' : '') + '"><img class="toolbar-icon" alt="" src="assets/toolbar-icons/wand-contig.png"></span><span class="wand-icon wand-icon-global' + (isContig ? '' : ' show') + '"><img class="toolbar-icon icon-wand-global" src="assets/toolbar-icons/wand-global.png"></span>';
             } else if (id === 'wand-global') {
                 const img = document.createElement('img'); img.className = 'toolbar-icon icon-wand-global'; img.alt = ''; img.src = 'assets/toolbar-icons/wand-global.png';
                 slot.appendChild(img);
             } else if (id === 'anchor-toggle') {
+                if (this.config.anchorCanvas) slot.classList.add('is-on');
                 slot.innerHTML = '<span class="toggle-icons"><img class="icon-off toolbar-icon" src="assets/anchor.png"><img class="icon-on toolbar-icon" src="assets/Free.png"></span>';
+            } else if (item.iconSrc && item.iconSvg) {
+                const img = document.createElement('img');
+                img.className = 'toolbar-icon pixel-perfect';
+                img.src = item.iconSrc;
+                img.alt = '';
+                const svg = item.iconSvg;
+                img.onerror = function() { this.insertAdjacentHTML('afterend', svg); this.remove(); };
+                slot.appendChild(img);
             } else if (item.iconSrc) {
                 const img = document.createElement('img');
-                img.className = 'toolbar-icon';
+                img.className = 'toolbar-icon pixel-perfect';
                 img.src = item.iconSrc;
                 img.alt = '';
                 slot.appendChild(img);
@@ -7764,20 +8810,35 @@ self.onmessage = (e) => {
                 slot.insertAdjacentHTML('beforeend', item.iconSvg);
             }
             if (item.isToggle) {
-                slot.addEventListener('click', (e) => { e.stopPropagation(); this.toggleAnchorCanvas(); });
+                slot.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (id === 'anchor-toggle') this.toggleAnchorCanvas();
+                    else if (id === 'layers-toggle') this.layerMgr.openPanel();
+                });
             } else if (item.mode && item.mode.selectTool) {
                 slot.addEventListener('click', (e) => { e.stopPropagation(); this.setSelectTool(item.mode.selectTool); });
             } else {
                 slot.addEventListener('click', (e) => { e.stopPropagation(); this._activateToolFromGrid(item); });
             }
-            if (id === 'pencil' || id === 'pencil-smart') {
+            if (id === 'pencil') {
                 slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); const n = this.config.pencilMode === 'smart' ? 'standard' : 'smart'; this.setPencilMode(n); this.setTool('pencil'); });
+                slot.title += '\nRight-click: switch pencil mode';
             }
-            if (id === 'wand' || id === 'wand-global') {
+            if (id === 'pencil-smart') {
+                slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); this.setPencilMode('smart'); this.setTool('pencil'); });
+            }
+            if (id === 'wand') {
                 slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); const n = this.config.wandMode === 'global' ? 'contiguous' : 'global'; this.setWandMode(n); this.setTool('wand'); });
+                slot.title += '\nRight-click: switch wand mode';
+            }
+            if (id === 'wand-global') {
+                slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); this.setWandMode('global'); this.setTool('wand'); });
             }
             if (id === 'picker') {
                 slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); this.openPickerMenu(e); });
+            }
+            if (id === 'paintbrush') {
+                slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); this.openPaintbrushMenu(e); });
             }
             return slot;
         }
@@ -7903,9 +8964,17 @@ self.onmessage = (e) => {
                         if (item) {
                             slot.classList.add('customizer-slot-filled');
                             slot.title = item.label;
-                            if (item.iconSrc) {
+                            if (item.iconSrc && item.iconSvg) {
                                 const img = document.createElement('img');
-                                img.className = 'toolbar-icon';
+                                img.className = 'toolbar-icon pixel-perfect';
+                                img.src = item.iconSrc;
+                                img.alt = '';
+                                const svg = item.iconSvg;
+                                img.onerror = function() { this.insertAdjacentHTML('afterend', svg); this.remove(); };
+                                slot.appendChild(img);
+                            } else if (item.iconSrc) {
+                                const img = document.createElement('img');
+                                img.className = 'toolbar-icon pixel-perfect';
                                 img.src = item.iconSrc;
                                 img.alt = '';
                                 slot.appendChild(img);
@@ -7937,9 +9006,17 @@ self.onmessage = (e) => {
                 el.title = item.label;
                 el.setAttribute('draggable', 'true');
                 el.dataset.drawerId = item.id;
-                if (item.iconSrc) {
+                if (item.iconSrc && item.iconSvg) {
                     const img = document.createElement('img');
-                    img.className = 'toolbar-icon';
+                    img.className = 'toolbar-icon pixel-perfect';
+                    img.src = item.iconSrc;
+                    img.alt = '';
+                    const svg = item.iconSvg;
+                    img.onerror = function() { this.insertAdjacentHTML('afterend', svg); this.remove(); };
+                    el.appendChild(img);
+                } else if (item.iconSrc) {
+                    const img = document.createElement('img');
+                    img.className = 'toolbar-icon pixel-perfect';
                     img.src = item.iconSrc;
                     img.alt = '';
                     el.appendChild(img);
@@ -8008,7 +9085,7 @@ self.onmessage = (e) => {
         applyToolGridLayout() {
             if (!this._customizerState) return;
             if (!this.validateToolGridLayout(this._customizerState)) {
-                alert('Invalid layout — some tools were not recognized.');
+                showToast('Invalid layout — some tools were not recognized.', 'warning');
                 return;
             }
             this.saveToolGridLayout(this._customizerState);
@@ -8445,8 +9522,73 @@ self.onmessage = (e) => {
             `;
             const blob = new Blob([code], { type: 'application/javascript' });
             const url = URL.createObjectURL(blob);
-            this.quantizeWorker = new Worker(url);
-            URL.revokeObjectURL(url);
+            const worker = new Worker(url);
+            this.quantizeWorker = worker;
+            const revokeUrl = () => {
+                URL.revokeObjectURL(url);
+                worker.removeEventListener('message', revokeUrl);
+                worker.removeEventListener('error', revokeUrl);
+            };
+            worker.addEventListener('error', revokeUrl);
+            worker.addEventListener('message', revokeUrl);
+        }
+
+        /**
+         * Compute the SVG clip-rect that culls ants to the visible viewport area.
+         * Returns { x, y, w, h, visible } in SVG-local (canvas-pixel) coordinates.
+         * Used by both updateGlobalOverlays (committed selections) and
+         * _applyWandSvgPreview (live wand drag preview).
+         */
+        _computeAntsClipRect() {
+            const clipRect = this.ui.svgAntsClipRect;
+            const antsWrap = this.ui.svgAntsWrap;
+            if (!clipRect || !antsWrap || !this.ui.viewport) {
+                return { x: 0, y: 0, w: 1000000, h: 1000000, visible: true };
+            }
+            const stageRect = this.ui.stage ? this.ui.stage.getBoundingClientRect() : null;
+            const vpRect = this.ui.viewport.getBoundingClientRect();
+            if (!stageRect || !vpRect) {
+                return { x: 0, y: 0, w: 1000000, h: 1000000, visible: true };
+            }
+            const left   = Math.max(stageRect.left,  vpRect.left);
+            const top    = Math.max(stageRect.top,   vpRect.top);
+            const right  = Math.min(stageRect.right, vpRect.right);
+            const bottom = Math.min(stageRect.bottom,vpRect.bottom);
+            if (right <= left || bottom <= top) {
+                return { x: 0, y: 0, w: 0, h: 0, visible: false };
+            }
+            const ctm = antsWrap.getScreenCTM ? antsWrap.getScreenCTM() : null;
+            let inv = null;
+            if (ctm && typeof ctm.inverse === 'function') {
+                try { inv = ctm.inverse(); } catch (_) { inv = null; }
+            }
+            if (!inv) {
+                // CTM inversion failed — fail open (no culling).
+                return { x: 0, y: 0, w: 1000000, h: 1000000, visible: true };
+            }
+            const map = (x, y) => ({
+                x: (inv.a * x) + (inv.c * y) + inv.e,
+                y: (inv.b * x) + (inv.d * y) + inv.f
+            });
+            const p1 = map(left, top),  p2 = map(right, top);
+            const p3 = map(left, bottom), p4 = map(right, bottom);
+            const minX = Math.min(p1.x, p2.x, p3.x, p4.x);
+            const minY = Math.min(p1.y, p2.y, p3.y, p4.y);
+            const maxX = Math.max(p1.x, p2.x, p3.x, p4.x);
+            const maxY = Math.max(p1.y, p2.y, p3.y, p4.y);
+            const origin = map(0, 0);
+            const unitX  = map(1, 0);
+            const unitY  = map(0, 1);
+            const localPerPxX = Math.hypot(unitX.x - origin.x, unitX.y - origin.y);
+            const localPerPxY = Math.hypot(unitY.x - origin.x, unitY.y - origin.y);
+            const pad = 2 * Math.max(localPerPxX, localPerPxY, 1e-6);
+            const clipLeft   = Math.floor(minX - pad);
+            const clipTop    = Math.floor(minY - pad);
+            const clipRight  = Math.ceil(maxX  + pad);
+            const clipBottom = Math.ceil(maxY  + pad);
+            const w = Math.max(0, clipRight  - clipLeft);
+            const h = Math.max(0, clipBottom - clipTop);
+            return { x: clipLeft, y: clipTop, w, h, visible: w > 0 && h > 0 };
         }
 
         updateGlobalOverlays(creatingOverride = null) {
@@ -8640,70 +9782,12 @@ self.onmessage = (e) => {
                     }
                     const clipRect = this.ui.svgAntsClipRect;
                     const antsWrap = this.ui.svgAntsWrap;
-                    let clipX = 0;
-                    let clipY = 0;
-                    let clipW = 0;
-                    let clipH = 0;
-                    let clipVisible = true;
-                    if (clipRect && antsWrap && this.ui.viewport) {
-                        clipVisible = false;
-                        const stageRect = this.ui.stage ? this.ui.stage.getBoundingClientRect() : null;
-                        const vpRect = this.ui.viewport.getBoundingClientRect();
-                        if (stageRect && vpRect) {
-                            const left = Math.max(stageRect.left, vpRect.left);
-                            const top = Math.max(stageRect.top, vpRect.top);
-                            const right = Math.min(stageRect.right, vpRect.right);
-                            const bottom = Math.min(stageRect.bottom, vpRect.bottom);
-                            if (right > left && bottom > top) {
-                                const ctm = antsWrap.getScreenCTM ? antsWrap.getScreenCTM() : null;
-                                let inv = null;
-                                if (ctm && typeof ctm.inverse === 'function') {
-                                    try {
-                                        inv = ctm.inverse();
-                                    } catch (e) {
-                                        inv = null;
-                                    }
-                                }
-                                if (inv) {
-                                    const map = (x, y) => ({
-                                        x: (inv.a * x) + (inv.c * y) + inv.e,
-                                        y: (inv.b * x) + (inv.d * y) + inv.f
-                                    });
-                                    const p1 = map(left, top);
-                                    const p2 = map(right, top);
-                                    const p3 = map(left, bottom);
-                                    const p4 = map(right, bottom);
-                                    const minX = Math.min(p1.x, p2.x, p3.x, p4.x);
-                                    const minY = Math.min(p1.y, p2.y, p3.y, p4.y);
-                                    const maxX = Math.max(p1.x, p2.x, p3.x, p4.x);
-                                    const maxY = Math.max(p1.y, p2.y, p3.y, p4.y);
-                                    const origin = map(0, 0);
-                                    const unitX = map(1, 0);
-                                    const unitY = map(0, 1);
-                                    const localPerPxX = Math.hypot(unitX.x - origin.x, unitX.y - origin.y);
-                                    const localPerPxY = Math.hypot(unitY.x - origin.x, unitY.y - origin.y);
-                                    const pad = 2 * Math.max(localPerPxX, localPerPxY, 1e-6);
-                                    const clipLeft = Math.floor(minX - pad);
-                                    const clipTop = Math.floor(minY - pad);
-                                    const clipRight = Math.ceil(maxX + pad);
-                                    const clipBottom = Math.ceil(maxY + pad);
-                                    clipX = clipLeft;
-                                    clipY = clipTop;
-                                    clipW = Math.max(0, clipRight - clipLeft);
-                                    clipH = Math.max(0, clipBottom - clipTop);
-                                    clipVisible = clipW > 0 && clipH > 0;
-                                } else {
-                                    // CTM inversion failed (e.g. singular matrix on a zero-size SVG).
-                                // Fail open: disable viewport culling rather than producing misaligned ants.
-                                    clipX = 0;
-                                    clipY = 0;
-                                    clipW = 1000000;
-                                    clipH = 1000000;
-                                    clipVisible = true;
-                                }
-                            }
-                        }
-                    }
+                    const clipResult = this._computeAntsClipRect();
+                    let clipX = clipResult.x;
+                    let clipY = clipResult.y;
+                    let clipW = clipResult.w;
+                    let clipH = clipResult.h;
+                    let clipVisible = clipResult.visible;
                     if (clipVisible && clipRect && antsWrap && this.ui.viewport && !hasRot) {
                         const invPathScale = 1 / Math.max(Math.abs(matScale), 1e-6);
                         const qx1 = (clipX - tx) * invPathScale;
@@ -8743,19 +9827,23 @@ self.onmessage = (e) => {
                         this._antsOverlayCache = { selection: sel, path: d, transform, visible, clip };
                     }
                 } else {
-                    const cache = this._antsOverlayCache || { selection: null, path: '', transform: '', visible: false, clip: '0,0,0,0' };
-                    if (cache.visible || cache.clip !== '0,0,0,0') {
-                        if (this.ui.svgAntsClipRect) {
-                            this.ui.svgAntsClipRect.setAttribute('x', '0');
-                            this.ui.svgAntsClipRect.setAttribute('y', '0');
-                            this.ui.svgAntsClipRect.setAttribute('width', '0');
-                            this.ui.svgAntsClipRect.setAttribute('height', '0');
+                    // Do not touch the ants elements while the wand SVG preview owns them.
+                    // _clearWandSvgPreview() relinquishes control and resets the flag.
+                    if (!this._wandSvgPreviewActive) {
+                        const cache = this._antsOverlayCache || { selection: null, path: '', transform: '', visible: false, clip: '0,0,0,0' };
+                        if (cache.visible || cache.clip !== '0,0,0,0') {
+                            if (this.ui.svgAntsClipRect) {
+                                this.ui.svgAntsClipRect.setAttribute('x', '0');
+                                this.ui.svgAntsClipRect.setAttribute('y', '0');
+                                this.ui.svgAntsClipRect.setAttribute('width', '0');
+                                this.ui.svgAntsClipRect.setAttribute('height', '0');
+                            }
+                            if (this.ui.svgAntsPathBack) {
+                                this.ui.svgAntsPathBack.style.display = 'none';
+                            }
+                            this.ui.svgAntsPath.style.display = 'none';
+                            this._antsOverlayCache = { selection: null, path: '', transform: '', visible: false, clip: '0,0,0,0' };
                         }
-                        if (this.ui.svgAntsPathBack) {
-                            this.ui.svgAntsPathBack.style.display = 'none';
-                        }
-                        this.ui.svgAntsPath.style.display = 'none';
-                        this._antsOverlayCache = { selection: null, path: '', transform: '', visible: false, clip: '0,0,0,0' };
                     }
                 }
             }
@@ -9339,7 +10427,7 @@ self.onmessage = (e) => {
             if (!selection) return { x: 0, y: 0, w: 0, h: 0 };
             return this.getNormalizedRect(selection);
         }
-        getSelectionDrawMetrics(selection = this.state.selection, renderCanvas = null) {
+        getSelectionDrawMetrics(selection = this.state.selection, renderCanvas = null, noSnap = false) {
             if (!selection) return null;
             const display = this.getSelectionDisplayRect(selection);
             const rotation = this.getSelectionRotationDegrees(selection);
@@ -9356,7 +10444,7 @@ self.onmessage = (e) => {
                 destY = Math.round(center.y - (drawH / 2));
             }
             const z = this.config.zoom || 1;
-            if (z < 1 && Math.abs(rotation) <= 0.01) {
+            if (z < 1 && Math.abs(rotation) <= 0.01 && !noSnap) {
                 const snapToScreen = (v) => Math.round(v * z) / z;
                 destX = snapToScreen(destX);
                 destY = snapToScreen(destY);
@@ -10096,12 +11184,23 @@ void main() {
             const v = Math.max(0, Math.min(255, Math.round((parseFloat(value) || 0) * 10) / 10));
             const setConfig = opts.setConfig !== false;
             if (setConfig) this.config.wandTolerance = v;
-            if (this.ui.wandThreshold) this.ui.wandThreshold.value = v;
+            if (this.ui.wandThreshold) {
+                this.ui.wandThreshold.value = v;
+                const el = this.ui.wandThreshold;
+                const wrap = el.parentNode;
+                const min = parseFloat(el.min) || 0;
+                const max = parseFloat(el.max) || 255;
+                const pct = ((v - min) / (max - min)) * 100;
+                el.style.setProperty('--pct', pct + '%');
+                if (wrap && wrap.classList.contains('pb-slider-wrap')) {
+                    wrap.style.setProperty('--pct', pct + '%');
+                }
+            }
             if (this.ui.wandThresholdVal) this.ui.wandThresholdVal.textContent = v;
             const applySelection = opts.applySelection !== false;
             if (applySelection && this.state.wandActive && this.state.wandStart && this.state.wandBase) {
                 this.state.wandTol = v;
-                this.magicWandSelectAsync(this.state.wandStart.x, this.state.wandStart.y, v, this.getSelectionOp(this._lastPointerEvent), this.state.wandBase);
+                this._scheduleWandFrame();
             }
         }
 
@@ -10393,6 +11492,13 @@ void main() {
                     diff[i] = m;
                 }
                 this.state.wandDiff = diff;
+                this._wandEntered = this.config.wandMode === 'contiguous'
+                    ? buildPriorityFlood(diff, w, h, Math.floor(p.x), Math.floor(p.y)) : null;
+                const keyArr = this._wandEntered || diff;
+                this._wandSortedIdx = buildSortedDiffIndex(keyArr);
+                this._wandMaskBuf = new Uint8Array(w * h);
+                this._wandSelectedCutoff = -1;
+                this._initWandPreviewWorker(diff, keyArr, this._wandSortedIdx, w, h);
                 this.magicWandSelectAsync(p.x, p.y, this.state.wandTol, this.getSelectionOp(e), this.state.wandBase);
                 return;
             }
@@ -10653,9 +11759,10 @@ void main() {
             }
 
             if (this.config.tool === 'freehand') {
-                if (e.button !== 0) return;
+                if (e.button !== 0 && e.button !== 2) return;
                 this.state.isDrawing = true;
                 this.state.freehandActive = true;
+                this.state.freehandSlot = e.button === 2 ? 2 : 1;
                 this.state.freehandPoints = [];
                 this._freehandInputPoints = [];
                 this._freehandStrokePoints = null;
@@ -10666,11 +11773,12 @@ void main() {
             }
 
             if (this.config.tool === 'paintbrush') {
-                if (e.button !== 0) return;
+                if (e.button !== 0 && e.button !== 2) return;
                 this.state.isDrawing = true;
                 this.state.paintbrushActive = true;
+                this.state.paintbrushSlot = e.button === 2 ? 2 : 1;
                 if (this.brush && this.brush.beginStroke) {
-                    this.brush.beginStroke(p.x, p.y, e.pressure != null ? e.pressure : 0.5, this.getActiveDrawColor(false));
+                    this.brush.beginStroke(pp.x, pp.y, e.pressure != null ? e.pressure : 0.5, this.getActiveDrawColor(this.state.paintbrushSlot === 2));
                 }
                 return;
             }
@@ -10692,31 +11800,38 @@ void main() {
                 this.updateHoverPreview(p.x, p.y);
             } else if(this.config.tool==='gradient') {
                 const _g = this.config.gradient;
-                // If there's an active (placed) gradient, check if pointer is near a handle
                 if (_g.active) {
-                    const _dStart = Math.hypot(p.x - _g.startX, p.y - _g.startY);
-                    const _dEnd   = Math.hypot(p.x - _g.endX,   p.y - _g.endY);
-                    const _hitR   = GRAD_HANDLE_RADIUS + 6; // generous hit zone for cross handles
-                    // Midpoint diamond hit-test (in canvas pixels)
-                    const _mp  = (_g.midpoint != null) ? _g.midpoint : 0.5;
-                    const _mpx = _g.startX + (_g.endX - _g.startX) * _mp;
-                    const _mpy = _g.startY + (_g.endY - _g.startY) * _mp;
-                    const _dMid = Math.hypot(p.x - _mpx, p.y - _mpy);
-                    if (_dMid <= _hitR && _dMid < _dStart && _dMid < _dEnd) {
-                        _g.draggingHandle = 'midpoint';
+                    if (e.button === 2) {
+                        this.gradientDiscard();
                         e.preventDefault();
                         return;
                     }
-                    if (_dStart <= _hitR || _dEnd <= _hitR) {
-                        // Drag whichever handle is closer (prefer start if tied)
-                        _g.draggingHandle = _dStart <= _dEnd ? 'start' : 'end';
+                    if (e.button === 0) {
+                        const _dStart = Math.hypot(p.x - _g.startX, p.y - _g.startY);
+                        const _dEnd   = Math.hypot(p.x - _g.endX,   p.y - _g.endY);
+                        const _hitR   = GRAD_HANDLE_RADIUS + 6;
+                        const _mp  = (_g.midpoint != null) ? _g.midpoint : 0.5;
+                        const _mpx = _g.startX + (_g.endX - _g.startX) * _mp;
+                        const _mpy = _g.startY + (_g.endY - _g.startY) * _mp;
+                        const _dMid = Math.hypot(p.x - _mpx, p.y - _mpy);
+                        if (_dMid <= _hitR && _dMid < _dStart && _dMid < _dEnd) {
+                            _g.draggingHandle = 'midpoint';
+                            e.preventDefault();
+                            return;
+                        }
+                        if (_dStart <= _hitR || _dEnd <= _hitR) {
+                            _g.draggingHandle = _dStart <= _dEnd ? 'start' : 'end';
+                            e.preventDefault();
+                            return;
+                        }
+                        this.gradientApply();
                         e.preventDefault();
                         return;
                     }
-                    // Clicked away from handles → discard current and start a new one
-                    this.gradientDiscard();
+                    return;
                 }
                 // Start placing a new gradient
+                if (e.button !== 0) return;
                 _g.isPlacing = true;
                 _g.active = false;
                 _g.draggingHandle = null;
@@ -10735,7 +11850,7 @@ void main() {
                 this.state.pickerArmed = true;
                 this.state.pickerSlot = isRight ? 2 : 1;
                 this.state.isDrawing = false;
-                this.updatePickerPreviewAt(p.x, p.y);
+                this.updatePickerPreviewAt((e.clientX - this.bounds.left - 2) / this.config.zoom, p.y);
             }
         }
 
@@ -10750,7 +11865,7 @@ void main() {
                 const now = performance.now();
                 if (now - (this.state.pickerPreviewLastSample || 0) >= 16) {
                     this.state.pickerPreviewLastSample = now;
-                    this.updatePickerPreviewAt(p.x, p.y);
+                    this.updatePickerPreviewAt((lastEvent.clientX - this.bounds.left - 2) / this.config.zoom, p.y);
                 }
                 if (this.ui.pickerDot) {
                     this.ui.pickerDot.style.display = 'block';
@@ -10819,14 +11934,13 @@ void main() {
             }
             if (this.state.wandActive && this.config.tool === 'wand') {
                 const dx = e.clientX - this.state.wandStartScreen.x;
-                const dy = e.clientY - this.state.wandStartScreen.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                const deadZone = 4;
-                const tol = dist <= deadZone ? 0 : Math.min(255, Math.round((dist / 3.3333333333) * 10) / 10);
+                const base = this.config.wandTolerance;
+                const tol = Math.max(0, Math.min(255, Math.round((base + dx / 3.3333333333) * 10) / 10));
                 if (tol !== this.state.wandTol) {
                     this.state.wandTol = tol;
-                    if (this.ui.wandThresholdVal) this.ui.wandThresholdVal.textContent = tol;
-                    this.magicWandSelectAsync(this.state.wandStart.x, this.state.wandStart.y, tol, this.getSelectionOp(e), this.state.wandBase);
+                    this.state.wandOp = this.getSelectionOp(e);
+                    this.updateWandThreshold(tol, { setConfig: false, applySelection: false });
+                    this._scheduleWandFrame();
                 }
                 this.updateHoverPreview(p.x, p.y);
                 return;
@@ -11129,18 +12243,18 @@ void main() {
             }
 
             if (this.config.tool === 'paintbrush' && this.state.isDrawing) {
-                var _color = this.getActiveDrawColor(false);
+                var _color = this.getActiveDrawColor(this.state.paintbrushSlot === 2);
                 var _coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
                 if (_coalesced && _coalesced.length > 0) {
                     for (var _ci = 0; _ci < _coalesced.length; _ci++) {
-                        var _cp = this.getMouse(_coalesced[_ci]);
+                        var _cp = this.getMousePrecise(_coalesced[_ci]);
                         if (this.brush && this.brush.moveStroke) {
                             this.brush.moveStroke(_cp.x, _cp.y, _coalesced[_ci].pressure != null ? _coalesced[_ci].pressure : 0.5, _color);
                         }
                     }
                 } else {
                     if (this.brush && this.brush.moveStroke) {
-                        this.brush.moveStroke(p.x, p.y, e.pressure != null ? e.pressure : 0.5, _color);
+                        this.brush.moveStroke(pp.x, pp.y, e.pressure != null ? e.pressure : 0.5, _color);
                     }
                 }
                 this.updateHoverPreview(p.x, p.y);
@@ -11306,16 +12420,22 @@ void main() {
             if (!_g.active) return;
             const _dist = Math.hypot(_g.endX - _g.startX, _g.endY - _g.startY);
             if (_dist > 2) {
-                this.saveState();
                 this.ctx.save();
-                if (this.state.selection) {
-                    const _nr = this.getNormalizedRect(this.state.selection);
-                    this.ctx.beginPath();
-                    this.ctx.rect(_nr.x, _nr.y, _nr.w, _nr.h);
-                    this.ctx.clip();
-                }
                 _gradientRender(this.ctx, _g, this.config.width, this.config.height, this.config.c1, this.config.c2);
+                if (this.state.selection) {
+                    const s = this.state.selection;
+                    if (s.mask) {
+                        this.ctx.globalCompositeOperation = 'destination-in';
+                        this.ctx.drawImage(s.mask, s.x, s.y, s.w, s.h);
+                    } else {
+                        const _nr = this.getNormalizedRect(s);
+                        this.ctx.beginPath();
+                        this.ctx.rect(_nr.x, _nr.y, _nr.w, _nr.h);
+                        this.ctx.clip();
+                    }
+                }
                 this.ctx.restore();
+                this.saveState();
             }
             _g.active = false;
             _g.isPlacing = false;
@@ -11419,12 +12539,16 @@ void main() {
         // Clip the temp canvas gradient preview to the selection bounds.
         _clipGradientToSelection() {
             if (!this.state.selection) return;
-            const nr = this.getNormalizedRect(this.state.selection);
+            const s = this.state.selection;
             const ctx = this.ctxTemp;
             ctx.save();
             ctx.globalCompositeOperation = 'destination-in';
-            ctx.fillStyle = '#000';
-            ctx.fillRect(Math.floor(nr.x), Math.floor(nr.y), Math.ceil(nr.w), Math.ceil(nr.h));
+            if (s.mask) {
+                ctx.drawImage(s.mask, s.x, s.y, s.w, s.h);
+            } else {
+                ctx.fillStyle = '#000';
+                ctx.fillRect(Math.floor(s.x), Math.floor(s.y), Math.ceil(s.w), Math.ceil(s.h));
+            }
             ctx.restore();
         }
 
@@ -11442,6 +12566,7 @@ void main() {
                 return;
             }
             if (this.config.tool === 'pencil') { this.state.pencilCtrlAxis = null; }
+            if (this.config.tool === 'gradient' && !this.config.gradient.isPlacing && !this.config.gradient.draggingHandle) return;
             if (this.config.tool === 'gradient' && (this.config.gradient.isPlacing || this.config.gradient.draggingHandle)) {
                 const _g = this.config.gradient;
                 const _p = this.getMouse(e);
@@ -11477,12 +12602,13 @@ void main() {
                     this._clipGradientToSelection();
                     this._gradientDrawVectorSVG();
                 }
+                this.state.isDrawing = false;
                 return;
             }
             if (this.config.tool === 'picker' && this.state.pickerArmed) {
                 const p = this.getMouse(e);
                 if (p.x >= 0 && p.y >= 0 && p.x < this.config.width && p.y < this.config.height) {
-                    this.pickColor(p.x, p.y, this.state.pickerSlot || (e.button === 2 ? 2 : 1));
+                    this.pickColor((e.clientX - this.bounds.left - 2) / this.config.zoom, p.y, this.state.pickerSlot || (e.button === 2 ? 2 : 1));
                 }
                 this.state.pickerArmed = false;
                 this.setTool(this.state.lastDrawTool || 'pencil');
@@ -11509,7 +12635,9 @@ void main() {
                 this.state.wandBase        = null;
                 this.state.wandDiff        = null;
                 this.state.wandStartScreen = null;
+                if (this._wandSelectRaf) { cancelAnimationFrame(this._wandSelectRaf); this._wandSelectRaf = null; }
                 if (wandBase && wandStart) {
+                    this._clearWandSvgPreview();
                     this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
                     this.magicWandSelect(wandStart.x, wandStart.y, wandTol, selOp, wandBase, true);
                 }
@@ -12005,7 +13133,7 @@ void main() {
             } catch (e) {}
             if (hasSelection) {
                 const s = this.state.selection;
-                selCtx = s.canvas.getContext('2d');
+                selCtx = s.canvas.getContext('2d', { willReadFrequently: true });
                 selW = Math.max(0, Math.floor(Math.abs(s.w)));
                 selH = Math.max(0, Math.floor(Math.abs(s.h)));
                 try {
@@ -12097,7 +13225,7 @@ void main() {
 
             const data = this.ctx.getImageData(x, y, w, h);
             const selC = document.createElement('canvas'); selC.width = w; selC.height = h;
-            const selCtx = selC.getContext('2d');
+            const selCtx = selC.getContext('2d', { willReadFrequently: true });
             this.disableSmoothing(selCtx);
             selCtx.putImageData(data, 0, 0);
 
@@ -12528,7 +13656,7 @@ void main() {
             }
             const mw = mask.width;
             const mh = mask.height;
-            const mctx = mask.getContext('2d');
+            const mctx = mask.getContext('2d', { willReadFrequently: true });
             const img = mctx.getImageData(0, 0, mw, mh).data;
             const edges = [];
             const idx = (x, y) => (y * mw + x) * 4;
@@ -13238,6 +14366,8 @@ void main() {
 
         commitSelection() {
             if(!this.state.selection) return;
+            this.state.wandBase = null;
+            this.state.wandDiff = null;
             this._clearSelAnchorMode();
             const s = this.state.selection;
             s._forceOpaque = false;
@@ -13258,7 +14388,7 @@ void main() {
                 return;
             }
             const renderC = this.getRenderedSelectionCanvas();
-            const metrics = this.getSelectionDrawMetrics(s, renderC);
+            const metrics = this.getSelectionDrawMetrics(s, renderC, true);
 
             this.disableSmoothing(this.ctx);
             if (isDeferred && !changed) {
@@ -13390,7 +14520,7 @@ void main() {
             // fits the rotated diagonal), so either operation would destroy canvas pixels
             // in the corner areas that were never part of the selection.
             const renderC = this.getRenderedSelectionCanvas();
-            const metrics = this.getSelectionDrawMetrics(s, renderC);
+            const metrics = this.getSelectionDrawMetrics(s, renderC, true);
             this.disableSmoothing(this.ctx);
             if (s._deferredCut && s._cutRect) {
                 const cut = s._cutRect;
@@ -13472,12 +14602,11 @@ void main() {
             if(!this.state.selection) return;
             const s = this.state.selection;
             const renderC = this.getRenderedSelectionCanvas();
-            const metrics = this.getSelectionDrawMetrics(s, renderC);
+            const metrics = this.getSelectionDrawMetrics(s, renderC, true);
 
             this.disableSmoothing(this.ctx);
             this.ctx.drawImage(renderC, metrics.destX, metrics.destY);
         }
-
         toggleTransparentSelection() {
             this.config.transparentSelection = !this.config.transparentSelection;
             document.getElementById('item-trans-sel').classList.toggle('checked', this.config.transparentSelection);
@@ -13616,58 +14745,12 @@ void main() {
             const hex = this.rgbToHex(data[0], data[1], data[2]);
             this.updatePickerCursorSwatch(hex);
         }
-        setLassoSelectMode(mode) {
-            this.config.lassoSelectMode = mode === 'poly' ? 'poly' : 'free';
-            if (this.config.tool === 'lasso' && this.state.lassoActive) {
-                this.resetLassoState();
-            }
-            this.setTool(this.config.tool);
-        }
-        invertSelection() {
-            if(!this.state.selection) return;
-            const r = this.getNormalizedRect(this.state.selection);
-            const w = this.config.width;
-            const h = this.config.height;
-            const selC = document.createElement('canvas');
-            selC.width = w;
-            selC.height = h;
-            const selCtx = selC.getContext('2d');
-            this.disableSmoothing(selCtx);
-            selCtx.drawImage(this.ui.cMain, 0, 0);
-            selCtx.clearRect(r.x, r.y, r.w, r.h);
-
-            this.state.selection = {
-                x: 0, y: 0, w: w, h: h, rotation: 0,
-                canvas: selC,
-                originalX: 0, originalY: 0,
-                palette: null,
-                _glTex: null, _glTexDirty: true, _cache: null
-            };
-            this.state.selectionOriginalPos = { x: 0, y: 0, w: w, h: h, rotation: 0 };
-            this.renderSelectionFast();
-            this.deferSelectionRenderFinalize(this.state.selection);
-        }
-
-        cancelSelection() {
-            if(!this.state.selection) return;
-            if(this.state.selectionOriginalPos) {
-                const s = this.state.selection;
-                if (s._cutSavedData && s._cutSavedRect) {
-                    const activeLayer = this.layerMgr && this.layerMgr.active && this.layerMgr.layers[this.layerMgr.activeIdx];
-                    if (activeLayer && activeLayer.alpha !== false) {
-                        activeLayer.ctx.putImageData(s._cutSavedData, s._cutSavedRect.x, s._cutSavedRect.y);
-                    }
-                    s._cutSavedData = null;
-                    s._cutSavedRect = null;
-                }
-                s.x = this.state.selectionOriginalPos.x;
-                s.y = this.state.selectionOriginalPos.y;
-                s.w = this.state.selectionOriginalPos.w;
-                s.h = this.state.selectionOriginalPos.h;
-                s.rotation = this.state.selectionOriginalPos.rotation || 0;
-                s._forceOpaque = false;
-                this.renderSelection();
-            }
+        openPaintbrushMenu(e) {
+            const menu = document.getElementById('paintbrush-menu');
+            if (!menu) return;
+            menu.style.display = 'flex';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
         }
 
         removeSelection() {
@@ -13747,6 +14830,8 @@ void main() {
             const renderC = this.getRenderedSelectionCanvas();
             s._forceOpaque = prevForceOpaque;
             s._cache = null;
+            const oldW = this.config.width;
+            const oldH = this.config.height;
             this.setSize(Math.abs(nw), Math.abs(nh));
             this.ctx.clearRect(0, 0, this.config.width, this.config.height);
             this.disableSmoothing(this.ctx);
@@ -13758,6 +14843,9 @@ void main() {
             this.resetSelectionTempDirty();
             this.renderSelection();
             this.saveState();
+            if (nw < oldW || nh < oldH) {
+                this.centerCanvas();
+            }
         }
 
         flattenCanvasAlpha(ctx, w, h) {
@@ -13785,44 +14873,59 @@ void main() {
                 const h = this.config.height;
                 this.resizeState = { w: w, h: h, ratio: w/h };
             }
-            document.querySelector('input[name="rz-mode"][value="percent"]').checked = true;
-            document.getElementById('rz-h-val').value = 100;
-            document.getElementById('rz-v-val').value = 100;
-            document.getElementById('rz-ratio').checked = true;
+            this.resizeRatioState ??= true;
+            document.getElementById('rz-h-pct').value = 100;
+            document.getElementById('rz-h-px').value  = this.resizeState.w;
+            document.getElementById('rz-v-pct').value = 100;
+            document.getElementById('rz-v-px').value  = this.resizeState.h;
+            document.getElementById('rz-ratio').checked = this.resizeRatioState;
             this.openModal('resize');
             this.updateResizePreview();
         }
 
-        updateResizeInputs() {
-            const mode = document.querySelector('input[name="rz-mode"]:checked').value;
-            const hIn = document.getElementById('rz-h-val');
-            const vIn = document.getElementById('rz-v-val');
-            if(mode === 'percent') {
-                hIn.value = 100;
-                vIn.value = 100;
-            } else {
-                hIn.value = this.resizeState.w;
-                vIn.value = this.resizeState.h;
-            }
-            this.updateResizePreview();
-        }
-
-        onResizeInput(axis) {
+        onResizeInput(axis, unit) {
+            const hPct = document.getElementById('rz-h-pct');
+            const hPx = document.getElementById('rz-h-px');
+            const vPct = document.getElementById('rz-v-pct');
+            const vPx = document.getElementById('rz-v-px');
             const maintain = document.getElementById('rz-ratio').checked;
-            const mode = document.querySelector('input[name="rz-mode"]:checked').value;
-            const hIn = document.getElementById('rz-h-val');
-            const vIn = document.getElementById('rz-v-val');
-            const ratio = this.resizeState.ratio;
-            if(!maintain) {
-                this.updateResizePreview();
-                return;
-            }
-            if(mode === 'percent') {
-                if(axis === 'h') vIn.value = hIn.value;
-                else hIn.value = vIn.value;
+            const fmt = (n) => {
+                const r = Math.round(n * 100) / 100;
+                return String(r);
+            };
+            const hBase = this.resizeState.w;
+            const vBase = this.resizeState.h;
+            let curPct, curPx;
+            if (axis === 'h') {
+                if (unit === 'pct') {
+                    curPct = parseFloat(hPct.value) || 0;
+                    curPx = Math.max(1, Math.round(hBase * curPct / 100));
+                    hPx.value = curPx;
+                } else {
+                    curPx = parseFloat(hPx.value) || 0;
+                    curPct = curPx / hBase * 100;
+                    hPct.value = fmt(curPct);
+                }
             } else {
-                if(axis === 'h') vIn.value = Math.round(hIn.value / ratio);
-                else hIn.value = Math.round(vIn.value * ratio);
+                if (unit === 'pct') {
+                    curPct = parseFloat(vPct.value) || 0;
+                    curPx = Math.max(1, Math.round(vBase * curPct / 100));
+                    vPx.value = curPx;
+                } else {
+                    curPx = parseFloat(vPx.value) || 0;
+                    curPct = curPx / vBase * 100;
+                    vPct.value = fmt(curPct);
+                }
+            }
+            if (maintain) {
+                const factor = curPct / 100;
+                if (axis === 'h') {
+                    vPct.value = fmt(curPct);
+                    vPx.value = Math.max(1, Math.round(vBase * factor));
+                } else {
+                    hPct.value = fmt(curPct);
+                    hPx.value = Math.max(1, Math.round(hBase * factor));
+                }
             }
             this.updateResizePreview();
         }
@@ -15807,6 +16910,7 @@ void main() {
                     this.saveState();
                 }
             } finally {
+                this._closeActiveSidebar(true);
                 this.endOperation();
             }
         }
@@ -15817,6 +16921,11 @@ void main() {
             this.config.c2 = temp;
             document.getElementById('c1-disp').style.backgroundColor = this.config.c1;
             document.getElementById('c2-disp').style.backgroundColor = this.config.c2;
+            const _swapStops = this.config.gradient.stops;
+            if (_swapStops && _swapStops.length >= 2) {
+                _swapStops[0].color = this.config.c1;
+                _swapStops[_swapStops.length - 1].color = this.config.c2;
+            }
             if (this.config.tool === 'gradient' && (this.config.gradient.active || this.config.gradient.isPlacing)) {
                 const _g = this.config.gradient;
                 this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
@@ -15824,6 +16933,7 @@ void main() {
                 this._clipGradientToSelection();
                 this._gradientDrawVectorSVG();
             }
+            if (this._renderGradBar) this._renderGradBar();
         }
 
         replaceColorAt(x, y) {
@@ -15996,8 +17106,54 @@ void main() {
             this.setColor(hex, slot);
         }
         applyStageTransform() {
-            const off = this.state.canvasOffset || { x: 0, y: 0 };
-            this.ui.stage.style.transform = `translate(${off.x}px, ${off.y}px) scale(${this.config.zoom})`;
+            var off = this.state.canvasOffset || { x: 0, y: 0 };
+            this.ui.stage.style.transform = 'translate(' + off.x + 'px, ' + off.y + 'px) scale(' + this.config.zoom + ')';
+        }
+        _updateSidebarViewportShift(smoothHandles) {
+            const anyOpen = (document.getElementById('unified-sidebar')?.classList.contains('hidden') === false) ||
+                document.getElementById('freehand-sidebar')?.classList.contains('open') ||
+                document.getElementById('paintbrush-sidebar')?.classList.contains('open') ||
+                document.getElementById('gradient-sidebar')?.classList.contains('open');
+            const shift = this.config.anchorCanvas && anyOpen ? 290 : 0;
+            if (!this.ui.viewport) return;
+            if (smoothHandles) {
+                const hc = document.getElementById('canvas-resize-handles');
+                if (hc) hc.classList.add('smooth');
+                clearTimeout(this._handleSmoothTimer);
+                this._handleSmoothTimer = setTimeout(() => {
+                    const el = document.getElementById('canvas-resize-handles');
+                    if (el) el.classList.remove('smooth');
+                }, 300);
+            }
+            let predictedBounds = null;
+            if (smoothHandles && this.bounds) {
+                const wasOpen = this.ui.viewport.classList.contains('sidebar-open');
+                const willBeOpen = shift !== 0;
+                if (wasOpen !== willBeOpen) {
+                    const delta = willBeOpen ? 280 : -280;
+                    predictedBounds = {
+                        left: this.bounds.left + delta,
+                        top: this.bounds.top,
+                        right: this.bounds.right + delta,
+                        bottom: this.bounds.bottom,
+                        width: this.bounds.width,
+                        height: this.bounds.height
+                    };
+                }
+            }
+            this.ui.viewport.classList.toggle('sidebar-open', shift !== 0);
+            if (predictedBounds) {
+                const saved = this.bounds;
+                this.bounds = predictedBounds;
+                this.updateCanvasResizeHandles();
+                this.bounds = saved;
+                if (this.config.anchorCanvas) {
+                    this.requestGlobalOverlayUpdate();
+                }
+            } else if (this.config.anchorCanvas) {
+                this.updateBounds();
+                this.requestGlobalOverlayUpdate();
+            }
         }
         clampCanvasOffset(off) {
             if (!this.config.anchorCanvas || !this.ui.viewport) return off;
@@ -16029,10 +17185,16 @@ void main() {
         }
         updateViewportScrollability() {
             if (!this.ui.viewport) return;
+            if (!this.config.anchorCanvas) {
+                this.ui.viewport.style.overflowX = 'hidden';
+                this.ui.viewport.style.overflowY = 'hidden';
+                return;
+            }
             const zoom = this.config.zoom || 1;
             const stageW = this.config.width * zoom;
             const stageH = this.config.height * zoom;
-            const vpW = this.ui.viewport.clientWidth;
+            const sidebarOff = this.ui.viewport.classList.contains('sidebar-open') ? 290 : 0;
+            const vpW = this.ui.viewport.clientWidth - sidebarOff;
             const vpH = this.ui.viewport.clientHeight;
             const needsX = stageW > vpW;
             const needsY = stageH > vpH;
@@ -16042,14 +17204,8 @@ void main() {
         }
         clampViewportScroll() {
             if (!this.ui.viewport || !this.config.anchorCanvas) return;
-            const pad = 20;
-            const zoom = this.config.zoom || 1;
-            const stageW = this.config.width * zoom;
-            const stageH = this.config.height * zoom;
-            const vpW = this.ui.viewport.clientWidth;
-            const vpH = this.ui.viewport.clientHeight;
-            const maxX = Math.max(0, Math.round(stageW + pad - vpW));
-            const maxY = Math.max(0, Math.round(stageH + pad - vpH));
+            const maxX = Math.max(0, Math.round(this.ui.viewport.scrollWidth - this.ui.viewport.clientWidth));
+            const maxY = Math.max(0, Math.round(this.ui.viewport.scrollHeight - this.ui.viewport.clientHeight));
             const nextLeft = Math.min(maxX, Math.max(0, this.ui.viewport.scrollLeft));
             const nextTop = Math.min(maxY, Math.max(0, this.ui.viewport.scrollTop));
             if (nextLeft !== this.ui.viewport.scrollLeft) this.ui.viewport.scrollLeft = nextLeft;
@@ -16078,20 +17234,29 @@ void main() {
         }
         toggleAnchorCanvas(isAnchored) {
             const next = isAnchored === undefined ? !this.config.anchorCanvas : !!isAnchored;
+            const vp = this.ui.viewport;
+            if (vp) vp.classList.add('no-pad-transition');
             this.config.anchorCanvas = next;
             this.lsSet('paint.anchorCanvas', this.config.anchorCanvas ? 'true' : 'false');
             // Free mode removes fixed padding so the stage can move within the viewport.
-            if (this.ui.viewport) {
-                this.ui.viewport.classList.toggle('free-canvas', !this.config.anchorCanvas);
+            if (vp) {
+                vp.classList.toggle('free-canvas', !this.config.anchorCanvas);
             }
             if (this.config.anchorCanvas) {
+                this.state.savedFreeOffset = { x: this.state.canvasOffset.x, y: this.state.canvasOffset.y };
                 this.state.canvasOffset = { x: 0, y: 0 };
+            } else {
+                if (this.state.savedFreeOffset) {
+                    this.state.canvasOffset = { x: this.state.savedFreeOffset.x, y: this.state.savedFreeOffset.y };
+                }
             }
+            this._updateSidebarViewportShift();
             this.applyStageTransform();
             this.updateBounds();
             this.requestGlobalOverlayUpdate();
             this.updateGridOverlay();
             this.updateAnchorStatus();
+            if (vp) vp.classList.remove('no-pad-transition');
             /* Auto-center when entering free canvas mode */
             if (!this.config.anchorCanvas) {
                 requestAnimationFrame(() => this.centerCanvas());
@@ -16144,8 +17309,8 @@ void main() {
             this.requestGlobalOverlayUpdate();
         }
         setTool(t) {
-            // Don't commit selection when switching to gradient — it clips the gradient
-            if(this.state.selection && t !== 'gradient' && (t!=='select' || this.config.tool==='select')) this.commitSelection();
+            // Don't commit selection when entering/exiting gradient — it clips the gradient
+            if(this.state.selection && t !== 'gradient' && this.config.tool !== 'gradient' && (t!=='select' || this.config.tool==='select')) this.commitSelection();
             if(this.state.activeShape && t!==this.state.activeShape.type) this.commitActiveShape();
             if(this.state.polyActive && t!=='poly') this.commitPolyline();
             if (this.state.lassoActive && t!=='lasso') {
@@ -16163,9 +17328,11 @@ void main() {
                 this.state.wandMaskCanvas = null;
                 this.state.wandMaskImageData = null;
                 this.state.wandDiff = null;
+                if (this._wandSelectRaf) { cancelAnimationFrame(this._wandSelectRaf); this._wandSelectRaf = null; }
                 this._wandPreviewImageData = null;
                 this._wandPreviewBuffer = null;
                 this._wandStack = null;
+                this._clearWandSvgPreview();
             }
             if (this.state.smartPencilActive && t !== 'pencil') {
                 this.finishSmartPencilStroke();
@@ -16180,6 +17347,7 @@ void main() {
             }
             // Commit a live gradient when switching away
             if (this.config.tool === 'gradient' && t !== 'gradient') {
+                this.state.isDrawing = false;
                 if (this.config.gradient.active) this.gradientApply();
                 else { this.config.gradient.isPlacing = false; this.config.gradient.draggingHandle = null; this.ctxTemp.clearRect(0,0,this.config.width,this.config.height); this._gradientClearVectorSVG(); }
                 // Restore selection handles when leaving gradient tool
@@ -16223,15 +17391,25 @@ void main() {
             const _freehandSidebar = document.getElementById('freehand-sidebar');
             if (_freehandSidebar) {
                 _freehandSidebar.classList.toggle('open', t === 'freehand');
-                _freehandSidebar.classList.toggle('hidden', t !== 'freehand');
             }
             const _freehandReopen = document.getElementById('freehand-reopen-btn');
             if (_freehandReopen) _freehandReopen.classList.remove('show');
             const _pbSidebar = document.getElementById('paintbrush-sidebar');
             if (_pbSidebar) {
                 _pbSidebar.classList.toggle('open', t === 'paintbrush');
-                _pbSidebar.classList.toggle('hidden', t !== 'paintbrush');
             }
+            const _pbReopen = document.getElementById('pb-reopen-btn');
+            if (_pbReopen) _pbReopen.classList.remove('show');
+            const _gradSidebar = document.getElementById('gradient-sidebar');
+            if (_gradSidebar) {
+                _gradSidebar.classList.toggle('open', t === 'gradient');
+            }
+            const _gradReopen = document.getElementById('gradient-reopen-btn');
+            if (_gradReopen) _gradReopen.classList.remove('show');
+            if (_gradSidebar && t === 'gradient' && this._renderGradBar) {
+                this._renderGradBar();
+            }
+            this._updateSidebarViewportShift(true);
             document.querySelectorAll('.btn, .btn-icon, .split-btn-container').forEach(b=>b.classList.remove('active'));
             const b = document.querySelector(`[data-tool="${t}"]`);
             if(b) b.classList.add('active');
@@ -16269,6 +17447,9 @@ void main() {
                 cancelAnimationFrame(this.strokeRaf);
                 this.strokeRaf = null;
             }
+        }
+        setLassoSelectMode(mode) {
+            this.config.lassoSelectMode = mode === 'poly' ? 'poly' : 'free';
         }
         setSelectTool(mode) {
             if (mode) this.config.selectTool = mode === 'lasso' ? 'lasso' : 'select';
@@ -16354,6 +17535,7 @@ void main() {
             this.renderWinLum(hsl.H, hsl.S);
             this.positionWinMarkers(hsl.H, hsl.S, hsl.L);
             if (this.ui.winSample) this.ui.winSample.style.backgroundColor = this.winColorSelected;
+            this._livePreviewSwatch();
             this.updateWinBppUI();
             modal.style.display = 'flex';
             this.centerWinColor();
@@ -16364,6 +17546,25 @@ void main() {
                 const orig = this._paletteSwatchEditTarget.dataset.fixedPaletteColor;
                 if (orig) this._paletteSwatchEditTarget.style.backgroundColor = orig;
                 this.enforceFixedPaletteSwatchStyles();
+            } else {
+                // Restore ribbon and sidebar swatches to their pre-edit colors
+                const slot = this.config.activeSlot;
+                const origHex = slot === 1 ? this.config.c1 : this.config.c2;
+                const el = document.getElementById('c' + slot + '-disp');
+                if (el) el.style.backgroundColor = origHex;
+                const swatchId = slot === 1 ? 'fh-fill-swatch' : 'fh-stroke-swatch';
+                const swatch = document.getElementById(swatchId);
+                if (swatch) swatch.style.backgroundColor = origHex;
+            }
+            if (this._gradStopEditTarget != null) {
+                const idx = this._gradStopEditTarget;
+                const bak = this._gradStopEditBackup;
+                this._gradStopEditTarget = null;
+                this._gradStopEditBackup = null;
+                if (bak && this.config.gradient.stops && this.config.gradient.stops[idx]) {
+                    this.config.gradient.stops[idx].color = bak;
+                    if (this._renderGradBar) this._renderGradBar();
+                }
             }
             this._paletteSwatchEditTarget = null;
             document.getElementById('modal-wincolor').style.display = 'none';
@@ -16449,6 +17650,31 @@ void main() {
             document.getElementById('wincolor-define-btn').disabled = true;
         }
         applyWinColor() {
+            if (this._gradStopEditTarget != null) {
+                const idx = this._gradStopEditTarget;
+                this._gradStopEditTarget = null;
+                const chosen = this.winColorSelected;
+                if (this.config.gradient.stops && this.config.gradient.stops[idx]) {
+                    this.config.gradient.stops[idx].color = chosen;
+                    if (this._renderGradBar) this._renderGradBar();
+                    if (this._gradRefresh) this._gradRefresh();
+                    const _gs = this.config.gradient.stops;
+                    if (_gs && _gs.length >= 2) {
+                        if (idx === 0) {
+                            this.config.c1 = _gs[0].color;
+                            const el = document.getElementById('c1-disp');
+                            if (el) el.style.backgroundColor = _gs[0].color;
+                        }
+                        if (idx === _gs.length - 1) {
+                            this.config.c2 = _gs[idx].color;
+                            const el = document.getElementById('c2-disp');
+                            if (el) el.style.backgroundColor = _gs[idx].color;
+                        }
+                    }
+                }
+                this.closeWinColor();
+                return;
+            }
             if (this._paletteSwatchEditTarget) {
                 const swatchEl = this._paletteSwatchEditTarget;
                 this._paletteSwatchEditTarget = null;
@@ -16537,10 +17763,41 @@ void main() {
             if (this.ui.winSample) this.ui.winSample.style.backgroundColor = this.winColorSelected;
             this.updateWinBppUI();
             this._livePreviewPaletteSwatchEdit();
+            this._livePreviewSwatch();
         }
         _livePreviewPaletteSwatchEdit() {
             if (!this._paletteSwatchEditTarget) return;
             this._paletteSwatchEditTarget.style.backgroundColor = this.winColorSelected;
+        }
+        _livePreviewSwatch() {
+            if (!this.winColorSelected) return;
+            if (this._gradStopEditTarget != null) {
+                const idx = this._gradStopEditTarget;
+                if (this.config.gradient.stops && this.config.gradient.stops[idx]) {
+                    this.config.gradient.stops[idx].color = this.winColorSelected;
+                    if (this._renderGradBar) this._renderGradBar();
+                    const _gs = this.config.gradient.stops;
+                    if (_gs && _gs.length >= 2) {
+                        if (idx === 0) {
+                            this.config.c1 = _gs[0].color;
+                            const el = document.getElementById('c1-disp');
+                            if (el) el.style.backgroundColor = _gs[0].color;
+                        }
+                        if (idx === _gs.length - 1) {
+                            this.config.c2 = _gs[idx].color;
+                            const el = document.getElementById('c2-disp');
+                            if (el) el.style.backgroundColor = _gs[idx].color;
+                        }
+                    }
+                }
+                return;
+            }
+            const slot = this.config.activeSlot;
+            const el = document.getElementById('c' + slot + '-disp');
+            if (el) el.style.backgroundColor = this.winColorSelected;
+            const swatchId = slot === 1 ? 'fh-fill-swatch' : 'fh-stroke-swatch';
+            const swatch = document.getElementById(swatchId);
+            if (swatch) swatch.style.backgroundColor = this.winColorSelected;
         }
         setWinInputs(rgb, hsl) {
             document.getElementById('win-r').value = Math.round(rgb.r);
@@ -16569,6 +17826,7 @@ void main() {
             if (this.ui.winSample) this.ui.winSample.style.backgroundColor = this.winColorSelected;
             this.updateWinBppUI();
             this._livePreviewPaletteSwatchEdit();
+            this._livePreviewSwatch();
         }
         updateWinFromHsl(keepHsl = false) {
             const H = Math.max(0, Math.min(239, parseInt(document.getElementById('win-h').value, 10) || 0));
@@ -16592,6 +17850,7 @@ void main() {
             if (this.ui.winSample) this.ui.winSample.style.backgroundColor = this.winColorSelected;
             this.updateWinBppUI();
             this._livePreviewPaletteSwatchEdit();
+            this._livePreviewSwatch();
         }
         setWinColorTab(tab) {
             const isBpp = !!this.winColorQuantMode;
@@ -16669,6 +17928,7 @@ void main() {
             if (this.ui.winSample) this.ui.winSample.style.backgroundColor = this.winColorSelected;
             if (this.ui.winBppPreview) this.ui.winBppPreview.style.backgroundColor = this.winColorSelected;
             this._livePreviewPaletteSwatchEdit();
+            this._livePreviewSwatch();
         }
         quantizeWinColorRgb(r, g, b) {
             if (this.winColorQuantMode === 'rgb565') return this.quantizeRgb565(r, g, b);
@@ -16947,6 +18207,12 @@ void main() {
             if (this.config.tool === 'path' && FreehandPathEngine.isActive() && this.state.freehandPathSlot === s) {
                 FreehandPathEngine.setColor(this.getActiveDrawColor(s === 2));
             }
+            // Sync gradient stop colors with c1/c2 when stops are initialized
+            const _stops = this.config.gradient.stops;
+            if (_stops && _stops.length >= 2) {
+                if (s === 1) _stops[0].color = c;
+                else _stops[_stops.length - 1].color = c;
+            }
             // Live-update gradient preview when a color changes while the gradient is active or being placed
             if (this.config.tool === 'gradient' && (this.config.gradient.active || this.config.gradient.isPlacing)) {
                 const _g = this.config.gradient;
@@ -16955,6 +18221,7 @@ void main() {
                 this._clipGradientToSelection();
                 this._gradientDrawVectorSVG();
             }
+            if (this._renderGradBar) this._renderGradBar();
             this.selectSlot(s);
         }
         isShapeTool(t) {
@@ -17169,28 +18436,6 @@ void main() {
             const q = this.strokeQueue;
             this.strokeQueue = [];
             this.strokeRaf = null;
-            // Compute dirty bounds from all queued strokes for partial tile readback.
-            if (this.tileHistory.enabled && q.length > 0) {
-                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-                for (let i = 0; i < q.length; i++) {
-                    const s = q[i];
-                    const hw = Math.ceil((s.width || 1) / 2) + 1;
-                    const x0 = Math.min(s.x0, s.x1) - hw;
-                    const x1 = Math.max(s.x0, s.x1) + hw;
-                    const y0 = Math.min(s.y0, s.y1) - hw;
-                    const y1 = Math.max(s.y0, s.y1) + hw;
-                    if (x0 < minX) minX = x0;
-                    if (y0 < minY) minY = y0;
-                    if (x1 > maxX) maxX = x1;
-                    if (y1 > maxY) maxY = y1;
-                }
-                const cw = this.config.width, ch = this.config.height;
-                const x = Math.max(0, Math.floor(minX));
-                const y = Math.max(0, Math.floor(minY));
-                const w = Math.min(cw, Math.ceil(maxX)) - x;
-                const h = Math.min(ch, Math.ceil(maxY)) - y;
-                if (w > 0 && h > 0) this._markDirty(x, y, w, h);
-            }
             const webglGroups = new Map();
             const webglQuadGroups = new Map();
             const cpu = [];
@@ -17415,6 +18660,9 @@ void main() {
             } else if (t === 'paintbrush') {
                 if (!this.config.paintbrush) this.config.paintbrush = { size: 12 };
                 this.config.paintbrush.size = n;
+                if (this.brush && typeof this.brush.setParam === 'function') {
+                    this.brush.setParam('size', n);
+                }
             } else if (this.isShapeTool(t)) {
                 this.config.shapeWidth = n;
                 if(this.state.activeShape) {
@@ -17595,8 +18843,6 @@ void main() {
             this.config.height=h;
             this.tileHistory.enabled = this.shouldUseTiledHistory(w, h);
             this.tileHistory.tileSize = this._chooseTileSize(w, h);
-            this._canvasResizedSinceLastSave = true;
-            this._markDirty(0, 0, w, h);
             this.ui.cMain.width=w;
             this.ui.cMain.height=h;
             this.ui.cTemp.width=w;
@@ -17624,6 +18870,7 @@ void main() {
             this.deferColorCounts();
             this.updateViewportScrollability();
             this.updateGridOverlay();
+            this._applyMemoryBudget();
         }
         shouldUseTiledHistory(w, h) {
             return (w * h) >= this.tileHistory.thresholdPixels;
@@ -17637,11 +18884,18 @@ void main() {
         }
         _applyMemoryBudget() {
             const gb = navigator.deviceMemory || 8;
-            if (gb <= 4) {
-                this.tileHistory.anchorInterval = 5;
-                if (this.historyLimit > 20) this.historyLimit = 20;
-            } else if (gb >= 16) {
-                this.tileHistory.anchorInterval = 15;
+            // Adaptive undo depth by canvas size. Each tiled/flat history entry can be
+            // up to a full-canvas snapshot for detailed art, so a fixed limit of 50 is
+            // catastrophic on huge docs. Only auto-tune when adaptive mode is enabled.
+            if (this._historyAdaptive) {
+                const px = (this.config.width || 0) * (this.config.height || 0);
+                let limit = 50;
+                if (px >= 64 * 1024 * 1024) limit = 12;
+                else if (px >= 16 * 1024 * 1024) limit = 20;
+                else if (px >= 2 * 1024 * 1024) limit = 30;
+                if (gb <= 4 && limit > 20) limit = 20;
+                this.historyLimit = limit;
+                this._syncHistoryLimitInput();
             }
         }
         getSolidTileColor(data) {
@@ -17683,17 +18937,13 @@ void main() {
             }
             return out;
         }
-        // Expand the dirty rect to include the given region (used by draw ops
-        // to avoid full-canvas readback in captureTiledSnapshot).
-        _markDirty(x, y, w, h) {
-            if (!this._dirtyBounds) {
-                this._dirtyBounds = { x1: x, y1: y, x2: x + w, y2: y + h };
-            } else {
-                if (x < this._dirtyBounds.x1) this._dirtyBounds.x1 = x;
-                if (y < this._dirtyBounds.y1) this._dirtyBounds.y1 = y;
-                if (x + w > this._dirtyBounds.x2) this._dirtyBounds.x2 = x + w;
-                if (y + h > this._dirtyBounds.y2) this._dirtyBounds.y2 = y + h;
+        _rleEqual(a, b) {
+            if (a === b) return true;
+            if (a.length !== b.length) return false;
+            for (let i = 0; i < a.length; i++) {
+                if (a[i] !== b[i]) return false;
             }
+            return true;
         }
         captureTiledSnapshot(canvas, prevTiles) {
             const tileSize = this.tileHistory.tileSize;
@@ -17701,134 +18951,57 @@ void main() {
             const height = canvas.height;
             const ctx = canvas.getContext('2d');
             const tiles = [];
-            const tileMap = new Map();
-
-            // First saveState (initializeBlankDocument): canvas was just filled with
-            // solid white — skip the 100MB readback entirely.
-            if (!prevTiles && this.state.step < 0) {
-                const bgColor = [255, 255, 255, 255];
-                for (let y = 0; y < height; y += tileSize) {
-                    for (let x = 0; x < width; x += tileSize) {
-                        const tw = Math.min(tileSize, width - x);
-                        const th = Math.min(tileSize, height - y);
-                        tiles.push({ x, y, w: tw, h: th, solid: bgColor });
-                        tileMap.set(x + ',' + y, { solid: bgColor });
-                    }
-                }
-                return { width, height, tileSize, tiles, tileMap };
+            const maxTileBytes = tileSize * tileSize * 4;
+            if (!this._tileCopyBuf || this._tileCopyBuf.length < maxTileBytes) {
+                this._tileCopyBuf = new Uint8ClampedArray(maxTileBytes);
             }
-
-            // Strip readback: reads tileSize-high bands (~4 MB at 4K) instead of
-            // one full-canvas readback (~67 MB at 4K). Each strip contains exactly
-            // one row of tiles, so no tile crosses a strip boundary.
-            // When a dirty rect is known (delta save), only read strips that intersect it.
-            const db = prevTiles && this._dirtyBounds;
-            // Reset dirtyBounds after consuming — next draw expands it fresh.
-            this._dirtyBounds = null;
-            for (let stripY = 0; stripY < height; stripY += tileSize) {
-                const stripH = Math.min(tileSize, height - stripY);
-                // Skip the entire strip readback if it doesn't intersect the dirty rect.
-                if (db && (stripY + stripH <= db.y1 || stripY >= db.y2)) {
-                    for (let x = 0; x < width; x += tileSize) {
-                        const key = x + ',' + stripY;
-                        const prev = prevTiles.get(key);
-                        if (prev) {
-                            tileMap.set(key, prev);
-                        } else {
-                            tileMap.set(key, {});
-                        }
-                    }
-                    continue;
+            let prevMap = null;
+            if (prevTiles) {
+                prevMap = new Map();
+                for (const t of prevTiles) {
+                    prevMap.set(t.x + ',' + t.y, t);
                 }
-                const readX0 = db ? Math.max(0, db.x1) : 0;
-                const readX1 = db ? Math.min(width, db.x2) : width;
-                const readW = readX1 - readX0;
-                const strip = ctx.getImageData(readX0, stripY, readW, stripH);
+            }
+            for (let y = 0; y < height; y += tileSize) {
+                const stripH = Math.min(tileSize, height - y);
+                const strip = ctx.getImageData(0, y, width, stripH);
                 const stripData = strip.data;
-                const y = stripY;
                 for (let x = 0; x < width; x += tileSize) {
-                    const tw = Math.min(tileSize, width - x);
-                    const th = Math.min(tileSize, height - y);
-                    // Outside dirty rect: carry forward from prevTiles
-                    if (db && (x + tw <= db.x1 || x >= db.x2)) {
-                        const key = x + ',' + y;
-                        const prev = prevTiles.get(key);
-                        if (prev) {
-                            tileMap.set(key, prev);
-                            continue;
-                        }
+                    const w = Math.min(tileSize, width - x);
+                    const h = Math.min(tileSize, height - y);
+                    const tileData = this._tileCopyBuf.subarray(0, w * h * 4);
+                    for (let row = 0; row < h; row++) {
+                        const srcOffset = (row * width + x) * 4;
+                        tileData.set(stripData.subarray(srcOffset, srcOffset + w * 4), row * w * 4);
                     }
-                    const tileData = new Uint8ClampedArray(tw * th * 4);
-                    if (x >= readX0 && x < readX1) {
-                        for (let row = 0; row < th; row++) {
-                            const srcOffset = (row * readW + (x - readX0)) * 4;
-                            tileData.set(stripData.subarray(srcOffset, srcOffset + tw * 4), row * tw * 4);
-                        }
-                    } else {
-                        for (let row = 0; row < th; row++) {
-                            const srcOffset = (row * width + x) * 4;
-                            tileData.set(stripData.subarray(srcOffset, srcOffset + tw * 4), row * tw * 4);
-                        }
-                    }
-                    const key = x + ',' + y;
                     const solid = this.getSolidTileColor(tileData);
-                    const rle = solid ? null : this._rleEncode(tileData);
-                    if (prevTiles) {
-                        const prev = prevTiles.get(key);
-                        if (prev) {
-                            if (solid && prev.solid && solid[0] === prev.solid[0] && solid[1] === prev.solid[1] && solid[2] === prev.solid[2] && solid[3] === prev.solid[3]) {
-                                tileMap.set(key, prev);
-                                continue;
-                            }
-                            if (rle && prev.rle && rle.length === prev.rle.length) {
-                                let same = true;
-                                for (let qi = 0; qi < rle.length; qi++) { if (rle[qi] !== prev.rle[qi]) { same = false; break; } }
-                                if (same) { tileMap.set(key, prev); continue; }
-                            }
-                        }
-                    }
                     if (solid) {
-                        tiles.push({ x, y, w: tw, h: th, solid });
-                        tileMap.set(key, { solid });
+                        tiles.push({ x, y, w, h, solid });
                     } else {
-                        tiles.push({ x, y, w: tw, h: th, rle });
-                        tileMap.set(key, { rle });
+                        const rle = this._rleEncode(tileData);
+                        if (prevMap) {
+                            const prev = prevMap.get(x + ',' + y);
+                            if (prev && prev.rle && this._rleEqual(prev.rle, rle)) {
+                                tiles.push({ x, y, w, h, rle: prev.rle });
+                            } else {
+                                tiles.push({ x, y, w, h, rle });
+                            }
+                        } else {
+                            tiles.push({ x, y, w, h, rle });
+                        }
                     }
                 }
             }
-            return { width, height, tileSize, tiles, tileMap };
+            return { width, height, tileSize, tiles };
         }
         applyTiledSnapshot(snapshot) {
             const ctx = this.ctx;
             const { width, height, tiles } = snapshot;
-            // ── Batch adjacent non-solid tiles for fewer GPU uploads ──
-            // Adjacent tiles in the same row share the same strip context and can
-            // be merged into a single putImageData call.  At 5000×5000 with 256²
-            // tiles this reduces ~400 calls to ~20-40, significantly cutting GPU
-            // upload overhead on undo/redo.
-            const nonSolid = tiles.filter(t => !t.solid);
-            nonSolid.sort((a, b) => a.y - b.y || a.x - b.x);
-            const merged = [];
-            for (const tile of nonSolid) {
+            for (const tile of tiles) {
+                if (tile.solid) continue;
                 const data = tile.rle ? this._rleDecode(tile.rle, tile.w, tile.h) : tile.data;
-                if (merged.length) {
-                    const prev = merged[merged.length - 1];
-                    if (tile.y === prev.y && tile.x === prev.x + prev.w) {
-                        // Merge horizontally: extend width, concatenate pixel data
-                        const comb = new Uint8ClampedArray((prev.w + tile.w) * tile.h * 4);
-                        comb.set(prev.data);
-                        comb.set(data, prev.w * tile.h * 4);
-                        prev.data = comb;
-                        prev.w += tile.w;
-                        continue;
-                    }
-                }
-                merged.push({ x: tile.x, y: tile.y, w: tile.w, h: tile.h, data });
+                ctx.putImageData(new ImageData(data, tile.w, tile.h), tile.x, tile.y);
             }
-            for (const m of merged) {
-                ctx.putImageData(new ImageData(m.data, m.w, m.h), m.x, m.y);
-            }
-            // Paint solid tiles (clearRect for transparent, fillRect otherwise).
             for (const tile of tiles) {
                 if (!tile.solid) continue;
                 const r = tile.solid[0];
@@ -17850,21 +19023,7 @@ void main() {
         restoreHistoryEntry(entry, stepIdx) {
             this.setSize(entry.width, entry.height);
             this.disableSmoothing(this.ctx);
-            if (entry.tiles && entry.isDelta) {
-                // Walk backward to find the nearest full anchor
-                let anchorStep = (stepIdx || 0) - 1;
-                while (anchorStep >= 0 && this.state.history[anchorStep].isDelta) anchorStep--;
-                if (anchorStep >= 0) {
-                    this.ctx.clearRect(0, 0, entry.width, entry.height);
-                    this.applyTiledSnapshot(this.state.history[anchorStep]);
-                    for (let ri = anchorStep + 1; ri <= (stepIdx || 0); ri++) {
-                        this.applyTiledSnapshot(this.state.history[ri]);
-                    }
-                } else {
-                    this.ctx.clearRect(0, 0, entry.width, entry.height);
-                    this.applyTiledSnapshot(entry);
-                }
-            } else if (entry.tiles) {
+            if (entry.tiles) {
                 this.ctx.clearRect(0, 0, entry.width, entry.height);
                 this.applyTiledSnapshot(entry);
             } else if (entry.bitmap) {
@@ -17955,28 +19114,10 @@ void main() {
                 for (const e of dropped) this._closeBitmapEntry(e);
             }
             if (this.tileHistory.enabled) {
-                const stepsSinceAnchor = this.state.step - this._lastAnchorStep;
-                const forceAnchor = stepsSinceAnchor < 0
-                    || stepsSinceAnchor >= this.tileHistory.anchorInterval
-                    || this._canvasResizedSinceLastSave
-                    || stepsSinceAnchor >= this.tileHistory.maxDeltaWalk;
-                const prevTiles = forceAnchor ? null : this._prevTileMap;
-                // If no dirty rect was set since the last save, default to full canvas.
-                if (prevTiles && !this._dirtyBounds) {
-                    this._markDirty(0, 0, this.config.width, this.config.height);
-                }
-                const snapshot = this.captureTiledSnapshot(this.ui.cMain, prevTiles);
-                this._prevTileMap = snapshot.tileMap;
-                this._canvasResizedSinceLastSave = false;
-                const entry = {
-                    tiles: snapshot.tiles,
-                    width: snapshot.width,
-                    height: snapshot.height,
-                    isDelta: snapshot.tiles.length > 0 && !forceAnchor && prevTiles !== null
-                };
-                if (!entry.isDelta || this._lastAnchorStep < 0) this._lastAnchorStep = this.state.step + 1;
-                entry._anchorStep = this._lastAnchorStep;
-                this.state.history.push(entry);
+                const prevEntry = this.state.history[this.state.step];
+                const prevTiles = prevEntry && prevEntry.tiles && prevEntry.width === this.ui.cMain.width && prevEntry.height === this.ui.cMain.height ? prevEntry.tiles : null;
+                const tiles = this.captureTiledSnapshot(this.ui.cMain, prevTiles);
+                this.state.history.push({ tiles: tiles.tiles, width: tiles.width, height: tiles.height });
                 this.state.step++;
                 this.enforceHistoryLimit();
                 this.state.isDirty = true;
@@ -18034,6 +19175,13 @@ void main() {
                 _wsm.getContext('2d').drawImage(_ws.mask, 0, 0);
                 _wandEntry.wandSelSnap = { x: _ws.x, y: _ws.y, w: _ws.w, h: _ws.h, canvas: _wsc, mask: _wsm };
             }
+            // Free the brush engine's full-canvas offscreen buffers (flow/scratch/bg) once a
+            // committed state no longer needs them. They are recreated lazily on the next
+            // stroke. Skipped while a stroke is mid-flight (isDrawing) to avoid yanking a
+            // buffer out from under an active dab paint.
+            if (!this.state.isDrawing && this.brush && typeof this.brush.releaseOffscreenBuffers === 'function') {
+                this.brush.releaseOffscreenBuffers();
+            }
         }
         collapseSelectionCutStep() {
             const cutStep = this.state.selectionCutStep;
@@ -18046,6 +19194,7 @@ void main() {
             this.state.selectionCutStep = null;
         }
         undo() {
+            if (this.state.isDrawing && this.config.tool === 'paintbrush') return;
             // For an active Magic Wand selection, cancel it silently (do NOT commit
             // pixels to the canvas) so the canvas snapshot in history remains the
             // authoritative source.  This enables step-by-step wand undo: each Ctrl+Z
@@ -18111,6 +19260,7 @@ void main() {
             this.updateTitleBarActions();
         }
         redo() {
+            if (this.state.isDrawing && this.config.tool === 'paintbrush') return;
             this.cancelPendingStrokes();
             if (this.state.curveUndo) {
                 const draft = this.state.curveUndo;
@@ -18150,16 +19300,17 @@ void main() {
             }
             this.updateTitleBarActions();
         }
-        execCopy() {
+        async execCopy() {
             if(this.state.selection) {
                 const c=document.createElement('canvas');
                 c.width=this.state.selection.w;
                 c.height=this.state.selection.h;
-                c.getContext('2d').drawImage(this.state.selection.canvas,0,0);
+                const ctx = c.getContext('2d');
+                ctx.drawImage(this.state.selection.canvas,0,0);
                 c.toBlob(blob => navigator.clipboard.write([new ClipboardItem({'image/png': blob})]));
             }
         }
-        execCut() { this.execCopy(); this.deleteSelection(); }
+        async execCut() { await this.execCopy(); this.deleteSelection(); }
         async execPaste() {
             try {
                 const items = await navigator.clipboard.read();
@@ -18171,8 +19322,8 @@ void main() {
                         return;
                     }
                 }
-                alert("No image on clipboard");
-            } catch (e) { alert("Paste failed or denied: " + e); }
+                showToast("No image on clipboard", 'warning');
+            } catch (e) { showToast("Paste failed or denied: " + e, 'error'); }
         }
         toggleMenu(e, id) {
             e.stopPropagation();
@@ -18205,6 +19356,42 @@ void main() {
         closeMenus() {
             document.querySelectorAll('.dropdown-menu').forEach(x=>x.style.display='none');
         }
+        _promptName(title, cb) {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            overlay.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:99999;';
+            const box = document.createElement('div');
+            box.className = 'modal';
+            box.style.cssText = 'background:var(--bg,#1e1e1e);color:var(--fg,#eee);padding:16px;border-radius:8px;min-width:260px;box-shadow:0 4px 24px rgba(0,0,0,0.4);';
+            const label = document.createElement('div');
+            label.textContent = title;
+            label.style.cssText = 'margin-bottom:8px;font-weight:600;';
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.style.cssText = 'width:100%;box-sizing:border-box;padding:6px;margin-bottom:12px;';
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+            const cancel = document.createElement('button');
+            cancel.textContent = 'Cancel';
+            const ok = document.createElement('button');
+            ok.textContent = 'OK';
+            ok.style.cssText = 'font-weight:600;';
+            row.appendChild(cancel);
+            row.appendChild(ok);
+            box.appendChild(label);
+            box.appendChild(input);
+            box.appendChild(row);
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            input.focus();
+            const onKey = (e) => { if (e.key === 'Escape') { close(); } else if (e.key === 'Enter') { done(); } };
+            const close = () => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); document.removeEventListener('keydown', onKey); };
+            const done = () => { const v = input.value.trim(); if (!v) { showToast('Please enter a name.', 'warning'); input.focus(); return; } close(); cb(v); };
+            ok.addEventListener('click', done);
+            cancel.addEventListener('click', () => { close(); });
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+            document.addEventListener('keydown', onKey);
+        }
         _enterPopupMode(id) {
             this._inPopup = true;
             ['title-bar','huesat-split-handle','ribbon','viewport','status-bar'].forEach(eid => {
@@ -18215,21 +19402,14 @@ void main() {
             this.openModal(id);
         }
         async openModal(id) {
-            if (!this._inPopup && ['tool-customizer'].includes(id)) {
-                const tauriInvoke = this.getTauriInvokeFn();
-                if (tauriInvoke) {
-                    localStorage.setItem('paint.popupModal', id);
-                    try {
-                        await this.tauriInvoke('create_popup_window');
-                        return;
-                    } catch(e) {
-                        localStorage.removeItem('paint.popupModal');
-                    }
-                }
-            }
             if (id === 'export') {
                 this.openExportModal();
                 return;
+            }
+
+            if (id === 'gapstitch') {
+                const m = document.getElementById('modal-gapstitch');
+                if (m && m.style.display === 'flex') { this.closeGapStitchModal(); return; }
             }
 
             if (id === 'props') {
@@ -18245,10 +19425,17 @@ void main() {
                     h = this.config.height;
                 }
                 this.resizeState = { w: w, h: h, ratio: w/h };
-                document.querySelector('input[name="rz-mode"][value="percent"]').checked = true;
-                document.getElementById('rz-h-val').value = 100;
-                document.getElementById('rz-v-val').value = 100;
-                document.getElementById('rz-ratio').checked = true;
+                this.resizeRatioState ??= true;
+                document.getElementById('rz-h-pct').value = 100;
+                document.getElementById('rz-h-px').value  = this.resizeState.w;
+                document.getElementById('rz-v-pct').value = 100;
+                document.getElementById('rz-v-px').value  = this.resizeState.h;
+                document.getElementById('rz-ratio').checked = this.resizeRatioState;
+                if (this._activeSidebarModalId === 'resize') return;
+                if (this._loadSidebarUIMode('resize') === 'sidebar') {
+                    this._openUnifiedSidebar('resize');
+                    return;
+                }
             }
             if(id==='depth') {
                 let depthVal = '256';
@@ -18267,9 +19454,19 @@ void main() {
                 backup.height = source.height;
                 backup.getContext('2d').drawImage(source, 0, 0);
                 this.depthBackup = backup;
+                if (this._activeSidebarModalId === 'depth') return;
+                if (this._loadSidebarUIMode('depth') === 'sidebar') {
+                    this._openUnifiedSidebar('depth');
+                    return;
+                }
             }
             if(id==='huesat') {
                 this.openHueSat();
+                if (this._activeSidebarModalId === 'huesat') return;
+                if (this._loadSidebarUIMode('huesat') === 'sidebar') {
+                    this._openUnifiedSidebar('huesat');
+                    return;
+                }
             }
             if(id==='colors') {
                 if (!this.colorDefaults || !this.colorStyleEl) {
@@ -18299,16 +19496,9 @@ void main() {
                 setTimeout(() => this.checkForUpdates(), 0);
             }
             document.getElementById('modal-'+id).style.display='flex';
-            /* Default positioning for these two modals. */
-            if (id === 'resize') {
-                this.positionResizeModal();
-                this.updateResizePreview();
-            }
-            if (id === 'depth') {
-                this.centerModal('modal-' + id);
-                setTimeout(() => { const b = document.getElementById('depth-apply-btn'); if (b) b.focus(); }, 0);
-            }
-            if (id === 'huesat') this.centerModal('modal-' + id);
+            if (id === 'resize') { this.positionResizeModal(); this.updateResizePreview(); }
+            if (id === 'depth') { this.centerModal('modal-'+id); setTimeout(()=>{const b=document.getElementById('depth-apply-btn');if(b)b.focus();},0); }
+            if (id === 'huesat') this.centerModal('modal-'+id);
             this.syncThemeColorsModelessMode();
         }
         safeHttpUrl(url) {
@@ -18520,13 +19710,35 @@ void main() {
             this.syncThemeColorsModelessMode();
         }
         closeModals(options = {}) {
+            // If a panel is docked in the sidebar, move it to body and hide it,
+            // but keep the sidebar open so the user can re-open via its tab
+            if (this._activeSidebarModalId) {
+                const dockedId = this._activeSidebarModalId;
+                const modal = document.getElementById('modal-' + dockedId);
+                const sidebar = document.getElementById('unified-sidebar');
+                if (modal && sidebar && modal.parentNode !== document.body) {
+                    document.body.appendChild(modal);
+                }
+                if (modal) modal.style.display = 'none';
+                const btnId = dockedId === 'huesat' ? 'hs-sidebar-toggle-btn' : dockedId + '-sidebar-toggle-btn';
+                const btn = document.getElementById(btnId);
+                if (btn) { btn.title = 'Dock as sidebar'; btn.innerHTML = this.getSidebarDockIcon(); }
+                this._activeSidebarModalId = null;
+                this._updateSidebarTabVisibility();
+            }
             const keepColorsOpen = options.keepColorsOpen !== false;
             const colorsModal = document.getElementById('modal-colors');
             const shouldKeepColors = !!(keepColorsOpen && colorsModal && colorsModal.style.display === 'flex');
             document.querySelectorAll('.modal-mask').forEach(m => {
                 if (shouldKeepColors && m.id === 'modal-colors') return;
                 m.style.display = 'none';
+                // If this was a floated sidebar modal, un-float its tab
+                const mid = m.id.replace('modal-', '');
+                if (this._floatedModals && this._floatedModals[mid]) {
+                    delete this._floatedModals[mid];
+                }
             });
+            this._updateSidebarTabVisibility();
             if (!shouldKeepColors) {
                 this.toggleThemeSelectMode(false);
             }
@@ -18883,28 +20095,16 @@ void main() {
                 this.requestGlobalOverlayUpdate();
                 return;
             }
-            const mode = document.querySelector('input[name="rz-mode"]:checked').value;
-            const hIn = parseFloat(document.getElementById('rz-h-val').value);
-            const vIn = parseFloat(document.getElementById('rz-v-val').value);
+            const hp = this.normalizeResizePercent(parseFloat(document.getElementById('rz-h-pct').value) || 0);
+            const vp = this.normalizeResizePercent(parseFloat(document.getElementById('rz-v-pct').value) || 0);
             const base = this.state.selection ? {
                 x: this.state.selection.x,
                 y: this.state.selection.y,
                 w: this.state.selection.w,
                 h: this.state.selection.h
             } : { x: 0, y: 0, w: this.config.width, h: this.config.height };
-            let newW = base.w;
-            let newH = base.h;
-            if (mode === 'percent') {
-                const hp = this.normalizeResizePercent(hIn);
-                const vp = this.normalizeResizePercent(vIn);
-                newW = Math.round(base.w * (hp / 100));
-                newH = Math.round(base.h * (vp / 100));
-            } else {
-                newW = Math.round(hIn);
-                newH = Math.round(vIn);
-            }
-            newW = Math.max(1, newW);
-            newH = Math.max(1, newH);
+            let newW = Math.max(1, Math.round(base.w * (hp / 100)));
+            let newH = Math.max(1, Math.round(base.h * (vp / 100)));
             this.state.resizePreviewActive = true;
             this.state.resizePreviewRect = { x: base.x, y: base.y, w: newW, h: newH };
             this.state.resizePreviewGhost = { x: base.x, y: base.y, w: base.w, h: base.h };
@@ -18916,9 +20116,9 @@ void main() {
             return v;
         }
         async applyResize() {
-            const mode = document.querySelector('input[name="rz-mode"]:checked').value;
-            const hIn = parseFloat(document.getElementById('rz-h-val').value);
-            const vIn = parseFloat(document.getElementById('rz-v-val').value);
+            const mode = 'percent';
+            const hIn = parseFloat(document.getElementById('rz-h-pct').value);
+            const vIn = parseFloat(document.getElementById('rz-v-pct').value);
             const skH = parseFloat(document.getElementById('sk-h-val').value || '0');
             const skV = parseFloat(document.getElementById('sk-v-val').value || '0');
             const skewX = Math.tan((skH || 0) * Math.PI / 180);
@@ -18938,7 +20138,7 @@ void main() {
                     newH = Math.round(vIn);
                 }
                 if (!Number.isFinite(newW) || !Number.isFinite(newH) || newW < 1 || newH < 1) {
-                    alert('Please enter valid resize dimensions.');
+                    showToast('Please enter valid resize dimensions.', 'warning');
                     return;
                 }
                 let tempC = document.createElement('canvas');
@@ -18993,7 +20193,7 @@ void main() {
                     newH = Math.round(vIn);
                 }
                 if (!Number.isFinite(newW) || !Number.isFinite(newH) || newW < 1 || newH < 1) {
-                    alert('Please enter valid resize dimensions.');
+                    showToast('Please enter valid resize dimensions.', 'warning');
                     return;
                 }
                 const bitmap = await this.getBitmap(this.ui.cMain);
@@ -19042,13 +20242,15 @@ void main() {
                 this.ctx.drawImage(tempC, 0, 0);
                 this.saveState();
             }
+            this.resizeRatioState = document.getElementById('rz-ratio').checked;
+            this._closeActiveSidebar(true);
             this.closeModals();
         }
         async applyProps() {
             const w = parseInt(document.getElementById('pr-w').value, 10);
             const h = parseInt(document.getElementById('pr-h').value, 10);
             if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1 || w > 65535 || h > 65535) {
-                alert('Please enter valid width and height values between 1 and 65535.');
+                showToast('Please enter valid width and height values between 1 and 65535.', 'warning');
                 return;
             }
             const bitmap = await this.getBitmap(this.ui.cMain);
@@ -19374,17 +20576,12 @@ void main() {
         }
         autoDetectBackground(mode) {
             const pal = this.state.exportPalette;
-            const w = this.config.width;
             const h = this.config.height;
             const ctx = this.ui.cMain.getContext('2d');
-            const data = ctx.getImageData(0, 0, w, h).data;
-
-            let targetIdx = 0;
-            if (mode === 'bl') targetIdx = (h - 1) * w * 4;
-
-            const r = data[targetIdx];
-            const g = data[targetIdx + 1];
-            const b = data[targetIdx + 2];
+            let px = 0, py = 0;
+            if (mode === 'bl') py = h - 1;
+            const pixel = ctx.getImageData(px, py, 1, 1).data;
+            const r = pixel[0], g = pixel[1], b = pixel[2];
 
             const existingIdx = pal.findIndex(c => Math.abs(c.r - r) < 2 && Math.abs(c.g - g) < 2 && Math.abs(c.b - b) < 2);
 
@@ -19991,7 +21188,7 @@ void main() {
                     queueFile(palStr, `${prefix}${isShiny ? 'shiny' : 'normal'}.pal`, true);
                 }
                 if (!queuedFiles.length) {
-                    alert('No export files are selected.');
+                    showToast('No export files are selected.', 'warning');
                     return;
                 }
 
@@ -20004,7 +21201,7 @@ void main() {
                 this.closeModals();
             } catch (e) {
                 console.error("Export Error:", e);
-                alert("Export Failed:\n" + e);
+                showToast("Export Failed: " + e, 'error');
             }
         }
         doExport() {
@@ -20032,6 +21229,11 @@ void main() {
         }
 
         handleFile(f, isPaste = false) {
+            if (!isPaste && this.hasUnsavedChanges()) {
+                const file = f;
+                this.showOpenConfirm(() => this.handleFile(file, false), 'Opening a new file');
+                return;
+            }
             if (isPaste && this.config.transparentSelection && this.config.transAutoPaste) {
                 this.handlePastedFileWithConversions(f);
                 return;
@@ -20062,23 +21264,19 @@ void main() {
         }
 
         async handlePastedFileWithConversions(f) {
-            const variants = await this.decodeImageVariants(f);
-            if (!variants.length) {
-                const img = await this.loadImageFromBlob(f);
-                this.handleLoadedImage(img, true);
-                return;
-            }
-            const w = variants[0].canvas.width;
-            const h = variants[0].canvas.height;
-            this.ensurePasteCanvasFits(w, h);
-
+            let firstW = null, firstH = null;
             let best = null;
             const tol = this.config.transTol ?? 12;
             const mode = this.config.transMode === 'edge' ? 'edge' : 'all';
+            let sawVariant = false;
 
-            for (const variant of variants) {
-                const c = variant.canvas;
-                const cCtx = this.get2dContext(c);
+            await this.evaluateDecodedImageVariants(f, async (c, cCtx, label) => {
+                sawVariant = true;
+                if (firstW === null) {
+                    firstW = c.width;
+                    firstH = c.height;
+                    this.ensurePasteCanvasFits(c.width, c.height);
+                }
                 this.normalizeCanvasColors(cCtx, c.width, c.height);
                 const imgData = cCtx.getImageData(0, 0, c.width, c.height);
                 let bg = null;
@@ -20086,20 +21284,34 @@ void main() {
                 else if (this.config.transMode === 'c2') bg = this.hexToRgb(this.config.c2);
                 else bg = this.sampleBorderColorFromImageData(imgData, c.width, c.height) || this.hexToRgb(this.config.c2);
                 const keyCount = this.countTransparencyKeyMatches(imgData, c.width, c.height, bg, tol, mode);
-                const candidate = { canvas: c, ctx: cCtx, bg, keyCount };
-                if (!best || candidate.keyCount > best.keyCount) best = candidate;
+
+                if (!best || keyCount > best.keyCount) {
+                    const bestCanvas = document.createElement('canvas');
+                    bestCanvas.width = c.width;
+                    bestCanvas.height = c.height;
+                    const bestCtx = this.get2dContext(bestCanvas);
+                    this.disableSmoothing(bestCtx);
+                    bestCtx.drawImage(c, 0, 0);
+                    best = { canvas: bestCanvas, ctx: bestCtx, bg, keyCount, label };
+                }
+            });
+
+            if (!best) {
+                if (!sawVariant) {
+                    const img = await this.loadImageFromBlob(f);
+                    this.handleLoadedImage(img, true);
+                }
+                return;
             }
 
-            if (best) {
-                let keyMask = null;
-                if (best.bg) {
-                    const imgData = best.ctx.getImageData(0, 0, best.canvas.width, best.canvas.height);
-                    keyMask = this.buildTransparencyKeyMask(imgData, best.canvas.width, best.canvas.height, best.bg, tol, mode);
-                }
-                await this.applyCurrentModeToCanvasAsync(best.ctx, best.canvas.width, best.canvas.height, true);
-                if (keyMask) this.applyTransparencyMaskToCanvas(best.ctx, best.canvas.width, best.canvas.height, keyMask);
-                this.finalizePastedSelection(best.canvas);
+            let keyMask = null;
+            if (best.bg) {
+                const imgData = best.ctx.getImageData(0, 0, best.canvas.width, best.canvas.height);
+                keyMask = this.buildTransparencyKeyMask(imgData, best.canvas.width, best.canvas.height, best.bg, tol, mode);
             }
+            await this.applyCurrentModeToCanvasAsync(best.ctx, best.canvas.width, best.canvas.height, true);
+            if (keyMask) this.applyTransparencyMaskToCanvas(best.ctx, best.canvas.width, best.canvas.height, keyMask);
+            this.finalizePastedSelection(best.canvas);
         }
         async handleLoadedImage(img, isPaste) {
             if (isPaste) {
@@ -20285,8 +21497,17 @@ self.onmessage = function(e) {
     self.postMessage({ buffer, changed: true }, [buffer]);
 };`;
             const blob = new Blob([src], { type: 'application/javascript' });
-            this._floodFillWorker = new Worker(URL.createObjectURL(blob));
-            return this._floodFillWorker;
+            const url = URL.createObjectURL(blob);
+            const worker = new Worker(url);
+            this._floodFillWorker = worker;
+            const revokeUrl = () => {
+                URL.revokeObjectURL(url);
+                worker.removeEventListener('message', revokeUrl);
+                worker.removeEventListener('error', revokeUrl);
+            };
+            worker.addEventListener('error', revokeUrl);
+            worker.addEventListener('message', revokeUrl);
+            return worker;
         }
 
         floodFill(startX, startY, targetColor) {
@@ -20313,22 +21534,12 @@ self.onmessage = function(e) {
             const minY = tileBounds ? tileBounds.y : 0;
             const maxY = tileBounds ? tileBounds.y + tileBounds.h - 1 : height - 1;
 
-            // Fast path: single-color canvas means the fill region is always the entire
-            // bounds. Skip pixel iteration entirely and use a single fillRect.
+            // Fast path: single-color canvas — no-op if clicking the same color.
             if (this._lastKnownColorCount === 1) {
-                const startIdx = (startY * width + startX) * 4;
                 const probe = this.ctx.getImageData(startX, startY, 1, 1).data;
                 const sameColor = probe[0] === targetColor.r && probe[1] === targetColor.g
                                && probe[2] === targetColor.b && probe[3] === 255;
-                if (!sameColor) {
-                    this.ctx.save();
-                    this.ctx.fillStyle = `rgb(${targetColor.r},${targetColor.g},${targetColor.b})`;
-                    this.ctx.fillRect(minX, minY, maxX - minX + 1, maxY - minY + 1);
-                    this.ctx.restore();
-                    if (this.tileModeEnabled) this.replicateCenterTile();
-                    this.saveState();
-                }
-                return;
+                if (sameColor) return;
             }
 
             const imageData = this.ctx.getImageData(0, 0, width, height);
@@ -20440,7 +21651,7 @@ self.onmessage = function(e) {
         buildMaskFromPolygon(points, w, h) {
             const c = document.createElement('canvas');
             c.width = w; c.height = h;
-            const ctx = c.getContext('2d');
+            const ctx = c.getContext('2d', { willReadFrequently: true });
             ctx.clearRect(0,0,w,h);
             ctx.fillStyle = '#000';
             ctx.beginPath();
@@ -20457,11 +21668,11 @@ self.onmessage = function(e) {
             const mw = this.config.width, mh = this.config.height;
             const mask = document.createElement('canvas');
             mask.width = mw; mask.height = mh;
-            const mctx = mask.getContext('2d');
+            const mctx = mask.getContext('2d', { willReadFrequently: true });
             mctx.clearRect(0,0,mw,mh);
             const tmp = document.createElement('canvas');
             tmp.width = rc.width; tmp.height = rc.height;
-            const tctx = tmp.getContext('2d');
+            const tctx = tmp.getContext('2d', { willReadFrequently: true });
             tctx.drawImage(rc, 0, 0);
             const img = tctx.getImageData(0, 0, tmp.width, tmp.height);
             const d = img.data;
@@ -20486,7 +21697,7 @@ self.onmessage = function(e) {
             if (selMask) {
                 const selFull = document.createElement('canvas');
                 selFull.width = w; selFull.height = h;
-                const sctx = selFull.getContext('2d');
+                const sctx = selFull.getContext('2d', { willReadFrequently: true });
                 sctx.clearRect(0,0,w,h);
                 if (this.state.selection) {
                     const nr = this.getNormalizedRect(this.state.selection);
@@ -20557,13 +21768,13 @@ self.onmessage = function(e) {
             const selH = maxY - minY + 1;
             const selC = document.createElement('canvas');
             selC.width = selW; selC.height = selH;
-            const selCtx = selC.getContext('2d');
+            const selCtx = selC.getContext('2d', { willReadFrequently: true });
             this.disableSmoothing(selCtx);
             const selImgOut = selCtx.createImageData(selW, selH);
             const sd = selImgOut.data;
             const maskSel = document.createElement('canvas');
             maskSel.width = selW; maskSel.height = selH;
-            const maskCtx = maskSel.getContext('2d');
+            const maskCtx = maskSel.getContext('2d', { willReadFrequently: true });
             const maskImg = maskCtx.createImageData(selW, selH);
             const md = maskImg.data;
 
@@ -20684,12 +21895,12 @@ self.onmessage = function(e) {
             if (!mask || mask.width !== width || mask.height !== height) {
                 mask = document.createElement('canvas');
                 mask.width = width; mask.height = height;
-                mctx = mask.getContext('2d');
+                mctx = mask.getContext('2d', { willReadFrequently: true });
                 mimg = mctx.createImageData(width, height);
                 this.state.wandMaskCanvas = mask;
                 this.state.wandMaskImageData = mimg;
             } else {
-                mctx = mask.getContext('2d');
+                mctx = mask.getContext('2d', { willReadFrequently: true });
                 mimg = this.state.wandMaskImageData;
             }
             const md = mimg.data;
@@ -20734,55 +21945,401 @@ self.onmessage = function(e) {
             const mask = this._wandPreviewBuffer;
             mask.fill(0);
             if (this.config.wandMode === 'global') {
-                for (let i = 0; i < diff.length; i++) {
-                    if (diff[i] <= tolerance) mask[i] = 1;
+                if (this._wandSortedIdx) {
+                    const res = applyToleranceIncremental(diff, this._wandSortedIdx, this._wandSelectedCutoff, tolerance, mask, w);
+                    this._wandSelectedCutoff = res.cutoff;
+                } else {
+                    for (let i = 0; i < diff.length; i++)
+                        if (diff[i] <= tolerance) mask[i] = 1;
                 }
                 return mask;
             }
-            if (!this._wandStack || this._wandStack.length < w * h * 2) {
-                this._wandStack = new Int32Array(w * h * 2);
-            }
-            let sp = 0;
-            const push = (x, y) => {
-                this._wandStack[sp++] = x;
-                this._wandStack[sp++] = y;
-            };
-            push(Math.floor(startX), Math.floor(startY));
-            while (sp > 0) {
-                const y = this._wandStack[--sp];
-                const x = this._wandStack[--sp];
-                if (x < 0 || x >= w || y < 0 || y >= h) continue;
-                const idx = y * w + x;
-                if (mask[idx]) continue;
-                if (diff[idx] > tolerance) continue;
-                mask[idx] = 1;
-                push(x + 1, y);
-                push(x - 1, y);
-                push(x, y + 1);
-                push(x, y - 1);
+            if (this._wandEntered && this._wandSortedIdx) {
+                const res = applyToleranceIncremental(this._wandEntered, this._wandSortedIdx, this._wandSelectedCutoff, tolerance, mask, w);
+                this._wandSelectedCutoff = res.cutoff;
+            } else {
+                if (!this._wandStack || this._wandStack.length < w * h * 2) {
+                    this._wandStack = new Int32Array(w * h * 2);
+                }
+                let sp = 0;
+                const push = (x, y) => {
+                    this._wandStack[sp++] = x;
+                    this._wandStack[sp++] = y;
+                };
+                push(Math.floor(startX), Math.floor(startY));
+                while (sp > 0) {
+                    const y = this._wandStack[--sp];
+                    const x = this._wandStack[--sp];
+                    if (x < 0 || x >= w || y < 0 || y >= h) continue;
+                    const idx = y * w + x;
+                    if (mask[idx]) continue;
+                    if (diff[idx] > tolerance) continue;
+                    mask[idx] = 1;
+                    push(x + 1, y);
+                    push(x - 1, y);
+                    push(x, y + 1);
+                    push(x, y - 1);
+                }
             }
             return mask;
         }
-        renderWandLivePreview(maskData, w, h) {
-            if (!maskData) return;
-            this.ctxTemp.clearRect(0, 0, w, h);
-            if (!this._wandPreviewImageData || this._wandPreviewImageData.width !== w || this._wandPreviewImageData.height !== h) {
-                this._wandPreviewImageData = this.ctxTemp.createImageData(w, h);
+        _scheduleWandFrame() {
+            if (this._wandSelectRaf) return;
+            const jobId = ++this.state.wandJobId;
+            this._wandSelectRaf = requestAnimationFrame(() => this._processWandDrag(jobId));
+        }
+        _processWandDrag(jobId) {
+            this._wandSelectRaf = null;
+            if (!this.state.wandActive || this.state.wandJobId !== jobId) return;
+            const tol = this.state.wandTol;
+            const op = this.state.wandOp || 'replace';
+            if (op === 'replace') {
+                // Prefer the worker: it never blocks the main thread on mask
+                // compute + boundary tracing, so pointer handling and other UI
+                // stay responsive even on a large/noisy canvas at a high
+                // threshold. Falls back to the synchronous path (unchanged
+                // output) if the worker isn't available/ready.
+                if (!this._postWandWorkerUpdate(tol, jobId)) {
+                    this._lightweightWandUpdate(tol, jobId).then();
+                }
+            } else {
+                this.magicWandSelectAsync(this.state.wandStart.x, this.state.wandStart.y, tol, op, this.state.wandBase);
             }
-            const img = this._wandPreviewImageData;
-            const d = img.data;
-            for (let i = 0; i < maskData.length; i++) {
-                const idx = i * 4;
-                if (maskData[i]) {
-                    d[idx] = 0;
-                    d[idx + 1] = 120;
-                    d[idx + 2] = 215;
-                    d[idx + 3] = 100;
+        }
+        async _lightweightWandUpdate(tolerance, jobId) {
+            const w = this.config.width, h = this.config.height;
+            const diff = this.state.wandDiff;
+            if (!diff) return;
+            if (!this._wandPreviewBuffer || this._wandPreviewBuffer.length !== w * h)
+                this._wandPreviewBuffer = new Uint8Array(w * h);
+            const mask = this._wandPreviewBuffer;
+            mask.fill(0);
+            if (this.config.wandMode === 'global') {
+                if (this._wandSortedIdx) {
+                    const res = applyToleranceIncremental(diff, this._wandSortedIdx, this._wandSelectedCutoff, tolerance, mask, w);
+                    this._wandSelectedCutoff = res.cutoff;
                 } else {
-                    d[idx + 3] = 0;
+                    for (let i = 0; i < diff.length; i++)
+                        if (diff[i] <= tolerance) mask[i] = 1;
+                }
+                // Stale job — leave current ants visible; next job will overwrite.
+                if (this.state.wandJobId !== jobId) return;
+                const pathStr = this._maskToSvgPath(mask, w, h);
+                if (this.state.wandJobId !== jobId) return;
+                this.ctxTemp.clearRect(0, 0, w, h);
+                this._applyWandSvgPreview(pathStr);
+                return;
+            }
+            if (this._wandEntered && this._wandSortedIdx) {
+                const res = applyToleranceIncremental(this._wandEntered, this._wandSortedIdx, this._wandSelectedCutoff, tolerance, mask, w);
+                this._wandSelectedCutoff = res.cutoff;
+            } else {
+                const stackLen = w * h * 2;
+                if (!this._wandStack || this._wandStack.length < stackLen)
+                    this._wandStack = new Int32Array(stackLen);
+                let sp = 0;
+                const push = (x, y) => { this._wandStack[sp++] = x; this._wandStack[sp++] = y; };
+                push(Math.floor(this.state.wandStart.x), Math.floor(this.state.wandStart.y));
+                let steps = 0;
+                while (sp > 0) {
+                    if (this.state.wandJobId !== jobId) return;
+                    const y = this._wandStack[--sp], x = this._wandStack[--sp];
+                    if (x < 0 || x >= w || y < 0 || y >= h) continue;
+                    const idx = y * w + x;
+                    if (mask[idx]) continue;
+                    if (diff[idx] > tolerance) continue;
+                    mask[idx] = 1;
+                    push(x + 1, y); push(x - 1, y); push(x, y + 1); push(x, y - 1);
+                    steps++;
+                    if (steps % 20000 === 0) await new Promise(requestAnimationFrame);
                 }
             }
-            this.ctxTemp.putImageData(img, 0, 0);
+            // Stale job — leave current ants visible; next job will overwrite.
+            if (this.state.wandJobId !== jobId) return;
+            const pathStr = this._maskToSvgPath(mask, w, h);
+            if (this.state.wandJobId !== jobId) return;
+            this.ctxTemp.clearRect(0, 0, w, h);
+            this._applyWandSvgPreview(pathStr);
+        }
+
+        /**
+         * Convert a Uint8Array binary mask (1=selected, 0=not) into an SVG path
+         * string that is identical in format to what committed selections use.
+         *
+         * Strategy: paint the mask into a scratch canvas as alpha values, then
+         * delegate to buildMaskOutlineData which traces connected boundary loops,
+         * simplifies collinear segments, and returns the joined path string.
+         * This ensures the preview ants look and animate exactly like committed ants.
+         */
+        /**
+         * Convert a Uint8Array binary mask (1=selected, 0=not) to an SVG path
+         * string of connected boundary loops — identical in visual quality to what
+         * buildMaskOutlineData produces for committed selections, but operating
+         * entirely on the typed array with no canvas, no getImageData, and no
+         * putImageData. Uses integer-keyed adjacency (y*(w+1)+x) instead of
+         * string keys, and an inline O(n) collinear simplification instead of
+         * the O(n┬▓) splice loop in simplifyAxisAlignedPath.
+         */
+        /**
+         * Ensure the reusable typed-array scratch buffers for _maskToSvgPath are
+         * sized correctly for the current canvas dimensions, and reset (to -1)
+         * only the vertex-bucket slots that were actually touched by the PREVIOUS
+         * call — an O(perimeter) reset instead of re-allocating and O(w*h)-filling
+         * a fresh (w+1)*(h+1) array every single frame of a wand-threshold drag.
+         * Returns the grid stride (w+1) used for vertex keys.
+         */
+        _ensureWandTraceBuffers(w, h) {
+            const stride = w + 1;
+            const vertexCount = stride * (h + 1);
+            if (!this._wandTraceHead || this._wandTraceHead.length < vertexCount) {
+                // (Re)allocate — only happens the first time, or when the canvas
+                // grows past the previously allocated size. Every other frame
+                // reuses this buffer and only touches the handful of vertex slots
+                // that this frame's boundary actually visits.
+                this._wandTraceHead = new Int32Array(vertexCount).fill(-1);
+                this._wandTraceTouchedCount = 0;
+            } else if (this._wandTraceTouchedCount) {
+                const head = this._wandTraceHead;
+                const touched = this._wandTraceTouched;
+                for (let i = 0; i < this._wandTraceTouchedCount; i++) head[touched[i]] = -1;
+                this._wandTraceTouchedCount = 0;
+            }
+            return stride;
+        }
+        /** Grow (doubling) an Int32Array scratch buffer stored on `this[key]` to at least `minLen`. */
+        _growWandTraceI32(key, minLen) {
+            let buf = this[key];
+            if (!buf || buf.length < minLen) {
+                let newLen = buf ? buf.length * 2 : 1024;
+                while (newLen < minLen) newLen *= 2;
+                buf = new Int32Array(newLen);
+                this[key] = buf;
+            }
+            return buf;
+        }
+        _maskToSvgPath(mask, w, h) {
+            if (!mask) return '';
+
+            // ÔöÇÔöÇ 1. Collect directed boundary edges ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+            // Winding: CCW around each selected pixel, matching buildMaskOutlineData.
+            // Stored as flat array [ax,ay,bx,by, ax,ay,bx,by, ...].
+            const edges = [];
+            for (let y = 0; y < h; y++) {
+                const row  = y * w;
+                const rowP = (y - 1) * w;
+                const rowN = (y + 1) * w;
+                for (let x = 0; x < w; x++) {
+                    if (!mask[row + x]) continue;
+                    const x1 = x + 1, y1 = y + 1;
+                    if (y === 0   || !mask[rowP + x])   { edges.push(x,  y,  x1, y);  }
+                    if (x === w-1 || !mask[row  + x+1]) { edges.push(x1, y,  x1, y1); }
+                    if (y === h-1 || !mask[rowN + x])   { edges.push(x1, y1, x,  y1); }
+                    if (x === 0   || !mask[row  + x-1]) { edges.push(x,  y1, x,  y);  }
+                }
+            }
+            const nEdges = edges.length >> 2;
+            if (!nEdges) return '';
+
+            // ÔöÇÔöÇ 2. Integer-keyed adjacency, as a reusable flat linked list ÔöÇÔöÇÔöÇÔöÇ
+            // Point key = y*(w+1)+x — a unique integer for every grid corner.
+            // Replaces the previous per-frame `Map` (+ per-vertex array) with a
+            // preallocated head[]/next[]/edgeAt[] structure reused across frames:
+            // head[key] -> index into entry arrays, entryNext[] chains further
+            // entries at the same vertex, entryEdge[] holds the edge index.
+            // This avoids Map hashing/boxing overhead and per-frame GC pressure
+            // on the hottest path of the wand-drag preview.
+            // NOTE: entries must be appended in FIFO (insertion) order, matching
+            // the original `la.push(i)` / `lb.push(i)` array behaviour. At
+            // non-manifold vertices (e.g. two selected pixels touching only
+            // diagonally) more than 2 edges can meet at one point, and which
+            // edge the tracer picks first is order-sensitive — LIFO/prepend
+            // ordering silently produces a different (still valid-looking, but
+            // NOT byte-identical) loop decomposition. A tail pointer per vertex
+            // gives FIFO append while staying O(1) per insertion.
+            const stride = this._ensureWandTraceBuffers(w, h);
+            const vertexCount = stride * (h + 1);
+            const head = this._wandTraceHead;
+            const entryCap = nEdges * 2;
+            const entryNext = this._growWandTraceI32('_wandTraceEntryNext', entryCap);
+            const entryEdge = this._growWandTraceI32('_wandTraceEntryEdge', entryCap);
+            const entryTail = this._growWandTraceI32('_wandTraceEntryTail', vertexCount);
+            const touched = this._growWandTraceI32('_wandTraceTouched', entryCap);
+            let touchedCount = 0;
+            let entryCount = 0;
+            for (let i = 0; i < nEdges; i++) {
+                const b = i * 4;
+                const ka = edges[b+1] * stride + edges[b];
+                const kb = edges[b+3] * stride + edges[b+2];
+
+                entryEdge[entryCount] = i; entryNext[entryCount] = -1;
+                if (head[ka] === -1) head[ka] = entryCount; else entryNext[entryTail[ka]] = entryCount;
+                entryTail[ka] = entryCount;
+                touched[touchedCount++] = ka; entryCount++;
+
+                entryEdge[entryCount] = i; entryNext[entryCount] = -1;
+                if (head[kb] === -1) head[kb] = entryCount; else entryNext[entryTail[kb]] = entryCount;
+                entryTail[kb] = entryCount;
+                touched[touchedCount++] = kb; entryCount++;
+            }
+            // Remember exactly which vertex slots we touched so the *next* call
+            // can reset just those instead of the whole (w+1)*(h+1) buffer.
+            this._wandTraceTouchedCount = touchedCount;
+
+            // ÔöÇÔöÇ 3. Trace connected loops ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+            const used = this._growWandTraceI32('_wandTraceUsed', nEdges);
+            used.fill(0, 0, nEdges);
+            const parts = [];
+
+            for (let si = 0; si < nEdges; si++) {
+                if (used[si]) continue;
+                used[si] = 1;
+                const b0   = si * 4;
+                const sx   = edges[b0],   sy   = edges[b0+1];
+                const startKey = sy * stride + sx;
+                let prevKey = startKey;
+                let cx = edges[b0+2], cy = edges[b0+3];
+                let currKey = cy * stride + cx;
+
+                // Collect polygon points as parallel flat arrays (faster than objects).
+                const ptx = [sx, cx];
+                const pty = [sy, cy];
+
+                while (currKey !== startKey) {
+                    let entry = head[currKey];
+                    if (entry === -1) break;
+                    let nextIdx = -1, nxtX = 0, nxtY = 0;
+                    let fbIdx   = -1, fbX  = 0, fbY  = 0;
+                    while (entry !== -1) {
+                        const ei = entryEdge[entry];
+                        entry = entryNext[entry];
+                        if (used[ei]) continue;
+                        const nb   = ei * 4;
+                        const naKey = edges[nb+1] * stride + edges[nb];
+                        const isA  = (naKey === currKey);
+                        const ox   = isA ? edges[nb+2] : edges[nb];
+                        const oy   = isA ? edges[nb+3] : edges[nb+1];
+                        const ok   = oy * stride + ox;
+                        if (ok !== prevKey) { nextIdx = ei; nxtX = ox; nxtY = oy; break; }
+                        if (fbIdx === -1)   { fbIdx   = ei; fbX  = ox; fbY  = oy; }
+                    }
+                    if (nextIdx === -1) {
+                        if (fbIdx === -1) break;
+                        nextIdx = fbIdx; nxtX = fbX; nxtY = fbY;
+                    }
+                    used[nextIdx] = 1;
+                    prevKey = currKey;
+                    cx = nxtX; cy = nxtY;
+                    currKey = cy * stride + cx;
+                    ptx.push(cx); pty.push(cy);
+                }
+
+                const n = ptx.length;
+                if (n < 2) continue;
+                const isClosed = n > 2 && currKey === startKey;
+
+                // ÔöÇÔöÇ 4. Inline O(n) collinear simplification ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+                // Replaces simplifyAxisAlignedPath's O(n┬▓) splice loop.
+                // A point is collinear (kept=false) when both its neighbours share
+                // the same x OR the same y as it.
+                const keep = new Uint8Array(n);
+                if (!isClosed) {
+                    keep[0] = 1; keep[n - 1] = 1;
+                    for (let i = 1; i < n - 1; i++) {
+                        const px = ptx[i-1], py = pty[i-1];
+                        const qx = ptx[i],   qy = pty[i];
+                        const rx = ptx[i+1], ry = pty[i+1];
+                        if (!((px === qx && qx === rx) || (py === qy && qy === ry))) keep[i] = 1;
+                    }
+                } else {
+                    for (let i = 0; i < n; i++) {
+                        const pi = (i - 1 + n) % n;
+                        const ni = (i + 1) % n;
+                        const px = ptx[pi], py = pty[pi];
+                        const qx = ptx[i],  qy = pty[i];
+                        const rx = ptx[ni], ry = pty[ni];
+                        if (!((px === qx && qx === rx) || (py === qy && qy === ry))) keep[i] = 1;
+                    }
+                }
+
+                // ÔöÇÔöÇ 5. Emit path string ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+                let first = true;
+                for (let i = 0; i < n; i++) {
+                    if (!keep[i]) continue;
+                    parts.push(first ? ('M' + ptx[i] + ' ' + pty[i])
+                                     : ('L' + ptx[i] + ' ' + pty[i]));
+                    first = false;
+                }
+                if (isClosed && !first) parts.push('Z');
+            }
+
+            return parts.join('');
+        }
+
+        /**
+         * Apply a pre-built SVG path string to the marching-ants overlay elements,
+         * using the correct zoom transform and viewport clip rect. Hides elements
+         * when pathStr is empty. Call clearRect on ctxTemp BEFORE calling this.
+         */
+        _applyWandSvgPreview(pathStr) {
+            if (!this.ui.svgAntsPath) return;
+            if (!pathStr) {
+                this._clearWandSvgPreview();
+                return;
+            }
+            // Mark preview active BEFORE touching the DOM so updateGlobalOverlays
+            // never races us into hiding the elements on the same frame.
+            this._wandSvgPreviewActive = true;
+            const z = this.config.zoom || 1;
+            // The mask is always origin-aligned (full canvas), so tx=ty=0.
+            // overlayUnscaled=true mode: path in canvas pixels, transform scales by zoom.
+            // `d` changes every frame during a drag, but `transform` only changes
+            // when the user zooms/pans — skip the redundant attribute write (which
+            // is a layout-adjacent op on an SVG element) when zoom hasn't moved.
+            const backWasHidden = this.ui.svgAntsPathBack && this.ui.svgAntsPathBack.style.display !== 'block';
+            const frontWasHidden = this.ui.svgAntsPath.style.display !== 'block';
+            const zoomChanged = this._wandSvgPreviewLastZoom !== z;
+            let transform = null;
+            if (zoomChanged || backWasHidden || frontWasHidden) {
+                transform = 'matrix(' + z + ' 0 0 ' + z + ' 0 0)';
+                this._wandSvgPreviewLastZoom = z;
+            }
+            // Apply clip rect for viewport culling.
+            const clip = this._computeAntsClipRect();
+            const clipRect = this.ui.svgAntsClipRect;
+            if (clipRect) {
+                clipRect.setAttribute('x',      String(clip.x));
+                clipRect.setAttribute('y',      String(clip.y));
+                clipRect.setAttribute('width',  String(clip.visible ? clip.w : 0));
+                clipRect.setAttribute('height', String(clip.visible ? clip.h : 0));
+            }
+            if (this.ui.svgAntsPathBack) {
+                this.ui.svgAntsPathBack.setAttribute('d', pathStr);
+                if (transform !== null) this.ui.svgAntsPathBack.setAttribute('transform', transform);
+                // Only set display:block on first show — avoid restarting the CSS animation.
+                if (backWasHidden)
+                    this.ui.svgAntsPathBack.style.display = 'block';
+            }
+            this.ui.svgAntsPath.setAttribute('d', pathStr);
+            if (transform !== null) this.ui.svgAntsPath.setAttribute('transform', transform);
+            if (frontWasHidden)
+                this.ui.svgAntsPath.style.display = 'block';
+        }
+
+        /**
+         * Hide the wand-drag SVG preview ants. Also resets the clip rect to zero
+         * so it doesn't occlude the committed selection's ants when they appear.
+         * Safe to call even if SVG elements are not yet in the DOM.
+         */
+        _clearWandSvgPreview() {
+            this._wandSvgPreviewActive = false;
+            this._wandSvgPreviewLastZoom = null;
+            if (this.ui.svgAntsPath)     this.ui.svgAntsPath.style.display     = 'none';
+            if (this.ui.svgAntsPathBack) this.ui.svgAntsPathBack.style.display = 'none';
+            const clipRect = this.ui.svgAntsClipRect;
+            if (clipRect) {
+                clipRect.setAttribute('width',  '0');
+                clipRect.setAttribute('height', '0');
+            }
         }
         async magicWandSelectAsync(startX, startY, tolerance = 0, op = 'replace', baseImageData = null) {
             const width = this.config.width;
@@ -20819,12 +22376,12 @@ self.onmessage = function(e) {
             if (!mask || mask.width !== width || mask.height !== height) {
                 mask = document.createElement('canvas');
                 mask.width = width; mask.height = height;
-                mctx = mask.getContext('2d');
+                mctx = mask.getContext('2d', { willReadFrequently: true });
                 mimg = mctx.createImageData(width, height);
                 this.state.wandMaskCanvas = mask;
                 this.state.wandMaskImageData = mimg;
             } else {
-                mctx = mask.getContext('2d');
+                mctx = mask.getContext('2d', { willReadFrequently: true });
                 mimg = this.state.wandMaskImageData;
             }
             const md = mimg.data;
@@ -20974,6 +22531,7 @@ self.onmessage = function(e) {
                             if (this.hueSatWorker) { this.hueSatWorker.terminate(); this.hueSatWorker = null; this.hueSatWorkerCallbacks?.clear(); }
                             this.disposeHueSatGL();
                             this.hueSatBackup = null;
+                            this._closeHueSatSidebarIfActive();
                             return;
                         }
                     }
@@ -21015,6 +22573,7 @@ self.onmessage = function(e) {
                 if (this.hueSatWorker) { this.hueSatWorker.terminate(); this.hueSatWorker = null; this.hueSatWorkerCallbacks?.clear(); }
                 this.disposeHueSatGL();
                 this.hueSatBackup = null;
+                this._closeHueSatSidebarIfActive();
                 return;
             }
             this.state.selection._forceOpaque = false;
@@ -21031,6 +22590,7 @@ self.onmessage = function(e) {
             if (this.hueSatWorker) { this.hueSatWorker.terminate(); this.hueSatWorker = null; this.hueSatWorkerCallbacks?.clear(); }
             this.disposeHueSatGL();
             this.hueSatBackup = null;
+            this._closeHueSatSidebarIfActive();
         }
         rgbToHsl(r, g, b) {
             const max = Math.max(r, g, b);
@@ -21104,7 +22664,7 @@ self.onmessage = function(e) {
             const h = parseInt(document.getElementById('new-h').value, 10);
             const depth = parseInt(document.getElementById('new-depth').value, 10);
             if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1 || w > 65535 || h > 65535) {
-                alert('Please enter valid width and height values between 1 and 65535.');
+                showToast('Please enter valid width and height values between 1 and 65535.', 'warning');
                 return;
             }
             this.setSize(w, h);
@@ -21178,9 +22738,9 @@ self.onmessage = function(e) {
             reader.onload = (e) => {
                 const text = e.target.result;
                 const lines = text.split(/\r?\n/);
-                if(lines[0] !== 'JASC-PAL' || lines[1] !== '0100') { alert('Invalid JASC-PAL file'); return; }
+                if(lines[0] !== 'JASC-PAL' || lines[1] !== '0100') { showToast('Invalid JASC-PAL file', 'warning'); return; }
                 const count = parseInt(lines[2], 10);
-                if (!Number.isFinite(count) || count < 0) { alert('Invalid JASC-PAL file'); return; }
+                if (!Number.isFinite(count) || count < 0) { showToast('Invalid JASC-PAL file', 'warning'); return; }
                 this.palette = [];
                 for(let i=3; i<3+count; i++) {
                     if(!lines[i]) continue;
@@ -21194,7 +22754,7 @@ self.onmessage = function(e) {
                     if (this.palette.length === 0) alpha = 0;
                     this.palette.push({r:Math.round(r), g:Math.round(g), b:Math.round(b), a:alpha});
                 }
-                if (!this.palette.length) { alert('Palette file had no valid colors'); return; }
+                if (!this.palette.length) { showToast('Palette file had no valid colors', 'warning'); return; }
                 this.paletteLab = null;
                 this.enforcePalette(this.ctx, this.config.width, this.config.height, {set: new Set(), list: this.palette});
                 this.saveState();
@@ -21307,6 +22867,7 @@ self.onmessage = function(e) {
 
         getFreehandOptions(isComplete = false) {
             const fh = this.config.freehand || {};
+            const sp = this._getSmoothParams();
             const easingFn = PaintEngine._freehandEasingMap[fh.easing] || PaintEngine._freehandEasingMap.linear;
             const easingStartFn = PaintEngine._freehandEasingMap[fh.easingStart] || easingFn;
             const easingEndFn = PaintEngine._freehandEasingMap[fh.easingEnd] || easingFn;
@@ -21316,9 +22877,9 @@ self.onmessage = function(e) {
             const taperEndVal = rawTaperEnd === true || rawTaperEnd >= 100 ? true : (rawTaperEnd > 0 ? rawTaperEnd : 0);
             return {
                 size: fh.size ?? 4,
-                smoothing: fh.smoothing != null ? Math.min(0.99, Math.max(0.01, fh.smoothing)) : 0.5,
-                thinning: fh.thinning ?? 0.5,
-                streamline: fh.streamline ?? 0.5,
+                smoothing: sp.smoothing,
+                thinning: fh.thinning ?? 0,
+                streamline: sp.streamline,
                 simulatePressure: fh.simulatePressure ?? true,
                 easing: easingFn,
                 last: isComplete,
@@ -21333,6 +22894,19 @@ self.onmessage = function(e) {
                     easing: easingEndFn
                 }
             };
+        }
+
+        _getSmoothParams() {
+            const fh = this.config.freehand || {};
+            return {
+                smoothing: fh.smoothing ?? 0.5,
+                streamline: fh.streamline ?? 0.5,
+                isStabilizer: false
+            };
+        }
+
+        _isStabilizerActive() {
+            return false;
         }
 
         scheduleFreehandPreview() {
@@ -21358,12 +22932,13 @@ self.onmessage = function(e) {
             if (!stroke || stroke.length < 2) return;
             this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
             const fh = this.config.freehand || {};
+            const _freehandIsRight = this.state.freehandSlot === 2;
             this.renderFreehandOutline(this.ctxTemp, stroke, {
                 alpha: 1,
                 isFilled: fh.fillEnabled !== false,
-                strokeWidth: fh.strokeWidth || 0,
-                fillColor: this.getActiveDrawColor(false),
-                strokeColor: this.getActiveDrawColor(true)
+                strokeWidth: (fh.strokeEnabled !== false) ? (fh.strokeWidth || 0) : 0,
+                fillColor: this.getActiveDrawColor(_freehandIsRight),
+                strokeColor: this.getActiveDrawColor(!_freehandIsRight)
             });
             if (this.ui.cTemp) this.ui.cTemp.style.opacity = '0.5';
             this._fhPreviewing = true;
@@ -21388,7 +22963,8 @@ self.onmessage = function(e) {
                 if (p[1] > maxY) maxY = p[1];
             }
             const fh = this.config.freehand || {};
-            const pad = Math.ceil((fh.strokeWidth || 0) * 2) + 2;
+            const effectiveStrokeWidth = (fh.strokeEnabled !== false) ? (fh.strokeWidth || 0) : 0;
+            const pad = Math.ceil(effectiveStrokeWidth * 2) + 2;
             minX = Math.max(0, Math.floor(minX) - pad);
             minY = Math.max(0, Math.floor(minY) - pad);
             maxX = Math.min(this.config.width, Math.ceil(maxX) + pad);
@@ -21396,9 +22972,10 @@ self.onmessage = function(e) {
             const bw = maxX - minX;
             const bh = maxY - minY;
             if (bw <= 0 || bh <= 0) return;
-            const strokeColor = this.getActiveDrawColor(true);
-            const fillColor = this.getActiveDrawColor(false);
-            const strokeWidth = fh.strokeWidth || 0;
+            const _commitIsRight = this.state.freehandSlot === 2;
+            const strokeColor = this.getActiveDrawColor(!_commitIsRight);
+            const fillColor = this.getActiveDrawColor(_commitIsRight);
+            const strokeWidth = effectiveStrokeWidth;
             const isFilled = fh.fillEnabled !== false;
             const pixelMode = fh.pixelMode !== false;
             this.disableSmoothing(this.ctx);
@@ -21460,27 +23037,17 @@ self.onmessage = function(e) {
         }
 
         renderFreehandOutline(ctx, outline, opts = {}) {
-            if (!outline || outline.length < 4) return;
+            if (!outline || outline.length < 3) return;
             const len = outline.length;
-            const avg = (a, b) => (a + b) / 2;
             const path = new Path2D();
-            let a = outline[0], b = outline[1], c = outline[2];
-            path.moveTo(a[0], a[1]);
-            path.quadraticCurveTo(b[0], b[1], avg(b[0], c[0]), avg(b[1], c[1]));
-            let prevCp = b;
-            let prevMp = [avg(b[0], c[0]), avg(b[1], c[1])];
-            for (let i = 2, max = len - 1; i < max; i++) {
-                a = outline[i];
-                b = outline[i + 1];
-                const rcpX = 2 * prevMp[0] - prevCp[0];
-                const rcpY = 2 * prevMp[1] - prevCp[1];
-                const mx = avg(a[0], b[0]);
-                const my = avg(a[1], b[1]);
-                path.quadraticCurveTo(rcpX, rcpY, mx, my);
-                prevCp = [rcpX, rcpY];
-                prevMp = [mx, my];
+            let p0 = outline[len - 1];
+            let p1 = outline[0];
+            path.moveTo((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2);
+            for (let i = 0; i < len; i++) {
+                p0 = outline[i];
+                p1 = outline[(i + 1) % len];
+                path.quadraticCurveTo(p0[0], p0[1], (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2);
             }
-            path.closePath();
             const isFilled = opts.isFilled !== false;
             const strokeWidth = opts.strokeWidth || 0;
             const fillColor = opts.fillColor || '#000000';
@@ -21488,7 +23055,9 @@ self.onmessage = function(e) {
             ctx.save();
             if (strokeWidth > 0) {
                 ctx.strokeStyle = strokeColor;
-                ctx.lineWidth = strokeWidth * 2;
+                ctx.lineWidth = strokeWidth;
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
                 ctx.stroke(path);
             }
             if (isFilled) {
@@ -21501,8 +23070,8 @@ self.onmessage = function(e) {
         bindFreehandSettings() {
             const sliderMap = [
                 ['fh-size', 'size'],
-                ['fh-smoothing', 'smoothing'],
                 ['fh-thinning', 'thinning'],
+                ['fh-smoothing', 'smoothing'],
                 ['fh-streamline', 'streamline'],
                 ['fh-taperStart', 'taperStart'],
                 ['fh-taperEnd', 'taperEnd'],
@@ -21512,10 +23081,64 @@ self.onmessage = function(e) {
                 const el = document.getElementById(id);
                 if (!el) continue;
                 el.addEventListener('input', () => {
-                    const val = parseFloat(el.value);
+                    var wrap2 = el.parentElement;
+                    var val = (key === 'size' && wrap2 && wrap2.dataset.overflowVal !== undefined)
+                        ? parseFloat(wrap2.dataset.overflowVal)
+                        : parseFloat(el.value);
                     if (!isNaN(val)) this.config.freehand[key] = val;
+                    var min = parseFloat(el.min) || 0;
+                    var max = parseFloat(el.max) || 100;
+                    var raw = (val - min) / (max - min) * 100;
+                    var pct = Math.round(key === 'size' ? Math.min(raw, 100) : raw) + '%';
+                    el.style.setProperty('--pct', pct);
+                    var wrap = el.parentElement;
+                    if (wrap && wrap.classList.contains('pb-slider-wrap')) {
+                        wrap.style.setProperty('--pct', pct);
+                    }
                     this.updateFreehandPanel();
                     this._saveFreehandConfig();
+                });
+            }
+            for (const [id] of sliderMap) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                const wrap = el.parentElement;
+                if (!wrap || !wrap.classList.contains('pb-slider-wrap')) continue;
+                wrap.addEventListener('mousedown', function (e) {
+                    e.preventDefault();
+                    var step = parseFloat(el.step) || 1;
+                    var min = parseFloat(el.min) || 0;
+                    var max = parseFloat(el.max) || 100;
+                    var allowOverflow = (id === 'fh-size');
+                    function updateFromClientX(cx) {
+                        var rect = wrap.getBoundingClientRect();
+                        var pct;
+                        if (allowOverflow) {
+                            pct = Math.max(0, (cx - rect.left) / rect.width);
+                        } else {
+                            pct = Math.max(0, Math.min(1, (cx - rect.left) / rect.width));
+                        }
+                        var val = min + pct * (max - min);
+                        val = Math.round(val / step) * step;
+                        if (!allowOverflow) {
+                            val = Math.max(min, Math.min(max, val));
+                        }
+                        if (allowOverflow) {
+                            wrap.dataset.overflowVal = val;
+                            el.value = Math.min(val, max);
+                        } else {
+                            el.value = val;
+                        }
+                        el.dispatchEvent(new Event('input'));
+                    }
+                    updateFromClientX(e.clientX);
+                    function onMove(me) { updateFromClientX(me.clientX); }
+                    function onUp() {
+                        document.removeEventListener('mousemove', onMove);
+                        document.removeEventListener('mouseup', onUp);
+                    }
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
                 });
             }
             const selMap = [
@@ -21554,6 +23177,27 @@ self.onmessage = function(e) {
                     this._saveFreehandConfig();
                 });
             }
+            const fillSwatch = document.getElementById('fh-fill-swatch');
+            if (fillSwatch) {
+                fillSwatch.addEventListener('click', () => {
+                    this.selectSlot(1);
+                    this.openWinColor();
+                });
+            }
+            const strokeSwatch = document.getElementById('fh-stroke-swatch');
+            if (strokeSwatch) {
+                strokeSwatch.addEventListener('click', () => {
+                    this.selectSlot(2);
+                    this.openWinColor();
+                });
+            }
+            const strokeEnabledEl = document.getElementById('fh-strokeEnabled');
+            if (strokeEnabledEl) {
+                strokeEnabledEl.addEventListener('change', () => {
+                    this.config.freehand.strokeEnabled = strokeEnabledEl.checked;
+                    this._saveFreehandConfig();
+                });
+            }
             const pixelModeEl = document.getElementById('fh-pixelMode');
             if (pixelModeEl) {
                 pixelModeEl.addEventListener('change', () => {
@@ -21568,6 +23212,7 @@ self.onmessage = function(e) {
                     this._saveFreehandConfig();
                 });
             }
+
             const resetBtn = document.getElementById('fh-reset-btn');
             if (resetBtn) {
                 resetBtn.addEventListener('click', () => this.resetFreehandSettings());
@@ -21579,6 +23224,7 @@ self.onmessage = function(e) {
                     if (sidebar) sidebar.classList.remove('open');
                     const reopen = document.getElementById('freehand-reopen-btn');
                     if (reopen) reopen.classList.add('show');
+                    this._updateSidebarViewportShift(true);
                 });
             }
             const reopenBtn = document.getElementById('freehand-reopen-btn');
@@ -21587,16 +23233,37 @@ self.onmessage = function(e) {
                     const sidebar = document.getElementById('freehand-sidebar');
                     if (sidebar) sidebar.classList.add('open');
                     reopenBtn.classList.remove('show');
+                    this._updateSidebarViewportShift(true);
                 });
             }
+            const gradCollapseBtn = document.getElementById('gradient-collapse-btn');
+            if (gradCollapseBtn) {
+                gradCollapseBtn.addEventListener('click', () => {
+                    const sidebar = document.getElementById('gradient-sidebar');
+                    if (sidebar) sidebar.classList.remove('open');
+                    const reopen = document.getElementById('gradient-reopen-btn');
+                    if (reopen) reopen.classList.add('show');
+                    this._updateSidebarViewportShift(true);
+                });
+            }
+            const gradReopenBtn = document.getElementById('gradient-reopen-btn');
+            if (gradReopenBtn) {
+                gradReopenBtn.addEventListener('click', () => {
+                    const sidebar = document.getElementById('gradient-sidebar');
+                    if (sidebar) sidebar.classList.add('open');
+                    gradReopenBtn.classList.remove('show');
+                    this._updateSidebarViewportShift(true);
+                });
+            }
+            this.updateFreehandPanel();
         }
 
         updateFreehandPanel() {
             const fh = this.config.freehand || {};
             const sliderMap = [
                 ['fh-size', 'size'],
-                ['fh-smoothing', 'smoothing'],
                 ['fh-thinning', 'thinning'],
+                ['fh-smoothing', 'smoothing'],
                 ['fh-streamline', 'streamline'],
                 ['fh-taperStart', 'taperStart'],
                 ['fh-taperEnd', 'taperEnd'],
@@ -21607,9 +23274,30 @@ self.onmessage = function(e) {
                 if (!el) continue;
                 const raw = fh[key];
                 const numVal = raw === true ? 100 : (raw ?? 0);
-                el.value = numVal;
-                const label = document.getElementById(id + '-val');
-                if (label) label.textContent = numVal;
+                if (key === 'size') {
+                    var wrap = el.parentElement;
+                    if (numVal > (parseFloat(el.max) || 100)) {
+                        wrap.dataset.overflowVal = numVal;
+                        el.value = parseFloat(el.max) || 100;
+                    } else {
+                        delete wrap.dataset.overflowVal;
+                        el.value = numVal;
+                    }
+                } else {
+                    el.value = numVal;
+                }
+                var min = parseFloat(el.min) || 0;
+                var max = parseFloat(el.max) || 100;
+                var rawPct = (numVal - min) / (max - min) * 100;
+                var pct = Math.round(key === 'size' ? Math.min(rawPct, 100) : rawPct) + '%';
+                el.style.setProperty('--pct', pct);
+                var wrap = el.parentElement;
+                if (wrap && wrap.classList.contains('pb-slider-wrap')) {
+                    wrap.style.setProperty('--pct', pct);
+                    var pbVal = wrap.querySelector('.pb-val');
+                    if (pbVal) pbVal.textContent = numVal;
+                }
+
             }
             const selMap = [
                 ['fh-easing', 'easing'],
@@ -21626,6 +23314,7 @@ self.onmessage = function(e) {
             if (capEndEl) capEndEl.checked = fh.capEnd !== false;
             const simPresEl = document.getElementById('fh-simulatePressure');
             if (simPresEl) simPresEl.checked = fh.simulatePressure !== false;
+
             const fillEl = document.getElementById('fh-fill');
             if (fillEl) fillEl.checked = fh.fillEnabled !== false;
             const pixelModeEl = document.getElementById('fh-pixelMode');
@@ -21634,6 +23323,8 @@ self.onmessage = function(e) {
             if (fillSwatch) fillSwatch.style.backgroundColor = this.config.c1;
             const strokeSwatch = document.getElementById('fh-stroke-swatch');
             if (strokeSwatch) strokeSwatch.style.backgroundColor = this.config.c2;
+            const strokeEnabledEl = document.getElementById('fh-strokeEnabled');
+            if (strokeEnabledEl) strokeEnabledEl.checked = fh.strokeEnabled !== false;
             const capStartRow = document.getElementById('fh-capStart-row');
             if (capStartRow) {
                 capStartRow.classList.toggle('fh-hidden', fh.taperStart > 0);
@@ -21664,6 +23355,12 @@ self.onmessage = function(e) {
                 if (raw) {
                     const saved = JSON.parse(raw);
                     if (saved && typeof saved === 'object') {
+                        if (saved.smoothMode != null) {
+                            delete saved.smoothMode;
+                            delete saved.smoothAmount;
+                            delete saved.smoothDelay;
+                            try { localStorage.setItem('cdpaint.freehandConfig', JSON.stringify(saved)); } catch (e) {}
+                        }
                         this.config.freehand = { ...this.config.freehand, ...saved };
                     }
                 }
@@ -21672,13 +23369,15 @@ self.onmessage = function(e) {
 
         resetFreehandSettings() {
             this.config.freehand = {
-                size: 4, smoothing: 0.5, thinning: 0.5, streamline: 0.5,
+                size: 4, thinning: 0,
+                smoothing: 0.5, streamline: 0.5,
                 taperStart: 0, taperEnd: 0,
                 capStart: false, capEnd: false,
                 simulatePressure: true, easing: 'linear',
                 easingStart: 'linear', easingEnd: 'linear',
                 fillEnabled: true,
                 strokeWidth: 0,
+                strokeEnabled: true,
                 pixelMode: true
             };
             this.updateFreehandPanel();
@@ -21687,7 +23386,7 @@ self.onmessage = function(e) {
     }
 
     // boot the app (keep this last)
-    const PaintApp = new PaintEngine();
+    var PaintApp = new PaintEngine();
 
     // Clean up timers and workers on page unload
     window.addEventListener('beforeunload', () => {
@@ -21720,6 +23419,9 @@ self.onmessage = function(e) {
             _compositeCtx:    null,
         };
         app.layerMgr = mgr;
+
+        // Public panel toggle — called from ribbon tool click.
+        mgr.openPanel = function(v) { _openPanel(v); };
 
         // Preserve original context reference so the engine can still reassign ctx freely.
         const _holder = { ctx: app.ctx };
@@ -21781,15 +23483,6 @@ self.onmessage = function(e) {
 /* ── LAYER SYSTEM ──────────────────────────────────────── */
 #canvas-stage.layers-active {
     background: repeating-conic-gradient(#b0b0b0 0% 25%, #e8e8e8 0% 50%) 0 0 / 16px 16px;
-}
-#lsys-hover{
-    position:fixed;right:0;top:145px;width:18px;height:calc(100vh - 145px - 24px);
-    z-index:9990;cursor:pointer;
-}
-#lsys-hover:hover #lsys-arr{opacity:1;}
-#lsys-arr{
-    position:absolute;right:2px;top:50%;transform:translateY(-50%);
-    width:14px;height:28px;opacity:0;transition:opacity .18s;pointer-events:none;
 }
 #lsys-panel{
     position:fixed;top:145px;bottom:24px;right:-336px;width:320px;
@@ -21993,20 +23686,8 @@ self.onmessage = function(e) {
         document.head.appendChild(_css);
 
         /* ──────────────────────────────────────────────────────────────────
-         * 4.  HTML  — hover zone + slide-out panel
+         * 4.  HTML  — slide-out panel
          * ────────────────────────────────────────────────────────────────── */
-        const _hoverEl = document.createElement('div');
-        _hoverEl.id = 'lsys-hover';
-        _hoverEl.title = 'Open Layers panel';
-        _hoverEl.innerHTML =
-            '<svg id="lsys-arr" viewBox="0 0 14 28" fill="none" aria-hidden="true">' +
-            '<rect x="0" y="0" width="14" height="28" rx="3"' +
-            '  fill="var(--bg-ribbon,#f0f0f0)"' +
-            '  stroke="var(--border-ribbon,#ddd)" stroke-width="1"/>' +
-            '<path d="M5 10L9 14L5 18" stroke="#0078d7" stroke-width="2"' +
-            '  stroke-linecap="round" stroke-linejoin="round"/></svg>';
-        document.body.appendChild(_hoverEl);
-
         const _panelEl = document.createElement('div');
         _panelEl.id = 'lsys-panel';
         _panelEl.setAttribute('aria-label', 'Layers panel');
@@ -22188,7 +23869,7 @@ self.onmessage = function(e) {
             const c = document.createElement('canvas');
             c.width = w; c.height = h;
             c.style.cssText =
-                'position:absolute;left:0;top:0;pointer-events:none;image-rendering:pixelated;';
+                'position:absolute;left:0;top:0;pointer-events:none;';
             return c;
         }
 
@@ -22224,6 +23905,7 @@ self.onmessage = function(e) {
             }
             return mgr._compositeCanvas;
         }
+        mgr.getCompositeCanvas = function() { return _composite(); };
 
         /* Strip C2 (background colour) pixels from a canvas — makes them transparent.
          * Used when stamping a floating selection onto a transparent layer so we don't
@@ -22892,7 +24574,7 @@ self.onmessage = function(e) {
 
             const entry = {
                 _lsys: true, snaps,
-                activeIdx: mgr.activeIdx,
+                // activeIdx intentionally omitted - layer selection is navigation, not a document edit
                 width:  this.config.width,
                 height: this.config.height
             };
@@ -22956,7 +24638,7 @@ self.onmessage = function(e) {
                 return;
             }
             // ── Multi-layer restore ─────────────────────────────────────
-            const { snaps, activeIdx, width, height } = entry;
+            const { snaps, width, height } = entry;
             // Remove surplus layers.
             while (mgr.layers.length > snaps.length) {
                 const l = mgr.layers.pop();
@@ -23005,8 +24687,13 @@ self.onmessage = function(e) {
                     });
                 }
             }
+            // Do NOT restore activeIdx -- layer selection is a navigation
+            // action, not a content edit. Krita, CSP, and modern Photoshop
+            // all keep layer selection outside the undo/redo stack.  Clamp
+            // it against the current array size so undo/redo can never push
+            // it out of bounds.
             mgr.active    = true;
-            mgr.activeIdx = Math.min(activeIdx, mgr.layers.length - 1);
+            mgr.activeIdx = Math.min(mgr.activeIdx, Math.max(0, mgr.layers.length - 1));
             this.requestGlobalOverlayUpdate();
             this.deferColorCounts();
             _refreshList(); _syncBtns(); _syncOpacity();
@@ -23096,6 +24783,15 @@ self.onmessage = function(e) {
                 const normals = q.filter(s => !s.isEraser);
                 if (normals.length) { this.strokeQueue = normals; _origFlushStrokes(); }
                 for (const s of erasers) {
+                    const hw = Math.ceil((s.width || 1) / 2) + 1;
+                    const bx0 = Math.min(s.x0, s.x1) - hw;
+                    const bx1 = Math.max(s.x0, s.x1) + hw;
+                    const by0 = Math.min(s.y0, s.y1) - hw;
+                    const by1 = Math.max(s.y0, s.y1) + hw;
+                    const dx = Math.max(0, Math.floor(bx0));
+                    const dy = Math.max(0, Math.floor(by0));
+                    const dw = Math.min(this.config.width, Math.ceil(bx1)) - dx;
+                    const dh = Math.min(this.config.height, Math.ceil(by1)) - dy;
                     this.drawBinaryLine(s.x0, s.y0, s.x1, s.y1, s.color, false, s.width, true);
                 }
                 _schedThumb();
@@ -23108,7 +24804,6 @@ self.onmessage = function(e) {
             const normals = q.filter(s => !s.isEraser);
             if (normals.length) { this.strokeQueue = normals; _origFlushStrokes(); }
             for (const s of erasers) {
-                // isEraserOverride = true forces destination-out branch in drawBinaryLine.
                 this.drawBinaryLine(s.x0, s.y0, s.x1, s.y1, s.color, false, s.width, true);
             }
             _schedThumb();
@@ -23129,7 +24824,7 @@ self.onmessage = function(e) {
             if (!s) { _origStampSel(); return; }
             const renderC  = this.getRenderedSelectionCanvas();
             if (!renderC)  { _origStampSel(); return; }
-            const metrics = this.getSelectionDrawMetrics(s, renderC);
+            const metrics = this.getSelectionDrawMetrics(s, renderC, true);
             if (!metrics)  { _origStampSel(); return; }
             const stripped = _stripC2(renderC, this.config.c2);
             const ctx = mgr.layers[mgr.activeIdx].ctx;
@@ -23184,6 +24879,13 @@ self.onmessage = function(e) {
                         diff[i] = m;
                     }
                     this.state.wandDiff = diff;
+                    this._wandEntered = this.config.wandMode === 'contiguous'
+                        ? buildPriorityFlood(diff, w, h, Math.floor(this.state.wandStart.x), Math.floor(this.state.wandStart.y)) : null;
+                    const keyArr = this._wandEntered || diff;
+                    this._wandSortedIdx = buildSortedDiffIndex(keyArr);
+                    this._wandMaskBuf = new Uint8Array(w * h);
+                    this._wandSelectedCutoff = -1;
+                    this._initWandPreviewWorker(diff, keyArr, this._wandSortedIdx, w, h);
                     this.magicWandSelectAsync(
                         this.state.wandStart.x, this.state.wandStart.y,
                         this.state.wandTol, this.getSelectionOp(e), compData
@@ -23237,8 +24939,8 @@ self.onmessage = function(e) {
                     try {
                         const cs = new CompressionStream('deflate-raw');
                         const writer = cs.writable.getWriter();
-                        writer.write(data);
-                        writer.close();
+                        await writer.write(data);
+                        await writer.close();
                         return new Uint8Array(await new Response(cs.readable).arrayBuffer());
                     } catch (_) { /* fall through */ }
                 }
@@ -23452,16 +25154,38 @@ self.onmessage = function(e) {
 
         /* ── LOAD ORA ────────────────────────────────────────────────────── */
         app.loadORAFile = async function (file) {
+            if (app.hasUnsavedChanges()) {
+                const f = file;
+                app.showOpenConfirm(() => app.loadORAFile(f), 'Opening a new file');
+                return;
+            }
             try {
                 const zipBytes = new Uint8Array(await file.arrayBuffer());
                 const files    = _parseZip(zipBytes);
 
-                /* Parse stack.xml */
-                const xmlBytes = files['stack.xml'];
+                /* Parse stack.xml (handle deferred deflation when pako absent) */
+                let xmlBytes = files['stack.xml'];
+                if (!xmlBytes && files['__deflated__stack.xml'] && typeof DecompressionStream !== 'undefined') {
+                    for (const fmt of ['deflate-raw', 'deflate']) {
+                        try {
+                            const raw = files['__deflated__stack.xml'].slice();
+                            const ds = new DecompressionStream(fmt);
+                            const readDone = new Response(ds.readable).arrayBuffer();
+                            const writer = ds.writable.getWriter();
+                            await writer.write(raw);
+                            await writer.close();
+                            xmlBytes = new Uint8Array(await readDone);
+                            break;
+                        } catch (e) {
+                            console.warn('[ORA] deflate format', fmt, 'failed:', e.message);
+                        }
+                    }
+                }
                 if (!xmlBytes) throw new Error('stack.xml missing from ORA');
                 const xmlStr  = new TextDecoder().decode(xmlBytes);
                 const parser  = new DOMParser();
-                const doc     = parser.parseFromString(xmlStr, 'text/xml');
+                const cleanXml = xmlStr.replace(/paint:/g, '');
+                const doc     = parser.parseFromString(cleanXml, 'text/xml');
                 const imageEl = doc.querySelector('image');
                 if (!imageEl) throw new Error('Invalid stack.xml: no <image> element');
 
@@ -23474,7 +25198,7 @@ self.onmessage = function(e) {
                 const layerEls  = stack ? Array.from(stack.querySelectorAll(':scope > layer')).reverse() : [];
                 if (!layerEls.length) throw new Error('ORA contains no layers');
 
-                const activeIdxAttr = parseInt(imageEl.getAttribute('paint:activeLayer') || '0', 10);
+                const activeIdxAttr = parseInt(imageEl.getAttribute('activeLayer') || '0', 10);
 
                 /* Load all layer PNGs */
                 const layerDefs = [];
@@ -23485,10 +25209,20 @@ self.onmessage = function(e) {
                     if (!pngBytes) {
                         const deflated = files['__deflated__' + (src || src.replace(/^\//, ''))];
                         if (deflated && typeof DecompressionStream !== 'undefined') {
-                            const ds = new DecompressionStream('deflate-raw');
-                            const writer = ds.writable.getWriter();
-                            writer.write(deflated); writer.close();
-                            pngBytes = new Uint8Array(await new Response(ds.readable).arrayBuffer());
+                            for (const fmt of ['deflate-raw', 'deflate']) {
+                                try {
+                                    const raw = deflated.slice();
+                                    const ds = new DecompressionStream(fmt);
+                                    const readDone = new Response(ds.readable).arrayBuffer();
+                                    const writer = ds.writable.getWriter();
+                                    await writer.write(raw);
+                                    await writer.close();
+                                    pngBytes = new Uint8Array(await readDone);
+                                    break;
+                                } catch (e) {
+                                    /* try next format */
+                                }
+                            }
                         }
                     }
                     if (!pngBytes) { console.warn('[ORA] missing layer data:', src); continue; }
@@ -23512,9 +25246,9 @@ self.onmessage = function(e) {
                         opacity:   parseFloat(el.getAttribute('opacity') || '1'),
                         visible:   (el.getAttribute('visibility') || 'visible') !== 'hidden',
                         blendMode: _oraToBlend[el.getAttribute('composite-op') || 'svg:src-over'] || 'source-over',
-                        locked:    el.getAttribute('paint:locked') === 'true',
-                        alphaLock: el.getAttribute('paint:alphaLock') === 'true',
-                        isBase:    el.getAttribute('paint:isBase') === 'true',
+                        locked:    el.getAttribute('locked') === 'true',
+                        alphaLock: el.getAttribute('alphaLock') === 'true',
+                        isBase:    el.getAttribute('isBase') === 'true',
                     });
                 }
                 if (!layerDefs.length) throw new Error('No usable layers found in ORA');
@@ -23582,11 +25316,13 @@ self.onmessage = function(e) {
                 this.updateTitleFilename();
                 _refreshList();
                 _syncBtns();
+                _openPanel(true);
                 _schedThumb();
                 this.requestGlobalOverlayUpdate();
 
             } catch (err) {
-                alert('Failed to open ORA file:\n' + err.message);
+                showToast('Failed to open ORA file: ' + err.message, 'error');
+                console.error('[ORA] load failed, about to show toast:', err);
                 console.error('[ORA load]', err);
             }
         };
@@ -23657,21 +25393,20 @@ self.onmessage = function(e) {
         /* ──────────────────────────────────────────────────────────────────
          * 16. EVENT WIRING
          * ────────────────────────────────────────────────────────────────── */
-        _hoverEl.addEventListener('click', () => _openPanel(true));
-        document.getElementById('lsys-xbtn')
-            .addEventListener('click', () => _openPanel(false));
-        document.getElementById('lsys-add')
-            .addEventListener('click', () => { _addLayer(); app.saveState(); _schedThumb(); });
-        document.getElementById('lsys-up')
-            .addEventListener('click', () => _moveLayerUp());
-        document.getElementById('lsys-down')
-            .addEventListener('click', () => _moveLayerDown());
-        document.getElementById('lsys-del')
-            .addEventListener('click', () => _delLayer());
-        document.getElementById('lsys-merge')
-            .addEventListener('click', () => _mergeDown());
-        document.getElementById('lsys-group')
-            .addEventListener('click', () => _makeGroup());
+        const lsysXbtn = document.getElementById('lsys-xbtn');
+        if (lsysXbtn) lsysXbtn.addEventListener('click', () => _openPanel(false));
+        const lsysAdd = document.getElementById('lsys-add');
+        if (lsysAdd) lsysAdd.addEventListener('click', () => { _addLayer(); app.saveState(); _schedThumb(); });
+        const lsysUp = document.getElementById('lsys-up');
+        if (lsysUp) lsysUp.addEventListener('click', () => _moveLayerUp());
+        const lsysDown = document.getElementById('lsys-down');
+        if (lsysDown) lsysDown.addEventListener('click', () => _moveLayerDown());
+        const lsysDel = document.getElementById('lsys-del');
+        if (lsysDel) lsysDel.addEventListener('click', () => _delLayer());
+        const lsysMerge = document.getElementById('lsys-merge');
+        if (lsysMerge) lsysMerge.addEventListener('click', () => _mergeDown());
+        const lsysGroup = document.getElementById('lsys-group');
+        if (lsysGroup) lsysGroup.addEventListener('click', () => _makeGroup());
 
         const _opSl = document.getElementById('lsys-op');
         if (_opSl) {

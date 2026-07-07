@@ -1,3 +1,4 @@
+// @ts-check
     // Minimal seeded LCG (linear congruential generator) used for repeatable brush jitter and noise patterns.
     // Not cryptographically secure — only used for visual randomness.
     class SeededRNG {

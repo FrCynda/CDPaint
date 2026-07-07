@@ -1,3 +1,4 @@
+// @ts-check
     // boot the app (keep this last)
     const PaintApp = new PaintEngine();
 
