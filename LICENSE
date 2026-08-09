@@ -2,8 +2,6 @@ MIT License
 
 Copyright (c) 2026 FrCynda
 
-“This license applies solely to the functional logic, algorithms, and source code architecture of this project. NOTICE: This project contains embedded graphical data (Base64/SVG strings) which are replicas/extractions of the Microsoft Paint UI. These specific data strings are EXCLUDED from this MIT License and remain the intellectual property of Microsoft Corporation. This project is a non-commercial educational tribute.”
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
@@ -22,14 +20,25 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Additional Notice (Split-License Clarification)
-------------------------------------------------
-For clarity and avoidance of doubt, the MIT grant above applies only to
-original programming logic and project architecture authored for this repository.
-Any embedded third-party visual assets, including but not limited to legacy UI
-icon replicas represented as Base64/SVG strings, are excluded from the MIT
-license grant and retain their respective ownership rights.
+Additional Notice (Third-Party Assets)
+---------------------------------------
+The MIT license above covers the original code in this repository. The
+following bundled assets are NOT covered by the MIT grant and retain their
+respective ownership:
 
-Redistributors and forkers are solely responsible for assessing and complying
-with any third-party intellectual property rights that may apply to excluded
-asset data bundled in source files or build outputs.
+- Legacy Microsoft Paint UI elements embedded as Base64/SVG strings in the
+  source. These are replicas of Microsoft's interface, used here as a
+  non-commercial educational tribute, and remain the intellectual property
+  of Microsoft Corporation.
+
+- Brush tip images in src/brushes/ are from David Revoy's Krita brush packs,
+  licensed under Creative Commons Attribution 4.0 (CC BY 4.0) to David Revoy,
+  www.davidrevoy.com. Some brushes were modified locally; attribution is
+  provided here and in the README.
+
+- Pokemon-related fan assets (src/assets/PokemonProject.png,
+  src/assets/normal.pal) are reference material for the sprite editor and are
+  not part of the MIT grant; all rights remain with their respective owners.
+
+Redistributors and forkers are responsible for complying with any third-party
+intellectual property rights that apply to these excluded assets.

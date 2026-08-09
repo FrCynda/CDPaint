@@ -876,6 +876,7 @@
                 { id:'paintbrush',     toolId:'paintbrush', label:'Paint Brush',        iconSrc:'assets/Paintbrush.png', iconSvg:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#0078d7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16 L7 5 L16 3 L17 12 L9 14 Z" fill="rgba(0,120,215,0.15)"/><path d="M7 5 L16 3" stroke="#0078d7" stroke-width="1"/><path d="M9 14 L5 16" stroke="#0078d7" stroke-width="1"/><path d="M11 13 L12 9" stroke="#0078d7" stroke-width="1" stroke-dasharray="1 1"/></svg>', defaultSection:'tools' },
                 { id:'anchor-toggle',  label:'Anchor/Free Toggle', isToggle:true,        iconSvg:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#0078d7" stroke-width="1.5"><circle cx="10" cy="10" r="7"/><line x1="3" y1="10" x2="17" y2="10"/><line x1="10" y1="3" x2="10" y2="17"/></svg>', defaultSection:'tools' },
                 { id:'layers-toggle',  label:'Layers',           isToggle:true,        iconSrc:'assets/layers.png',                      defaultSection:'tools' },
+                { id:'pokeproject',    label:'PokéProject — toggle asset browser', isToggle:true, iconSrc:'assets/PokéProject.png', defaultSection:'tools' },
                 { id:'select-rect',    toolId:'select',     label:'Select (Rectangle)', iconSrc:'assets/toolbar-icons/rect.png',         defaultSection:'tools', mode:{selectTool:'select'} },
                 { id:'select-lasso',   toolId:'lasso',      label:'Lasso Select',       iconSrc:'assets/toolbar-icons/poly.png',          defaultSection:'tools', mode:{selectTool:'lasso'} },
                 { id:'line',           toolId:'line',       label:'Line',               iconSrc:'assets/toolbar-icons/line.png',          defaultSection:'shapes' },
@@ -965,7 +966,14 @@
                 hoverPreviewLastSample: 0,
                 hoverPreviewLastPoint: null,
                 fileHandle: null,
+                projectHandle: null,
                 filePath: null,
+                palettes: [],
+                activePaletteId: null,
+                previewPaletteId: null,
+                previewSnapshot: null,
+                projectImage: false,
+                projectBitDepth: 4,
                 lastMouse: null,
                 transPick: false,
                 outlinePhase: 0,
@@ -2793,13 +2801,6 @@
             this.revealStartupWindow();
             Promise.resolve(this.initTauriFileOpenListener());
             this.setActiveTab('home');
-            let popupModal;
-            try { popupModal = localStorage.getItem('paint.popupModal'); } catch (e) {}
-            if (popupModal) {
-                try { localStorage.removeItem('paint.popupModal'); } catch (e) {}
-                this._enterPopupMode(popupModal);
-                return;
-            }
         }
 
         deferHeavyInit() {
@@ -3899,6 +3900,15 @@
             return Promise.resolve();
         }
         async openFileFromPath(path, _skipUnsavedCheck = false) {
+            this.state.projectFile = null;
+            this.state.projectHandle = null;
+            this.state.palettes = [];
+            this.state.activePaletteId = null;
+            this.state.previewPaletteId = null;
+            this.state.previewSnapshot = null;
+            this.state.projectImage = false;
+            this.state.projectBitDepth = 4;
+            if (this.onPalettesChanged) this.onPalettesChanged();
             if (!_skipUnsavedCheck && this.hasUnsavedChanges()) {
                 return new Promise((resolve) => {
                     this.showOpenConfirm(async () => {
@@ -4636,7 +4646,7 @@
             return false;
         }
         enforceFixedPaletteSwatchStyles() {
-            const swatches = document.querySelectorAll('#palette-std .mini-swatch, #palette-recent .mini-swatch, #palette-custom .mini-swatch, #palette .mini-swatch, #cq-palette .mini-swatch');
+            const swatches = document.querySelectorAll('#palette-std .mini-swatch, #palette-recent .mini-swatch, #palette-custom .mini-swatch, #palette .mini-swatch, #cq-palette .mini-swatch, #palette-panel .mini-swatch');
             swatches.forEach((swatch) => {
                 if (!swatch || !swatch.style) return;
                 swatch.style.border = '1px solid var(--palette-mini-swatch-border)';
@@ -7388,8 +7398,8 @@
                 if (btn) { btn.title = 'Dock as sidebar'; btn.innerHTML = this.getSidebarDockIcon(); }
             }
         }
-        getSidebarDockIcon() { return '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1"/><rect x="7" y="4" width="8" height="1.5" rx="0.75"/><rect x="7" y="7.25" width="8" height="1.5" rx="0.75"/><rect x="7" y="10.5" width="8" height="1.5" rx="0.75"/></svg>'; }
-        getSidebarUndockIcon() { return '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1" opacity="0.4"/><path d="M8 3l4 4-4 4V8H5V7h3V3z"/></svg>'; }
+        getSidebarDockIcon() { return '<img class="util-dock-icon" src="assets/anchor.png" alt="Dock as sidebar">'; }
+        getSidebarUndockIcon() { return '<img class="util-dock-icon" src="assets/Free.png" alt="Undock to floating window">'; }
 
         setHueSatChannel(channel) {
             if (!this.hueSatChannels[channel]) return;
@@ -8730,9 +8740,9 @@ self.onmessage = (e) => {
         _makeEmptyRow() { return new Array(20).fill(null); }
         getDefaultToolGrid() {
             const t = [
-                ['pencil','fill','wand'],
-                ['eraser','picker','zoom'],
-                ['gradient','anchor-toggle','freehand','layers-toggle']
+                ['pencil','fill','wand','paintbrush'],
+                ['eraser','picker','zoom','layers-toggle'],
+                ['gradient','anchor-toggle','freehand','pokeproject']
             ].map(arr => { const r = this._makeEmptyRow(); arr.forEach((v,i) => r[i]=v); return r; });
             const s = [
                 ['line','curve','poly','rect'],
@@ -8814,6 +8824,7 @@ self.onmessage = (e) => {
                     e.stopPropagation();
                     if (id === 'anchor-toggle') this.toggleAnchorCanvas();
                     else if (id === 'layers-toggle') this.layerMgr.openPanel();
+                    else if (id === 'pokeproject') this.toggleProjectPanel();
                 });
             } else if (item.mode && item.mode.selectTool) {
                 slot.addEventListener('click', (e) => { e.stopPropagation(); this.setSelectTool(item.mode.selectTool); });
@@ -8890,6 +8901,10 @@ self.onmessage = (e) => {
             this._renderSectionGrid('shapes', 'dynamic-shapes-grid');
             this.syncToolGridActive();
         }
+        toggleProjectPanel() {
+            if (window.PokeProject && typeof window.PokeProject.toggle === 'function') window.PokeProject.toggle();
+            this.syncToolGridActive();
+        }
         syncToolGridActive() {
             const t = this.config.tool;
             const selTool = this.config.selectTool;
@@ -8899,6 +8914,10 @@ self.onmessage = (e) => {
                 if (!id) return;
                 const item = this.getToolManifestItem(id);
                 if (!item) return;
+                if (id === 'pokeproject') {
+                    if (document.body.classList.contains('project-panel-open')) b.classList.add('active');
+                    return;
+                }
                 if (item.toolId === t) {
                     let matched = false;
                     if (item.mode && item.mode.selectTool && selTool) {
@@ -8925,7 +8944,11 @@ self.onmessage = (e) => {
                 if (item.mode.pencilMode) this.setPencilMode(item.mode.pencilMode);
                 if (item.mode.wandMode) this.setWandMode(item.mode.wandMode);
             }
-            if (item.toolId) this.setTool(item.toolId);
+            if (item.toolId) {
+                const _togg = item.toolId === 'freehand' || item.toolId === 'paintbrush' || item.toolId === 'gradient';
+                if (_togg && this.config.tool === item.toolId) this.setTool('pencil');
+                else this.setTool(item.toolId);
+            }
         }
         initToolGrid() {
             this.renderToolGrid();
@@ -11456,6 +11479,10 @@ void main() {
             if (e.button === 1) return;
             if (this.state.quantizeBusy) return;
             if (this.state.isFileLoading) return;
+            if (this.state.previewPaletteId) {
+                showToast('Exit palette preview to edit', 'warning');
+                return;
+            }
             this._lastPointerEvent = e;
 
             if(this.state.isCanvasResizing) return;
@@ -16225,6 +16252,16 @@ void main() {
         addPaletteColor(r, g, b) {
             this.palette.push({ r, g, b, a: 255 });
             if (this.paletteLab) this.paletteLab.push(this.rgbToOklab(r, g, b));
+            this._schedulePalettePanelRefresh();
+        }
+        _schedulePalettePanelRefresh() {
+            if (this._paletteRefreshScheduled) return;
+            this._paletteRefreshScheduled = true;
+            const self = this;
+            setTimeout(function () {
+                self._paletteRefreshScheduled = false;
+                if (self.onPalettesChanged) self.onPalettesChanged();
+            }, 0);
         }
         mapRgbToIndexed(r, g, b, limit) {
             if (!this.palette) this.palette = [];
@@ -17113,7 +17150,8 @@ void main() {
             const anyOpen = (document.getElementById('unified-sidebar')?.classList.contains('hidden') === false) ||
                 document.getElementById('freehand-sidebar')?.classList.contains('open') ||
                 document.getElementById('paintbrush-sidebar')?.classList.contains('open') ||
-                document.getElementById('gradient-sidebar')?.classList.contains('open');
+                document.getElementById('gradient-sidebar')?.classList.contains('open') ||
+                (document.getElementById('project-panel') && !document.getElementById('project-panel').classList.contains('project-collapsed'));
             const shift = this.config.anchorCanvas && anyOpen ? 290 : 0;
             if (!this.ui.viewport) return;
             if (smoothHandles) {
@@ -20376,6 +20414,35 @@ void main() {
                 this.applyExportPreset();
             }
 
+            // Auto-destination: derive sensible export defaults from the open project path
+            const projPath = this.state.projectFile || this.state.filePath || '';
+            if (projPath) {
+                const projFolder = this.getParentDirectory(projPath);
+                if (projFolder) this.state.exportDir = projFolder;
+                const segs = projPath.split(/[\\/]/).filter(Boolean);
+                const fileNameRaw = segs[segs.length - 1] || '';
+                const baseRaw = fileNameRaw.replace(/\.[^./]+$/, '');
+                const lc = baseRaw.toLowerCase();
+                let species = baseRaw.split('_')[0] || '';
+                const pkIdx = segs.findIndex(function (s) { return /pokemon/i.test(s); });
+                if (pkIdx >= 0 && pkIdx + 1 < segs.length) species = segs[pkIdx + 1].split('_')[0] || species;
+                if (species && nameInput && !nameInput.value) nameInput.value = species;
+                const typeSelect = document.getElementById('export-asset-type');
+                let at = null;
+                if (/back/.test(lc)) at = 'back';
+                else if (/icon/.test(lc)) at = 'icon';
+                else if (/footprint/.test(lc)) at = 'footprint';
+                else if (/anim/.test(lc)) at = 'anim_front';
+                else if (/front/.test(lc)) at = 'front';
+                if (at && typeSelect && typeSelect.querySelector('option[value="' + at + '"]')) typeSelect.value = at;
+                const shinyChk = document.getElementById('export-is-shiny');
+                if (shinyChk) shinyChk.checked = /shiny/.test(lc);
+                const prefixChk = document.getElementById('export-use-prefix');
+                if (prefixChk) prefixChk.checked = true;
+                const genChk = document.getElementById('export-gen-pal');
+                if (genChk) genChk.checked = true;
+            }
+
             this.updateExportOutputInfo();
             modal.style.display = 'flex';
             this.sizeExportModalToContent(true);
@@ -20595,7 +20662,7 @@ void main() {
                 this.updateExportPreview();
             }
         }
-        async generateIndexedPNG(w, h, indices, palette, bitDepth) {
+        async generateIndexedPNG(w, h, indices, palette, bitDepth, trns) {
             const ihdr = new Uint8Array(13);
             const ihdrView = new DataView(ihdr.buffer);
             ihdrView.setUint32(0, w, false);
@@ -20613,22 +20680,41 @@ void main() {
                 plte[i * 3 + 2] = palette[i].b;
             }
 
-            const trns = new Uint8Array([0]);
+            if (trns === undefined || trns === null) {
+                let lastTransparent = -1;
+                for (let i = 0; i < palette.length; i++) {
+                    const a = palette[i].a === undefined ? 255 : palette[i].a;
+                    if (a < 255) lastTransparent = i;
+                }
+                if (lastTransparent >= 0) {
+                    trns = new Uint8Array(lastTransparent + 1);
+                    for (let i = 0; i <= lastTransparent; i++) {
+                        trns[i] = palette[i].a === undefined ? 255 : palette[i].a;
+                    }
+                } else {
+                    trns = null;
+                }
+            }
 
-            const rowBytes = bitDepth === 4 ? Math.ceil(w / 2) : w;
+            const rowBytes = Math.ceil((w * bitDepth) / 8);
             const rawData = new Uint8Array(h * (rowBytes + 1));
             for (let y = 0; y < h; y++) {
                 rawData[y * (rowBytes + 1)] = 0;
+                const base = y * (rowBytes + 1) + 1;
+                let bitBuffer = 0;
+                let bitsFilled = 0;
+                let byteIndex = base;
                 for (let x = 0; x < w; x++) {
-                    const idx = indices[y * w + x];
-                    const outPos = y * (rowBytes + 1) + 1;
-                    if (bitDepth === 4) {
-                        const bytePos = outPos + Math.floor(x / 2);
-                        if (x % 2 === 0) rawData[bytePos] |= (idx << 4);
-                        else rawData[bytePos] |= idx;
-                    } else {
-                        rawData[outPos + x] = idx;
+                    const idx = indices[y * w + x] & ((1 << bitDepth) - 1);
+                    bitBuffer = (bitBuffer << bitDepth) | idx;
+                    bitsFilled += bitDepth;
+                    while (bitsFilled >= 8) {
+                        bitsFilled -= 8;
+                        rawData[byteIndex++] = (bitBuffer >> bitsFilled) & 0xff;
                     }
+                }
+                if (bitsFilled > 0) {
+                    rawData[byteIndex] = (bitBuffer << (8 - bitsFilled)) & 0xff;
                 }
             }
 
@@ -20638,11 +20724,11 @@ void main() {
             const chunks = [
                 sig,
                 PngMetadata.createChunk('IHDR', ihdr),
-                PngMetadata.createChunk('PLTE', plte),
-                PngMetadata.createChunk('tRNS', trns),
-                PngMetadata.createChunk('IDAT', idatData),
-                PngMetadata.createChunk('IEND', new Uint8Array(0))
+                PngMetadata.createChunk('PLTE', plte)
             ];
+            if (trns && trns.length) chunks.push(PngMetadata.createChunk('tRNS', trns));
+            chunks.push(PngMetadata.createChunk('IDAT', idatData));
+            chunks.push(PngMetadata.createChunk('IEND', new Uint8Array(0)));
 
             let totalLen = 0;
             for (let c of chunks) totalLen += c.length;
@@ -20653,6 +20739,232 @@ void main() {
                 offset += c.length;
             }
             return out;
+        }
+        parsePngPalette(bytes) {
+            const sig = [137, 80, 78, 71, 13, 10, 26, 10];
+            if (!bytes || bytes.length < 8) throw new Error('File is not a PNG');
+            for (let i = 0; i < 8; i++) {
+                if (bytes[i] !== sig[i]) throw new Error('File is not a PNG');
+            }
+            let pos = 8;
+            let width = 0, height = 0, bitDepth = 8, colorType = 0;
+            let palette = null, trns = null;
+            while (pos + 8 <= bytes.length) {
+                const len = (bytes[pos] << 24) | (bytes[pos + 1] << 16) | (bytes[pos + 2] << 8) | bytes[pos + 3];
+                const type = String.fromCharCode(bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]);
+                const dataStart = pos + 8;
+                const dataEnd = dataStart + len;
+                if (type === 'IHDR' && len >= 13) {
+                    width = (bytes[dataStart] << 24) | (bytes[dataStart + 1] << 16) | (bytes[dataStart + 2] << 8) | bytes[dataStart + 3];
+                    height = (bytes[dataStart + 4] << 24) | (bytes[dataStart + 5] << 16) | (bytes[dataStart + 6] << 8) | bytes[dataStart + 7];
+                    bitDepth = bytes[dataStart + 8];
+                    colorType = bytes[dataStart + 9];
+                } else if (type === 'PLTE') {
+                    const count = Math.floor(len / 3);
+                    palette = [];
+                    for (let i = 0; i < count; i++) {
+                        palette.push({ r: bytes[dataStart + i * 3], g: bytes[dataStart + i * 3 + 1], b: bytes[dataStart + i * 3 + 2], a: 255 });
+                    }
+                } else if (type === 'tRNS') {
+                    trns = bytes.slice(dataStart, dataEnd);
+                } else if (type === 'IEND') {
+                    break;
+                }
+                if (dataEnd + 4 > bytes.length) break;
+                pos = dataEnd + 4;
+            }
+            if (palette && trns) {
+                for (let i = 0; i < trns.length && i < palette.length; i++) palette[i].a = trns[i];
+            }
+            return { width, height, bitDepth, colorType, palette, trns };
+        }
+        _nearestPaletteIndex(r, g, b) {
+            this.ensurePaletteLab();
+            const pLab = this.rgbToOklab(r, g, b);
+            let best = 0, bestDist = Infinity;
+            for (let i = 0; i < this.paletteLab.length; i++) {
+                const dist = this.distOklab(pLab, this.paletteLab[i]);
+                if (dist < bestDist) { bestDist = dist; best = i; }
+            }
+            return best;
+        }
+        async openProjectImage(path, palNodes) {
+            if (!this.getTauriInvokeFn() || !path) {
+                if (!this.state.hasDocument) this.initializeBlankDocument();
+                return false;
+            }
+            const normalizedPath = this.normalizeIncomingPath(path);
+            if (!this.isSupportedImagePath(normalizedPath)) {
+                showToast('Unsupported project image: ' + normalizedPath, 'warning');
+                return false;
+            }
+            if (this.hasUnsavedChanges()) {
+                return new Promise((resolve) => {
+                    this.showOpenConfirm(async () => {
+                        const r = await this.openProjectImage(path, palNodes);
+                        resolve(r);
+                    }, 'Opening a new file');
+                });
+            }
+            try {
+                const bytes = await this.tauriReadImageBytes(normalizedPath);
+                return await this.applyProjectImageBytes(bytes, this.getFilenameFromPath(normalizedPath), normalizedPath, palNodes);
+            } catch (err) {
+                console.error('Failed to open project image', err);
+                showToast('Failed to open project image: ' + this.getErrorText(err), 'error');
+                if (!this.state.hasDocument) this.initializeBlankDocument();
+                return false;
+            }
+        }
+        async applyProjectImageBytes(bytes, fallbackName, sourcePath, palNodes) {
+            const meta = this.parsePngPalette(bytes);
+            if (meta.colorType !== 3 || !meta.palette || !meta.palette.length) {
+                if (sourcePath) {
+                    showToast('Project image is not an indexed PNG; opening normally', 'warning');
+                    return this.openFileFromPath(sourcePath, true);
+                }
+                showToast('Project image is not an indexed PNG', 'warning');
+                return false;
+            }
+            const blob = new Blob([bytes], { type: 'image/png' });
+            const bmp = await createImageBitmap(blob);
+            const w = meta.width, h = meta.height;
+            this.state.projectFile = sourcePath || fallbackName;
+            this.state.history = [];
+            this.state.step = -1;
+            if (this.state.selection) this.cancelSelection();
+            const embeddedColors = meta.palette.map(c => ({ r: c.r, g: c.g, b: c.b, a: c.a === undefined ? 255 : c.a }));
+            const palettes = await this.buildProjectPalettes(embeddedColors, palNodes);
+            const active = palettes[0];
+            this.palette = active ? active.colors : embeddedColors;
+            this.basePalette = this.palette;
+            this.paletteLab = null;
+            this.bitDepth = 24;
+            this.state.projectBitDepth = meta.bitDepth || 4;
+            this.paletteLocked = false;
+            this.state.palettes = palettes;
+            this.state.activePaletteId = active ? active.id : null;
+            this.state.projectImage = true;
+            this.setSize(w, h);
+            this.ctx.drawImage(bmp, 0, 0);
+            await this.applyCurrentModeToCanvasAsync(this.ctx, w, h, false);
+            try {
+                const _snap = this.ctx.getImageData(0, 0, w, h);
+                this.spriteIndices = this.quantizeToIndices(_snap.data, w, h, this.basePalette || this.palette);
+            } catch (e) { this.spriteIndices = null; }
+            this.state.hasDocument = true;
+            this.state.filePath = sourcePath || '';
+            this.state.fileName = fallbackName || this.getFilenameFromPath(sourcePath || '');
+            this.renderQuantPalette();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+            this.saveState();
+            this.markSaved(this.state.fileName);
+            this.addRecentFile({ name: this.state.fileName, path: sourcePath || '' });
+            if (bmp.close) bmp.close();
+            return true;
+        }
+        async openProjectImageFromHandle(node, palNodes) {
+            if (!node || !node.handle) {
+                showToast('No file handle for this asset', 'warning');
+                return false;
+            }
+            if (this.hasUnsavedChanges()) {
+                return new Promise((resolve) => {
+                    this.showOpenConfirm(async () => {
+                        const r = await this.openProjectImageFromHandle(node, palNodes);
+                        resolve(r);
+                    }, 'Opening a new file');
+                });
+            }
+            try {
+                let file;
+                if (node.handle instanceof File) file = node.handle;
+                else if (typeof node.handle.getFile === 'function') file = await node.handle.getFile();
+                else { showToast('Unsupported file handle', 'warning'); return false; }
+                const bytes = new Uint8Array(await file.arrayBuffer());
+                const ok = await this.applyProjectImageBytes(bytes, node.name, '', palNodes);
+                if (ok) {
+                    this.state.projectHandle = node.handle || null;
+                }
+                return ok;
+            } catch (err) {
+                console.error('Failed to open project image', err);
+                showToast('Failed to open project image: ' + this.getErrorText(err), 'error');
+                if (!this.state.hasDocument) this.initializeBlankDocument();
+                return false;
+            }
+        }
+        async saveProjectFile(path) {
+            const w = this.config.width, h = this.config.height;
+            const imgData = this.ctx.getImageData(0, 0, w, h);
+            const d = imgData.data;
+            const palette = this.palette;
+            const exact = new Map();
+            for (let i = 0; i < palette.length; i++) {
+                exact.set((palette[i].r << 16) | (palette[i].g << 8) | palette[i].b, i);
+            }
+            const indices = new Uint8Array(w * h);
+            for (let p = 0, q = 0; p < d.length; p += 4, q++) {
+                const key = (d[p] << 16) | (d[p + 1] << 8) | d[p + 2];
+                let idx = exact.get(key);
+                if (idx === undefined) idx = this._nearestPaletteIndex(d[p], d[p + 1], d[p + 2]);
+                indices[q] = idx;
+            }
+            const bytes = await this.generateIndexedPNG(w, h, indices, palette, this.state.projectBitDepth || this.bitDepth);
+            if (this.getTauriInvokeFn()) {
+                const normalizedPath = this.normalizeIncomingPath(path);
+                await this.tauriWriteAllowedFile(normalizedPath, bytes);
+                this.state.filePath = normalizedPath;
+                this.markSaved(this.getFilenameFromPath(normalizedPath));
+                this.resetSaveReminderTimer();
+                this.revealInExplorer(this.getParentDirectory(normalizedPath));
+                return;
+            }
+            await this.saveProjectFileBrowser(bytes);
+        }
+        async saveProjectFileBrowser(bytes) {
+            const name = this.getFilenameFromPath(this.state.projectFile) || 'sprite.png';
+            const blob = new Blob([bytes], { type: 'image/png' });
+            const handle = this.state.projectHandle;
+            if (handle && typeof handle.createWritable === 'function') {
+                try {
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    this.state.fileHandle = handle;
+                    this.state.filePath = handle.name;
+                    this.markSaved(name);
+                    this.resetSaveReminderTimer();
+                    return;
+                } catch (e) { /* read-only handle or denied -> fall through */ }
+            }
+            if (typeof window.showSaveFilePicker === 'function') {
+                let picked;
+                try {
+                    picked = await window.showSaveFilePicker({
+                        suggestedName: name,
+                        types: [{ description: 'PNG', accept: { 'image/png': ['.png'] } }]
+                    });
+                } catch (e) {
+                    if (e && e.name === 'AbortError') return;
+                    throw e;
+                }
+                const writable = await picked.createWritable();
+                await writable.write(blob);
+                await writable.close();
+                this.state.fileHandle = picked;
+                this.state.filePath = picked.name;
+                this.markSaved(name);
+                this.resetSaveReminderTimer();
+                return;
+            }
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = name;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            this.markSaved(name);
+            this.resetSaveReminderTimer();
         }
         joinPath(base, name) {
             const left = String(base || '');
@@ -20857,10 +21169,12 @@ void main() {
             return undefined;
         }
         async pickExportDirectoryForDesktop() {
+            const defaultPath = this.normalizeExportDirectoryPath(this.state.exportDir || '');
             const selected = await this.tauriOpenDirectoryDialog({
                 title: 'Choose Export Folder',
                 directory: true,
-                multiple: false
+                multiple: false,
+                defaultPath: defaultPath || undefined
             });
             if (selected !== undefined) {
                 if (!selected) return null;
@@ -20909,6 +21223,13 @@ void main() {
             if (/^[a-zA-Z]:$/.test(parent)) return `${parent}\\`;
             if (parent === '') return trimmed.startsWith('/') ? '/' : '';
             return parent;
+        }
+        revealInExplorer(dir) {
+            const d = this.normalizeExportDirectoryPath(dir);
+            if (!d) return;
+            const invoke = this.getTauriInvokeFn();
+            if (!invoke) return;
+            Promise.resolve(invoke('plugin:opener|reveal_item_in_dir', { path: d })).catch(function () {});
         }
         async tauriWriteExportFilesOneByOneViaDialog(files, initialDirectory = '') {
             const list = Array.isArray(files) ? files : [];
@@ -21158,7 +21479,7 @@ void main() {
                         subIndices[row * subW + col] = indices[(y + row) * w + (x + col)];
                     }
                 }
-                const pngBytes = await this.generateIndexedPNG(subW, subH, subIndices, finalPalette, 4); // Assuming 4bpp for decomps
+                const pngBytes = await this.generateIndexedPNG(subW, subH, subIndices, finalPalette, 4, new Uint8Array([0])); // index 0 = transparent (GBA contract); 4bpp for decomps
                 queueFile(pngBytes, filename);
             };
 
@@ -21197,6 +21518,7 @@ void main() {
                 });
                 if (saveResult === null) return;
                 if (saveResult === false) flushDownloads();
+                if (saveResult && this.getTauriInvokeFn()) this.revealInExplorer(this.state.exportDir);
 
                 this.closeModals();
             } catch (e) {
@@ -22732,6 +23054,652 @@ self.onmessage = function(e) {
             setTimeout(() => URL.revokeObjectURL(url), 100);
         }
 
+        parseGbaPaletteText(text) {
+            const lines = String(text).split(/\r?\n/);
+            if (lines[0] !== 'JASC-PAL' || lines[1] !== '0100') {
+                throw new Error('Invalid JASC-PAL file');
+            }
+            const count = parseInt(lines[2], 10);
+            if (!Number.isFinite(count) || count < 0) {
+                throw new Error('Invalid JASC-PAL file');
+            }
+            let maxVal = 0;
+            for (let i = 3; i < 3 + count; i++) {
+                if (!lines[i]) continue;
+                const parts = lines[i].trim().split(/\s+/);
+                if (parts.length < 3) continue;
+                for (let k = 0; k < 3; k++) {
+                    const v = Number(parts[k]);
+                    if (Number.isFinite(v)) maxVal = Math.max(maxVal, v);
+                }
+            }
+            const isGba = maxVal > 0 && maxVal <= 31;
+            const scale = isGba ? (255 / 31) : 1;
+            const pal = [];
+            for (let i = 3; i < 3 + count; i++) {
+                if (!lines[i]) continue;
+                const parts = lines[i].trim().split(/\s+/);
+                if (parts.length < 3) continue;
+                const r = Number(parts[0]), g = Number(parts[1]), b = Number(parts[2]);
+                if (![r, g, b].every(v => Number.isFinite(v) && v >= 0 && v <= (isGba ? 31 : 255))) continue;
+                pal.push({ r: Math.round(r * scale), g: Math.round(g * scale), b: Math.round(b * scale), a: i === 3 ? 0 : 255 });
+            }
+            if (!pal.length) throw new Error('Palette file had no valid colors');
+            return { colors: pal, isGba };
+        }
+        applyGbaPaletteText(text) {
+            let parsed;
+            try {
+                parsed = this.parseGbaPaletteText(text);
+            } catch (e) {
+                showToast(e.message, 'warning');
+                return;
+            }
+            const { colors, isGba } = parsed;
+            this.palette = colors;
+            this.paletteLab = null;
+            this.paletteLocked = false;
+            this.renderQuantPalette();
+            this.saveState();
+            showToast('Palette loaded' + (isGba ? ' (GBA 15-bit scaled)' : ''), 'info');
+        }
+        loadProjectPalette(name, text) {
+            let parsed;
+            try {
+                parsed = this.parseGbaPaletteText(text);
+            } catch (e) {
+                showToast(e.message, 'warning');
+                return;
+            }
+            const label = this.labelForProjectPal(name);
+            const id = 'pal-' + (name || label);
+            const entry = {
+                id,
+                name: label,
+                colors: parsed.colors,
+                source: 'pal',
+                handle: null,
+                path: null
+            };
+            if (!Array.isArray(this.state.palettes)) this.state.palettes = [];
+            const existingIdx = this.state.palettes.findIndex(p => p.id === id);
+            if (existingIdx >= 0) this.state.palettes[existingIdx] = entry;
+            else this.state.palettes.push(entry);
+            this.palette = entry.colors;
+            this.basePalette = entry.colors;
+            this.paletteLab = null;
+            this.paletteLocked = false;
+            this.state.activePaletteId = id;
+            if (!this.state.projectBitDepth) this.state.projectBitDepth = 4;
+            this.renderQuantPalette();
+            this.saveState();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+            if (window.PalettePanel && window.PalettePanel.open) window.PalettePanel.open();
+            if (window.SpritePreview && window.SpritePreview.open) window.SpritePreview.open();
+            showToast('Palette loaded' + (parsed.isGba ? ' (GBA 15-bit scaled)' : ''), 'info');
+        }
+        labelForProjectPal(name) {
+            const n = (name || '').toLowerCase();
+            if (n === 'normal.pal') return 'Normal';
+            if (n === 'shiny.pal') return 'Shiny';
+            return (name || 'palette').replace(/\.pal$/i, '');
+        }
+        async readPalNodeText(node) {
+            if (node && node.handle) {
+                const file = node.handle instanceof File ? node.handle : (await node.handle.getFile());
+                return await file.text();
+            }
+            if (node && node.path) {
+                return await this.tauriInvoke('read_text_file', { path: this.normalizeIncomingPath(node.path) });
+            }
+            throw new Error('No palette source');
+        }
+        async buildProjectPalettes(embeddedColors, palNodes) {
+            const palettes = [];
+            palettes.push({ id: 'embedded', name: 'Embedded', colors: embeddedColors, source: 'embedded', handle: null, path: null });
+            if (Array.isArray(palNodes)) {
+                for (let i = 0; i < palNodes.length; i++) {
+                    const node = palNodes[i];
+                    try {
+                        const text = await this.readPalNodeText(node);
+                        const parsed = this.parseGbaPaletteText(text);
+                        palettes.push({
+                            id: 'pal-' + i + '-' + node.name,
+                            name: this.labelForProjectPal(node.name),
+                            colors: parsed.colors,
+                            source: 'pal',
+                            handle: node.handle || null,
+                            path: node.path || null
+                        });
+                    } catch (e) {
+                        console.warn('Failed to load palette', node && node.name, e);
+                    }
+                }
+            }
+            return palettes;
+        }
+        getTargetProfiles() {
+            return {
+                'pokemon-front': { label: 'Pokémon front sprite', bitDepth: 4, maxColors: 16, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64], [80, 80], [96, 96]] },
+                'pokemon-back': { label: 'Pokémon back sprite', bitDepth: 4, maxColors: 16, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[80, 80], [96, 96], [128, 128]] },
+                'pokemon-icon': { label: 'Pokémon icon', bitDepth: 4, maxColors: 16, palettes: ['Normal'], strictResolution: true, allowedResolutions: [[32, 32], [64, 64]] },
+                'interface': { label: 'Interface graphic', bitDepth: 4, maxColors: 16, palettes: ['Normal'], strictResolution: false },
+                'default': { label: 'Project asset', bitDepth: 4, maxColors: 16, palettes: ['Normal'], strictResolution: false }
+            };
+        }
+        inferProfile(sourcePath) {
+            const profiles = this.getTargetProfiles();
+            const raw = (sourcePath || '').replace(/\\/g, '/');
+            const low = raw.toLowerCase();
+            if (low.includes('graphics/pokemon/')) {
+                const file = low.split('/').pop() || '';
+                if (file.includes('icon')) return profiles['pokemon-icon'];
+                if (file.startsWith('back') || file.includes('back')) return profiles['pokemon-back'];
+                if (file.startsWith('front') || file.includes('front') || file.includes('anim')) return profiles['pokemon-front'];
+                if (file.includes('overworld') || file.includes('footprint')) return profiles['interface'];
+                return profiles['pokemon-front'];
+            }
+            if (low.includes('graphics/interface')) return profiles['interface'];
+            return profiles['default'];
+        }
+        findOffendingColors(paletteColors, d, tol) {
+            const exact = new Map();
+            for (let i = 0; i < paletteColors.length; i++) {
+                const c = paletteColors[i];
+                exact.set((c.r << 16) | (c.g << 8) | c.b, true);
+            }
+            const seen = new Map();
+            const out = [];
+            for (let p = 0; p < d.length; p += 4) {
+                const a = d[p + 3];
+                if (a < 128) continue;
+                const r = d[p], g = d[p + 1], b = d[p + 2];
+                const key = (r << 16) | (g << 8) | b;
+                if (exact.has(key)) continue;
+                if (seen.has(key)) continue;
+                let best = Infinity;
+                for (let i = 0; i < paletteColors.length; i++) {
+                    const c = paletteColors[i];
+                    const dr = r - c.r, dg = g - c.g, db = b - c.b;
+                    const dist = (dr > dg ? dr : dg); const m = db > dist ? db : dist;
+                    if (m < best) best = m;
+                }
+                seen.set(key, true);
+                if (best > tol) {
+                    out.push({ r, g, b });
+                    if (out.length >= 6) break;
+                }
+            }
+            return out;
+        }
+        validateForExport(profile) {
+            const errors = [];
+            const w = this.config.width, h = this.config.height;
+            if (profile.allowedResolutions && profile.allowedResolutions.length) {
+                const okRes = profile.allowedResolutions.some(r => r[0] === w && r[1] === h);
+                if (!okRes) {
+                    const hint = 'Allowed resolutions: ' + profile.allowedResolutions.map(r => r.join('x')).join(', ');
+                    if (profile.strictResolution) {
+                        errors.push({ field: 'resolution', message: `Resolution ${w}x${h} is not allowed for ${profile.label}.`, hint, warn: false });
+                    } else {
+                        errors.push({ field: 'resolution', message: `Resolution ${w}x${h} is unusual for ${profile.label}.`, hint, warn: true });
+                    }
+                }
+            }
+            const imgData = this.ctx.getImageData(0, 0, w, h);
+            const d = imgData.data;
+            const distinct = new Map();
+            for (let p = 0; p < d.length; p += 4) {
+                if (d[p + 3] < 128) continue;
+                distinct.set((d[p] << 16) | (d[p + 1] << 8) | d[p + 2], true);
+            }
+            const distinctCount = distinct.size;
+            if (distinctCount > profile.maxColors) {
+                errors.push({ field: 'colors', message: `Artwork uses ${distinctCount} distinct colors; ROM allows ${profile.maxColors}.`, hint: `Reduce to ${profile.maxColors} or fewer colors before exporting.`, warn: false });
+            }
+            const tol = 24;
+            const palEntries = (this.state.palettes || []).filter(pe => pe.source === 'pal');
+            for (const pe of palEntries) {
+                const offending = this.findOffendingColors(pe.colors, d, tol);
+                if (offending.length) {
+                    const sw = offending.slice(0, 5).map(c => this.rgbToHex(c.r, c.g, c.b)).join(', ');
+                    errors.push({ field: 'palette:' + pe.name, message: `${offending.length}+ pixel color(s) fall outside the ${pe.name} palette.`, hint: `Mismatched colors: ${sw}`, warn: true });
+                }
+            }
+            const blocking = errors.filter(e => !e.warn);
+            return { ok: blocking.length === 0, errors };
+        }
+        serializeJascPal(colors) {
+            let out = 'JASC-PAL\n0100\n' + colors.length + '\n';
+            for (let i = 0; i < colors.length; i++) {
+                const c = colors[i];
+                const r = Math.round((c.r * 31) / 255);
+                const g = Math.round((c.g * 31) / 255);
+                const b = Math.round((c.b * 31) / 255);
+                out += r + ' ' + g + ' ' + b + '\n';
+            }
+            return out;
+        }
+        async writePalViaSaveDialog(name, bytes) {
+            if (typeof window.showSaveFilePicker !== 'function') {
+                const blob = new Blob([bytes], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = name || 'palette.pal';
+                document.body.appendChild(a); a.click(); a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                return;
+            }
+            const picked = await window.showSaveFilePicker({
+                suggestedName: name || 'palette.pal',
+                types: [{ description: 'GBA Palette', accept: { 'application/octet-stream': ['.pal'] } }]
+            });
+            const writable = await picked.createWritable();
+            await writable.write(new Blob([bytes]));
+            await writable.close();
+        }
+        async writeProjectPalFiles() {
+            const entries = (this.state.palettes || []).filter(p => p.source === 'pal' && (p.handle || p.path));
+            for (const e of entries) {
+                const text = this.serializeJascPal(e.colors);
+                const bytes = new TextEncoder().encode(text);
+                try {
+                    if (e.path && this.getTauriInvokeFn()) {
+                        await this.tauriWriteAllowedFile(this.normalizeIncomingPath(e.path), bytes);
+                    } else if (e.handle && typeof e.handle.createWritable === 'function') {
+                        try {
+                            const writable = await e.handle.createWritable();
+                            await writable.write(new Blob([bytes]));
+                            await writable.close();
+                        } catch (err) {
+                            await this.writePalViaSaveDialog(e.name, bytes);
+                        }
+                    } else {
+                        await this.writePalViaSaveDialog(e.name, bytes);
+                    }
+                } catch (err) {
+                    if (err && err.name === 'AbortError') continue;
+                    console.error('Failed to write palette', e.name, err);
+                    showToast('Palette write failed: ' + e.name, 'error');
+                }
+            }
+        }
+        async doExportProjectFile() {
+            this.state.isSaving = true;
+            this.updateBusyIndicator();
+            try {
+                await this.saveProjectFile(this.state.projectFile);
+                await this.writeProjectPalFiles();
+            } finally {
+                this.state.isSaving = false;
+                this.updateBusyIndicator();
+            }
+        }
+        showExportValidationModal(errors, onSaveAnyway) {
+            const existing = document.getElementById('export-validation-modal');
+            if (existing) existing.remove();
+            const overlay = document.createElement('div');
+            overlay.id = 'export-validation-modal';
+            overlay.className = 'modal-overlay';
+            overlay.style.position = 'fixed';
+            overlay.style.inset = '0';
+            overlay.style.background = 'rgba(0,0,0,0.5)';
+            overlay.style.display = 'flex';
+            overlay.style.alignItems = 'center';
+            overlay.style.justifyContent = 'center';
+            overlay.style.zIndex = '9999';
+            const box = document.createElement('div');
+            box.className = 'modal-box';
+            box.style.background = 'var(--bg, #fff)';
+            box.style.color = 'var(--fg, #000)';
+            box.style.padding = '20px';
+            box.style.borderRadius = '8px';
+            box.style.maxWidth = '480px';
+            box.style.width = '90%';
+            const title = document.createElement('h3');
+            title.textContent = 'Export validation failed';
+            box.appendChild(title);
+            const list = document.createElement('ul');
+            errors.forEach(err => {
+                const li = document.createElement('li');
+                const strong = document.createElement('strong');
+                strong.textContent = (err.warn ? 'Warning' : 'Error') + ': ';
+                li.appendChild(strong);
+                li.appendChild(document.createTextNode(err.message));
+                if (err.hint) {
+                    const hint = document.createElement('div');
+                    hint.style.fontSize = '0.85em';
+                    hint.style.opacity = '0.8';
+                    hint.textContent = err.hint;
+                    li.appendChild(hint);
+                }
+                list.appendChild(li);
+            });
+            box.appendChild(list);
+            const btnRow = document.createElement('div');
+            btnRow.style.marginTop = '16px';
+            btnRow.style.display = 'flex';
+            btnRow.style.gap = '8px';
+            btnRow.style.justifyContent = 'flex-end';
+            const cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.textContent = 'Cancel';
+            cancel.onclick = () => overlay.remove();
+            const saveAnyway = document.createElement('button');
+            saveAnyway.type = 'button';
+            saveAnyway.textContent = 'Export anyway';
+            saveAnyway.onclick = () => { overlay.remove(); onSaveAnyway(); };
+            btnRow.appendChild(cancel);
+            btnRow.appendChild(saveAnyway);
+            box.appendChild(btnRow);
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+        }
+        getPaletteById(id) {
+            return (this.state.palettes || []).find(p => p.id === id) || null;
+        }
+        quantizeToIndices(d, w, h, palette) {
+            const n = palette ? palette.length : 0;
+            const idx = new Uint8Array(w * h);
+            if (n === 0) return idx;
+            let q = 0;
+            for (let p = 0; p < d.length; p += 4, q++) {
+                const r = d[p], g = d[p + 1], b = d[p + 2];
+                let best = 0, bestDist = Infinity;
+                for (let i = 0; i < n; i++) {
+                    const c = palette[i];
+                    const dr = r - c.r, dg = g - c.g, db = b - c.b;
+                    const dist = dr * dr + dg * dg + db * db;
+                    if (dist < bestDist) { bestDist = dist; best = i; }
+                }
+                idx[q] = best;
+            }
+            return idx;
+        }
+        _recolorPreview() {
+            const id = this.state.previewPaletteId;
+            if (!id) return;
+            const target = this.getPaletteById(id);
+            if (!target || !this.state.previewSnapshot) return;
+            const w = this.config.width, h = this.config.height;
+            const snap = this.state.previewSnapshot;
+            const idx = (this.spriteIndices && this.spriteIndices.length === w * h)
+                ? this.spriteIndices
+                : this.quantizeToIndices(snap.data, w, h, this.basePalette || this.palette);
+            const out = this.ctx.createImageData(w, h);
+            const od = out.data, sd = snap.data, tcol = target.colors;
+            for (let q = 0; q < w * h; q++) {
+                const i = idx[q];
+                const c = tcol[i] || tcol[0] || { r: 0, g: 0, b: 0 };
+                const b4 = q * 4;
+                od[b4] = c.r; od[b4 + 1] = c.g; od[b4 + 2] = c.b; od[b4 + 3] = sd[b4 + 3];
+            }
+            this.ctx.putImageData(out, 0, 0);
+        }
+        enterPreview(id) {
+            if (this.state.previewPaletteId) return;
+            const target = this.getPaletteById(id);
+            if (!target) return;
+            if (!this.state.previewSnapshot) {
+                this.state.previewSnapshot = this.ctx.getImageData(0, 0, this.config.width, this.config.height);
+            }
+            this.state.previewPaletteId = id;
+            this._recolorPreview();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+        exitPreview() {
+            if (!this.state.previewPaletteId) return;
+            if (this.state.previewSnapshot) this.ctx.putImageData(this.state.previewSnapshot, 0, 0);
+            this.state.previewSnapshot = null;
+            this.state.previewPaletteId = null;
+            if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+        setActivePalette(id) {
+            const e = this.getPaletteById(id);
+            if (!e) return;
+            this.palette = e.colors;
+            this.paletteLab = null;
+            this.state.activePaletteId = id;
+            this.renderQuantPalette();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+        reorderPaletteColor(paletteId, from, to) {
+            const e = this.getPaletteById(paletteId);
+            if (!e) return;
+            const arr = e.colors;
+            if (from < 0 || from >= arr.length || to < 0 || to >= arr.length || from === to) return;
+            const moved = arr.splice(from, 1)[0];
+            arr.splice(to, 0, moved);
+            this.paletteLab = null;
+            if (paletteId === this.state.activePaletteId) this.renderQuantPalette();
+            if (this.state.previewPaletteId) this._recolorPreview();
+            else if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+        updatePaletteColor(paletteId, index, rgb) {
+            const e = this.getPaletteById(paletteId);
+            if (!e || index < 0 || index >= e.colors.length) return;
+            e.colors[index] = { r: rgb.r, g: rgb.g, b: rgb.b, a: e.colors[index].a };
+            this.paletteLab = null;
+            if (paletteId === this.state.activePaletteId) this.renderQuantPalette();
+            if (this.state.previewPaletteId) this._recolorPreview();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+        addPaletteColorTo(paletteId, color) {
+            const e = this.getPaletteById(paletteId);
+            if (!e) return;
+            e.colors.push({ r: color.r, g: color.g, b: color.b, a: 255 });
+            this.paletteLab = null;
+            if (paletteId === this.state.activePaletteId) this.renderQuantPalette();
+            if (this.state.previewPaletteId) this._recolorPreview();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+        moveColorBetweenPalettes(srcId, srcIdx, dstId, dstIdx) {
+            const src = this.getPaletteById(srcId);
+            const dst = this.getPaletteById(dstId);
+            if (!src || !dst || srcIdx < 0 || srcIdx >= src.colors.length) return;
+            const moved = src.colors.splice(srcIdx, 1)[0];
+            if (dstIdx < 0 || dstIdx > dst.colors.length) dstIdx = dst.colors.length;
+            dst.colors.splice(dstIdx, 0, moved);
+            this.paletteLab = null;
+            if (srcId === this.state.activePaletteId || dstId === this.state.activePaletteId) this.renderQuantPalette();
+            if (this.state.previewPaletteId) this._recolorPreview();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+        renderPalettePreviewInto(canvas, paletteId) {
+            if (!canvas) return;
+            const target = this.getPaletteById(paletteId);
+            if (!target) return;
+            const w = this.config.width, h = this.config.height;
+            if (!w || !h) { canvas.width = 0; canvas.height = 0; return; }
+            let srcData;
+            try { srcData = this.ctx.getImageData(0, 0, w, h); }
+            catch (e) { canvas.width = 0; canvas.height = 0; return; }
+            const native = document.createElement('canvas');
+            native.width = w; native.height = h;
+            const nctx = native.getContext('2d');
+            if (this.palette && this.palette.length) {
+                const idx = (this.spriteIndices && this.spriteIndices.length === w * h)
+                    ? this.spriteIndices
+                    : this.quantizeToIndices(srcData.data, w, h, this.basePalette || this.palette);
+                const nd = nctx.createImageData(w, h);
+                const tcol = target.colors;
+                const alpha = srcData.data;
+                for (let q = 0; q < w * h; q++) {
+                    const i = idx[q];
+                    const c = tcol[i] || tcol[0] || { r: 0, g: 0, b: 0 };
+                    const b4 = q * 4;
+                    nd.data[b4] = c.r; nd.data[b4 + 1] = c.g; nd.data[b4 + 2] = c.b; nd.data[b4 + 3] = alpha[b4 + 3];
+                }
+                nctx.putImageData(nd, 0, 0);
+            } else {
+                nctx.putImageData(srcData, 0, 0);
+            }
+            const sa = srcData.data;
+            let minX = w, minY = h, maxX = -1, maxY = -1;
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    if (sa[(y * w + x) * 4 + 3] > 0) {
+                        if (x < minX) minX = x;
+                        if (x > maxX) maxX = x;
+                        if (y < minY) minY = y;
+                        if (y > maxY) maxY = y;
+                    }
+                }
+            }
+            if (maxX < 0) { canvas.width = 0; canvas.height = 0; return; }
+            const cw = maxX - minX + 1, ch = maxY - minY + 1;
+            canvas.width = cw;
+            canvas.height = ch;
+            const cctx = canvas.getContext('2d');
+            cctx.imageSmoothingEnabled = false;
+            cctx.clearRect(0, 0, cw, ch);
+            cctx.drawImage(native, minX, minY, cw, ch, 0, 0, cw, ch);
+            const maxSide = Math.max(cw, ch) || 1;
+            let scale = Math.floor(128 / maxSide);
+            if (scale < 1) scale = 1;
+            scale = Math.min(scale, 128 / maxSide);
+            canvas.style.width = Math.round(cw * scale) + 'px';
+            canvas.style.height = Math.round(ch * scale) + 'px';
+        }
+        addPalette(name) {
+            const src = this.palette || [];
+            const colors = src.map(c => ({ r: c.r, g: c.g, b: c.b, a: c.a === undefined ? 255 : c.a }));
+            const id = 'custom-' + Date.now();
+            (this.state.palettes || (this.state.palettes = [])).push({
+                id, name: name || ('Custom ' + ((this.state.palettes || []).length + 1)),
+                colors, source: 'custom', handle: null, path: null
+            });
+            if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+        removePalette(id) {
+            const e = this.getPaletteById(id);
+            if (!e || e.source === 'embedded') return;
+            this.state.palettes = (this.state.palettes || []).filter(p => p.id !== id);
+            if (this.state.activePaletteId === id) {
+                const a = this.state.palettes[0];
+                this.state.activePaletteId = a ? a.id : null;
+                this.palette = a ? a.colors : [];
+            }
+            if (this.state.previewPaletteId === id) this.exitPreview();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+        async exportSinglePalette(paletteId) {
+            const e = this.getPaletteById(paletteId);
+            if (!e || !e.colors || !e.colors.length) { showToast('No palette to export', 'warning'); return; }
+            const text = this.serializeJascPal(e.colors);
+            const bytes = new TextEncoder().encode(text);
+            const suggested = (e.name && /\.pal$/i.test(e.name))
+                ? e.name
+                : ((e.name || 'palette').toLowerCase().replace(/[^a-z0-9_-]+/g, '_') + '.pal');
+            try {
+                if (e.source === 'pal' && e.path && this.getTauriInvokeFn()) {
+                    const normalized = this.normalizeIncomingPath(e.path);
+                    await this.tauriWriteAllowedFile(normalized, bytes);
+                    showToast('Palette saved: ' + e.name, 'info');
+                    const dir = normalized.replace(/[\\/][^\\/]*$/, '');
+                    this.revealInExplorer(dir);
+                } else if (e.source === 'pal' && e.handle && typeof e.handle.createWritable === 'function') {
+                    const writable = await e.handle.createWritable();
+                    await writable.write(new Blob([bytes]));
+                    await writable.close();
+                    showToast('Palette saved: ' + e.name, 'info');
+                } else {
+                    await this.writePalViaSaveDialog(suggested, bytes);
+                    showToast('Palette exported', 'info');
+                }
+            } catch (err) {
+                if (err && err.name === 'AbortError') return;
+                console.error('Palette export failed', e.name, err);
+                showToast('Palette export failed: ' + e.name, 'error');
+            }
+        }
+        generateShinyPalette(paletteId, hueShift) {
+            const src = this.getPaletteById(paletteId);
+            if (!src || !src.colors || !src.colors.length) { showToast('No palette to derive from', 'warning'); return; }
+            const shift = Number.isFinite(hueShift) ? hueShift : 150;
+            const rgbToHsl = (r, g, b) => {
+                r /= 255; g /= 255; b /= 255;
+                const max = Math.max(r, g, b), min = Math.min(r, g, b);
+                let h = 0, s = 0; const l = (max + min) / 2;
+                if (max !== min) {
+                    const dd = max - min;
+                    s = l > 0.5 ? dd / (2 - max - min) : dd / (max + min);
+                    if (max === r) h = (g - b) / dd + (g < b ? 6 : 0);
+                    else if (max === g) h = (b - r) / dd + 2;
+                    else h = (r - g) / dd + 4;
+                    h /= 6;
+                }
+                return [h, s, l];
+            };
+            const hslToRgb = (h, s, l) => {
+                let r, g, b;
+                if (s === 0) { r = g = b = l; }
+                else {
+                    const hue2rgb = (p, q, t) => {
+                        if (t < 0) t += 1;
+                        if (t > 1) t -= 1;
+                        if (t < 1 / 6) return p + (q - p) * 6 * t;
+                        if (t < 1 / 2) return q;
+                        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+                        return p;
+                    };
+                    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+                    const p = 2 * l - q;
+                    r = hue2rgb(p, q, h + 1 / 3);
+                    g = hue2rgb(p, q, h);
+                    b = hue2rgb(p, q, h - 1 / 3);
+                }
+                return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+            };
+            const colors = src.colors.map((c, i) => {
+                if (i === 0) return { r: c.r, g: c.g, b: c.b, a: c.a === undefined ? 255 : c.a };
+                const [h, s, l] = rgbToHsl(c.r, c.g, c.b);
+                const nh = (h + shift / 360) % 1;
+                const out = hslToRgb(nh < 0 ? nh + 1 : nh, s, l);
+                return { r: out.r, g: out.g, b: out.b, a: c.a === undefined ? 255 : c.a };
+            });
+            const baseName = src.name.replace(/\s*(normal|shiny)\s*$/i, '').trim() || src.name;
+            const id = 'custom-' + Date.now();
+            (this.state.palettes || (this.state.palettes = [])).push({
+                id, name: baseName + ' Shiny', colors, source: 'custom', handle: null, path: null
+            });
+            if (this.onPalettesChanged) this.onPalettesChanged();
+            showToast('Shiny palette generated', 'info');
+        }
+        remapCanvasToPalette(paletteId) {
+            const e = this.getPaletteById(paletteId);
+            if (!e || !e.colors || !e.colors.length) { showToast('No palette to remap to', 'warning'); return; }
+            if (this.state.previewPaletteId) this.exitPreview();
+            const w = this.config.width, h = this.config.height;
+            let imgData;
+            try { imgData = this.ctx.getImageData(0, 0, w, h); }
+            catch (err) { showToast('Cannot read canvas', 'error'); return; }
+            const d = imgData.data;
+            const exact = new Set();
+            for (let i = 0; i < e.colors.length; i++) {
+                const c = e.colors[i];
+                exact.add((c.r << 16) | (c.g << 8) | c.b);
+            }
+            const idx = this.quantizeToIndices(d, w, h, e.colors);
+            let changed = 0;
+            for (let p = 0, q = 0; p < d.length; p += 4, q++) {
+                if (d[p + 3] < 128) continue;
+                const r = d[p], g = d[p + 1], b = d[p + 2];
+                if (exact.has((r << 16) | (g << 8) | b)) continue;
+                const nc = e.colors[idx[q]] || e.colors[0];
+                d[p] = nc.r; d[p + 1] = nc.g; d[p + 2] = nc.b;
+                changed++;
+            }
+            this.ctx.putImageData(imgData, 0, 0);
+            this.spriteIndices = idx;
+            this.basePalette = e.colors;
+            this.palette = e.colors;
+            this.state.activePaletteId = paletteId;
+            this.renderQuantPalette();
+            this.saveState();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+            showToast(changed ? ('Remapped ' + changed + ' pixel(s) to ' + e.name) : 'All pixels already in palette', 'info');
+        }
         importPalette(file) {
             if (!file) return;
             const reader = new FileReader();
@@ -22784,6 +23752,24 @@ self.onmessage = function(e) {
             /* If layers are active, always save as ORA */
             if (this.layerMgr && this.layerMgr.active && this.layerMgr.layers.length > 1) {
                 return this.saveAsORA();
+            }
+            /* Project (pokeemerald) images are written back as indexed PNG with the
+               exact original palette/indices and no injected CDPaint metadata. */
+            if (this.state.projectFile && this.state.projectImage && this.palette && this.palette.length) {
+                try {
+                    if (this.state.previewPaletteId) this.exitPreview();
+                    const profile = this.inferProfile(this.state.projectFile);
+                    const validation = this.validateForExport(profile);
+                    if (!validation.ok) {
+                        this.showExportValidationModal(validation.errors, () => this.doExportProjectFile());
+                        return;
+                    }
+                    await this.doExportProjectFile();
+                } catch (e) {
+                    console.error('Project save failed', e);
+                    showToast('Project save failed: ' + this.getErrorText(e), 'error');
+                }
+                return;
             }
             const opts = options && typeof options === 'object' ? options : {};
             const wantCursorFeedback = !!opts.cursorFeedback;
@@ -23236,6 +24222,10 @@ self.onmessage = function(e) {
                     this._updateSidebarViewportShift(true);
                 });
             }
+            const freehandCloseBtn = document.getElementById('freehand-close-btn');
+            if (freehandCloseBtn) {
+                freehandCloseBtn.addEventListener('click', () => this.setTool('pencil'));
+            }
             const gradCollapseBtn = document.getElementById('gradient-collapse-btn');
             if (gradCollapseBtn) {
                 gradCollapseBtn.addEventListener('click', () => {
@@ -23254,6 +24244,10 @@ self.onmessage = function(e) {
                     gradReopenBtn.classList.remove('show');
                     this._updateSidebarViewportShift(true);
                 });
+            }
+            const gradientCloseBtn = document.getElementById('gradient-close-btn');
+            if (gradientCloseBtn) {
+                gradientCloseBtn.addEventListener('click', () => this.setTool('pencil'));
             }
             this.updateFreehandPanel();
         }

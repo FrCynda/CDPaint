@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Paint - Professional</title>
+    <title>CDPaint</title>
+    <link rel="icon" type="image/png" href="app-icon.png">
     <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
@@ -752,6 +753,29 @@
         <g id="grid-lines-4" style="display:none;"></g>
     </g>
 </svg>
+<!-- pokeemerald project asset browser -->
+<aside id="project-panel" class="project-collapsed">
+    <div id="project-header">
+        <span id="project-title">Project</span>
+        <div id="project-actions">
+            <button type="button" id="project-collapse" title="Collapse panel" aria-label="Collapse panel"><svg viewBox="0 0 16 16" width="11" height="11"><path d="M8 14 L2 8 L14 8 Z" fill="#000000"/></svg></button>
+            <button type="button" id="project-close" class="sb-close-x" title="Close panel" aria-label="Close panel">&#10005;</button>
+        </div>
+    </div>
+    <div class="proj-actionbar">
+        <button type="button" id="project-hook" title="Hook a graphics/ folder">Hook</button>
+        <button type="button" id="project-refresh" title="Rescan folder" disabled>Refresh</button>
+        <button type="button" id="project-unhook" title="Disconnect" disabled>Unhook</button>
+    </div>
+    <div id="project-tree" role="tree"></div>
+    <div id="project-status"></div>
+    <div id="project-overlay" class="proj-overlay" aria-hidden="true">
+        <div class="proj-spinner"></div>
+        <div class="proj-loading-text">Hooking project…</div>
+    </div>
+</aside>
+<button type="button" id="project-expand" title="Show project panel" aria-label="Show project panel"><svg viewBox="0 0 16 16" width="7" height="7"><path d="M4 2 L12 8 L4 14 Z" fill="#000000"/></svg></button>
+
 <!-- canvas stack + overlays + selection handles -->
 <div id="viewport">
     <div id="canvas-stage" style="width: 800px; height: 600px;">
@@ -1225,7 +1249,7 @@
     <div class="window" id="resize-window">
         <div class="title-bar">
             <div class="utility-sidebar-toggle" id="resize-sidebar-toggle-btn" onclick="PaintApp.toggleUtilitySidebar('resize')" title="Dock as sidebar">
-                <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1"/><rect x="7" y="4" width="8" height="1.5" rx="0.75"/><rect x="7" y="7.25" width="8" height="1.5" rx="0.75"/><rect x="7" y="10.5" width="8" height="1.5" rx="0.75"/></svg>
+                <img class="util-dock-icon" src="assets/anchor.png" alt="Dock as sidebar">
             </div>
             <span>Resize and Skew</span>
             <div class="close-btn" onclick="PaintApp.cancelResize()">&#10005;</div>
@@ -1326,7 +1350,7 @@
     <div class="window">
         <div class="title-bar">
             <div class="utility-sidebar-toggle" id="depth-sidebar-toggle-btn" onclick="PaintApp.toggleUtilitySidebar('depth')" title="Dock as sidebar">
-                <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1"/><rect x="7" y="4" width="8" height="1.5" rx="0.75"/><rect x="7" y="7.25" width="8" height="1.5" rx="0.75"/><rect x="7" y="10.5" width="8" height="1.5" rx="0.75"/></svg>
+                <img class="util-dock-icon" src="assets/anchor.png" alt="Dock as sidebar">
             </div>
             <span>Decrease Color Depth</span>
             <div class="close-btn" onclick="PaintApp.cancelDepth()"><span>&#10005;</span></div>
@@ -1692,7 +1716,7 @@
     <div class="window">
         <div class="title-bar">
             <div class="hs-sidebar-toggle" id="hs-sidebar-toggle-btn" onclick="PaintApp.toggleHueSatSidebar()" title="Dock as sidebar">
-                <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="4" height="14" rx="1"/><rect x="7" y="4" width="8" height="1.5" rx="0.75"/><rect x="7" y="7.25" width="8" height="1.5" rx="0.75"/><rect x="7" y="10.5" width="8" height="1.5" rx="0.75"/></svg>
+                <img class="util-dock-icon" src="assets/anchor.png" alt="Dock as sidebar">
             </div>
             <span>Hue/Saturation</span>
             <div class="close-btn" onclick="PaintApp.cancelHueSat()"><span>&#10005;</span></div>
@@ -1887,6 +1911,7 @@
     <div id="freehand-sidebar-header">
         <span>Freehand Brush</span>
         <button id="freehand-collapse-btn" title="Collapse sidebar"><svg viewBox="0 0 16 16" width="11" height="11"><path d="M8 14 L2 8 L14 8 Z" fill="#000000"/></svg></button>
+        <button id="freehand-close-btn" class="sb-close-x" title="Close sidebar">&#10005;</button>
     </div>
     <div id="freehand-sidebar-body">
         <div class="fh-section">
@@ -2060,12 +2085,13 @@
         </div>
     </div>
 </div>
-<button id="freehand-reopen-btn" title="Open freehand brush settings"><div style="width:0;height:0;border-top:5.5px solid transparent;border-bottom:5.5px solid transparent;border-left:5.5px solid #000;"></div></button>
+<button id="freehand-reopen-btn" title="Open freehand brush settings"><div style="width:0;height:0;border-top:3px solid transparent;border-bottom:3px solid transparent;border-left:3px solid #000;"></div></button>
 
 <div id="paintbrush-sidebar">
     <div id="paintbrush-sidebar-header">
         <span>Paint Brush</span>
         <button id="paintbrush-collapse-btn" title="Collapse sidebar"><svg viewBox="0 0 16 16" width="11" height="11"><path d="M8 14 L2 8 L14 8 Z" fill="#000000"/></svg></button>
+        <button id="paintbrush-close-btn" class="sb-close-x" title="Close sidebar">&#10005;</button>
     </div>
     <div id="paintbrush-sidebar-body">
         <div id="pb-brush-grid"></div>
@@ -2274,12 +2300,13 @@
         </div>
     </div>
 </div>
-<button id="pb-reopen-btn" title="Open paintbrush settings"><div style="width:0;height:0;border-top:5.5px solid transparent;border-bottom:5.5px solid transparent;border-left:5.5px solid #000;"></div></button>
+<button id="pb-reopen-btn" title="Open paintbrush settings"><div style="width:0;height:0;border-top:3px solid transparent;border-bottom:3px solid transparent;border-left:3px solid #000;"></div></button>
 
 <div id="gradient-sidebar">
     <div id="gradient-sidebar-header">
         <span>Gradient</span>
         <button id="gradient-collapse-btn" title="Collapse sidebar"><svg viewBox="0 0 16 16" width="11" height="11"><path d="M8 14 L2 8 L14 8 Z" fill="#000000"/></svg></button>
+        <button id="gradient-close-btn" class="sb-close-x" title="Close sidebar">&#10005;</button>
     </div>
     <div id="gradient-sidebar-body">
         <div id="gradient-options">
@@ -2385,14 +2412,14 @@
         </div>
     </div>
 </div>
-<button id="gradient-reopen-btn" title="Open gradient settings"><svg viewBox="0 0 16 16" width="11" height="11"><path d="M4 2 L12 8 L4 14 Z" fill="#000000"/></svg></button>
+<button id="gradient-reopen-btn" title="Open gradient settings"><svg viewBox="0 0 16 16" width="7" height="7"><path d="M4 2 L12 8 L4 14 Z" fill="#000000"/></svg></button>
 
 <div id="toast-container"></div>
 <div id="unified-sidebar" class="hidden">
     <div class="sidebar-title">
         <span class="sidebar-title-text">Tools</span>
         <div class="sidebar-title-buttons">
-            <button class="sidebar-title-btn" id="sidebar-float-btn" title="Undock to floating window">⬈</button>
+            <button class="sidebar-title-btn" id="sidebar-float-btn" title="Undock to floating window"><img class="util-dock-icon" src="assets/Free.png" alt="Undock to floating window"></button>
             <button class="sidebar-title-btn" id="sidebar-close-btn" title="Close sidebar">✕</button>
         </div>
     </div>
@@ -2408,6 +2435,9 @@
 <script defer src="js/gradient-engine.js"></script>
 <script type="module">import * as __wandAlgorithms from './js/wand-algorithms.js'; window.__wandAlgorithms = __wandAlgorithms;</script>
 <script defer src="js/paint-engine.js"></script>
+<script defer src="js/project-browser.js"></script>
+<script defer src="js/palette-panel.js"></script>
+<script defer src="js/sprite-preview.js"></script>
 <script defer src="js/krita-brush-engine.js"></script>
 <script defer src="freehand-path-engine.js"></script>
 <script defer src="js/perfect-freehand-bundle.js"></script>

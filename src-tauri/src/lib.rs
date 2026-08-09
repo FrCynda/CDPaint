@@ -122,13 +122,65 @@ fn enforce_min_window_size(window: &tauri::WebviewWindow) {
     let _ = window.set_min_size(Some(minimum_window_size()));
 }
 
+/// Returns true if the point (x, y) falls within any currently connected monitor.
+fn position_on_visible_monitor(window: &tauri::WebviewWindow, x: i32, y: i32) -> bool {
+    let monitors = match window.available_monitors() {
+        Ok(m) => m,
+        // If we can't enumerate monitors, trust the saved value rather than
+        // risk moving a perfectly good window.
+        Err(_) => return true,
+    };
+    if monitors.is_empty() {
+        return true;
+    }
+    monitors.iter().any(|m| {
+        let pos = m.position();
+        let size = m.size();
+        x >= pos.x
+            && y >= pos.y
+            && x < pos.x + size.width as i32
+            && y < pos.y + size.height as i32
+    })
+}
+
+/// Move the window to the centre of the primary (or first available) monitor.
+fn center_on_primary_monitor(window: &tauri::WebviewWindow) {
+    let monitor = window
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.available_monitors().ok().and_then(|m| m.into_iter().next()));
+    let monitor = match monitor {
+        Some(m) => m,
+        None => {
+            let _ = window.center();
+            return;
+        }
+    };
+    let pos = monitor.position();
+    let size = monitor.size();
+    let win = window
+        .outer_size()
+        .unwrap_or(tauri::PhysicalSize::new(1200u32, 800u32));
+    let x = pos.x + ((size.width as i32 - win.width as i32) / 2).max(0);
+    let y = pos.y + ((size.height as i32 - win.height as i32) / 2).max(0);
+    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)));
+}
+
 fn apply_startup_window_state(
     window: &tauri::WebviewWindow,
     saved: Option<&SavedWindowState>,
     default_maximized: bool,
 ) -> bool {
     if let Some(state) = saved {
+        // A position saved while a now-disconnected monitor was attached would
+        // otherwise be reapplied verbatim, placing the window off-screen
+        // (invisible, but the process keeps running). Keep the window on a
+        // visible monitor before restoring it.
         if state.maximized {
+            if !position_on_visible_monitor(window, state.x, state.y) {
+                center_on_primary_monitor(window);
+            }
             // Apply maximized state after window creation to avoid a visible
             // resize frame on Windows when using frameless windows.
             let _ = window.maximize();
@@ -142,9 +194,13 @@ fn apply_startup_window_state(
                 height,
             )));
         }
-        let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
-            state.x, state.y,
-        )));
+        if position_on_visible_monitor(window, state.x, state.y) {
+            let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+                state.x, state.y,
+            )));
+        } else {
+            center_on_primary_monitor(window);
+        }
         return false;
     }
 
@@ -436,6 +492,129 @@ fn write_allowed_file(path: String, data: Vec<u8>) -> Result<(), String> {
     std::fs::write(&p, data).map_err(|e| format!("write failed: {}", e))
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ProjectNode {
+    name: String,
+    path: String,
+    kind: String,
+    ext: Option<String>,
+    size: u64,
+    children: Vec<ProjectNode>,
+}
+
+const MAX_SCAN_DEPTH: usize = 12;
+const SCAN_DIR_DENYLIST: [&str; 6] = [".git", "node_modules", "target", ".vscode", ".idea", "dist"];
+
+fn scan_dir(dir: &Path, depth: usize, out: &mut ProjectNode) -> std::io::Result<()> {
+    let mut dir_entries: Vec<(String, PathBuf)> = Vec::new();
+    let mut file_entries: Vec<(String, PathBuf, u64)> = Vec::new();
+    let mut entries = std::fs::read_dir(dir)?;
+    while let Some(entry) = entries.next() {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let p = entry.path();
+        let meta = match std::fs::symlink_metadata(&p) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.is_symlink() {
+            continue;
+        }
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if meta.is_dir() {
+            if depth >= MAX_SCAN_DEPTH {
+                continue;
+            }
+            if SCAN_DIR_DENYLIST.iter().any(|d| d.eq_ignore_ascii_case(&fname)) {
+                continue;
+            }
+            dir_entries.push((fname, p));
+        } else if meta.is_file() {
+            let ext = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase());
+            if matches!(ext.as_deref(), Some("png") | Some("pal")) {
+                file_entries.push((fname, p, meta.len()));
+            }
+        }
+    }
+    for (fname, p) in dir_entries {
+        let mut node = ProjectNode {
+            name: fname,
+            path: p.to_string_lossy().to_string(),
+            kind: "dir".to_string(),
+            ext: None,
+            size: 0,
+            children: Vec::new(),
+        };
+        if scan_dir(&p, depth + 1, &mut node).is_ok() {
+            if !node.children.is_empty() {
+                out.children.push(node);
+            }
+        }
+    }
+    for (fname, p, size) in file_entries {
+        out.children.push(ProjectNode {
+            name: fname,
+            path: p.to_string_lossy().to_string(),
+            kind: "file".to_string(),
+            ext: p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase()),
+            size,
+            children: Vec::new(),
+        });
+    }
+    out.children.sort_by(|a, b| {
+        if a.kind != b.kind {
+            return a.kind.cmp(&b.kind);
+        }
+        a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase())
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn scan_project(path: String) -> Result<ProjectNode, String> {
+    let p = normalize_to_absolute_path(&path)?;
+    if !p.is_dir() {
+        return Err("path is not an existing directory".into());
+    }
+    let mut root = ProjectNode {
+        name: p
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| p.to_string_lossy().to_string()),
+        path: p.to_string_lossy().to_string(),
+        kind: "dir".to_string(),
+        ext: None,
+        size: 0,
+        children: Vec::new(),
+    };
+    scan_dir(&p, 0, &mut root).map_err(|e| format!("scan failed: {}", e))?;
+    Ok(root)
+}
+
+#[tauri::command]
+fn read_text_file(path: String) -> Result<String, String> {
+    let p = normalize_to_absolute_path(&path)?;
+    if !p.is_file() {
+        return Err("path is not an existing file".into());
+    }
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    if !matches!(ext.as_deref(), Some("pal") | Some("txt")) {
+        return Err("only .pal and .txt files can be read".into());
+    }
+    std::fs::read_to_string(&p).map_err(|e| format!("read failed: {}", e))
+}
+
 #[derive(Debug, Deserialize)]
 struct ExportFilePayload {
     name: String,
@@ -482,12 +661,16 @@ fn write_export_files(directory: String, files: Vec<ExportFilePayload>) -> Resul
 }
 
 #[tauri::command]
-fn write_export_files_with_dialog(app: tauri::AppHandle, files: Vec<ExportFilePayload>) -> Result<bool, String> {
-    let Some(folder) = app
-        .dialog()
-        .file()
-        .set_title("Choose Export Folder")
-        .blocking_pick_folder() else {
+async fn write_export_files_with_dialog(app: tauri::AppHandle, files: Vec<ExportFilePayload>) -> Result<bool, String> {
+    let folder = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Choose Export Folder")
+            .blocking_pick_folder()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(folder) = folder else {
         return Ok(false);
     };
     let dir = resolve_dialog_file_path(folder)?;
@@ -496,7 +679,7 @@ fn write_export_files_with_dialog(app: tauri::AppHandle, files: Vec<ExportFilePa
 }
 
 #[tauri::command]
-fn write_export_files_with_save_dialog(
+async fn write_export_files_with_save_dialog(
     app: tauri::AppHandle,
     files: Vec<ExportFilePayload>,
     suggested_name: Option<String>,
@@ -509,7 +692,10 @@ fn write_export_files_with_save_dialog(
         }
     }
 
-    let Some(selection) = dialog.blocking_save_file() else {
+    let selection = tauri::async_runtime::spawn_blocking(move || dialog.blocking_save_file())
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(selection) = selection else {
         return Ok(false);
     };
     let selected_path = resolve_dialog_file_path(selection)?;
@@ -526,7 +712,7 @@ fn write_export_files_with_save_dialog(
 }
 
 #[tauri::command]
-fn write_export_file_with_save_dialog(
+async fn write_export_file_with_save_dialog(
     app: tauri::AppHandle,
     file: ExportFilePayload,
     suggested_name: Option<String>,
@@ -555,7 +741,10 @@ fn write_export_file_with_save_dialog(
         dialog = dialog.set_file_name(suggested);
     }
 
-    let Some(selection) = dialog.blocking_save_file() else {
+    let selection = tauri::async_runtime::spawn_blocking(move || dialog.blocking_save_file())
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(selection) = selection else {
         return Ok(None);
     };
 
@@ -630,12 +819,16 @@ fn toggle_current_window_fullscreen(window: tauri::Window) -> Result<bool, Strin
 }
 
 #[tauri::command]
-fn pick_export_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let Some(folder) = app
-        .dialog()
-        .file()
-        .set_title("Choose Export Folder")
-        .blocking_pick_folder() else {
+async fn pick_export_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let folder = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Choose Export Folder")
+            .blocking_pick_folder()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(folder) = folder else {
         return Ok(None);
     };
     let path = resolve_dialog_file_path(folder)?;
@@ -747,7 +940,9 @@ pub fn run() {
             write_export_file_with_save_dialog,
             show_current_window,
             toggle_current_window_fullscreen,
-            pick_export_folder
+            pick_export_folder,
+            scan_project,
+            read_text_file
         ])
         .setup(|app| {
             if let Some(main_window) = app.get_webview_window("main") {
