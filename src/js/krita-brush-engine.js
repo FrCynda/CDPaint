@@ -2005,6 +2005,13 @@
             });
         }
 
+        var pbCloseBtn = document.getElementById('paintbrush-close-btn');
+        if (pbCloseBtn) {
+            pbCloseBtn.addEventListener('click', function () {
+                if (typeof PaintApp.setTool === 'function') PaintApp.setTool('pencil');
+            });
+        }
+
         var resetBtn = document.getElementById('pb-reset-btn');
         if (resetBtn) {
             resetBtn.addEventListener('click', function () {

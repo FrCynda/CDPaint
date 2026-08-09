@@ -24,3 +24,18 @@ src-tauri/target
 *.njsproj
 *.sln
 *.sw?
+
+# Local AI tooling (kept on disk, not part of the repo)
+.kilo
+AGENTS.md
+opencode.json
+.opencode
+
+# Local backups
+src-tauri/icons-backup-*
+
+# Environment files
+*.env
+
+# Local security audit notes
+src/CDPaint_Security_Audit.txt
