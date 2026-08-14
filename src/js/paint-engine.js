@@ -3779,32 +3779,57 @@
         initHistoryLimitControls() {
             const savedEnabled = this.lsGet('paint.history.limit.enabled');
             const savedLimit = parseInt(this.lsGet('paint.history.limit.value') || '', 10);
-            const savedAdaptive = this.lsGet('paint.history.limit.adaptive');
             if (savedEnabled !== null) this.historyLimitEnabled = savedEnabled === 'true';
             if (Number.isFinite(savedLimit) && savedLimit >= 1) this.historyLimit = savedLimit;
-            this._historyAdaptive = savedAdaptive === null ? false : savedAdaptive === 'true';
+            // The old "Adaptive" checkbox guessed a step count from canvas size.
+            // Memory is measured directly now, so it reported a number that no
+            // longer moved. Retired, and anyone who had it on gets their own
+            // limit back rather than a value it had overwritten.
+            this._historyAdaptive = false;
 
             const toggle = document.getElementById('history-limit-toggle');
             const input = document.getElementById('history-limit-input');
-            const adaptiveCb = document.getElementById('history-limit-adaptive');
 
             if (toggle) {
                 toggle.checked = this.historyLimitEnabled;
                 toggle.addEventListener('change', () => this.setHistoryLimitEnabled(toggle.checked));
             }
-            if (adaptiveCb) {
-                adaptiveCb.checked = this._historyAdaptive;
-                adaptiveCb.addEventListener('change', () => this.setHistoryAdaptive(adaptiveCb.checked));
-            }
             if (input) {
                 input.value = this.historyLimit;
-                input.addEventListener('change', () => {
-                    if (!this._historyAdaptive) this.setHistoryLimit(input.value, true, true);
-                });
+                input.addEventListener('change', () => this.setHistoryLimit(input.value, true, true));
             }
 
             this.setHistoryLimitEnabled(this.historyLimitEnabled, false);
-            if (this._historyAdaptive) this._applyMemoryBudget();
+            this.updateHistoryUsage();
+        }
+
+        // Show what history is actually holding. This is the quantity that
+        // governs — the step count is only a ceiling — and nothing in the UI
+        // reported it before.
+        updateHistoryUsage() {
+            const el = document.getElementById('history-usage');
+            if (!el) return;
+            const steps  = Array.isArray(this.state.history) ? this.state.history.length : 0;
+            const bytes  = this.historyBytes();
+            const budget = this.historyByteBudget();
+            const fmt = (b) => b >= 1024 * 1024 * 1024
+                ? (b / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
+                : (b >= 1024 * 1024 ? Math.round(b / (1024 * 1024)) + ' MB'
+                                    : Math.max(1, Math.round(b / 1024)) + ' KB');
+            el.textContent = `${steps.toLocaleString()} held · ${fmt(bytes)} of ${fmt(budget)}`;
+            const ratio = budget > 0 ? bytes / budget : 0;
+            el.classList.toggle('is-high', ratio >= 0.6 && ratio < 0.9);
+            el.classList.toggle('is-full', ratio >= 0.9);
+        }
+
+        // Called from the paths that change history; coalesced so a fast stroke
+        // sequence does not walk the whole history list per step.
+        scheduleHistoryUsage() {
+            if (this._historyUsageRaf) return;
+            this._historyUsageRaf = requestAnimationFrame(() => {
+                this._historyUsageRaf = null;
+                try { this.updateHistoryUsage(); } catch (_) {}
+            });
         }
         setHistoryLimitEnabled(enabled, trimNow = true) {
             this.historyLimitEnabled = !!enabled;
@@ -3825,23 +3850,16 @@
         }
         _syncHistoryLimitInput() {
             const input = document.getElementById('history-limit-input');
-            const adaptiveCb = document.getElementById('history-limit-adaptive');
-            if (adaptiveCb) adaptiveCb.disabled = !this.historyLimitEnabled;
             if (input) {
-                const adaptiveOn = this._historyAdaptive && this.historyLimitEnabled;
-                input.disabled = !this.historyLimitEnabled || adaptiveOn;
-                if (adaptiveOn) input.value = this.historyLimit;
+                input.disabled = !this.historyLimitEnabled;
+                input.value = this.historyLimit;
             }
         }
+        // Retained so anything still calling it is harmless. The setting is gone:
+        // history is bounded by measured bytes, not by a count guessed from
+        // canvas size. See updateHistoryUsage().
         setHistoryAdaptive(on) {
-            this._historyAdaptive = !!on;
-            this.lsSet('paint.history.limit.adaptive', this._historyAdaptive ? 'true' : 'false');
-            if (this._historyAdaptive) {
-                this._applyMemoryBudget();
-            } else {
-                this.lsSet('paint.history.limit.value', String(this.historyLimit));
-                this._syncHistoryLimitInput();
-            }
+            this._historyAdaptive = false;
         }
         // Count ceiling only, and a loose one: memory is governed by the byte
         // budget below, which measures what history is actually holding. This
@@ -5100,6 +5118,9 @@
             return !!this.state.curveUndo || this.state.step < this.state.history.length - 1;
         }
         updateTitleBarActions() {
+            // Every path that changes history already calls this, so it is the
+            // one place the usage readout needs hooking to.
+            this.scheduleHistoryUsage();
             const undoBtn = document.getElementById('title-undo');
             const redoBtn = document.getElementById('title-redo');
             const canUndo = this.canUndo();
@@ -19192,21 +19213,13 @@ void main() {
         _chooseTileSize(w, h) {
             return 128;
         }
+        // History depth used to be guessed from canvas size on the assumption
+        // that a step cost a whole canvas. It does not: historyByteBudget()
+        // measures what history is really holding and trimming works from that.
+        // All this does now is keep the readout honest after a resize.
         _applyMemoryBudget() {
-            const gb = navigator.deviceMemory || 8;
-            // Adaptive undo depth by canvas size. Each tiled/flat history entry can be
-            // up to a full-canvas snapshot for detailed art, so a fixed limit of 50 is
-            // catastrophic on huge docs. Only auto-tune when adaptive mode is enabled.
-            // "Adaptive" now means "as many steps as memory allows", which is
-            // what historyByteBudget() already works out from what history
-            // actually holds. Guessing a count from canvas size was a proxy for
-            // that, and a bad one: it capped a 13000² document at 100 steps when
-            // the real cost is well under a megabyte each.
-            if (this._historyAdaptive) {
-                this.historyLimit = this.historyHardCap(this.config.width, this.config.height);
-                if (gb <= 4) this.historyLimit = Math.floor(this.historyLimit / 2);
-                this._syncHistoryLimitInput();
-            }
+            this._syncHistoryLimitInput();
+            this.updateHistoryUsage();
         }
         getSolidTileColor(data) {
             if (data.length < 4) return null;
