@@ -12465,6 +12465,39 @@ void main() {
             if(['pencil','eraser'].includes(this.config.tool)) {
                 const isRight = e.buttons===2;
                 const color = this.getActiveDrawColor(isRight || this.config.tool==='eraser');
+
+                // Follow every position the browser folded into this event.
+                // When a frame is lost — a big brush takes real time to paint —
+                // the browser delivers one move holding the latest position and
+                // the intermediate ones inside it. Using only the latest turns
+                // the whole gap into one straight segment, which is what a
+                // stroke looked like whenever the app fell behind. Constrained
+                // (ctrl) strokes are straight by definition, so they skip this.
+                const coalesced = (!e.ctrlKey && e.getCoalescedEvents)
+                    ? e.getCoalescedEvents() : null;
+                if (coalesced && coalesced.length > 1) {
+                    for (const ce of coalesced) {
+                        const cp = this.getMouse(ce);
+                        if (this.config.tool === 'eraser' && isRight) {
+                            this.replaceColorLine(this.state.startPos.x, this.state.startPos.y, cp.x, cp.y);
+                        } else {
+                            this.enqueueStroke({
+                                x0: this.state.startPos.x,
+                                y0: this.state.startPos.y,
+                                x1: cp.x,
+                                y1: cp.y,
+                                color,
+                                width: this.config.tool === 'eraser'
+                                    ? this.config.eraserWidth : this.config.lineWidth,
+                                isEraser: this.config.tool === 'eraser'
+                            });
+                        }
+                        this.state.startPos = { x: cp.x, y: cp.y };
+                    }
+                    this.updateHoverPreview(this.state.startPos.x, this.state.startPos.y);
+                    return;
+                }
+
                 let endP = p;
                 if (this.config.tool === 'pencil' && e.ctrlKey) {
                     if (!this.state.pencilCtrlAxis) {
@@ -19396,7 +19429,16 @@ void main() {
                 // Rows nothing touched are not read at all — this is where the
                 // saving is. An anchor has to hold everything, so it ignores it.
                 if (dirty && !anchor && (y + stripH - 1 < dirty.y0 || y > dirty.y1)) continue;
-                const strip = ctx.getImageData(0, y, width, stripH);
+                // Read only the columns in play, not the full width of the
+                // document. A tall narrow edit on a 13000px canvas was pulling
+                // back the entire row band — three times the pixels needed.
+                let stripX = 0, stripW = width;
+                if (dirty && !anchor) {
+                    stripX = Math.max(0, Math.floor(dirty.x0 / tileSize) * tileSize);
+                    const endX = Math.min(width, Math.ceil((dirty.x1 + 1) / tileSize) * tileSize);
+                    stripW = Math.max(tileSize, endX - stripX);
+                }
+                const strip = ctx.getImageData(stripX, y, stripW, stripH);
                 const stripData = strip.data;
                 for (let x = 0; x < width; x += tileSize) {
                     const w = Math.min(tileSize, width - x);
@@ -19404,7 +19446,9 @@ void main() {
                     if (dirty && !anchor && (x + w - 1 < dirty.x0 || x > dirty.x1)) continue;
                     const tileData = this._tileCopyBuf.subarray(0, w * h * 4);
                     for (let row = 0; row < h; row++) {
-                        const srcOffset = (row * width + x) * 4;
+                        // Offsets are relative to the strip, which may start
+                        // part-way across the document.
+                        const srcOffset = (row * stripW + (x - stripX)) * 4;
                         tileData.set(stripData.subarray(srcOffset, srcOffset + w * 4), row * w * 4);
                     }
                     const solid = this.getSolidTileColor(tileData);
