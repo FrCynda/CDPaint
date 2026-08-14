@@ -40,7 +40,8 @@ function extractMethod(name) {
 
 const NAMES = ['_collectOwnedSnapsInUse', '_releaseHistoryEntries', '_closeBitmapEntry',
                'historyHardCap', 'historyBudgetFor', '_trimHistoryTarget',
-               '_entryBytes', 'historyBytes', 'historyByteBudget'];
+               '_entryBytes', 'historyBytes', 'historyByteBudget',
+               '_resolveTiles', '_anchorEntry'];
 const body = NAMES.map(extractMethod).join('\n');
 const sandbox = { console };
 vm.createContext(sandbox);
