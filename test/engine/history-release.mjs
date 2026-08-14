@@ -39,12 +39,15 @@ function extractMethod(name) {
 }
 
 const NAMES = ['_collectOwnedSnapsInUse', '_releaseHistoryEntries', '_closeBitmapEntry',
-               'historyHardCap', 'historyBudgetFor', '_trimHistoryTarget'];
+               'historyHardCap', 'historyBudgetFor', '_trimHistoryTarget',
+               '_entryBytes', 'historyBytes', 'historyByteBudget'];
 const body = NAMES.map(extractMethod).join('\n');
 const sandbox = { console };
 vm.createContext(sandbox);
 vm.runInContext(`class H {\n${body}\n}\nglobalThis.H = H;`, sandbox);
 const h = new sandbox.H();
+h.HISTORY_MIN_STEPS = 8;
+sandbox.navigator = { deviceMemory: 8 };
 console.log(`extracted ${NAMES.length} methods from ${SRC}\n`);
 
 /* Fake ImageBitmap that records whether it was closed. */
@@ -143,12 +146,14 @@ console.log('\n== 6. trim is a no-op under budget ==');
     check('handles null target', h._trimHistoryTarget(null, 5) === 0);
 }
 
-console.log('\n== 7. budget scales down for large canvases ==');
+console.log('\n== 7. the count ceiling no longer punishes large canvases ==');
 {
-    const small = h.historyHardCap(64, 64);
-    const huge = h.historyHardCap(8000, 8000);
-    check('small canvas gets the max cap', small === 500, String(small));
-    check('huge canvas capped far lower', huge < 50 && huge >= 8, String(huge));
+    // This used to model every entry as a full-canvas snapshot and so allowed
+    // 8 undo steps on an 8000² document. Memory is the byte budget's job now;
+    // the count is only a ceiling.
+    check('canvas size no longer decides the step count',
+        h.historyHardCap(64, 64) === 500 && h.historyHardCap(8000, 8000) === 500,
+        `${h.historyHardCap(64, 64)} vs ${h.historyHardCap(8000, 8000)}`);
     check('degenerate size falls back safely', h.historyHardCap(0, 0) === 500);
 
     h.historyLimitEnabled = true; h.historyLimit = 25;
@@ -208,6 +213,63 @@ console.log('\n== 10. document-replacing paths must DETACH, not release ==');
         check(`${label} does NOT release entries it may not own`, !releases,
             `${name} calls a release helper on a possibly-shared array`);
     }
+}
+
+console.log('\n== 11. history is budgeted by real bytes, not a worst-case guess ==');
+{
+    const MB = 1024 * 1024;
+    const canvas = (w, h2) => ({ width: w, height: h2 });
+
+    // A tiled entry costs what its tiles actually weigh, not what the canvas
+    // would weigh — the assumption that produced an 8-step ceiling.
+    const tiled = (bytes) => ({ tiles: [{ rle: new Uint8Array(bytes) }], width: 8000, height: 8000 });
+    check('a tiled step costs its compressed size, not the canvas size',
+        h._entryBytes(tiled(4096)) === 4096, String(h._entryBytes(tiled(4096))));
+
+    check('a flat snapshot really does cost the whole canvas',
+        h._entryBytes({ width: 100, height: 100 }) === 100 * 100 * 4);
+
+    // Layered: only what this entry OWNS. A ref points at someone else's pixels,
+    // and counting those twice would evict far too eagerly.
+    const owned = { snaps: [{ snap: canvas(100, 100) }, { ref: {}, snap: null }] };
+    check('a layered step ignores layers it shares by reference',
+        h._entryBytes(owned) === 100 * 100 * 4, String(h._entryBytes(owned)));
+
+    const masked = { snaps: [{ snap: canvas(10, 10), mask: { canvas: canvas(10, 10) } }] };
+    check('an owned mask is counted too', h._entryBytes(masked) === 10 * 10 * 4 * 2);
+
+    check('the byte budget is a sane size',
+        h.historyByteBudget() >= 256 * MB && h.historyByteBudget() <= 2048 * MB,
+        (h.historyByteBudget() / MB) + 'MB');
+}
+
+console.log('\n== 12. trimming honours bytes AND a floor on steps ==');
+{
+    // 40 full-canvas steps at 64 MB each; a 640 MB budget leaves room for 10,
+    // comfortably above the floor, so the budget is what decides.
+    const target = { history: Array.from({ length: 40 }, () => ({ width: 4000, height: 4000 })), step: 39 };
+    const evicted = h._trimHistoryTarget(target, 500, 640 * 1024 * 1024);
+    check('an oversized history is trimmed even when under the count limit',
+        evicted > 0, String(evicted));
+    check('what remains fits the byte budget',
+        h.historyBytes(target) <= 640 * 1024 * 1024,
+        (h.historyBytes(target) / 1048576) + 'MB');
+    check('it keeps as much as the budget allows, not the bare minimum',
+        target.history.length === 10, String(target.history.length));
+    check('the cursor moved with it', target.step === 39 - evicted);
+
+    // The floor outranks the budget: steps this big cannot all fit, and an
+    // undo system that leaves you one step is worse than one that overruns.
+    const huge = { history: Array.from({ length: 10 }, () => ({ width: 9000, height: 9000 })), step: 9 };
+    h._trimHistoryTarget(huge, 500, 1024);
+    check('never trims below the minimum number of steps',
+        huge.history.length === 8, String(huge.history.length));
+
+    // The whole point: cheap tiled steps survive in the hundreds.
+    const cheap = { history: Array.from({ length: 400 }, () => ({ tiles: [{ rle: new Uint8Array(2048) }] })), step: 399 };
+    const cut = h._trimHistoryTarget(cheap, 500, 256 * 1024 * 1024);
+    check('hundreds of small steps are kept', cut === 0 && cheap.history.length === 400,
+        String(cheap.history.length));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
