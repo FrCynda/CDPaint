@@ -110,6 +110,37 @@ await withPage(async (page) => {
         check('the count still happens when the user stops drawing', r >= 1, String(r));
     }
 
+    console.log('\n== 5. the count is still right, and off the main thread ==');
+    {
+        const r = await page.eval(`(async () => {
+            __s.doc(1200, 1200);
+            const c = PaintApp.ctx;
+            // Exactly six colours, white background included.
+            const cols = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff'];
+            cols.forEach((col, i) => { c.fillStyle = col; c.fillRect(20 + i * 60, 20, 40, 40); });
+
+            let reported = null;
+            const real = PaintApp.setColorCountStatus.bind(PaintApp);
+            PaintApp.setColorCountStatus = (total, sel, has) => { reported = total; return real(total, sel, has); };
+
+            PaintApp._colorCountLastAt = 0;
+            PaintApp._lastPointerActivityAt = 0;
+            const t0 = performance.now();
+            PaintApp.updateColorCounts();
+            const mainThreadMs = performance.now() - t0;
+
+            for (let i = 0; i < 60 && reported === null; i++) {
+                await new Promise(r => setTimeout(r, 25));
+            }
+            PaintApp.setColorCountStatus = real;
+            return { reported, mainThreadMs, usedBitmap: !PaintApp._colorCountNoBitmap };
+        })()`);
+        check('the worker read the image itself', r.usedBitmap === true);
+        check('six colours were counted', r.reported === 6, String(r.reported));
+        check('and the main thread barely touched it',
+            r.mainThreadMs < 15, r.mainThreadMs.toFixed(1) + ' ms');
+    }
+
     const errs = page.errors();
     console.log(`\npage errors: ${errs.length}`);
     for (const e of errs.slice(0, 5)) console.log('  ! ' + e.text.split('\n')[0]);
