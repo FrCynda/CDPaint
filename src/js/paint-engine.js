@@ -972,6 +972,7 @@
                 activePaletteId: null,
                 previewPaletteId: null,
                 previewSnapshot: null,
+                projectFile: null,
                 projectImage: false,
                 projectBitDepth: 4,
                 lastMouse: null,
@@ -1018,6 +1019,21 @@
                 freehandActive: false, freehandPoints: [],
                 paintbrushActive: false
             };
+            // Fields of `state` that describe *the document* rather than the app
+            // session. These are the fields a document swap (tab switch) must
+            // carry across; everything else is either app-global or in-progress
+            // gesture state cleared by resetTransientEditState().
+            //
+            // Adding a field to `state` above means deciding which of the two it
+            // is. If it belongs to the document, add it here — otherwise a second
+            // document will silently inherit the first one's value.
+            this.DOCUMENT_STATE_KEYS = Object.freeze([
+                'history', 'step',
+                'fileName', 'filePath', 'fileHandle',
+                'projectFile', 'projectHandle', 'projectImage', 'projectBitDepth',
+                'palettes', 'activePaletteId', 'previewPaletteId', 'previewSnapshot',
+                'isDirty', 'canvasOffset'
+            ]);
             this.resizeState = { w:0, h:0, ratio: 1 };
             this.resizeRatioState = true;
             this.hotkeys = {};
@@ -3185,7 +3201,7 @@
                 'edit.cut': { simple: '', complex: 'Ctrl+X' },
                 'edit.paste': { simple: '', complex: 'Ctrl+V' },
                 'image.props': { simple: '', complex: 'Ctrl+E' },
-                'image.resize': { simple: '', complex: 'Ctrl+W' },
+                'image.resize': { simple: '', complex: 'Ctrl+R' },
                 'brush.sizeUp': { simple: '', complex: 'Ctrl+Plus' },
                 'brush.sizeDown': { simple: '', complex: 'Ctrl+Minus' },
                 'view.toggleToolbar': { simple: 'Tab', complex: '' },
@@ -3824,42 +3840,56 @@
                 this._syncHistoryLimitInput();
             }
         }
+        // Hard safety cap: even with the user limit disabled, never retain unbounded
+        // history. Scale the ceiling by canvas size so a "limit disabled" footgun on an
+        // 8000² doc can't hold 500 × ~256 MB (~128 GB). Modeled per-entry cost is the
+        // worst-case full-canvas snapshot (W*H*4); tiled entries are typically far smaller,
+        // so this estimate is conservative (smaller cap) in the safe direction.
+        historyHardCap(width, height) {
+            const px = (width || 0) * (height || 0);
+            if (px <= 0) return 500;
+            return Math.max(8, Math.min(500, Math.floor((2 * 1024 * 1024 * 1024) / (px * 4))));
+        }
+
+        // Entries to keep for a document of the given size, honouring the user's
+        // limit setting and the hard cap.
+        historyBudgetFor(width, height) {
+            return this.historyLimitEnabled
+                ? Math.max(1, this.historyLimit || 1)
+                : this.historyHardCap(width, height);
+        }
+
+        // Drop the oldest entries of `target` ({history, step}) down to
+        // maxEntries. Works on the live state or on a background tab's stored
+        // document. Returns how many entries were evicted.
+        _trimHistoryTarget(target, maxEntries) {
+            if (!target || !Array.isArray(target.history)) return 0;
+            const overflow = target.history.length - maxEntries;
+            if (overflow <= 0) return 0;
+            const evicted = target.history.splice(0, overflow);
+            // Survivors first: eviction must not close pixels they still ref.
+            this._releaseHistoryEntries(evicted, target.history);
+            target.step = Math.max(-1, (target.step || 0) - overflow);
+            return overflow;
+        }
+
         enforceHistoryLimit() {
-            // Hard safety cap: even with the user limit disabled, never retain unbounded
-            // history. Scale the ceiling by canvas size so a "limit disabled" footgun on an
-            // 8000² doc can't hold 500 × ~256 MB (~128 GB). Modeled per-entry cost is the
-            // worst-case full-canvas snapshot (W*H*4); tiled entries are typically far smaller,
-            // so this estimate is conservative (smaller cap) in the safe direction.
-            const px = (this.config.width || 0) * (this.config.height || 0);
-            let HARD_CAP = 500;
-            if (px > 0) {
-                const estEntry = px * 4;
-                HARD_CAP = Math.max(8, Math.min(500, Math.floor((2 * 1024 * 1024 * 1024) / estEntry)));
-            }
-            if (!this.historyLimitEnabled) {
-                if (this.state.history.length <= HARD_CAP) return;
-                const overflow = this.state.history.length - HARD_CAP;
-                const evicted = this.state.history.splice(0, overflow);
-                for (const e of evicted) this._closeBitmapEntry(e);
-                this.state.step = Math.max(-1, this.state.step - overflow);
-                if (typeof this.state.selectionCutStep === 'number') {
-                    this.state.selectionCutStep -= overflow;
-                    if (this.state.selectionCutStep < 0) this.state.selectionCutStep = null;
-                }
-                this.updateTitleBarActions();
-                return;
-            }
-            const maxEntries = Math.max(1, this.historyLimit || 1);
-            const overflow = this.state.history.length - maxEntries;
-            if (overflow <= 0) return;
-            const evicted = this.state.history.splice(0, overflow);
-            for (const e of evicted) this._closeBitmapEntry(e);
-            this.state.step = Math.max(-1, this.state.step - overflow);
+            const overflow = this._trimHistoryTarget(
+                this.state,
+                this.historyBudgetFor(this.config.width, this.config.height)
+            );
+            if (!overflow) return;
             if (typeof this.state.selectionCutStep === 'number') {
                 this.state.selectionCutStep -= overflow;
                 if (this.state.selectionCutStep < 0) this.state.selectionCutStep = null;
             }
             this.updateTitleBarActions();
+        }
+
+        // Trim a document that isn't currently on screen (a background tab).
+        // Same ceiling as the live document, sized to *that* document's canvas.
+        trimBackgroundHistory(docState, width, height) {
+            return this._trimHistoryTarget(docState, this.historyBudgetFor(width, height));
         }
         initTauriFileOpenListener() {
             const tauri = window.__TAURI__;
@@ -4472,7 +4502,14 @@
             }
 
             this.updateTileOffsets();
-            if (this.tileModeEnabled) this.applyTileMode();
+            if (this.tileModeEnabled) {
+                // Boot-time restore of a persisted setting, not a user edit.
+                // applyTileMode() resizes and repaints the canvas and records an
+                // undo step for it, which would leave a freshly-opened app with
+                // one phantom action to undo.
+                this.applyTileMode();
+                this.resetHistoryBaseline();
+            }
             this.updateTileOverlay();
         }
         setTileModeEnabled(enabled) {
@@ -14483,6 +14520,166 @@ void main() {
             }
         }
 
+        // Discard the floating selection without stamping it onto the canvas.
+        // The counterpart to commitSelection(): never touches history, because
+        // selection creation is deliberately non-destructive (see createSelection).
+        cancelSelection() {
+            const s = this.state.selection;
+            if (!s) return;
+            this._clearSelAnchorMode();
+            // A deferred cut may have erased the source pixels from the layer canvas
+            // as a drag preview. Nothing is being committed, so put them back.
+            if (s._cutSavedData && s._cutSavedRect) {
+                const activeLayer = this.layerMgr && this.layerMgr.active && this.layerMgr.layers[this.layerMgr.activeIdx];
+                if (activeLayer && activeLayer.alpha !== false) {
+                    activeLayer.ctx.putImageData(s._cutSavedData, s._cutSavedRect.x, s._cutSavedRect.y);
+                }
+            }
+            this._freeSelectionGlTex(s);
+            this.state.selection = null;
+            this.state.selectionOriginalPos = null;
+            this.state.selectionRotateSession = null;
+            this.state.selectionJustCreated = false;
+            this.state.selectionCutStep = null;
+            this.state.isMovingSel = false;
+            this.state.isRotatingSel = false;
+            this.state.wandBase = null;
+            this.state.wandDiff = null;
+            this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+            this.resetSelectionTempDirty();
+            this.ui.selControls.style.display = 'none';
+            this.clearStatusSelectionSize();
+            this.stopOutlineAnimation();
+            this.requestGlobalOverlayUpdate();
+        }
+
+        // Drop an uncommitted shape draft without rasterizing it. Mirrors the
+        // shape branch of undo(); commitActiveShape() is the stamping variant.
+        discardActiveShape() {
+            if (!this.state.activeShape) return;
+            this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+            this.state.activeShape = null;
+            this.state.shapeEditMode = false;
+            this._activeShapeBoundsCache = null;
+            this._activeShapeBoundsCacheShape = null;
+            this.ui.selControls.style.display = 'none';
+            if (this.ui.pathHandles) this.ui.pathHandles.replaceChildren();
+            this.state.activeShapePathHandle = null;
+            this.state.isRotatingShape = false;
+            this.state.shapeRotateSession = null;
+            this.state.shapeResizeAnchor = null;
+            this.state.shapeResizeBase = null;
+            this.clearStatusSelectionSize();
+            this.requestGlobalOverlayUpdate();
+        }
+
+        // Every field below describes an edit that is *in progress*, not the
+        // document itself. It is scoped to one editing gesture and must never
+        // survive a document swap (tab switch, open, new) — carrying any of it
+        // across makes undo() take a branch that belongs to the other document.
+        // Keep this list next to the state initializer it mirrors.
+        resetTransientEditState() {
+            const s = this.state;
+            s.isDrawing = false;
+            s.startPos = { x: 0, y: 0 };
+            s.isCanvasResizing = false; s.rDir = '';
+            // Selection gesture
+            s.selection = null;
+            s.isMovingSel = false; s.isRotatingSel = false;
+            s.selStart = { x: 0, y: 0 }; s.dragHandle = null;
+            s.selectionOriginalPos = null;
+            s.selectionRotateSession = null;
+            s.selectionCutStep = null;
+            s.selectionJustCreated = false;
+            s.selectionIgnoreClickUntil = 0;
+            s.selectionIgnoreNextClick = false;
+            s.tempSelectionDrawRect = null;
+            // Shape gesture
+            s.activeShape = null; s.shapeEditMode = false;
+            s.activeShapePathHandle = null;
+            s.shapeDragStart = null; s.shapeDragBase = null;
+            s.isRotatingShape = false; s.shapeRotateSession = null;
+            s.shapeResizeAnchor = null; s.shapeResizeBase = null;
+            // Curve gesture — curveUndo is the redo draft and is the single
+            // worst offender: it makes redo() replay another document's curve.
+            s.curvePhase = 0; s.curvePts = [];
+            s.curveUndo = null;
+            // Freehand / brush gestures
+            s.freehandPathActive = false; s.freehandPathPoints = [];
+            s.freehandActive = false; s.freehandPoints = [];
+            s.paintbrushActive = false;
+            s.smartPencilActive = false;
+            s.pencilCtrlAxis = null;
+            // Polyline / lasso / wand gestures
+            s.polyActive = false; s.polyPoints = [];
+            s.lassoActive = false; s.lassoMode = null;
+            s.lassoPoints = []; s.lassoIsDown = false; s.lassoStart = null;
+            s.wandActive = false; s.wandStart = null; s.wandStartScreen = null;
+            s.wandBase = null; s.wandDiff = null; s.wandVisited = null;
+            s.wandMaskCanvas = null; s.wandMaskImageData = null;
+            // Viewport / canvas drag gestures
+            s.isPanning = false; s.isCanvasDragging = false;
+            s.canvasOriginalSize = null;
+            s.resizeAnchor = null;
+            s.resizePreviewActive = false;
+            s.resizePreviewRect = null; s.resizePreviewGhost = null;
+            // Adjustment-dialog live preview
+            s.hueSatActive = false; s.hueSatApplied = false; s.hueSatDragging = false;
+            // NOTE: wandJobId is deliberately not reset — it is a monotonic
+            // counter used to invalidate in-flight async wand jobs.
+        }
+
+        // Land every in-progress edit so the document is in a quiescent, fully
+        // described state. Call before snapshotting or replacing the document.
+        // commit:false discards drafts instead of stamping them.
+        endInteractiveEdit(opts) {
+            const commit = !opts || opts.commit !== false;
+            // Queued stroke frames first — they still have pixels to land.
+            if (commit && this.state.isDrawing) {
+                try { this.flushStrokes(); } catch (e) { /* transient stroke state */ }
+            }
+            this.cancelPendingStrokes();
+            if (this.brush && typeof this.brush.endStroke === 'function') {
+                try { this.brush.endStroke(); } catch (e) { /* ignore */ }
+            }
+            // A freehand path still active here means the gesture never reached
+            // pointer-up, so there is no committable result either way.
+            try {
+                if (typeof FreehandPathEngine !== 'undefined' &&
+                    FreehandPathEngine.isActive && FreehandPathEngine.isActive()) {
+                    FreehandPathEngine.cancel();
+                }
+            } catch (e) { /* ignore */ }
+            // A palette preview repaints the canvas without recording history, so
+            // while one is live the canvas does not match history[step]. It is
+            // transient hover UI, never part of the document — always drop it.
+            try { if (this.state.previewPaletteId) this.exitPreview(); } catch (e) { /* ignore */ }
+            // Point-collection drafts have no pixels until finalized.
+            try { if (this.state.polyActive) this.cancelPolyline(); } catch (e) { /* ignore */ }
+            try { if (this.state.lassoActive) this.resetLassoState(); } catch (e) { /* ignore */ }
+            // Gradient must be resolved before the selection is: gradientApply()
+            // clips to the live selection mask.
+            try {
+                if (this.config.gradient && this.config.gradient.active) {
+                    if (commit) this.gradientApply(); else this.gradientDiscard();
+                }
+            } catch (e) { console.warn('[Doc] gradient finalize failed', e); }
+            // Shapes and selections carry real pixels — these are the only two
+            // that respect the commit flag.
+            try {
+                if (this.state.activeShape) {
+                    if (commit) this.commitActiveShape(); else this.discardActiveShape();
+                }
+            } catch (e) { console.warn('[Doc] shape finalize failed', e); }
+            try {
+                if (this.state.selection) {
+                    if (commit) this.commitSelection(); else this.cancelSelection();
+                }
+            } catch (e) { console.warn('[Doc] selection finalize failed', e); }
+            // Whatever is left is pure draft bookkeeping.
+            this.resetTransientEditState();
+        }
+
         // Bakes any negative w/h flip into s.canvas so that s.w and s.h are
         // always positive before a new resize drag begins. Without this, starting
         // a side-handle drag after a corner flip (or vice-versa) would revert the
@@ -19071,8 +19268,57 @@ void main() {
                 this.ctx.drawImage(entry.canvas, 0, 0);
             }
         }
+        // Layered history entries reference unchanged layers from an *earlier*
+        // entry instead of re-cloning them (layer-system's saveState builds
+        // { ref: prevSnap } snaps). Walk every surviving entry's ref chains and
+        // collect the owned snaps they terminate at, so eviction can tell
+        // "nothing points here any more" from "an older entry owns the pixels a
+        // newer entry still displays".
+        _collectOwnedSnapsInUse(entries) {
+            const inUse = new Set();
+            if (!entries) return inUse;
+            for (const e of entries) {
+                if (!e || !e.snaps) continue;
+                for (const sv of e.snaps) {
+                    let s = sv;
+                    while (s.ref) s = s.ref;
+                    // s === sv means this entry owns its own snap; only a chain
+                    // that walked somewhere else pins a foreign entry's pixels.
+                    if (s !== sv) inUse.add(s);
+                }
+            }
+            return inUse;
+        }
+
+        // Release entries being dropped from the history, without closing image
+        // data that any surviving entry still resolves to. Closing a shared
+        // ImageBitmap leaves later undo steps drawing from a detached bitmap,
+        // which throws and strands the document mid-undo.
+        _releaseHistoryEntries(evicted, survivors) {
+            if (!evicted || !evicted.length) return;
+            const inUse = this._collectOwnedSnapsInUse(survivors);
+            for (const entry of evicted) {
+                if (!entry) continue;
+                if (entry.bitmap) {
+                    try { entry.bitmap.close(); } catch (_) {}
+                    entry.bitmap = null;
+                }
+                if (!entry.snaps) continue;
+                for (const sv of entry.snaps) {
+                    if (sv.ref) continue;        // this entry is not the owner
+                    if (inUse.has(sv)) continue; // a survivor still resolves here
+                    if (sv.bitmap) {
+                        try { sv.bitmap.close(); } catch (_) {}
+                        sv.bitmap = null;
+                    }
+                }
+            }
+        }
+
         // Release GPU-side ImageBitmap objects stored in a history entry.
         // Ref snaps don't own their bitmap — skip them.
+        // Only safe when the whole history is going away; use
+        // _releaseHistoryEntries() when other entries survive.
         _closeBitmapEntry(entry) {
             if (!entry) return;
             if (entry.bitmap) { try { entry.bitmap.close(); } catch (_) {} }
@@ -19146,10 +19392,13 @@ void main() {
         }
 
         saveState() {
-            // Truncate forward history and close any bitmaps being discarded.
+            // Truncate forward history and release the discarded entries. Refs
+            // always point backwards, so nothing kept can reference a dropped
+            // entry — but go through the ref-aware path anyway so this stays
+            // correct if that ever changes.
             if (this.state.step < this.state.history.length - 1) {
                 const dropped = this.state.history.splice(this.state.step + 1);
-                for (const e of dropped) this._closeBitmapEntry(e);
+                this._releaseHistoryEntries(dropped, this.state.history);
             }
             if (this.tileHistory.enabled) {
                 const prevEntry = this.state.history[this.state.step];
@@ -19221,12 +19470,30 @@ void main() {
                 this.brush.releaseOffscreenBuffers();
             }
         }
+        // Collapse history down to a single entry describing the current canvas,
+        // so the document has nothing to undo. For setup work that legitimately
+        // paints the canvas before the user has touched it (restoring tile mode
+        // at boot, adopting a document that reused another's history array).
+        resetHistoryBaseline() {
+            // Detach without releasing: this array may already be owned by a tab
+            // record (the tab system calls this precisely when a document path
+            // reused the previous history array). Closing its bitmaps would
+            // strand that tab. The tab system frees entries when a tab closes.
+            this.state.history = [];
+            this.state.step = -1;
+            this.saveState();
+            this.markClean();
+            this.updateTitleBarActions();
+        }
         collapseSelectionCutStep() {
             const cutStep = this.state.selectionCutStep;
             if (cutStep === null) return;
             if (cutStep >= 0 && cutStep < this.state.history.length) {
                 const [evicted] = this.state.history.splice(cutStep, 1);
-                this._closeBitmapEntry(evicted);
+                // This removes an entry from the MIDDLE of the history, so
+                // entries after it survive and may reference its layer pixels.
+                // Must not close anything they still resolve to.
+                this._releaseHistoryEntries([evicted], this.state.history);
                 if (this.state.step >= cutStep) this.state.step--;
             }
             this.state.selectionCutStep = null;
@@ -19533,6 +19800,7 @@ void main() {
                 // Kick the check after layout so the modal feels responsive.
                 setTimeout(() => this.checkForUpdates(), 0);
             }
+            if (id === 'new') this.resetNewModal();
             document.getElementById('modal-'+id).style.display='flex';
             if (id === 'resize') { this.positionResizeModal(); this.updateResizePreview(); }
             if (id === 'depth') { this.centerModal('modal-'+id); setTimeout(()=>{const b=document.getElementById('depth-apply-btn');if(b)b.focus();},0); }
@@ -22989,16 +23257,44 @@ self.onmessage = function(e) {
                 showToast('Please enter valid width and height values between 1 and 65535.', 'warning');
                 return;
             }
+            // The layer stack is global. A new document starts with one layer —
+            // without this the new tab opens holding the previous document's
+            // layers, and because there is only one stack, adding a layer in one
+            // tab appears in every other tab too.
+            if (this.layerMgr && typeof this.layerMgr.collapseToBase === 'function') {
+                this.layerMgr.collapseToBase({ fresh: true });
+            }
             this.setSize(w, h);
             this.bitDepth = depth;
-            this.ctx.fillStyle = 'white';
-            this.ctx.fillRect(0, 0, w, h);
+            const bg = document.getElementById('new-bg').value;
+            if (bg === 'transparent' && depth > 8) {
+                this.ctx.clearRect(0, 0, w, h);
+            } else {
+                if (bg === 'transparent') {
+                    showToast('Transparent background is only available at 24bpp; using white.', 'info');
+                }
+                this.ctx.fillStyle = (bg === 'custom') ? document.getElementById('new-bg-color').value : '#ffffff';
+                this.ctx.fillRect(0, 0, w, h);
+            }
             this.palette = [];
             this.paletteLab = null;
             this.paletteLocked = false;
             this.state.fileHandle = null;
             this.state.filePath = null;
             this.state.fileName = 'untitled.png';
+            // A brand-new document starts a brand-new history. Every other
+            // document-replacing path (initializeBlankDocument, handleLoadedImage,
+            // applyProjectImageBytes) does this; without it the new canvas
+            // inherits the previous document's whole undo stack — and because
+            // tabs capture state.history by reference, the old tab and the new
+            // tab end up sharing a single undo stack.
+            //
+            // Detach only — do NOT release the old entries. By the time we get
+            // here a tab record may already own this exact array, and closing
+            // its bitmaps would leave that tab unable to draw itself.
+            // Ownership is released by the tab system when a tab is closed.
+            this.state.history = [];
+            this.state.step = -1;
             this.saveState();
             this.state.hasDocument = true;
             this.state.resizePreviewActive = false;
@@ -23011,19 +23307,41 @@ self.onmessage = function(e) {
 
         applyNewPreset() {
             const p = document.getElementById('new-preset').value;
-            if(p === 'gba-sprite') {
-                document.getElementById('new-w').value = 64;
-                document.getElementById('new-h').value = 64;
-                document.getElementById('new-depth').value = 4;
-            } else if(p === 'gba-tile') {
-                document.getElementById('new-w').value = 8;
-                document.getElementById('new-h').value = 8;
-                document.getElementById('new-depth').value = 4;
-            } else if(p === 'gb') {
-                document.getElementById('new-w').value = 160;
-                document.getElementById('new-h').value = 144;
-                document.getElementById('new-depth').value = 2;
-            }
+            const set = (w, h, d) => {
+                document.getElementById('new-w').value = w;
+                document.getElementById('new-h').value = h;
+                document.getElementById('new-depth').value = d;
+            };
+            if (p === 'hd-1080p') set(1920, 1080, 24);
+            else if (p === 'hd-720p') set(1280, 720, 24);
+            else if (p === 'square') set(1080, 1080, 24);
+            else if (p === 'portrait') set(1080, 1350, 24);
+            else if (p === 'icon-512') set(512, 512, 24);
+            else if (p === 'icon-256') set(256, 256, 24);
+            else if (p === 'gba-sprite') set(64, 64, 4);
+            else if (p === 'gba-tile') set(8, 8, 4);
+            else if (p === 'gb') set(160, 144, 2);
+        }
+
+        swapNewDimensions() {
+            const w = document.getElementById('new-w');
+            const h = document.getElementById('new-h');
+            const t = w.value; w.value = h.value; h.value = t;
+            document.getElementById('new-preset').value = 'custom';
+        }
+
+        onNewBgChange() {
+            const bg = document.getElementById('new-bg').value;
+            document.getElementById('new-bg-custom-group').style.display = (bg === 'custom') ? '' : 'none';
+        }
+
+        resetNewModal() {
+            document.getElementById('new-preset').value = 'custom';
+            document.getElementById('new-w').value = this.config ? this.config.width : 800;
+            document.getElementById('new-h').value = this.config ? this.config.height : 600;
+            document.getElementById('new-depth').value = '24';
+            document.getElementById('new-bg').value = 'white';
+            document.getElementById('new-bg-custom-group').style.display = 'none';
         }
 
         promptImportPalette() {
@@ -24433,6 +24751,16 @@ self.onmessage = function(e) {
                     const l = mgr.layers[mgr.activeIdx];
                     // Return a no-op proxy context for locked layers to prevent drawing
                     if (l && l.locked) return _lockedCtxProxy(l.ctx);
+                    // Every drawing path in the app reaches the canvas through
+                    // this accessor, so it is the one reliable place to notice
+                    // "something is about to change" and schedule a repaint.
+                    // Layers are off-screen now — without this, strokes would
+                    // land correctly but never appear.
+                    _invalidate();
+                    // Editing a mask redirects every tool onto the mask canvas,
+                    // so painting reveals and erasing hides, without ever
+                    // touching the artwork underneath.
+                    if (_isMaskEditing(l)) return l.mask.ctx;
                     return (l && l.ctx) || _holder.ctx;
                 },
                 set(v) { _holder.ctx = v; },
@@ -24477,6 +24805,10 @@ self.onmessage = function(e) {
 /* ── LAYER SYSTEM ──────────────────────────────────────── */
 #canvas-stage.layers-active {
     background: repeating-conic-gradient(#b0b0b0 0% 25%, #e8e8e8 0% 50%) 0 0 / 16px 16px;
+    /* Layer canvases use mix-blend-mode, which blends with whatever is painted
+       behind them. Isolate the stage so a Multiply layer blends with the layers
+       below it and not with the app's UI. */
+    isolation: isolate;
 }
 #lsys-panel{
     position:fixed;top:145px;bottom:24px;right:-336px;width:320px;
@@ -24610,6 +24942,22 @@ self.onmessage = function(e) {
 .lsi-group-arrow{font-size:9px;transition:transform .15s;flex-shrink:0;opacity:.6;}
 .lsi-group-arrow.open{transform:rotate(90deg);}
 
+/* Clipping / mask indicators */
+.lsi-clip-badge{
+    font-size:10px;margin-left:4px;color:var(--win-blue,#0078d7);
+    opacity:.85;font-weight:700;
+}
+.lsi-mask-badge{
+    font-size:10px;margin-left:4px;color:var(--win-blue,#0078d7);opacity:.8;
+}
+.lsi-mask-badge.editing{
+    background:var(--win-blue,#0078d7);color:#fff;opacity:1;
+    padding:0 3px;border-radius:2px;
+}
+.lsi-mask-badge.off{opacity:.35;text-decoration:line-through;}
+/* Toolbar buttons that represent an ON state */
+.lstb.lstb-on{background:var(--btn-active-bg,#cce8ff);}
+
 /* Opacity row */
 #lsys-oprow{
     padding:5px 9px 6px;border-top:1px solid var(--border-ribbon,#dadbdc);
@@ -24725,6 +25073,24 @@ self.onmessage = function(e) {
             '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="1" y="4" width="14" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5" fill="none"/><rect x="3" y="2" width="5" height="3" rx="1" fill="currentColor" opacity=".6"/></svg>' +
             '</button>' +
             '<div class="lstb-sep"></div>' +
+            /* Clip to layer below */
+            '<button class="lstb" id="lsys-clip" title="Clip to layer below — confine this layer to the shape underneath" disabled>' +
+            '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2" y="8" width="9" height="6" rx="1" fill="currentColor" opacity=".35"/><rect x="5" y="2" width="9" height="6" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M4 12l3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>' +
+            '</button>' +
+            /* Add / edit layer mask */
+            '<button class="lstb" id="lsys-mask" title="Add a layer mask — hide parts without erasing them" disabled>' +
+            '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M8 3v10" stroke="currentColor" stroke-width="1.5"/><rect x="8" y="3" width="6" height="10" fill="currentColor" opacity=".35"/></svg>' +
+            '</button>' +
+            '<div class="lstb-sep"></div>' +
+            /* Flatten */
+            '<button class="lstb" id="lsys-flatten" title="Flatten image — merge every layer into one" disabled>' +
+            '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="3" rx="1" fill="currentColor" opacity=".3"/><rect x="2" y="7" width="12" height="3" rx="1" fill="currentColor" opacity=".5"/><rect x="2" y="11" width="12" height="3" rx="1" fill="currentColor"/></svg>' +
+            '</button>' +
+            /* Export flattened PNG */
+            '<button class="lstb" id="lsys-export" title="Export a flattened PNG (keeps your layered file)" disabled>' +
+            '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M5 7l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 12v2h10v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>' +
+            '</button>' +
+            '<div class="lstb-sep"></div>' +
             /* Delete */
             '<button class="lstb" id="lsys-del" title="Delete active layer" disabled>' +
             '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 5h10M6 5V3h4v2M7 8v4M9 8v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4 5l.7 8h6.6L12 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>' +
@@ -24751,6 +25117,15 @@ self.onmessage = function(e) {
             '<div class="lsctx-sep"></div>' +
             '<div class="lsctx-item" id="lsctx-lock">Lock layer</div>' +
             '<div class="lsctx-sep"></div>' +
+            '<div class="lsctx-item" id="lsctx-clip">Clip to layer below</div>' +
+            '<div class="lsctx-item" id="lsctx-passthrough">Pass through</div>' +
+            '<div class="lsctx-sep"></div>' +
+            '<div class="lsctx-item" id="lsctx-mask-add">Add layer mask</div>' +
+            '<div class="lsctx-item" id="lsctx-mask-edit">Edit mask</div>' +
+            '<div class="lsctx-item" id="lsctx-mask-toggle">Enable mask</div>' +
+            '<div class="lsctx-item" id="lsctx-mask-apply">Apply mask</div>' +
+            '<div class="lsctx-item" id="lsctx-mask-del">Delete mask</div>' +
+            '<div class="lsctx-sep"></div>' +
             '<div class="lsctx-item" id="lsctx-dup">Duplicate</div>' +
             '<div class="lsctx-item" id="lsctx-del">Delete</div>';
         document.body.appendChild(_ctxMenu);
@@ -24774,8 +25149,40 @@ self.onmessage = function(e) {
             alphaItem.className     = 'lsctx-item' + (l.alpha !== false ? ' checked' : '');
             alphaLockItem.className = 'lsctx-item' + (l.alphaLock ? ' checked' : '');
             lockItem.className      = 'lsctx-item' + (l.locked ? ' checked' : '');
+
+            // Clipping: only meaningful when there is a layer underneath to
+            // clip to, and never for the bottom layer.
+            const clipItem = document.getElementById('lsctx-clip');
+            clipItem.className = 'lsctx-item' + (l.clipped ? ' checked' : '');
+            clipItem.style.display = _canClip(idx) ? '' : 'none';
+
+            // Pass-through belongs to folders only.
+            const ptItem = document.getElementById('lsctx-passthrough');
+            if (ptItem) {
+                ptItem.className = 'lsctx-item' + (l.blendMode === 'pass-through' ? ' checked' : '');
+                ptItem.style.display = l.isGroup ? '' : 'none';
+            }
+
+            // Mask items: show "Add" when there is none, the rest when there is.
+            const hasMask = !!l.mask;
+            const show = (id, on) => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = on ? '' : 'none';
+            };
+            show('lsctx-mask-add', !hasMask && !l.isGroup);
+            show('lsctx-mask-edit', hasMask);
+            show('lsctx-mask-toggle', hasMask);
+            show('lsctx-mask-apply', hasMask);
+            show('lsctx-mask-del', hasMask);
+            if (hasMask) {
+                document.getElementById('lsctx-mask-edit').className =
+                    'lsctx-item' + (_isMaskEditing(l) ? ' checked' : '');
+                document.getElementById('lsctx-mask-toggle').className =
+                    'lsctx-item' + (l.mask.enabled !== false ? ' checked' : '');
+            }
+
             _ctxMenu.style.left = Math.min(e.clientX, window.innerWidth - 190) + 'px';
-            _ctxMenu.style.top  = Math.min(e.clientY, window.innerHeight - 160) + 'px';
+            _ctxMenu.style.top  = Math.min(e.clientY, window.innerHeight - 230) + 'px';
             _ctxMenu.classList.add('open');
         }
         function _closeCtx() { _ctxMenu.classList.remove('open'); }
@@ -24786,6 +25193,62 @@ self.onmessage = function(e) {
             if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
             _closeCtx();
         });
+        /* ── Clipping + mask menu actions ─────────────────────────────────── */
+
+        document.getElementById('lsctx-clip').addEventListener('click', () => {
+            if (!_canClip(_ctxTargetIdx)) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            l.clipped = !l.clipped;
+            _closeCtx(); _refreshList(); _invalidate();
+            app.saveState();
+        });
+        document.getElementById('lsctx-passthrough').addEventListener('click', () => {
+            const l = mgr.layers[_ctxTargetIdx];
+            if (!l || !l.isGroup) return;
+            l.blendMode = (l.blendMode === 'pass-through') ? 'source-over' : 'pass-through';
+            _closeCtx(); _refreshList(); _invalidate();
+            app.saveState();
+        });
+        document.getElementById('lsctx-mask-add').addEventListener('click', () => {
+            if (_ctxTargetIdx < 0) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            _addMask(l);
+            _setMaskEditing(l, true);       // painting goes to the mask right away
+            _closeCtx(); _refreshList(); _invalidate();
+            app.saveState();
+        });
+        document.getElementById('lsctx-mask-edit').addEventListener('click', () => {
+            if (_ctxTargetIdx < 0) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            _setMaskEditing(l, !_isMaskEditing(l));
+            _closeCtx(); _refreshList();
+        });
+        document.getElementById('lsctx-mask-toggle').addEventListener('click', () => {
+            if (_ctxTargetIdx < 0) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            if (!l.mask) return;
+            l.mask.enabled = l.mask.enabled === false;
+            l._dirty = true;
+            _closeCtx(); _refreshList(); _invalidate();
+            app.saveState();
+        });
+        document.getElementById('lsctx-mask-apply').addEventListener('click', () => {
+            if (_ctxTargetIdx < 0) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            _setMaskEditing(l, false);
+            _removeMask(l, true);           // bake what it hid into the pixels
+            _closeCtx(); _refreshList(); _invalidate();
+            app.saveState();
+        });
+        document.getElementById('lsctx-mask-del').addEventListener('click', () => {
+            if (_ctxTargetIdx < 0) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            _setMaskEditing(l, false);
+            _removeMask(l, false);          // discard it, layer pixels untouched
+            _closeCtx(); _refreshList(); _invalidate();
+            app.saveState();
+        });
+
         document.getElementById('lsctx-alphalock').addEventListener('click', () => {
             if (_ctxTargetIdx < 0) return;
             const l = mgr.layers[_ctxTargetIdx];
@@ -24859,19 +25322,278 @@ self.onmessage = function(e) {
                 : null;
         }
 
+        /* Layer pixels live OFF-SCREEN. Nothing is stacked in the page any
+         * more — cMain is the display canvas and shows the composited result.
+         * That is what makes real groups, clipping masks and layer masks
+         * possible, and it guarantees the screen matches the saved file. */
         function _newCanvas(w, h) {
             const c = document.createElement('canvas');
             c.width = w; c.height = h;
-            c.style.cssText =
-                'position:absolute;left:0;top:0;pointer-events:none;';
             return c;
         }
 
-        function _insertBeforeTemp(c) {
-            const stage = app.ui && app.ui.stage;
-            const ctemp = app.ui && app.ui.cTemp;
-            if (stage && ctemp && ctemp.parentNode === stage) stage.insertBefore(c, ctemp);
-            else if (stage) stage.appendChild(c);
+        /* Layer canvases used to be inserted into the stage. They are off-screen
+         * now; kept as a no-op so older call sites stay harmless. */
+        function _insertBeforeTemp() { /* layers are no longer in the DOM */ }
+
+        /* ── Compositor ───────────────────────────────────────────────────── */
+
+        const _scratchPool = [];
+        function _getScratch(w, h) {
+            const c = _scratchPool.pop() || document.createElement('canvas');
+            if (c.width !== w) c.width = w;
+            if (c.height !== h) c.height = h;
+            const ctx = c.getContext('2d');
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.clearRect(0, 0, w, h);
+            app.disableSmoothing(ctx);
+            return c;
+        }
+        function _releaseScratch(c) { if (_scratchPool.length < 12) _scratchPool.push(c); }
+
+        function _blendOf(l) {
+            const b = l.blendMode;
+            // 'pass-through' is a folder flag, not a canvas operation. A folder
+            // that lets the layers underneath show through is drawn by putting
+            // its children straight onto the parent, so by the time anything
+            // reaches this function it is plain Normal.
+            if (!b || b === 'source-over' || b === 'pass-through') return 'source-over';
+            return b;
+        }
+
+        /* A pass-through folder is not composited as a single object: its
+         * children blend with everything already on the canvas, which is how
+         * Photoshop groups behave by default. Isolation comes back the moment
+         * the folder has to be treated as one object — its own mask, or a
+         * partial opacity, both need the finished group before they apply. */
+        function _isPassThrough(l) {
+            return !!(l.isGroup && l.blendMode === 'pass-through' &&
+                      (l.opacity == null || l.opacity >= 1) &&
+                      !(l.mask && l.mask.enabled !== false && l.mask.canvas));
+        }
+
+        /* Flat array + parentId -> sibling lists, bottom-to-top. */
+        function _buildTree() {
+            const known = new Set(mgr.layers.map(l => l.id));
+            const roots = [];
+            const kids = new Map();
+            for (const l of mgr.layers) {
+                if (l.parentId && known.has(l.parentId)) {
+                    if (!kids.has(l.parentId)) kids.set(l.parentId, []);
+                    kids.get(l.parentId).push(l);
+                } else {
+                    roots.push(l);
+                }
+            }
+            return { roots, kids };
+        }
+
+        /* The pixels a node contributes, with its own mask applied. Groups are
+         * rendered into an isolated scratch so their opacity and blend mode
+         * apply to the folder as a whole. Returns {canvas, temp} or null. */
+        function _nodeContent(l, kids, w, h) {
+            let base = null, temp = false;
+            if (l.isGroup) {
+                const children = kids.get(l.id) || [];
+                if (!children.length) return null;
+                const s = _getScratch(w, h);
+                _renderList(children, kids, s.getContext('2d'), w, h);
+                base = s; temp = true;
+            } else {
+                if (!l.canvas) return null;
+                base = l.canvas;
+            }
+            const mask = l.mask;
+            if (mask && mask.enabled !== false && mask.canvas) {
+                const s = _getScratch(w, h);
+                const sctx = s.getContext('2d');
+                sctx.drawImage(base, 0, 0);
+                // Mask alpha decides what survives: painted = visible.
+                sctx.globalCompositeOperation = 'destination-in';
+                sctx.drawImage(mask.canvas, 0, 0);
+                sctx.globalCompositeOperation = 'source-over';
+                if (temp) _releaseScratch(base);
+                return { canvas: s, temp: true };
+            }
+            return { canvas: base, temp: temp };
+        }
+
+        /* Draw one list of siblings (bottom-to-top) into ctx. A run of clipped
+         * layers is confined to the shape of the first unclipped layer beneath
+         * it, exactly like a Photoshop/Krita clipping group. */
+        function _renderList(list, kids, ctx, w, h) {
+            for (let i = 0; i < list.length; i++) {
+                const l = list[i];
+                // A clipped layer is drawn as part of the run above its base.
+                // At the very bottom of a list there is nothing to clip to, so
+                // draw it as an ordinary layer rather than dropping it — it used
+                // to vanish with no explanation when it was first inside a group.
+                if (l.clipped && i > 0) continue;
+                if (!l.visible) {
+                    // An invisible clip base still swallows its clipped run.
+                    continue;
+                }
+
+                // A clipped run above needs this node's shape as one canvas, so
+                // a folder that would otherwise pass through has to isolate.
+                const hasRun = (i + 1 < list.length) && list[i + 1].clipped;
+                if (!hasRun && _isPassThrough(l)) {
+                    _renderList(kids.get(l.id) || [], kids, ctx, w, h);
+                    continue;
+                }
+
+                const content = _nodeContent(l, kids, w, h);
+                if (!content) continue;
+
+                // Collect the clipped run sitting directly on top of this layer.
+                const run = [];
+                for (let j = i + 1; j < list.length; j++) {
+                    if (!list[j].clipped) break;
+                    if (list[j].visible) run.push(list[j]);
+                }
+
+                let src = content.canvas, srcTemp = content.temp;
+                if (run.length) {
+                    const s = _getScratch(w, h);
+                    const sctx = s.getContext('2d');
+                    sctx.drawImage(content.canvas, 0, 0);
+                    for (const c of run) {
+                        const cc = _nodeContent(c, kids, w, h);
+                        if (!cc) continue;
+                        sctx.save();
+                        sctx.globalAlpha = c.opacity == null ? 1 : c.opacity;
+                        sctx.globalCompositeOperation = _blendOf(c);
+                        sctx.drawImage(cc.canvas, 0, 0);
+                        sctx.restore();
+                        if (cc.temp) _releaseScratch(cc.canvas);
+                    }
+                    // Confine the result to the base layer's own shape.
+                    sctx.save();
+                    sctx.globalCompositeOperation = 'destination-in';
+                    sctx.drawImage(content.canvas, 0, 0);
+                    sctx.restore();
+                    if (content.temp) _releaseScratch(content.canvas);
+                    src = s; srcTemp = true;
+                }
+
+                ctx.save();
+                ctx.globalAlpha = l.opacity == null ? 1 : l.opacity;
+                ctx.globalCompositeOperation = _blendOf(l);
+                ctx.drawImage(src, 0, 0);
+                ctx.restore();
+                if (srcTemp) _releaseScratch(src);
+            }
+        }
+
+        /* Composite the whole tree into the display canvas (cMain). */
+        let _renderRaf = null, _renderDirty = false;
+        function _render() {
+            _renderDirty = false;
+            if (!mgr.active || !mgr.layers.length) return;
+            const w = app.config.width, h = app.config.height;
+            const ctx = _holder.ctx;
+            if (!ctx) return;
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.clearRect(0, 0, w, h);
+            app.disableSmoothing(ctx);
+            const { roots, kids } = _buildTree();
+            _renderList(roots, kids, ctx, w, h);
+            ctx.restore();
+        }
+        mgr.render = _render;
+
+        /* Coalesce repaints to one per animation frame. */
+        function _invalidate() {
+            if (!mgr.active) return;
+            _renderDirty = true;
+            if (_renderRaf == null) {
+                _renderRaf = requestAnimationFrame(() => {
+                    _renderRaf = null;
+                    if (_renderDirty) _render();
+                });
+            }
+        }
+        mgr.invalidate = _invalidate;
+
+        /* The live view is a stack of DOM canvases, so visibility / opacity /
+         * blend mode are CSS on each canvas — nothing composites them in JS
+         * while you draw. This is the single place that pushes a layer's
+         * appearance onto its canvas; call it whenever any of those change.
+         *
+         * Canvas and CSS spell the default blend differently ('source-over' vs
+         * 'normal'); every other mode shares the same name. */
+        /* Appearance used to be CSS on stacked canvases. The compositor owns it
+         * now, so "apply style" just means "repaint". Kept as a named call so
+         * every place that changes how a layer looks stays obvious. */
+        function _applyLayerStyle() { _invalidate(); }
+        function _applyAllLayerStyles() { _invalidate(); }
+
+        /* ── Layer masks ──────────────────────────────────────────────────────
+         * A mask is a same-size canvas whose ALPHA decides what shows: painted
+         * = visible, erased = hidden. Nothing is destroyed, so hiding can be
+         * painted back at any time. */
+        function _makeMask(w, h, opaque) {
+            const c = _newCanvas(w, h);
+            const ctx = c.getContext('2d', { willReadFrequently: true });
+            app.disableSmoothing(ctx);
+            if (opaque) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); }
+            return { canvas: c, ctx, enabled: true };
+        }
+        function _addMask(l, opts) {
+            if (!l || l.mask) return;
+            // Start fully revealed — the mask should change nothing until painted.
+            l.mask = _makeMask(app.config.width, app.config.height, !(opts && opts.hidden));
+            l._dirty = true;
+        }
+        function _removeMask(l, apply) {
+            if (!l || !l.mask) return;
+            if (apply && l.canvas && l.ctx) {
+                // Bake it in: what the mask hid becomes actually erased.
+                l.ctx.save();
+                l.ctx.globalCompositeOperation = 'destination-in';
+                l.ctx.drawImage(l.mask.canvas, 0, 0);
+                l.ctx.restore();
+            }
+            l.mask = null;
+            l._dirty = true;
+        }
+        /* While a mask is being edited, drawing tools paint the MASK rather than
+         * the layer's pixels — paint to reveal, erase to hide. Only one mask can
+         * be in edit mode at a time, so the target of a brush stroke is never
+         * ambiguous. */
+        function _isMaskEditing(l) { return !!(l && l.mask && l._maskEdit); }
+        /* Where a drawing operation on this layer should actually land. */
+        function _targetCtx(l) { return _isMaskEditing(l) ? l.mask.ctx : (l && l.ctx); }
+        function _setMaskEditing(l, on) {
+            for (const other of mgr.layers) if (other !== l) other._maskEdit = false;
+            if (!l) return;
+            l._maskEdit = !!(on && l.mask);
+        }
+        mgr.isMaskEditing = () => {
+            const l = mgr.layers[mgr.activeIdx];
+            return _isMaskEditing(l);
+        };
+
+        function _snapshotMask(l) {
+            if (!l.mask || !l.mask.canvas) return null;
+            const c = _newCanvas(l.mask.canvas.width, l.mask.canvas.height);
+            c.getContext('2d').drawImage(l.mask.canvas, 0, 0);
+            return { canvas: c, enabled: l.mask.enabled !== false };
+        }
+        function _restoreMask(l, sv, w, h) {
+            if (!sv.mask || !sv.mask.canvas) { l.mask = null; return; }
+            if (!l.mask) l.mask = _makeMask(w, h, false);
+            if (l.mask.canvas.width !== w || l.mask.canvas.height !== h) {
+                l.mask.canvas.width = w; l.mask.canvas.height = h;
+            }
+            l.mask.ctx.clearRect(0, 0, w, h);
+            l.mask.ctx.drawImage(sv.mask.canvas, 0, 0);
+            l.mask.enabled = sv.mask.enabled !== false;
         }
 
         /* Flatten all visible layers into a single canvas.  Used for save/preview. */
@@ -24888,15 +25610,14 @@ self.onmessage = function(e) {
                 app.disableSmoothing(mgr._compositeCtx);
             }
             const ctx = mgr._compositeCtx;
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
             ctx.clearRect(0, 0, w, h);
-            for (const l of mgr.layers) {
-                if (!l.visible || l.isGroup) continue;
-                ctx.save();
-                ctx.globalAlpha = l.opacity;
-                ctx.globalCompositeOperation = l.blendMode || 'source-over';
-                ctx.drawImage(l.canvas, 0, 0);
-                ctx.restore();
-            }
+            // Same path the screen uses, so an exported/flattened image and the
+            // canvas you were looking at can never disagree.
+            const { roots, kids } = _buildTree();
+            _renderList(roots, kids, ctx, w, h);
             return mgr._compositeCanvas;
         }
         mgr.getCompositeCanvas = function() { return _composite(); };
@@ -24930,21 +25651,39 @@ self.onmessage = function(e) {
         function _activate() {
             if (mgr.active) return;
             mgr.active = true;
-            mgr.layers.push({
-                id:      1,
-                name:    'Background',
-                canvas:  app.ui.cMain,
-                ctx:     _holder.ctx,
-                visible: true,
-                opacity: 1.0,
-                isBase:  true,
-                locked:  false,
-                alpha:   false,
-                parentId: null,
-            });
-            // cTemp must remain visually on top of any layer canvases we insert.
-            if (app.ui.cTemp) app.ui.cTemp.style.zIndex = '200';
+            mgr.activeIdx = 0;
+            if (!mgr.layers.length) {
+                // Move the picture that was being drawn straight onto cMain into
+                // an off-screen Background layer. From here on cMain is the
+                // display surface and shows the composite, not the artwork.
+                const w = app.config.width, h = app.config.height;
+                const c = _newCanvas(w, h);
+                const cctx = c.getContext('2d', { willReadFrequently: true });
+                app.disableSmoothing(cctx);
+                cctx.drawImage(app.ui.cMain, 0, 0);
+                mgr.layers.push({
+                    id:       1,
+                    name:     'Background',
+                    canvas:   c,
+                    ctx:      cctx,
+                    visible:  true,
+                    opacity:  1.0,
+                    isBase:   true,
+                    locked:   false,
+                    alpha:    false,
+                    alphaLock: false,
+                    blendMode: 'source-over',
+                    clipped:  false,
+                    mask:     null,
+                    parentId: null,
+                    _dirty:   false,
+                });
+                if (mgr.nextId < 2) mgr.nextId = 2;
+            }
+            _invalidate();
             // Switch stage to checkered pattern so transparent areas are visible.
+            // (cTemp no longer needs a z-index bump — there are no layer
+            // canvases in the DOM to sit above.)
             if (app.ui.stage) app.ui.stage.classList.add('layers-active');
             _refreshList();
             _syncBtns();
@@ -24955,11 +25694,9 @@ self.onmessage = function(e) {
             const w = app.config.width, h = app.config.height;
             const id = mgr.nextId++;
             const c = _newCanvas(w, h);
-            c.style.zIndex = String(10 + mgr.layers.length);
             const ctx = c.getContext('2d', { willReadFrequently: true });
             app.disableSmoothing(ctx);
             // Canvas is transparent by default — no fill needed (rgba 0,0,0,0)
-            _insertBeforeTemp(c);
             mgr.layers.push({
                 id, name: 'Layer ' + id, canvas: c, ctx,
                 visible: true, opacity: 1.0, isBase: false,
@@ -24969,28 +25706,77 @@ self.onmessage = function(e) {
             });
             _setActive(mgr.layers.length - 1);
             _refreshList();
+            _invalidate();
+        }
+
+        /* Copy one layer's own pixels and settings. Children are NOT handled
+         * here — the caller walks the subtree and re-points parentId. */
+        function _cloneLayer(src, rename) {
+            const w = app.config.width, h = app.config.height;
+            const isGroup = !!src.isGroup;
+            let c, ctx = null;
+            if (isGroup) {
+                c = document.createElement('canvas');   // placeholder, never drawn
+            } else {
+                c = _newCanvas(w, h);
+                ctx = c.getContext('2d', { willReadFrequently: true });
+                app.disableSmoothing(ctx);
+                if (src.canvas) ctx.drawImage(src.canvas, 0, 0);
+            }
+            const copy = {
+                id: mgr.nextId++, name: rename ? src.name + ' copy' : src.name,
+                canvas: c, ctx,
+                visible: src.visible !== false, opacity: src.opacity,
+                isBase: false, locked: false, alpha: src.alpha !== false,
+                blendMode: src.blendMode, alphaLock: src.alphaLock,
+                isGroup, _open: src._open !== false,
+                // A copy that quietly dropped the mask or the clipping was not
+                // a copy — both used to be left behind here.
+                clipped: !!src.clipped, mask: null,
+                _dirty: true, parentId: src.parentId,
+            };
+            if (src.mask && src.mask.canvas) {
+                copy.mask = _makeMask(w, h, false);
+                copy.mask.ctx.drawImage(src.mask.canvas, 0, 0);
+                copy.mask.enabled = src.mask.enabled !== false;
+            }
+            return copy;
         }
 
         function _dupLayer() {
             if (!mgr.active || !mgr.layers.length) return;
             const src = mgr.layers[mgr.activeIdx];
-            const w = app.config.width, h = app.config.height;
-            const id = mgr.nextId++;
-            const c = _newCanvas(w, h);
-            c.style.zIndex = String(10 + mgr.layers.length);
-            const ctx = c.getContext('2d', { willReadFrequently: true });
-            app.disableSmoothing(ctx);
-            ctx.drawImage(src.canvas, 0, 0);
-            _insertBeforeTemp(c);
-            const layer = {
-                id, name: src.name + ' copy', canvas: c, ctx,
-                visible: true, opacity: src.opacity, isBase: false,
-                locked: false, alpha: src.alpha !== false,
-                blendMode: src.blendMode, alphaLock: src.alphaLock,
-                _dirty: false,
-                parentId: src.parentId,
-            };
-            mgr.layers.splice(mgr.activeIdx + 1, 0, layer);
+
+            if (src.isGroup) {
+                // Duplicating a folder used to hand back an empty folder: only
+                // the placeholder canvas was copied, never the contents.
+                const ids   = _subtreeIds(src.id);
+                const block = mgr.layers.filter(l => ids.has(l.id));
+                const idMap = new Map();
+                const copies = block.map(l => {
+                    const cp = _cloneLayer(l, l === src);
+                    idMap.set(l.id, cp.id);
+                    return cp;
+                });
+                // Re-point each copied child at its copied parent, so the new
+                // folder holds the new layers and the original keeps its own.
+                for (const cp of copies) {
+                    if (cp.parentId != null && idMap.has(cp.parentId)) {
+                        cp.parentId = idMap.get(cp.parentId);
+                    }
+                }
+                const groupCopy = copies[block.indexOf(src)];
+                const insertAt  = mgr.layers.indexOf(block[block.length - 1]) + 1;
+                mgr.layers.splice(insertAt, 0, ...copies);
+                _applyLayerStyle(groupCopy);
+                _setActive(insertAt + copies.indexOf(groupCopy));
+                _refreshList();
+                return;
+            }
+
+            const copy = _cloneLayer(src, true);
+            mgr.layers.splice(mgr.activeIdx + 1, 0, copy);
+            _applyLayerStyle(copy);   // carry the copied opacity/blend to screen
             _setActive(mgr.activeIdx + 1);
             _refreshList();
         }
@@ -24999,18 +25785,22 @@ self.onmessage = function(e) {
             if (!mgr.active || mgr.layers.length <= 1) return;
             const l = mgr.layers[mgr.activeIdx];
             if (l.isGroup) {
-                for (const child of mgr.layers) {
-                    if (child.parentId === l.id) child.parentId = null;
+                // A folder owns what is inside it. Deleting one used to leave
+                // its contents behind, scattered out to the top level.
+                const ids = _subtreeIds(l.id);
+                if (ids.size >= mgr.layers.length) return;   // would empty the document
+                for (let i = mgr.layers.length - 1; i >= 0; i--) {
+                    if (ids.has(mgr.layers[i].id)) mgr.layers.splice(i, 1);
                 }
+            } else {
+                // Every layer is an off-screen canvas now, so the bottom one is
+                // not special: dropping the reference is the whole job.
+                mgr.layers.splice(mgr.activeIdx, 1);
             }
-            if (l.isBase) {
-                l.ctx.clearRect(0, 0, app.config.width, app.config.height);
-            } else if (l.canvas.parentNode) {
-                l.canvas.parentNode.removeChild(l.canvas);
-            }
-            mgr.layers.splice(mgr.activeIdx, 1);
+            if (mgr.layers.length && !mgr.layers.some(x => x.isBase)) mgr.layers[0].isBase = true;
             _setActive(Math.min(mgr.activeIdx, mgr.layers.length - 1));
             _refreshList();
+            _invalidate();
             app.saveState();
         }
 
@@ -25018,15 +25808,20 @@ self.onmessage = function(e) {
             if (!mgr.active || mgr.activeIdx <= 0) return;
             const above = mgr.layers[mgr.activeIdx];
             const below = mgr.layers[mgr.activeIdx - 1];
+            // Groups are placeholders with no drawing context.
+            if (above.isGroup || below.isGroup || !below.ctx) return;
             below.ctx.save();
             below.ctx.globalAlpha = above.opacity;
+            // Merging must reproduce what the layer looked like — flattening a
+            // Multiply layer as Normal changed the picture.
+            below.ctx.globalCompositeOperation = above.blendMode || 'source-over';
             below.ctx.drawImage(above.canvas, 0, 0);
             below.ctx.restore();
-            if (!above.isBase && above.canvas.parentNode)
-                above.canvas.parentNode.removeChild(above.canvas);
+            below._dirty = true;
             mgr.layers.splice(mgr.activeIdx, 1);
             _setActive(mgr.activeIdx - 1);
             _refreshList();
+            _invalidate();
             app.saveState();
         }
 
@@ -25045,6 +25840,38 @@ self.onmessage = function(e) {
                 });
             }
         }
+
+        /* Collapse the whole stack into a single Background layer holding the
+         * composited picture. Unlike merging pairwise, this is exactly what you
+         * see, including groups, clipping and masks. */
+        function _flattenImage() {
+            if (!mgr.active || mgr.layers.length < 1) return;
+            const w = app.config.width, h = app.config.height;
+            const flat = _composite();
+            const c = _newCanvas(w, h);
+            const cctx = c.getContext('2d', { willReadFrequently: true });
+            app.disableSmoothing(cctx);
+            if (flat) cctx.drawImage(flat, 0, 0);
+            mgr.layers.length = 0;
+            mgr.layers.push({
+                id: 1, name: 'Background', canvas: c, ctx: cctx,
+                visible: true, opacity: 1.0, isBase: true, locked: false,
+                alpha: false, alphaLock: false, blendMode: 'source-over',
+                clipped: false, mask: null, parentId: null, _dirty: true,
+            });
+            mgr.nextId = 2;
+            mgr.activeIdx = 0;
+            _refreshList(); _syncBtns(); _syncOpacity(); _invalidate();
+            app.saveState();
+        }
+        mgr.flatten = _flattenImage;
+
+        /* The composited picture as a plain canvas — what a PNG export should
+         * contain when the document has layers. */
+        mgr.getFlattenedCanvas = function () {
+            if (!mgr.active || !mgr.layers.length) return app.ui.cMain;
+            return _composite() || app.ui.cMain;
+        };
 
         function _moveLayerUp() {
             // "Up" in the visual list = higher index in the array (drawn later = on top)
@@ -25078,12 +25905,20 @@ self.onmessage = function(e) {
                 locked: false, alpha: false,
                 canvas: document.createElement('canvas'), // placeholder
                 ctx: null,
-                blendMode: 'source-over', alphaLock: false, _dirty: false,
+                // Pass-through is what a folder does in Photoshop by default:
+                // the layers inside still blend with everything below it.
+                blendMode: 'pass-through', alphaLock: false, _dirty: false,
+                clipped: false, mask: null,
                 parentId: null,
             };
             mgr.layers.splice(idx, 0, grpLayer);
+            // Put the layer you had selected inside the new folder. Handing back
+            // an empty folder to drag things into is not what "group" means.
+            const inner = mgr.layers[idx + 1];
+            if (inner && !inner.isBase) inner.parentId = id;
             _setActive(idx + 1);
             _refreshList();
+            _invalidate();
             app.saveState();
         }
 
@@ -25091,15 +25926,11 @@ self.onmessage = function(e) {
             if (idx < 0 || idx >= mgr.layers.length) return;
             const l = mgr.layers[idx];
             l.visible = !l.visible;
-            if (l.canvas) l.canvas.style.display = l.visible ? '' : 'none';
-            if (l.isGroup) {
-                for (const child of mgr.layers) {
-                    if (child.parentId === l.id) {
-                        child.visible = l.visible;
-                        if (child.canvas) child.canvas.style.display = l.visible ? '' : 'none';
-                    }
-                }
-            }
+            // Hiding a group used to overwrite every child's own visibility, so
+            // re-showing the folder revealed layers you had hidden individually.
+            // The compositor skips a hidden group wholesale, so the children
+            // keep their own state and come back exactly as you left them.
+            _invalidate();
             _refreshList();
         }
 
@@ -25107,7 +25938,7 @@ self.onmessage = function(e) {
             if (!mgr.active || !mgr.layers.length) return;
             const l = mgr.layers[mgr.activeIdx];
             l.opacity = Math.max(0, Math.min(1, pct / 100));
-            l.canvas.style.opacity = l.opacity;
+            _applyLayerStyle(l);
             _syncOpacity();
         }
 
@@ -25117,11 +25948,22 @@ self.onmessage = function(e) {
         function _resizeLayers(w, h) {
             if (!mgr.active) return;
             for (const l of mgr.layers) {
-                if (l.isBase || l.isGroup) continue;
-                l.canvas.width  = w;
-                l.canvas.height = h;
-                app.disableSmoothing(l.ctx);
+                if (l.isGroup) continue;
+                // The bottom layer is off-screen like every other one now, so it
+                // resizes here too rather than riding along with cMain.
+                if (l.canvas && (l.canvas.width !== w || l.canvas.height !== h)) {
+                    l.canvas.width  = w;
+                    l.canvas.height = h;
+                    app.disableSmoothing(l.ctx);
+                }
+                if (l.mask && l.mask.canvas &&
+                    (l.mask.canvas.width !== w || l.mask.canvas.height !== h)) {
+                    l.mask.canvas.width  = w;
+                    l.mask.canvas.height = h;
+                    app.disableSmoothing(l.mask.ctx);
+                }
             }
+            _invalidate();
         }
 
         /* ──────────────────────────────────────────────────────────────────
@@ -25144,15 +25986,41 @@ self.onmessage = function(e) {
             }
             return false;
         }
-        function _setVisRecursive(groupId, visible) {
-            for (const child of mgr.layers) {
-                if (child.parentId === groupId) {
-                    child.visible = visible;
-                    if (child.canvas) child.canvas.style.display = visible ? '' : 'none';
-                    if (child.isGroup) _setVisRecursive(child.id, visible);
+        /* Deliberately no longer cascades visibility onto children: the
+         * compositor skips a hidden group as a whole, so each child keeps its
+         * own visible flag and survives the folder being toggled. */
+        /* Every layer inside this folder, at any depth, plus the folder itself.
+         * Built by repeated sweeps rather than recursion so it cannot be fooled
+         * by a child that sits before its parent in the array. */
+        function _subtreeIds(groupId) {
+            const ids = new Set([groupId]);
+            let grew = true;
+            while (grew) {
+                grew = false;
+                for (const l of mgr.layers) {
+                    if (l.parentId != null && ids.has(l.parentId) && !ids.has(l.id)) {
+                        ids.add(l.id);
+                        grew = true;
+                    }
                 }
             }
+            return ids;
         }
+
+        /* Clipping needs a sibling underneath to clip to. The bottom of the
+         * document is covered by idx > 0, but the bottom of a FOLDER is not:
+         * clipping there produced a layer that silently disappeared. */
+        function _canClip(idx) {
+            const l = mgr.layers[idx];
+            if (!l || idx <= 0 || l.isGroup) return false;
+            const parent = l.parentId || null;
+            for (let i = idx - 1; i >= 0; i--) {
+                if ((mgr.layers[i].parentId || null) === parent) return true;
+            }
+            return false;
+        }
+
+        function _setVisRecursive(groupId, visible) { _invalidate(); }
         function _unparentDescendants(groupId) {
             for (let i = 0; i < mgr.layers.length; i++) {
                 if (mgr.layers[i].parentId === groupId) {
@@ -25200,6 +26068,17 @@ self.onmessage = function(e) {
                 const lockClass = l.locked ? ' locked' : '';
                 const alphaBadge = (!l.isBase && l.alpha !== false)
                     ? '<span class="lsi-alpha-badge" title="Alpha channel">α</span>' : '';
+                // A clipped layer is confined to the one below — show it the way
+                // Photoshop does, with a turned corner arrow.
+                const clipBadge = l.clipped
+                    ? '<span class="lsi-clip-badge" title="Clipped to the layer below">⤷</span>' : '';
+                const maskBadge = l.mask
+                    ? '<span class="lsi-mask-badge' + (_isMaskEditing(l) ? ' editing' : '') +
+                      (l.mask.enabled === false ? ' off' : '') +
+                      '" title="' + (_isMaskEditing(l)
+                          ? 'Editing the mask — paint reveals, erase hides'
+                          : (l.mask.enabled === false ? 'Mask disabled' : 'Has a layer mask')) +
+                      '">◑</span>' : '';
 
                 item.innerHTML =
                     '<div class="lsi-icons">' +
@@ -25216,7 +26095,7 @@ self.onmessage = function(e) {
                     '</div>' +
                     '<div class="lsi-thumb-wrap"><canvas class="lsi-thumb" id="lsit-' + l.id + '" width="42" height="40"></canvas></div>' +
                     '<div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;padding-right:4px;">' +
-                      '<span class="lsi-name" title="' + app.escapeHtml(l.name) + '">' + app.escapeHtml(l.name) + alphaBadge + (l.alphaLock ? ' <span style="font-size:9px;color:#0078d7;background:rgba(0,120,215,.1);padding:0 3px;border-radius:2px;font-weight:600;">\u{1F512}</span>' : '') + '</span>' +
+                      '<span class="lsi-name" title="' + app.escapeHtml(l.name) + '">' + app.escapeHtml(l.name) + clipBadge + maskBadge + alphaBadge + (l.alphaLock ? ' <span style="font-size:9px;color:#0078d7;background:rgba(0,120,215,.1);padding:0 3px;border-radius:2px;font-weight:600;">\u{1F512}</span>' : '') + '</span>' +
                       '<select class="lsi-blend" data-bi="' + i + '" title="Blend mode" style="font-size:10px;border:1px solid #ccc;border-radius:2px;background:#fff;padding:0 2px;height:16px;width:100%;cursor:pointer;">' +
                         '<option value="source-over"'  + ((!l.blendMode || l.blendMode==='source-over')  ? ' selected' : '') + '>Normal</option>' +
                         '<option value="multiply"'     + (l.blendMode==='multiply'     ? ' selected' : '') + '>Multiply</option>' +
@@ -25294,6 +26173,7 @@ self.onmessage = function(e) {
                     e.stopPropagation();
                     const idx = parseInt(e.currentTarget.dataset.bi, 10);
                     mgr.layers[idx].blendMode = e.currentTarget.value;
+                    _applyLayerStyle(mgr.layers[idx]);   // make it visible on screen
                     app.saveState();
                 });
 
@@ -25448,12 +26328,10 @@ self.onmessage = function(e) {
             _schedThumb();
         }
 
-        function _rebuildZOrder() {
-            for (let i = 0; i < mgr.layers.length; i++) {
-                const l = mgr.layers[i];
-                if (!l.isBase) l.canvas.style.zIndex = String(10 + i);
-            }
-        }
+        /* Stacking order used to be CSS z-index on DOM canvases. The compositor
+         * draws mgr.layers bottom-to-top, so array order IS the z-order and
+         * reordering just needs a repaint. */
+        function _rebuildZOrder() { _invalidate(); }
 
         function _schedThumb() {
             if (mgr._thumbRaf) return;
@@ -25499,6 +26377,27 @@ self.onmessage = function(e) {
             if (del)   del.disabled   = !canDel;
             if (merge) merge.disabled = !canMrg;
             if (grp)   grp.disabled   = !has;
+
+            const clipBtn   = document.getElementById('lsys-clip');
+            const maskBtn   = document.getElementById('lsys-mask');
+            const flatBtn   = document.getElementById('lsys-flatten');
+            const exportBtn = document.getElementById('lsys-export');
+            // Clipping needs something underneath to clip to.
+            if (clipBtn) {
+                clipBtn.disabled = !(has && mgr.activeIdx > 0 && active && !active.isGroup);
+                clipBtn.classList.toggle('lstb-on', !!(active && active.clipped));
+            }
+            if (maskBtn) {
+                maskBtn.disabled = !(has && active && !active.isGroup);
+                maskBtn.classList.toggle('lstb-on', !!(active && active.mask));
+                maskBtn.title = active && active.mask
+                    ? (_isMaskEditing(active)
+                        ? 'Editing the mask — paint to reveal, erase to hide. Click to go back to the layer.'
+                        : 'Edit this layer’s mask')
+                    : 'Add a layer mask — hide parts without erasing them';
+            }
+            if (flatBtn)   flatBtn.disabled   = !(has && mgr.layers.length > 1);
+            if (exportBtn) exportBtn.disabled = !(has && mgr.layers.length > 1);
         }
 
         function _syncOpacity() {
@@ -25528,10 +26427,11 @@ self.onmessage = function(e) {
                 _schedThumb();
                 return;
             }
-            // Truncate forward history, releasing bitmaps.
+            // Truncate forward history, releasing the discarded entries without
+            // closing pixels the surviving entries still reference.
             if (this.state.step < this.state.history.length - 1) {
                 const dropped = this.state.history.splice(this.state.step + 1);
-                for (const e of dropped) this._closeBitmapEntry(e);
+                this._releaseHistoryEntries(dropped, this.state.history);
             }
 
             // Mark the active layer dirty — it was just drawn on.
@@ -25549,7 +26449,10 @@ self.onmessage = function(e) {
                     // Layer unchanged — share the previous entry's snap by reference.
                     return { id: l.id, name: l.name, visible: l.visible, opacity: l.opacity,
                              blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock, locked: l.locked,
-                             parentId: l.parentId,
+                             parentId: l.parentId, isGroup: !!l.isGroup, clipped: !!l.clipped,
+                             // Layer is unchanged, so its mask is too — share the
+                             // previous snapshot rather than cloning the canvas again.
+                             mask: prevSnaps[i].mask || _snapshotMask(l),
                              isBase: l.isBase, snap: null, bitmap: null, ref: prevSnaps[i] };
                 }
                 // Dirty — clone the canvas now (always safe / synchronous fallback).
@@ -25559,7 +26462,8 @@ self.onmessage = function(e) {
                 snap.getContext('2d').drawImage(l.canvas, 0, 0);
                 return { id: l.id, name: l.name, visible: l.visible, opacity: l.opacity,
                          blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock, locked: l.locked,
-                         parentId: l.parentId,
+                         parentId: l.parentId, isGroup: !!l.isGroup, clipped: !!l.clipped,
+                         mask: _snapshotMask(l),
                          isBase: l.isBase, snap, bitmap: null, ref: null };
             });
 
@@ -25608,23 +26512,41 @@ self.onmessage = function(e) {
          *     — flat entries: collapses multi-layer back to base layer.
          *     — _lsys entries: restores all layer canvases.
          * ────────────────────────────────────────────────────────────────── */
+        /* Tear the stack back down to the single base layer. The layer stack is
+         * global (one set of canvases in the DOM), so any operation that starts
+         * a genuinely new document has to collapse it — otherwise the new
+         * document inherits the previous one's layers. */
+        function _collapseToBase(opts) {
+            const fresh = !!(opts && opts.fresh);
+            // Bake the composite into cMain first: single-canvas mode draws
+            // straight onto it, so it has to hold the finished picture before we
+            // drop the layers. (Callers that immediately overwrite cMain — undo
+            // across the layer boundary, or a brand-new document — are
+            // unaffected.)
+            if (mgr.active && mgr.layers.length) {
+                try { _render(); } catch (e) { console.warn('[Layers] flatten on collapse failed', e); }
+            }
+            // Layers are off-screen; dropping the references is all that is
+            // needed. Emptying the array also restores the pristine state
+            // _activate() expects, so it can never build a second Background.
+            mgr.layers.length = 0;
+            // A brand-new document restarts layer numbering; undo must not, or
+            // it could hand out an id an existing history entry already uses.
+            if (fresh) mgr.nextId = 2;
+            mgr.activeIdx = 0;
+            mgr.active = false;
+            if (app.ui.cTemp) app.ui.cTemp.style.zIndex = '';
+            if (app.ui.stage) app.ui.stage.classList.remove('layers-active');
+            _refreshList();
+            _syncBtns();
+        }
+        mgr.collapseToBase = _collapseToBase;
+
         const _origRestoreEntry = app.restoreHistoryEntry.bind(app);
         app.restoreHistoryEntry = function (entry, stepIdx) {
             if (!entry._lsys) {
                 // Undo/redo crossed the layer-activation boundary — collapse.
-                if (mgr.active && mgr.layers.length > 1) {
-                    for (let i = mgr.layers.length - 1; i >= 1; i--) {
-                        const l = mgr.layers[i];
-                        if (l.canvas.parentNode) l.canvas.parentNode.removeChild(l.canvas);
-                    }
-                    mgr.layers.length = 1;
-                    mgr.activeIdx = 0;
-                    mgr.active = false;
-                    if (app.ui.cTemp) app.ui.cTemp.style.zIndex = '';
-                    if (app.ui.stage) app.ui.stage.classList.remove('layers-active');
-                    _refreshList();
-                    _syncBtns();
-                }
+                if (mgr.active && mgr.layers.length > 1) _collapseToBase();
                 _origRestoreEntry(entry, stepIdx);
                 // Re-sync the holder after setSize may have re-created the context.
                 _holder.ctx = app.ui.cMain.getContext('2d', { willReadFrequently: true });
@@ -25636,8 +26558,6 @@ self.onmessage = function(e) {
             // Remove surplus layers.
             while (mgr.layers.length > snaps.length) {
                 const l = mgr.layers.pop();
-                if (!l.isBase && l.canvas.parentNode)
-                    l.canvas.parentNode.removeChild(l.canvas);
             }
             // Restore existing layers and create missing ones.
             for (let i = 0; i < snaps.length; i++) {
@@ -25648,37 +26568,49 @@ self.onmessage = function(e) {
                     while (s.ref) s = s.ref;
                     return s.bitmap || s.snap;
                 })();
-                if (i === 0) this.setSize(width, height); // resizes cMain + cTemp
+                if (i === 0) this.setSize(width, height); // resizes the display canvas + cTemp
+                // A released entry has neither a bitmap nor a canvas — something
+                // freed pixels that were still in use. Leave that one layer
+                // blank rather than throwing, so the rest of the stack still
+                // rebuilds (and stays correctly aligned) instead of stranding
+                // the document half-restored.
+                if (!src) {
+                    console.warn('[Layers] history entry has no pixels for layer', sv.id, sv.name);
+                }
                 if (i < mgr.layers.length) {
                     const l = mgr.layers[i];
-                    if (!l.isBase) { l.canvas.width = width; l.canvas.height = height; }
+                    // Every layer is off-screen now, including the bottom one,
+                    // so they all resize the same way.
+                    if (l.canvas.width !== width || l.canvas.height !== height) {
+                        l.canvas.width = width; l.canvas.height = height;
+                    }
                     app.disableSmoothing(l.ctx);
                     l.ctx.clearRect(0, 0, width, height);
-                    l.ctx.drawImage(src, 0, 0);
+                    if (src) l.ctx.drawImage(src, 0, 0);
                     l.name = sv.name; l.visible = sv.visible; l.opacity = sv.opacity;
                     l.blendMode = sv.blendMode; l.alpha = sv.alpha; l.alphaLock = sv.alphaLock; l.locked = sv.locked; l.parentId = sv.parentId;
-                    l.canvas.style.display = l.visible ? '' : 'none';
-                    if (!l.isBase) l.canvas.style.opacity = l.opacity;
+                    l.isGroup = !!sv.isGroup;
+                    l.clipped = !!sv.clipped;
+                    _restoreMask(l, sv, width, height);
                     // Layer restored — clear dirty flag so next save can ref it.
                     l._dirty = false;
                 } else {
                     const c = _newCanvas(width, height);
-                    c.style.zIndex   = String(10 + i);
-                    c.style.display  = sv.visible ? '' : 'none';
-                    c.style.opacity  = sv.opacity;
                     const ctx = c.getContext('2d', { willReadFrequently: true });
                     app.disableSmoothing(ctx);
-                    ctx.drawImage(src, 0, 0);
-                    _insertBeforeTemp(c);
+                    if (src) ctx.drawImage(src, 0, 0);
                     if (sv.id >= mgr.nextId) mgr.nextId = sv.id + 1;
-                    mgr.layers.push({
+                    const nl = {
                         id: sv.id, name: sv.name,
                         canvas: c, ctx,
                         visible: sv.visible, opacity: sv.opacity,
                         blendMode: sv.blendMode, alpha: sv.alpha, alphaLock: sv.alphaLock, locked: sv.locked,
-                        isBase: false, _dirty: false,
+                        isBase: i === 0, _dirty: false,
+                        isGroup: !!sv.isGroup, clipped: !!sv.clipped, mask: null,
                         parentId: sv.parentId,
-                    });
+                    };
+                    mgr.layers.push(nl);
+                    _restoreMask(nl, sv, width, height);
                 }
             }
             // Do NOT restore activeIdx -- layer selection is a navigation
@@ -25688,6 +26620,12 @@ self.onmessage = function(e) {
             // it out of bounds.
             mgr.active    = true;
             mgr.activeIdx = Math.min(mgr.activeIdx, Math.max(0, mgr.layers.length - 1));
+            // Re-assert the multi-layer display state. Reaching here from a
+            // collapsed stack (undo across the layer boundary, or switching to a
+            // layered tab from a flat one) means _collapseToBase() cleared these.
+            if (app.ui.cTemp) app.ui.cTemp.style.zIndex = '200';
+            if (app.ui.stage) app.ui.stage.classList.add('layers-active');
+            _invalidate();
             this.requestGlobalOverlayUpdate();
             this.deferColorCounts();
             _refreshList(); _syncBtns(); _syncOpacity();
@@ -25710,6 +26648,8 @@ self.onmessage = function(e) {
         app.drawBinaryLine = function (x0, y0, x1, y1, color, isPreview, widthOverride, isEraserOverride) {
             // Locked layer: silently skip all drawing
             if (mgr.active && mgr.layers.length && mgr.layers[mgr.activeIdx].locked && !isPreview) return;
+            // Layers are off-screen; anything drawn has to trigger a repaint.
+            if (!isPreview) _invalidate();
             const isEraser = (isEraserOverride !== null && isEraserOverride !== undefined)
                 ? !!isEraserOverride
                 : (this.config.tool === 'eraser');
@@ -25720,7 +26660,7 @@ self.onmessage = function(e) {
                 // and also for the base layer when the layer system is active
                 // (so erasing the base layer reveals the checkerboard).
                 const layerIdx = onBaseLayerActive ? 0 : mgr.activeIdx;
-                const ctx = mgr.layers[layerIdx].ctx;
+                const ctx = _targetCtx(mgr.layers[layerIdx]);
                 const w = (widthOverride !== null && widthOverride !== undefined)
                     ? widthOverride : this.config.eraserWidth;
                 const half = Math.floor(w / 2);
@@ -25745,7 +26685,7 @@ self.onmessage = function(e) {
             }
             // Alpha lock: constrain drawing to existing opaque pixels
             const activeLayer = mgr.active && mgr.layers.length ? mgr.layers[mgr.activeIdx] : null;
-            if (!isPreview && activeLayer && activeLayer.alphaLock) {
+            if (!isPreview && activeLayer && activeLayer.alphaLock && !_isMaskEditing(activeLayer)) {
                 const ctx = activeLayer.ctx;
                 ctx.save();
                 ctx.globalCompositeOperation = 'source-atop';
@@ -25767,7 +26707,7 @@ self.onmessage = function(e) {
         app.flushStrokes = function () {
             const onTransLayer = mgr.active && mgr.activeIdx > 0;
             const onBaseLayerActive = mgr.active && mgr.activeIdx === 0;
-            if (!onTransLayer && !onBaseLayerActive) { _origFlushStrokes(); _schedThumb(); return; }
+            if (!onTransLayer && !onBaseLayerActive) { _origFlushStrokes(); _invalidate(); _schedThumb(); return; }
             if (onBaseLayerActive) {
                 // Base layer: route eraser strokes through destination-out, normals unchanged
                 const q = this.strokeQueue;
@@ -25788,6 +26728,7 @@ self.onmessage = function(e) {
                     const dh = Math.min(this.config.height, Math.ceil(by1)) - dy;
                     this.drawBinaryLine(s.x0, s.y0, s.x1, s.y1, s.color, false, s.width, true);
                 }
+                _invalidate();
                 _schedThumb();
                 return;
             }
@@ -25800,6 +26741,7 @@ self.onmessage = function(e) {
             for (const s of erasers) {
                 this.drawBinaryLine(s.x0, s.y0, s.x1, s.y1, s.color, false, s.width, true);
             }
+            _invalidate();
             _schedThumb();
         };
 
@@ -25812,6 +26754,7 @@ self.onmessage = function(e) {
          * ────────────────────────────────────────────────────────────────── */
         const _origStampSel = app.stampSelection.bind(app);
         app.stampSelection = function () {
+            _invalidate();
             const onTransLayer = mgr.active && mgr.activeIdx > 0;
             if (!onTransLayer) { _origStampSel(); return; }
             const s = this.state.selection;
@@ -25831,11 +26774,52 @@ self.onmessage = function(e) {
          * 14. PATCH: saveFile — composite all layers onto the base canvas
          *     momentarily, then restore the base layer after the save.
          * ────────────────────────────────────────────────────────────────── */
-        const _origSaveFile = app.saveFile.bind(app);
-        app.saveFile = async function (options) {
-            /* When layers are active, always save as ORA to preserve layer data */
-            if (mgr.active && mgr.layers.length > 1) return this.saveAsORA();
-            return _origSaveFile(options);
+        /* NOTE: saveFile() already begins with its own "layers active -> save as
+         * ORA" check (see the class method), so no policy wrapper is needed
+         * here. A second one used to exist and only added a way for the two
+         * checks to disagree. Flattened export deliberately bypasses saveFile
+         * entirely — see app.exportFlattenedPng below.
+         *
+         * These wrappers add REPORTING only. Save is triggered from inline
+         * onclick handlers that neither await nor catch, so a thrown error
+         * became an unhandled rejection and the user saw nothing happen at all.
+         * A save that fails must say so. */
+        for (const _fn of ['saveFile', 'saveAsFile']) {
+            if (typeof app[_fn] !== 'function') continue;
+            const _orig = app[_fn].bind(app);
+            app[_fn] = async function (...args) {
+                try {
+                    return await _orig(...args);
+                } catch (e) {
+                    console.error('[Save] ' + _fn + ' failed', e);
+                    if (window.showToast) {
+                        showToast('Save failed: ' + ((e && e.message) || 'unknown error'), 'error');
+                    }
+                    throw e;
+                }
+            };
+        }
+
+        /* Export the composited picture as a PNG without disturbing the layered
+         * document.
+         *
+         * This deliberately does NOT go through saveFile(): that method starts
+         * with its own "if layers are active, save as ORA" check, so routing an
+         * export through it just produced another .ora. Build the blob and write
+         * it directly instead. */
+        app.exportFlattenedPng = async function () {
+            const canvas = mgr.getFlattenedCanvas();
+            if (!canvas) return null;
+            const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+            if (!blob) throw new Error('Could not read the canvas');
+            const baseName = (this.state.fileName || 'untitled').replace(/\.[^/.]+$/, '');
+            const saved = await _saveBlobAs(
+                blob, baseName + '.png', 'PNG Image', { 'image/png': ['.png'] }
+            );
+            // An export is not a save of the document — the .ora is still the
+            // file of record, so the unsaved-changes state is left alone.
+            if (saved && window.showToast) showToast('Exported ' + baseName + '.png', 'success');
+            return saved;
         };
 
         /* ──────────────────────────────────────────────────────────────────
@@ -25932,10 +26916,23 @@ self.onmessage = function(e) {
                 if (typeof CompressionStream !== 'undefined') {
                     try {
                         const cs = new CompressionStream('deflate-raw');
+                        // Start draining the output BEFORE pushing input.
+                        //
+                        // `await writer.write(data)` only settles once the chunk
+                        // has been accepted downstream. With nothing reading
+                        // cs.readable yet, anything larger than the stream's
+                        // internal queue blocks on backpressure that can never
+                        // clear — the promise simply never resolves and the save
+                        // hangs forever with no error. Small layers fit in the
+                        // queue and appeared to work, which is what made this
+                        // look intermittent.
+                        //
+                        // (The ORA *loader* already does it in this order.)
+                        const done = new Response(cs.readable).arrayBuffer();
                         const writer = cs.writable.getWriter();
                         await writer.write(data);
                         await writer.close();
-                        return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+                        return new Uint8Array(await done);
                     } catch (_) { /* fall through */ }
                 }
                 /* stored (method 0) — always works */
@@ -26025,6 +27022,77 @@ self.onmessage = function(e) {
             };
         })();
 
+        /* Write a blob to disk the same way the PNG save path does: a real file
+         * picker where one is available, the Tauri writer in the desktop app,
+         * and a download link only as a last resort. ORA saving used to always
+         * take the last branch, which silently dropped a file in the downloads
+         * folder — so "Save" looked like it did nothing at all. */
+        async function _saveBlobAs(blob, suggestedName, typeDesc, accept) {
+            const ext = (suggestedName.split('.').pop() || '').toLowerCase();
+
+            /* 1. Desktop app: the native OS save dialog.
+             *
+             * The subtlety that made "Save" look dead: tauriSaveFileDialog()
+             * returns undefined when the dialog plugin isn't reachable, and null
+             * when the user cancelled. Treating both as "cancelled" meant an
+             * unavailable dialog silently aborted the save with no error and no
+             * window. Only an explicit null counts as a cancel; undefined means
+             * "this mechanism isn't available" and we move on to the next one. */
+            if (window.__TAURI__ && app.tauriSaveFileDialog) {
+                let picked;
+                let dialogWorked = true;
+                try {
+                    picked = await app.tauriSaveFileDialog({
+                        defaultPath: suggestedName,
+                        filters: [{ name: typeDesc, extensions: [ext] }]
+                    });
+                } catch (e) {
+                    console.warn('[Save] native save dialog unavailable, trying the next option', e);
+                    dialogWorked = false;
+                }
+                if (dialogWorked && picked === null) return null;      // cancelled
+                if (dialogWorked && picked) {
+                    const bytes = new Uint8Array(await blob.arrayBuffer());
+                    await app.tauriWriteAllowedFile(picked, bytes);
+                    return picked;
+                }
+                // undefined => no dialog available; fall through.
+            }
+
+            /* 2. Browser with the File System Access API. */
+            if (window.showSaveFilePicker) {
+                let handle;
+                try {
+                    handle = await window.showSaveFilePicker({
+                        suggestedName,
+                        types: [{ description: typeDesc, accept }]
+                    });
+                } catch (e) {
+                    if (e && e.name === 'AbortError') return null;   // user cancelled
+                    console.warn('[Save] file picker unavailable, falling back to download', e);
+                    handle = null;
+                }
+                if (handle) {
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    return handle.name || suggestedName;
+                }
+            }
+
+            /* 3. Last resort: a plain download. No dialog, so say so rather than
+             * leaving the user wondering whether anything happened. */
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = suggestedName; a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+            if (window.showToast) {
+                showToast('Saved to your Downloads folder as ' + suggestedName +
+                          ' — this build could not open a file dialog.', 'warning');
+            }
+            return suggestedName;
+        }
+
         /* ── Canvas → PNG bytes ──────────────────────────────────────────── */
         async function _canvasToPngBytes(canvas) {
             return new Promise((res, rej) => {
@@ -26057,54 +27125,147 @@ self.onmessage = function(e) {
         const _oraToBlend = Object.fromEntries(Object.entries(_blendToOra).map(([k,v])=>[v,k]));
 
         /* ── SAVE ORA ────────────────────────────────────────────────────── */
+        /* Save is invoked from inline onclick handlers that neither await nor
+         * catch the promise, so anything thrown in here used to vanish into an
+         * unhandled rejection — the user just saw nothing happen. Wrap the whole
+         * thing so a failure is always reported. */
         app.saveAsORA = async function () {
+            try {
+                return await _saveAsORAInner.call(this);
+            } catch (e) {
+                console.error('[ORA] save failed', e);
+                if (window.showToast) {
+                    showToast('Could not save the .ora file: ' +
+                        ((e && e.message) || 'unknown error'), 'error');
+                }
+                throw e;
+            }
+        };
+
+        async function _saveAsORAInner() {
             const w = this.config.width, h = this.config.height;
             const layers = mgr.active && mgr.layers.length ? mgr.layers : null;
             const enc    = new TextEncoder();
 
             /* If no layer system or single layer, treat base canvas as sole layer */
-            const layerList = layers
+            const allLayers = (layers
                 ? [...mgr.layers]           /* bottom-first already */
-                : [{ name: 'Background', canvas: this.ui.cMain, visible: true,
+                : [{ id: 1, name: 'Background', canvas: this.ui.cMain, visible: true,
                      opacity: 1.0, blendMode: 'source-over', locked: false,
-                     alphaLock: false, isBase: true, alpha: false }];
+                     alphaLock: false, isBase: true, alpha: false }])
+                .filter(Boolean);
+            // A folder has no pixels of its own, but it still has to be written
+            // out — as a <stack> — or the structure is lost.
+            if (!allLayers.some(l => l.canvas && !l.isGroup)) throw new Error('nothing to save');
+
+            /* Folders become nested <stack> elements, which is exactly what
+             * OpenRaster is for. Everything used to be flattened into one list,
+             * so every group you made was silently dropped on save. */
+            const oraKids = new Map();
+            const oraRoots = [];
+            {
+                const known = new Set(allLayers.map(l => l.id));
+                for (const l of allLayers) {
+                    if (l.parentId != null && known.has(l.parentId)) {
+                        if (!oraKids.has(l.parentId)) oraKids.set(l.parentId, []);
+                        oraKids.get(l.parentId).push(l);
+                    } else oraRoots.push(l);
+                }
+            }
+            /* The order the loader will rebuild the flat array in: bottom-first,
+             * each folder immediately followed by its contents. Saving the
+             * active layer as an index into this keeps the selection correct. */
+            const _oraFlatten = (list) => {
+                const out = [];
+                for (const l of list) {
+                    out.push(l);
+                    if (l.isGroup) out.push(..._oraFlatten(oraKids.get(l.id) || []));
+                }
+                return out;
+            };
+            const flatOrder = _oraFlatten(oraRoots);
 
             const entries = [];
 
             /* 1. mimetype — MUST be first, MUST be stored (no compression) */
             entries.push({ name: 'mimetype', data: enc.encode('image/openraster'), store: true });
 
-            /* 2. Layer PNGs */
-            const layerElems = [];
-            for (let i = 0; i < layerList.length; i++) {
-                const l   = layerList[i];
-                const fname = `data/layer_${i}.png`;
-                const png  = await _canvasToPngBytes(l.canvas);
-                entries.push({ name: fname, data: png, store: false });
+            /* 2. Layer PNGs + stack elements */
+            const esc = s => String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            let layerIdx = 0, maskIdx = 0;
 
+            /* Attributes every node carries, folders included. Writing the mask
+             * PNG is folded in here so a folder's mask travels too. */
+            const _oraAttrs = async (l) => {
                 const blend   = _blendToOra[l.blendMode || 'source-over'] || 'svg:src-over';
                 const visible = l.visible !== false ? 'visible' : 'hidden';
                 const opacity = typeof l.opacity === 'number' ? l.opacity.toFixed(4) : '1.0000';
-                const extras  = [
-                    l.locked    ? ' paint:locked="true"'    : '',
-                    l.alphaLock ? ' paint:alphaLock="true"' : '',
-                    l.isBase    ? ' paint:isBase="true"'    : '',
-                ].join('');
-                layerElems.push(
-                    `        <layer name="${(l.name||'Layer').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" ` +
-                    `src="${fname}" x="0" y="0" ` +
-                    `opacity="${opacity}" visibility="${visible}" composite-op="${blend}"${extras}/>`
-                );
-            }
+                let mask = '';
+                if (l.mask && l.mask.canvas) {
+                    // A layer mask rides along as its own PNG. Readers that
+                    // don't know about paint:mask simply ignore the extra file.
+                    const mname = `data/mask_${maskIdx++}.png`;
+                    entries.push({
+                        name: mname,
+                        data: await _canvasToPngBytes(l.mask.canvas),
+                        store: false
+                    });
+                    mask = ` paint:mask="${mname}"` +
+                           (l.mask.enabled === false ? ' paint:maskDisabled="true"' : '');
+                }
+                return `opacity="${opacity}" visibility="${visible}" composite-op="${blend}"` +
+                       (l.locked    ? ' paint:locked="true"'    : '') +
+                       (l.alphaLock ? ' paint:alphaLock="true"' : '') +
+                       (l.isBase    ? ' paint:isBase="true"'    : '') +
+                       (l.clipped   ? ' paint:clipped="true"'   : '') +
+                       (l.alpha === false ? ' paint:opaque="true"' : '') +
+                       mask;
+            };
+
+            /* ORA lists siblings top-to-bottom; our arrays are bottom-to-top. */
+            const _oraEmit = async (list, indent) => {
+                const out = [];
+                for (const l of list.slice().reverse()) {
+                    const attrs = await _oraAttrs(l);
+                    if (l.isGroup) {
+                        const inner = await _oraEmit(oraKids.get(l.id) || [], indent + '    ');
+                        const pass  = l.blendMode === 'pass-through';
+                        out.push(
+                            `${indent}<stack name="${esc(l.name || 'Group')}" x="0" y="0" ${attrs}` +
+                            ` isolation="${pass ? 'auto' : 'isolate'}"` +
+                            (pass ? ' paint:passThrough="true"' : '') + '>',
+                            ...inner,
+                            `${indent}</stack>`
+                        );
+                    } else {
+                        if (!l.canvas) continue;
+                        const fname = `data/layer_${layerIdx++}.png`;
+                        entries.push({
+                            name: fname,
+                            data: await _canvasToPngBytes(l.canvas),
+                            store: false
+                        });
+                        out.push(
+                            `${indent}<layer name="${esc(l.name || 'Layer')}" ` +
+                            `src="${fname}" x="0" y="0" ${attrs}/>`
+                        );
+                    }
+                }
+                return out;
+            };
+            const stackLines = await _oraEmit(oraRoots, '        ');
 
             /* 3. stack.xml */
-            const activeIdx = mgr.active ? mgr.activeIdx : 0;
+            const activeLayer = mgr.active
+                ? Math.max(0, flatOrder.indexOf(mgr.layers[mgr.activeIdx]))
+                : 0;
             const xml = [
                 '<?xml version="1.0" encoding="UTF-8"?>',
-                `<image version="0.0.3" w="${w}" h="${h}" xres="96" yres="96" paint:activeLayer="${activeIdx}">`,
+                `<image version="0.0.3" w="${w}" h="${h}" xres="96" yres="96" paint:activeLayer="${activeLayer}">`,
                 '    <stack>',
-                /* ORA stack is top-to-bottom in XML, bottom-to-top visually */
-                ...layerElems.slice().reverse(),
+                ...stackLines,
                 '    </stack>',
                 '</image>',
             ].join('\n');
@@ -26114,14 +27275,11 @@ self.onmessage = function(e) {
             const mergeCanvas = document.createElement('canvas');
             mergeCanvas.width = w; mergeCanvas.height = h;
             const mctx = mergeCanvas.getContext('2d');
-            for (const l of layerList) {
-                if (!l.visible) continue;
-                mctx.save();
-                mctx.globalAlpha = typeof l.opacity === 'number' ? l.opacity : 1;
-                mctx.globalCompositeOperation = l.blendMode || 'source-over';
-                mctx.drawImage(l.canvas, 0, 0);
-                mctx.restore();
-            }
+            // Go through the real compositor rather than re-adding the layers by
+            // hand: the hand-rolled loop here ignored masks, clipping and groups,
+            // so the preview stored in the file disagreed with the picture.
+            const mergedSrc = (layers && _composite()) || this.ui.cMain;
+            mctx.drawImage(mergedSrc, 0, 0);
             entries.push({ name: 'mergedimage.png', data: await _canvasToPngBytes(mergeCanvas), store: false });
 
             /* 5. Thumbnails/thumbnail.png (≤256 px, required by spec) */
@@ -26133,17 +27291,18 @@ self.onmessage = function(e) {
             tCanvas.getContext('2d').drawImage(mergeCanvas, 0, 0, tw, th);
             entries.push({ name: 'Thumbnails/thumbnail.png', data: await _canvasToPngBytes(tCanvas), store: false });
 
-            /* Build ZIP and download */
+            /* Build the ZIP and write it through the normal save dialog. */
             const zipBytes = await _oraZip.build(entries);
             const blob = new Blob([zipBytes], { type: 'image/openraster' });
             const baseName = (this.state.fileName || 'untitled').replace(/\.[^/.]+$/, '');
             const fname = baseName + '.ora';
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = fname; a.click();
-            setTimeout(() => URL.revokeObjectURL(url), 2000);
-            this.markSaved(fname);
+            const saved = await _saveBlobAs(
+                blob, fname, 'OpenRaster Image', { 'image/openraster': ['.ora'] }
+            );
+            if (!saved) return;                       // cancelled — leave it dirty
+            this.markSaved(typeof saved === 'string' ? saved.split(/[\\/]/).pop() : fname);
             this.resetSaveReminderTimer();
+            if (window.showToast) showToast('Saved ' + fname, 'success');
         };
 
         /* ── LOAD ORA ────────────────────────────────────────────────────── */
@@ -26187,17 +27346,16 @@ self.onmessage = function(e) {
                 const fileH = parseInt(imageEl.getAttribute('h') || '0', 10);
                 if (!fileW || !fileH) throw new Error('ORA has invalid canvas dimensions');
 
-                /* Layer elements — XML order is top→bottom; we want bottom→top */
-                const stack     = imageEl.querySelector('stack');
-                const layerEls  = stack ? Array.from(stack.querySelectorAll(':scope > layer')).reverse() : [];
-                if (!layerEls.length) throw new Error('ORA contains no layers');
+                const stack = imageEl.querySelector('stack');
+                if (!stack) throw new Error('ORA contains no layers');
 
                 const activeIdxAttr = parseInt(imageEl.getAttribute('activeLayer') || '0', 10);
 
                 /* Load all layer PNGs */
-                const layerDefs = [];
-                for (const el of layerEls) {
-                    const src  = el.getAttribute('src') || '';
+                /* Decode one PNG entry out of the archive into a canvas.
+                 * Shared by layer images and their masks. */
+                const _decodeEntry = async (src) => {
+                    if (!src) return null;
                     let pngBytes = files[src] || files[src.replace(/^\//, '')];
                     /* If deflated and no pako, inflate via DecompressionStream */
                     if (!pngBytes) {
@@ -26219,7 +27377,7 @@ self.onmessage = function(e) {
                             }
                         }
                     }
-                    if (!pngBytes) { console.warn('[ORA] missing layer data:', src); continue; }
+                    if (!pngBytes) { console.warn('[ORA] missing entry:', src); return null; }
                     const blob = new Blob([pngBytes], { type: 'image/png' });
                     const img  = window.createImageBitmap
                         ? await createImageBitmap(blob)
@@ -26230,22 +27388,54 @@ self.onmessage = function(e) {
                             i.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
                             i.src = url;
                           });
-                    if (!img) { console.warn('[ORA] failed to decode layer image'); continue; }
-                    const lc   = document.createElement('canvas');
+                    if (!img) { console.warn('[ORA] failed to decode', src); return null; }
+                    const lc = document.createElement('canvas');
                     lc.width = fileW; lc.height = fileH;
                     lc.getContext('2d').drawImage(img, 0, 0);
-                    layerDefs.push({
-                        canvas:    lc,
-                        name:      el.getAttribute('name') || 'Layer',
-                        opacity:   parseFloat(el.getAttribute('opacity') || '1'),
-                        visible:   (el.getAttribute('visibility') || 'visible') !== 'hidden',
-                        blendMode: _oraToBlend[el.getAttribute('composite-op') || 'svg:src-over'] || 'source-over',
-                        locked:    el.getAttribute('locked') === 'true',
-                        alphaLock: el.getAttribute('alphaLock') === 'true',
-                        isBase:    el.getAttribute('isBase') === 'true',
-                    });
-                }
-                if (!layerDefs.length) throw new Error('No usable layers found in ORA');
+                    return lc;
+                };
+
+                /* Walk the stack depth-first: bottom-first, each folder followed
+                 * by its contents, which is the order the layer array uses. A
+                 * nested <stack> is a folder — only top-level <layer> tags used
+                 * to be read, so anything inside a group was lost on open. */
+                const layerDefs = [];
+                const _walkStack = async (stackEl, parentIdx) => {
+                    const children = Array.from(stackEl.children)
+                        .filter(el => el.tagName === 'layer' || el.tagName === 'stack')
+                        .reverse();                       /* XML lists top-first */
+                    for (const el of children) {
+                        const isGroup = el.tagName === 'stack';
+                        const lc = isGroup ? null : await _decodeEntry(el.getAttribute('src') || '');
+                        if (!isGroup && !lc) continue;
+                        const maskCanvas = await _decodeEntry(el.getAttribute('mask') || null);
+                        // A folder that does not isolate is our pass-through.
+                        const passThrough = isGroup &&
+                            (el.getAttribute('passThrough') === 'true' ||
+                             el.getAttribute('isolation') === 'auto');
+                        layerDefs.push({
+                            isGroup,
+                            parentIdx,
+                            canvas:     lc,
+                            maskCanvas: maskCanvas,
+                            name:      el.getAttribute('name') || (isGroup ? 'Group' : 'Layer'),
+                            opacity:   parseFloat(el.getAttribute('opacity') || '1'),
+                            visible:   (el.getAttribute('visibility') || 'visible') !== 'hidden',
+                            blendMode: passThrough ? 'pass-through'
+                                : (_oraToBlend[el.getAttribute('composite-op') || 'svg:src-over'] || 'source-over'),
+                            locked:    el.getAttribute('locked') === 'true',
+                            alphaLock: el.getAttribute('alphaLock') === 'true',
+                            clipped: el.getAttribute('clipped') === 'true',
+                            maskSrc: el.getAttribute('mask') || null,
+                            maskDisabled: el.getAttribute('maskDisabled') === 'true',
+                            isBase:    el.getAttribute('isBase') === 'true',
+                            opaque:    el.getAttribute('opaque') === 'true',
+                        });
+                        if (isGroup) await _walkStack(el, layerDefs.length - 1);
+                    }
+                };
+                await _walkStack(stack, -1);
+                if (!layerDefs.some(d => !d.isGroup)) throw new Error('No usable layers found in ORA');
 
                 /* ── Apply to app ── */
                 /* Reset app state */
@@ -26259,46 +27449,53 @@ self.onmessage = function(e) {
                 /* Resize canvas */
                 this.setSize(fileW, fileH);
 
-                /* Stamp base layer (index 0) onto the main canvas */
-                const baseLayer = layerDefs.find(l => l.isBase) || layerDefs[0];
-                _holder.ctx.clearRect(0, 0, fileW, fileH);
-                _holder.ctx.drawImage(baseLayer.canvas, 0, 0);
-
-                /* Activate layer system if needed */
-                if (!mgr.active) _activate();
-
-                /* Tear down existing non-base layers */
-                while (mgr.layers.length > 1) {
-                    const l = mgr.layers.pop();
-                    if (l.canvas && l.canvas.parentNode) l.canvas.parentNode.removeChild(l.canvas);
-                }
-                /* Sync base layer object */
-                mgr.layers[0].name      = baseLayer.name;
-                mgr.layers[0].visible   = baseLayer.visible;
-                mgr.layers[0].opacity   = baseLayer.opacity;
-                mgr.layers[0].blendMode = baseLayer.blendMode;
-                mgr.layers[0].locked    = baseLayer.locked;
-                mgr.layers[0].alphaLock = baseLayer.alphaLock;
-
-                /* Create upper layers */
+                /* Rebuild the stack from scratch. Every layer is an off-screen
+                 * canvas now, so the bottom one needs no special handling — it
+                 * is built by the same loop as the rest. */
+                _collapseToBase({ fresh: true });
+                mgr.active = true;
+                mgr.activeIdx = 0;
+                mgr.layers.length = 0;
+                const createdIds = [];
+                let baseAssigned = false;
                 for (let i = 0; i < layerDefs.length; i++) {
-                    const ld = layerDefs[i];
-                    if (ld === baseLayer && i === 0) continue; /* already handled */
-                    const id  = mgr.nextId++;
-                    const c   = _newCanvas(fileW, fileH);
-                    c.style.zIndex = String(10 + mgr.layers.length);
-                    const ctx = c.getContext('2d', { willReadFrequently: true });
-                    app.disableSmoothing(ctx);
-                    ctx.drawImage(ld.canvas, 0, 0);
-                    _insertBeforeTemp(c);
-                    mgr.layers.push({
-                        id, name: ld.name, canvas: c, ctx,
+                    const ld  = layerDefs[i];
+                    let c, ctx = null;
+                    if (ld.isGroup) {
+                        c = document.createElement('canvas');   // folders hold no pixels
+                    } else {
+                        c   = _newCanvas(fileW, fileH);
+                        ctx = c.getContext('2d', { willReadFrequently: true });
+                        app.disableSmoothing(ctx);
+                        ctx.drawImage(ld.canvas, 0, 0);
+                    }
+                    // The bottom-most real layer is the base; a folder never is,
+                    // even when one happens to sit at the bottom of the stack.
+                    const isBase = !ld.isGroup && !baseAssigned;
+                    if (isBase) baseAssigned = true;
+                    const layer = {
+                        id: mgr.nextId++, name: ld.name, canvas: c, ctx,
                         visible: ld.visible, opacity: ld.opacity,
                         blendMode: ld.blendMode, locked: ld.locked,
-                        alphaLock: ld.alphaLock, isBase: false, alpha: true,
-                        parentId: null,
-                    });
+                        alphaLock: ld.alphaLock,
+                        isGroup: ld.isGroup, _open: true,
+                        isBase, alpha: ld.opaque ? false : (!ld.isGroup && !isBase),
+                        clipped: !!ld.clipped, mask: null,
+                        // Parents are always written before their contents, so
+                        // the real id is known by the time a child needs it.
+                        parentId: ld.parentIdx >= 0 ? createdIds[ld.parentIdx] : null,
+                        _dirty: true,
+                    };
+                    createdIds.push(layer.id);
+                    if (ld.maskCanvas) {
+                        layer.mask = _makeMask(fileW, fileH, false);
+                        layer.mask.ctx.drawImage(ld.maskCanvas, 0, 0);
+                        layer.mask.enabled = !ld.maskDisabled;
+                    }
+                    mgr.layers.push(layer);
                 }
+                if (app.ui.stage) app.ui.stage.classList.add('layers-active');
+                _invalidate();
 
                 /* Set active layer */
                 const safeActive = Math.min(Math.max(0, activeIdxAttr), mgr.layers.length - 1);
@@ -26402,10 +27599,50 @@ self.onmessage = function(e) {
         const lsysGroup = document.getElementById('lsys-group');
         if (lsysGroup) lsysGroup.addEventListener('click', () => _makeGroup());
 
+        const lsysClip = document.getElementById('lsys-clip');
+        if (lsysClip) lsysClip.addEventListener('click', () => {
+            const l = mgr.layers[mgr.activeIdx];
+            if (!l || !_canClip(mgr.activeIdx)) return;
+            l.clipped = !l.clipped;
+            _refreshList(); _syncBtns(); _invalidate();
+            app.saveState();
+        });
+
+        const lsysMask = document.getElementById('lsys-mask');
+        if (lsysMask) lsysMask.addEventListener('click', () => {
+            const l = mgr.layers[mgr.activeIdx];
+            if (!l || l.isGroup) return;
+            if (!l.mask) {
+                _addMask(l);
+                _setMaskEditing(l, true);
+                app.saveState();
+            } else {
+                // Second click toggles between painting the mask and the layer.
+                _setMaskEditing(l, !_isMaskEditing(l));
+            }
+            _refreshList(); _syncBtns(); _invalidate();
+        });
+
+        const lsysFlatten = document.getElementById('lsys-flatten');
+        if (lsysFlatten) lsysFlatten.addEventListener('click', () => _flattenImage());
+
+        const lsysExport = document.getElementById('lsys-export');
+        if (lsysExport) lsysExport.addEventListener('click', () => {
+            Promise.resolve(app.exportFlattenedPng()).catch(err => {
+                console.warn('[Layers] flattened export failed', err);
+                if (window.showToast) showToast('Could not export the flattened PNG.', 'error');
+            });
+        });
+
         const _opSl = document.getElementById('lsys-op');
         if (_opSl) {
             _opSl.addEventListener('input',  () => _setOpacity(parseInt(_opSl.value, 10)));
-            _opSl.addEventListener('change', () => app.saveState());
+            // One history step per slider release. 'input' fires continuously
+            // while dragging, so recording there would bury the history; 'change'
+            // fires once, when the slider is let go. There must be exactly ONE
+            // of these — a second listener pushes two entries per release, and
+            // then a single undo only takes the opacity half way back.
+            _opSl.addEventListener('change', () => { if (mgr.active) app.saveState(); });
         }
 
         _syncBtns();
