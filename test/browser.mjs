@@ -13,10 +13,10 @@
 import { createServer } from 'http';
 import { spawn } from 'child_process';
 import { readFile } from 'fs/promises';
-import { existsSync, readdirSync } from 'fs';
+import { existsSync, readdirSync, rmSync } from 'fs';
 import { extname, join, normalize, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
 
 export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -152,29 +152,43 @@ export async function withPage(fn, opts = {}) {
     const page = opts.page || '/src/index.html';
     const { server, port } = await startServer(root);
     const url = `http://127.0.0.1:${port}${page}`;
-    const debugPort = 9000 + Math.floor(Math.random() * 900);
 
-    const args = [
-        `--remote-debugging-port=${debugPort}`,
-        '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
-        '--window-size=1600,1000',
-        // Canvas readback must be deterministic, not fingerprint-noised.
-        '--disable-features=CanvasNoise'
-    ];
-    // A full Chrome needs telling to run headless; the shell build is already.
-    if (!/headless-shell/.test(chrome)) args.push('--headless=new');
-    const proc = spawn(chrome, [...args, url], { stdio: 'ignore' });
+    /* Launch and connect. Suites run back to back, so a fixed debug port can
+     * land on a browser that has not finished exiting — which either refuses
+     * the connection or, worse, hands back the previous browser's tabs. Each
+     * attempt gets its own port and its own profile directory, and a failed
+     * attempt is retried rather than failing the suite. */
+    let proc = null, wsUrl = null, debugPort = 0;
+    const profiles = [];
+    for (let attempt = 0; attempt < 3 && !wsUrl; attempt++) {
+        debugPort = 9000 + Math.floor(Math.random() * 900);
+        const profile = join(tmpdir(), `cdpaint-test-${process.pid}-${debugPort}`);
+        profiles.push(profile);
+        const args = [
+            `--remote-debugging-port=${debugPort}`,
+            `--user-data-dir=${profile}`,
+            '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
+            '--no-first-run', '--no-default-browser-check',
+            '--window-size=1600,1000',
+            // Canvas readback must be deterministic, not fingerprint-noised.
+            '--disable-features=CanvasNoise'
+        ];
+        // A full Chrome needs telling to run headless; the shell build is already.
+        if (!/headless-shell/.test(chrome)) args.push('--headless=new');
+        proc = spawn(chrome, [...args, url], { stdio: 'ignore' });
 
-    let wsUrl = null;
-    for (let i = 0; i < 100 && !wsUrl; i++) {
-        await new Promise(r => setTimeout(r, 100));
-        try {
-            const list = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();
-            const target = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl);
-            if (target) wsUrl = target.webSocketDebuggerUrl;
-        } catch { /* not up yet */ }
+        for (let i = 0; i < 100 && !wsUrl; i++) {
+            await new Promise(r => setTimeout(r, 100));
+            try {
+                const list = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();
+                const target = list.find(t => t.type === 'page' &&
+                    t.webSocketDebuggerUrl && t.url.startsWith(url));
+                if (target) wsUrl = target.webSocketDebuggerUrl;
+            } catch { /* not up yet */ }
+        }
+        if (!wsUrl) { try { proc.kill(); } catch {} }
     }
-    if (!wsUrl) { proc.kill(); server.close(); throw new Error('browser did not start'); }
+    if (!wsUrl) { server.close(); throw new Error('browser did not start'); }
 
     const ws = new WebSocket(wsUrl);
     await new Promise((res, rej) => {
@@ -200,5 +214,10 @@ export async function withPage(fn, opts = {}) {
         try { ws.close(); } catch {}
         proc.kill();
         server.close();
+        // Throw-away profiles would otherwise pile up in the temp directory,
+        // one per suite per run.
+        for (const dir of profiles) {
+            try { rmSync(dir, { recursive: true, force: true }); } catch { /* still locked */ }
+        }
     }
 }
