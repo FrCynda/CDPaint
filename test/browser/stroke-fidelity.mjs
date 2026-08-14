@@ -190,6 +190,54 @@ await withPage(async (page) => {
             r.backToFirst === r.first, `${r.backToFirst} vs ${r.first}`);
     }
 
+    console.log('\n== 3b. a stroke follows its real path even when a frame is lost ==');
+    {
+        // When the app falls behind, the browser delivers ONE move holding the
+        // latest position with the skipped ones folded inside it. Using only
+        // the latest collapses the gap into a straight segment — the reported
+        // bug. Real coalesced events cannot be synthesised, so they are
+        // attached to the event directly.
+        const r = await page.eval(`(() => {
+            __p.doc(600, 600);
+            PaintApp.config.tool = 'pencil';
+            PaintApp.config.lineWidth = 3;
+
+            const stage = PaintApp.ui.stage, b = PaintApp.bounds;
+            const mk = (type, x, y, buttons) => new PointerEvent(type, {
+                bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse',
+                isPrimary: true, buttons, button: 0, pressure: 0.5,
+                clientX: b.left + x, clientY: b.top + y
+            });
+
+            stage.dispatchEvent(mk('pointerdown', 100, 100, 1));
+
+            // An L: right along the top, then down. A straight line from start
+            // to finish would cut the corner diagonally instead.
+            const path = [[200, 100], [300, 100], [400, 100], [400, 200], [400, 300]];
+            const last = mk('pointermove', 400, 300, 1);
+            Object.defineProperty(last, 'getCoalescedEvents', {
+                value: () => path.map(([x, y]) => mk('pointermove', x, y, 1))
+            });
+            window.dispatchEvent(last);
+            window.dispatchEvent(mk('pointerup', 400, 300, 0));
+
+            const px = (x, y) => {
+                const d = PaintApp.ui.cMain.getContext('2d').getImageData(x, y, 1, 1).data;
+                return !(d[0] === 255 && d[1] === 255 && d[2] === 255);
+            };
+            return {
+                alongTop:   px(250, 100) && px(350, 100),
+                alongRight: px(400, 180) && px(400, 260),
+                onDiagonal: px(250, 200) || px(300, 230)
+            };
+        })()`);
+        check('the stroke ran along the top of the L', r.alongTop);
+        check('and down the side of it', r.alongRight);
+        check('it did NOT cut straight across the corner',
+            r.onDiagonal === false,
+            'the skipped positions were thrown away and the stroke went straight');
+    }
+
     console.log('\n== 4. the pause is gone ==');
     {
         const r = await page.eval(`(() => {
