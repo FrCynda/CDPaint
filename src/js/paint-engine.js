@@ -1214,7 +1214,8 @@
             this._lastCoordsText = this.ui.coords ? this.ui.coords.textContent : '';
             this._lastSelectionSizeText = this.ui.statusSelectionSize ? this.ui.statusSelectionSize.textContent : '-';
             this._lastRotationStatusText = this.ui.statusRotation ? this.ui.statusRotation.textContent : 'Rot: 0.00°';
-            this.ctx = this.ui.cMain.getContext('2d', {willReadFrequently:true});
+            this.ctx = this.trackCtx(this.ui.cMain.getContext('2d', {willReadFrequently:true}));
+            this.markAllDirty();
             this.ctxTemp = this.ui.cTemp.getContext('2d', { willReadFrequently: true });
             this.disableSmoothing(this.ctx);
             this.disableSmoothing(this.ctxTemp);
@@ -19177,6 +19178,8 @@ void main() {
             this.saveState();
         }
         setSize(w,h) {
+            // Resizing clears the canvas; no prior knowledge survives it.
+            this.markAllDirty();
             this.config.width=w;
             this.config.height=h;
             this.tileHistory.enabled = this.shouldUseTiledHistory(w, h);
@@ -19281,7 +19284,7 @@ void main() {
          * differ from it are returned — the entry becomes a delta on the step
          * before it. With `anchor` set, every tile is returned, so the entry
          * stands alone and bounds how far a restore has to walk back. */
-        captureTiledSnapshot(canvas, prevMap, anchor) {
+        captureTiledSnapshot(canvas, prevMap, anchor, dirty) {
             const tileSize = this.tileHistory.tileSize;
             const width = canvas.width;
             const height = canvas.height;
@@ -19294,11 +19297,15 @@ void main() {
             }
             for (let y = 0; y < height; y += tileSize) {
                 const stripH = Math.min(tileSize, height - y);
+                // Rows nothing touched are not read at all — this is where the
+                // saving is. An anchor has to hold everything, so it ignores it.
+                if (dirty && !anchor && (y + stripH - 1 < dirty.y0 || y > dirty.y1)) continue;
                 const strip = ctx.getImageData(0, y, width, stripH);
                 const stripData = strip.data;
                 for (let x = 0; x < width; x += tileSize) {
                     const w = Math.min(tileSize, width - x);
                     const h = Math.min(tileSize, height - y);
+                    if (dirty && !anchor && (x + w - 1 < dirty.x0 || x > dirty.x1)) continue;
                     const tileData = this._tileCopyBuf.subarray(0, w * h * 4);
                     for (let row = 0; row < h; row++) {
                         const srcOffset = (row * width + x) * 4;
@@ -19345,6 +19352,194 @@ void main() {
             ownedBytes += tiles.length * 8 + 64;
             return { width, height, tileSize, tiles, ownedBytes };
         }
+        /* ── Dirty-region tracking ────────────────────────────────────────
+         * Capturing a history step used to read and re-encode the whole canvas
+         * however little had changed: 618 ms on a 13000px document for a
+         * six-pixel dab. Knowing which part was touched turns that into a few
+         * milliseconds.
+         *
+         * Trusting each tool to declare what it touched would be a quiet
+         * disaster — a tool that understates its area produces an undo that
+         * restores the wrong pixels, and you would not find out for a long
+         * time. So nothing is trusted. Drawing contexts are wrapped, the
+         * wrapper works out the affected rectangle itself, and ANY operation it
+         * does not fully understand falls back to "assume everything changed".
+         * The failure mode is a slow capture, never a wrong one.
+         */
+        markAllDirty() {
+            this._dirtyRect = null;      // null means "unknown — read it all"
+            this._dirtyKnown = false;
+        }
+        markCleanDirty() {
+            this._dirtyRect = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+            this._dirtyKnown = true;
+        }
+        markDirtyRect(x0, y0, x1, y1) {
+            if (!this._dirtyKnown) return;             // already unknown; stays that way
+            if (!(isFinite(x0) && isFinite(y0) && isFinite(x1) && isFinite(y1))) {
+                this.markAllDirty();
+                return;
+            }
+            const r = this._dirtyRect;
+            if (x0 < r.x0) r.x0 = x0;
+            if (y0 < r.y0) r.y0 = y0;
+            if (x1 > r.x1) r.x1 = x1;
+            if (y1 > r.y1) r.y1 = y1;
+        }
+        /* The rectangle to capture, clamped to the canvas, or null for all of
+         * it. An empty region means nothing was drawn since the last step. */
+        currentDirtyRect() {
+            if (!this._dirtyKnown || !this._dirtyRect) return null;
+            const r = this._dirtyRect;
+            if (r.x1 < r.x0 || r.y1 < r.y0) return { x0: 0, y0: 0, x1: -1, y1: -1 };
+            return {
+                x0: Math.max(0, Math.floor(r.x0)),
+                y0: Math.max(0, Math.floor(r.y0)),
+                x1: Math.min(this.config.width  - 1, Math.ceil(r.x1)),
+                y1: Math.min(this.config.height - 1, Math.ceil(r.y1))
+            };
+        }
+
+        /* Wrap a 2D context so every drawing call reports the area it affects.
+         * The wrapper follows the transform itself, so a rotated or scaled
+         * brush stamp still reports where it actually landed. */
+        trackCtx(ctx) {
+            if (!ctx || ctx.__tracked) return ctx;
+            const app = this;
+            // Current transform, plus a stack for save()/restore().
+            let m = [1, 0, 0, 1, 0, 0];
+            const stack = [];
+            const mul = (n) => [
+                n[0] * m[0] + n[1] * m[2],       n[0] * m[1] + n[1] * m[3],
+                n[2] * m[0] + n[3] * m[2],       n[2] * m[1] + n[3] * m[3],
+                n[4] * m[0] + n[5] * m[2] + m[4], n[4] * m[1] + n[5] * m[3] + m[5]
+            ];
+            // Map a user-space rect through the transform and report its bounds.
+            const emit = (x, y, w, h, pad) => {
+                if (!(isFinite(x) && isFinite(y) && isFinite(w) && isFinite(h))) {
+                    app.markAllDirty(); return;
+                }
+                const px = [x, x + w, x, x + w], py = [y, y, y + h, y + h];
+                let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+                for (let i = 0; i < 4; i++) {
+                    const tx = px[i] * m[0] + py[i] * m[2] + m[4];
+                    const ty = px[i] * m[1] + py[i] * m[3] + m[5];
+                    if (tx < x0) x0 = tx; if (tx > x1) x1 = tx;
+                    if (ty < y0) y0 = ty; if (ty > y1) y1 = ty;
+                }
+                // Antialiasing, line width and rounding all bleed outwards.
+                const g = (pad || 0) + 2;
+                app.markDirtyRect(x0 - g, y0 - g, x1 + g, y1 + g);
+            };
+            // A blur or a filter paints outside the geometry it was given.
+            const spreads = () => (ctx.shadowBlur > 0) ||
+                (typeof ctx.filter === 'string' && ctx.filter !== 'none');
+            const lw = () => (ctx.lineWidth || 1) / 2 + 1;
+
+            // Everything that draws and whose extent we can work out.
+            const geo = {
+                fillRect:   (a) => emit(a[0], a[1], a[2], a[3], 0),
+                clearRect:  (a) => emit(a[0], a[1], a[2], a[3], 0),
+                strokeRect: (a) => emit(a[0], a[1], a[2], a[3], lw()),
+                fillText:     () => app.markAllDirty(),
+                strokeText:   () => app.markAllDirty(),
+                putImageData: (a) => {
+                    // putImageData ignores the transform entirely.
+                    const img = a[0];
+                    if (!img) { app.markAllDirty(); return; }
+                    app.markDirtyRect(a[1], a[2], a[1] + img.width, a[2] + img.height);
+                },
+                drawImage: (a) => {
+                    const src = a[0];
+                    const sw = (src && (src.width  || src.videoWidth))  || 0;
+                    const sh = (src && (src.height || src.videoHeight)) || 0;
+                    if (a.length >= 9)      emit(a[5], a[6], a[7], a[8], 0);
+                    else if (a.length >= 5) emit(a[1], a[2], a[3], a[4], 0);
+                    else                    emit(a[1], a[2], sw, sh, 0);
+                }
+            };
+            // Path building: remember the extent of the points as they arrive.
+            let pb = null;
+            const pt = (x, y) => {
+                if (!pb) pb = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+                if (!(isFinite(x) && isFinite(y))) { pb = false; return; }
+                if (pb === false) return;
+                if (x < pb.x0) pb.x0 = x; if (x > pb.x1) pb.x1 = x;
+                if (y < pb.y0) pb.y0 = y; if (y > pb.y1) pb.y1 = y;
+            };
+            const paintPath = (pad) => {
+                if (!pb || pb === false) { app.markAllDirty(); return; }
+                emit(pb.x0, pb.y0, pb.x1 - pb.x0, pb.y1 - pb.y0, pad);
+            };
+            const path = {
+                beginPath: () => { pb = null; },
+                moveTo: (a) => pt(a[0], a[1]),
+                lineTo: (a) => pt(a[0], a[1]),
+                rect:   (a) => { pt(a[0], a[1]); pt(a[0] + a[2], a[1] + a[3]); },
+                arc:    (a) => { pt(a[0] - a[2], a[1] - a[2]); pt(a[0] + a[2], a[1] + a[2]); },
+                arcTo:  (a) => { pt(a[0], a[1]); pt(a[2], a[3]); },
+                ellipse:(a) => { pt(a[0] - a[2], a[1] - a[3]); pt(a[0] + a[2], a[1] + a[3]); },
+                quadraticCurveTo: (a) => { pt(a[0], a[1]); pt(a[2], a[3]); },
+                bezierCurveTo:    (a) => { pt(a[0], a[1]); pt(a[2], a[3]); pt(a[4], a[5]); },
+                closePath: () => {},
+                fill:   () => paintPath(0),
+                stroke: () => paintPath(lw()),
+                clip:   () => {}
+            };
+            // Transform bookkeeping, and state that does not paint.
+            const xform = {
+                save:    () => { stack.push(m.slice()); },
+                restore: () => { if (stack.length) m = stack.pop(); },
+                translate: (a) => { m = mul([1, 0, 0, 1, a[0], a[1]]); },
+                scale:     (a) => { m = mul([a[0], 0, 0, a[1], 0, 0]); },
+                rotate:    (a) => { const c = Math.cos(a[0]), s = Math.sin(a[0]);
+                                    m = mul([c, s, -s, c, 0, 0]); },
+                transform: (a) => { m = mul(a); },
+                setTransform: (a) => {
+                    m = (a.length >= 6) ? a.slice(0, 6)
+                      : (a[0] && typeof a[0].a === 'number'
+                            ? [a[0].a, a[0].b, a[0].c, a[0].d, a[0].e, a[0].f]
+                            : [1, 0, 0, 1, 0, 0]);
+                },
+                resetTransform: () => { m = [1, 0, 0, 1, 0, 0]; }
+            };
+            // Reads and pure state: no effect on the canvas.
+            const inert = new Set([
+                'getImageData', 'createImageData', 'measureText', 'getLineDash',
+                'setLineDash', 'createLinearGradient', 'createRadialGradient',
+                'createConicGradient', 'createPattern', 'isPointInPath',
+                'isPointInStroke', 'getTransform', 'getContextAttributes'
+            ]);
+
+            const cache = new Map();
+            return new Proxy(ctx, {
+                get(target, prop) {
+                    const v = target[prop];
+                    if (prop === '__tracked') return true;
+                    if (prop === '__raw') return target;
+                    if (typeof v !== 'function') return v;
+                    if (cache.has(prop)) return cache.get(prop);
+                    const handler = geo[prop] || path[prop] || xform[prop];
+                    const fn = (...args) => {
+                        if (handler) {
+                            // A shadow or filter paints beyond the geometry, so
+                            // the computed rectangle would be too small.
+                            if ((geo[prop] || path[prop]) && spreads()) app.markAllDirty();
+                            else handler(args);
+                        } else if (!inert.has(prop)) {
+                            // Something that draws in a way this wrapper does
+                            // not model. Assume the worst; correctness first.
+                            app.markAllDirty();
+                        }
+                        return v.apply(target, args);
+                    };
+                    cache.set(prop, fn);
+                    return fn;
+                },
+                set(target, prop, value) { target[prop] = value; return true; }
+            });
+        }
+
         /* A tiled entry stores only the tiles that step CHANGED, plus a link to
          * the step before it. Resolving walks back to the nearest anchor — an
          * entry holding a full grid — and replays forward so newer tiles win.
@@ -19415,6 +19610,9 @@ void main() {
             }
         }
         restoreHistoryEntry(entry, stepIdx) {
+            // The canvas is about to be replaced from history, so nothing known
+            // about what changed since the last step still applies.
+            this.markAllDirty();
             this.setSize(entry.width, entry.height);
             this.disableSmoothing(this.ctx);
             if (entry.tiles) {
@@ -19591,17 +19789,27 @@ void main() {
                     prevEntry.tileSize === this.tileHistory.tileSize);
                 const chainLen = canChain ? (prevEntry._chain || 0) + 1 : 0;
                 // Anchor periodically so a restore never walks back further
-                // than this many steps.
-                const anchor = !canChain || chainLen >= this.tileHistory.anchorInterval;
+                // than this many steps. The anchor is built by flattening the
+                // chain in memory afterwards, NOT by re-reading the canvas —
+                // otherwise every 20th stroke would pay the old full price.
+                const needAnchor = !canChain || chainLen >= this.tileHistory.anchorInterval;
                 const prevMap = canChain ? this._resolveTiles(prevEntry) : null;
-                const tiles = this.captureTiledSnapshot(this.ui.cMain, prevMap, anchor);
-                this.state.history.push({
+                // Only meaningful when building on a previous step: with nothing
+                // to fall back on, everything has to be read.
+                const dirty = canChain ? this.currentDirtyRect() : null;
+                const tiles = this.captureTiledSnapshot(
+                    this.ui.cMain, prevMap, !canChain, dirty);
+                const entry = {
                     tiles: tiles.tiles, width: tiles.width, height: tiles.height,
                     tileSize: tiles.tileSize,
-                    base: anchor ? null : prevEntry,
-                    _chain: anchor ? 0 : chainLen,
+                    base: canChain ? prevEntry : null,
+                    _chain: canChain ? chainLen : 0,
                     _bytes: tiles.ownedBytes
-                });
+                };
+                if (needAnchor && canChain) this._anchorEntry(entry);
+                this.state.history.push(entry);
+                // The canvas and this step now agree; start accumulating afresh.
+                this.markCleanDirty();
                 this.state.step++;
                 this.enforceHistoryLimit();
                 this.state.isDirty = true;
@@ -25859,6 +26067,7 @@ self.onmessage = function(e) {
          * Called lazily the first time the user adds a layer. */
         function _activate() {
             if (mgr.active) return;
+            app.markAllDirty();
             mgr.active = true;
             mgr.activeIdx = 0;
             if (!mgr.layers.length) {
@@ -26748,6 +26957,9 @@ self.onmessage = function(e) {
          * a genuinely new document has to collapse it — otherwise the new
          * document inherits the previous one's layers. */
         function _collapseToBase(opts) {
+            // cMain is about to change role between composite and artwork; whatever
+            // was known about the untouched area no longer holds.
+            app.markAllDirty();
             const fresh = !!(opts && opts.fresh);
             // Bake the composite into cMain first: single-canvas mode draws
             // straight onto it, so it has to hold the finished picture before we
@@ -26780,7 +26992,7 @@ self.onmessage = function(e) {
                 if (mgr.active && mgr.layers.length > 1) _collapseToBase();
                 _origRestoreEntry(entry, stepIdx);
                 // Re-sync the holder after setSize may have re-created the context.
-                _holder.ctx = app.ui.cMain.getContext('2d', { willReadFrequently: true });
+                _holder.ctx = app.trackCtx(app.ui.cMain.getContext('2d', { willReadFrequently: true }));
                 app.disableSmoothing(_holder.ctx);
                 return;
             }
