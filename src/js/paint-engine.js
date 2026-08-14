@@ -1255,7 +1255,9 @@
                 maxDeltaWalk: 30           // force anchor if delta chain exceeds this (dead config)
             };
             this.historyLimitEnabled = true;
-            this.historyLimit = 50;
+            // A count, not a memory guard — historyByteBudget() does that. Kept
+            // generous so memory is what you run out of, not an arbitrary number.
+            this.historyLimit = 500;
             this.HISTORY_MIN_STEPS = 8;
             this._historyAdaptive = false;
             this._tileCopyBuf = null;
@@ -3841,12 +3843,14 @@
                 this._syncHistoryLimitInput();
             }
         }
-        // Count ceiling only. Memory is governed by the byte budget below, which
-        // measures what history is actually holding — this used to model every
-        // entry as a full-canvas snapshot (W*H*4) and so allowed just 8 steps on
-        // an 8000² document even though a real step costs a few kilobytes.
+        // Count ceiling only, and a loose one: memory is governed by the byte
+        // budget below, which measures what history is actually holding. This
+        // used to model every entry as a full-canvas snapshot (W*H*4) and so
+        // allowed 8 steps on an 8000² document, where a real step costs
+        // kilobytes. A ceiling still exists so the array cannot grow without
+        // bound in a long session, but it should not be what you hit first.
         historyHardCap(width, height) {
-            return 500;
+            return 10000;
         }
 
         // Entries to keep for a document of the given size, honouring the user's
@@ -3873,7 +3877,15 @@
             if (typeof entry._bytes === 'number') return entry._bytes;
             let bytes = 0;
             if (entry.tiles) {
-                for (const t of entry.tiles) bytes += t.rle ? t.rle.length : 8;
+                // Every step holds one array slot per tile whether or not that
+                // tile changed, and a big canvas has thousands of them. Counting
+                // only the pixel data made a 13000px document look almost free
+                // when each step really costs ~80 KB of bookkeeping.
+                // This is only the fallback for an entry captured without a
+                // recorded cost; it treats every tile as owned, which
+                // over-counts shared ones and so errs towards trimming early.
+                bytes += entry.tiles.length * 8;
+                for (const t of entry.tiles) bytes += 48 + (t.rle ? t.rle.length : 0);
             } else if (entry.snaps) {
                 for (const sv of entry.snaps) {
                     if (sv.ref) continue;
@@ -19185,18 +19197,14 @@ void main() {
             // Adaptive undo depth by canvas size. Each tiled/flat history entry can be
             // up to a full-canvas snapshot for detailed art, so a fixed limit of 50 is
             // catastrophic on huge docs. Only auto-tune when adaptive mode is enabled.
-            // Memory is enforced by historyByteBudget() now, which measures what
-            // history actually holds. These numbers used to assume a step cost a
-            // whole canvas and dropped to 12 on a large document — which today
-            // would throw away hundreds of affordable undo steps. They stay only
-            // as a gentle count preference for people who want one.
+            // "Adaptive" now means "as many steps as memory allows", which is
+            // what historyByteBudget() already works out from what history
+            // actually holds. Guessing a count from canvas size was a proxy for
+            // that, and a bad one: it capped a 13000² document at 100 steps when
+            // the real cost is well under a megabyte each.
             if (this._historyAdaptive) {
-                const px = (this.config.width || 0) * (this.config.height || 0);
-                let limit = 200;
-                if (px >= 64 * 1024 * 1024) limit = 100;
-                else if (px >= 16 * 1024 * 1024) limit = 150;
-                if (gb <= 4) limit = Math.min(limit, 75);
-                this.historyLimit = limit;
+                this.historyLimit = this.historyHardCap(this.config.width, this.config.height);
+                if (gb <= 4) this.historyLimit = Math.floor(this.historyLimit / 2);
                 this._syncHistoryLimitInput();
             }
         }
@@ -19279,28 +19287,43 @@ void main() {
                     }
                     const solid = this.getSolidTileColor(tileData);
                     if (solid) {
-                        tiles.push({ x, y, w, h, solid });
-                        ownedBytes += 8;                 // four channels plus the object
+                        // Flat tiles were the one case that never shared, so a
+                        // dab on a mostly-empty canvas still minted a descriptor
+                        // for every other tile in the document.
+                        const prevSolid = prevMap && prevMap.get(x + ',' + y);
+                        if (prevSolid && prevSolid.solid &&
+                            prevSolid.solid[0] === solid[0] && prevSolid.solid[1] === solid[1] &&
+                            prevSolid.solid[2] === solid[2] && prevSolid.solid[3] === solid[3]) {
+                            tiles.push(prevSolid);
+                        } else {
+                            tiles.push({ x, y, w, h, solid });
+                            ownedBytes += 48;            // a fresh descriptor object
+                        }
                     } else {
                         const rle = this._rleEncode(tileData);
                         if (prevMap) {
                             const prev = prevMap.get(x + ',' + y);
                             if (prev && prev.rle && this._rleEqual(prev.rle, rle)) {
-                                // Identical to the previous step: share the array
-                                // rather than keeping a second copy of it, and
-                                // charge the bytes to whoever owns them.
-                                tiles.push({ x, y, w, h, rle: prev.rle });
+                                // Identical to the previous step: reuse the whole
+                                // descriptor, not just the pixel array. Tiles are
+                                // never mutated after capture, and on a 13000px
+                                // canvas a step has ~10,000 of them — minting
+                                // fresh objects for the ones that did not change
+                                // cost half a megabyte per step on its own.
+                                tiles.push(prev);
                             } else {
                                 tiles.push({ x, y, w, h, rle });
-                                ownedBytes += rle.length;
+                                ownedBytes += 48 + rle.length;
                             }
                         } else {
                             tiles.push({ x, y, w, h, rle });
-                            ownedBytes += rle.length;
+                            ownedBytes += 48 + rle.length;
                         }
                     }
                 }
             }
+            // One array slot per tile is held whether the tile changed or not.
+            ownedBytes += tiles.length * 8;
             return { width, height, tileSize, tiles, ownedBytes };
         }
         applyTiledSnapshot(snapshot) {

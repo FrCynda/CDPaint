@@ -151,15 +151,21 @@ console.log('\n== 7. the count ceiling no longer punishes large canvases ==');
     // This used to model every entry as a full-canvas snapshot and so allowed
     // 8 undo steps on an 8000² document. Memory is the byte budget's job now;
     // the count is only a ceiling.
+    // The ceiling exists so the array cannot grow without bound in a long
+    // session. It must not be the thing you hit first — that is the byte
+    // budget's job — so it is deliberately loose and size-independent.
+    const CAP = 10000;
     check('canvas size no longer decides the step count',
-        h.historyHardCap(64, 64) === 500 && h.historyHardCap(8000, 8000) === 500,
-        `${h.historyHardCap(64, 64)} vs ${h.historyHardCap(8000, 8000)}`);
-    check('degenerate size falls back safely', h.historyHardCap(0, 0) === 500);
+        h.historyHardCap(64, 64) === CAP && h.historyHardCap(13000, 13000) === CAP,
+        `${h.historyHardCap(64, 64)} vs ${h.historyHardCap(13000, 13000)}`);
+    check('the ceiling is loose enough not to bind before memory does',
+        h.historyHardCap(8000, 8000) >= 1000);
+    check('degenerate size falls back safely', h.historyHardCap(0, 0) === CAP);
 
     h.historyLimitEnabled = true; h.historyLimit = 25;
     check('user limit wins when enabled', h.historyBudgetFor(64, 64) === 25);
     h.historyLimitEnabled = false;
-    check('hard cap applies when limit disabled', h.historyBudgetFor(64, 64) === 500);
+    check('hard cap applies when limit disabled', h.historyBudgetFor(64, 64) === CAP);
 }
 
 console.log('\n== 8. removing an entry from the MIDDLE (collapseSelectionCutStep) ==');
@@ -220,11 +226,20 @@ console.log('\n== 11. history is budgeted by real bytes, not a worst-case guess 
     const MB = 1024 * 1024;
     const canvas = (w, h2) => ({ width: w, height: h2 });
 
-    // A tiled entry costs what its tiles actually weigh, not what the canvas
-    // would weigh — the assumption that produced an 8-step ceiling.
+    // A tiled entry costs what its tiles actually weigh, plus the bookkeeping
+    // to hold them — not what the canvas would weigh, which is the assumption
+    // that produced an 8-step ceiling.
     const tiled = (bytes) => ({ tiles: [{ rle: new Uint8Array(bytes) }], width: 8000, height: 8000 });
-    check('a tiled step costs its compressed size, not the canvas size',
-        h._entryBytes(tiled(4096)) === 4096, String(h._entryBytes(tiled(4096))));
+    const oneTile = h._entryBytes(tiled(4096));
+    check('a tiled step is dominated by its compressed data',
+        oneTile >= 4096 && oneTile < 4096 + 256, String(oneTile));
+    check('and is nowhere near the cost of the canvas',
+        oneTile < 8000 * 8000 * 4 / 1000, String(oneTile));
+    // Bookkeeping is per tile, so a big canvas has a real floor per step even
+    // when nothing changed. Counting only pixel data hid that entirely.
+    const many = { tiles: Array.from({ length: 10404 }, () => ({ solid: [0, 0, 0, 0] })) };
+    check('per-tile bookkeeping is counted, not ignored',
+        h._entryBytes(many) > 10404 * 8, String(h._entryBytes(many)));
 
     check('a flat snapshot really does cost the whole canvas',
         h._entryBytes({ width: 100, height: 100 }) === 100 * 100 * 4);
