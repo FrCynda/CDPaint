@@ -1121,6 +1121,7 @@
             this._saveCursorFeedbackTimer = null;
             this._saveCursorFeedbackUntil = 0;
             this._lastMouseMoveAt = 0;
+            this._lastPointerActivityAt = 0;
             this.gridlinesSize = 64;
             this.gridlinesEnabled = false;
             this.gridlinesColor = '#0044ff';
@@ -1519,14 +1520,38 @@
                     }
                     return set.size;
                 }
+                // Reading a 13000x13000 canvas back costs ~125 ms and a 676 MB
+                // allocation. Doing that here rather than on the main thread is
+                // the difference between a hitch and no hitch, so an image is
+                // preferred over a pixel buffer whenever one can be sent.
+                function dataFromBitmap(bmp) {
+                    const oc = new OffscreenCanvas(bmp.width, bmp.height);
+                    const c = oc.getContext('2d', { willReadFrequently: true });
+                    c.drawImage(bmp, 0, 0);
+                    const d = c.getImageData(0, 0, bmp.width, bmp.height).data;
+                    bmp.close();
+                    return d;
+                }
                 self.onmessage = function (e) {
                     const payload = e && e.data ? e.data : {};
                     const jobId = payload.jobId || 0;
-                    const mainData = payload.mainData ? new Uint8ClampedArray(payload.mainData) : new Uint8ClampedArray(0);
-                    const selData = payload.selData ? new Uint8ClampedArray(payload.selData) : null;
-                    const total = countColors(mainData);
-                    const sel = selData ? countColors(selData) : null;
-                    self.postMessage({ jobId, total, sel });
+                    try {
+                        let mainData;
+                        if (payload.bitmap) {
+                            mainData = dataFromBitmap(payload.bitmap);
+                        } else {
+                            mainData = payload.mainData ? new Uint8ClampedArray(payload.mainData) : new Uint8ClampedArray(0);
+                        }
+                        const selData = payload.selData ? new Uint8ClampedArray(payload.selData) : null;
+                        const total = countColors(mainData);
+                        const sel = selData ? countColors(selData) : null;
+                        self.postMessage({ jobId, total, sel });
+                    } catch (err) {
+                        if (payload.bitmap && payload.bitmap.close) {
+                            try { payload.bitmap.close(); } catch (e2) {}
+                        }
+                        self.postMessage({ jobId, failed: true });
+                    }
                 };
             `;
             try {
@@ -1544,6 +1569,12 @@
                     const payload = event && event.data ? event.data : null;
                     if (!payload) return;
                     if (payload.jobId !== this._colorCountJobId) return;
+                    if (payload.failed) {
+                        // The worker could not read the image; go back to
+                        // reading it here, slow but correct.
+                        this._colorCountNoBitmap = true;
+                        return;
+                    }
                     this.setColorCountStatus(payload.total, payload.sel, !!this.state.selection);
                 };
                 worker.onerror = () => {
@@ -11617,6 +11648,7 @@ void main() {
         }
 
         onMouseDown(e) {
+            this._lastPointerActivityAt = performance.now();
             if (this.state.isPanning) return;
             if (e.button === 1) return;
             if (this.state.quantizeBusy) return;
@@ -12025,6 +12057,7 @@ void main() {
 
         onMouseMove(e) {
             this._lastMouseMoveAt = performance.now();
+            this._lastPointerActivityAt = this._lastMouseMoveAt;
             const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
             const lastEvent = (coalesced && coalesced.length) ? coalesced[coalesced.length - 1] : e;
             this.state.lastMouse = { clientX: lastEvent.clientX, clientY: lastEvent.clientY };
@@ -12722,6 +12755,7 @@ void main() {
         }
 
         onMouseUp(e) {
+            this._lastPointerActivityAt = performance.now();
             if(this.state.isPanning) { this.state.isPanning = false; return; }
             if(this.state.isCanvasDragging) { this.state.isCanvasDragging = false; return; }
             if(this.state.isCanvasResizing) { this.endCanvasResize(); return; }
@@ -13297,9 +13331,16 @@ void main() {
             let selCtx = null;
             let selW = 0;
             let selH = 0;
-            try {
-                mainData = this.ctx.getImageData(0, 0, width, height).data;
-            } catch (e) {}
+            // Skip this read entirely when the worker can take the image
+            // instead — it is the single most expensive thing in the app.
+            const canSendBitmap = !this._colorCountNoBitmap &&
+                typeof createImageBitmap === 'function' &&
+                !!this.ensureColorCountWorker();
+            if (!canSendBitmap) {
+                try {
+                    mainData = this.ctx.getImageData(0, 0, width, height).data;
+                } catch (e) {}
+            }
             if (hasSelection) {
                 const s = this.state.selection;
                 selCtx = s.canvas.getContext('2d', { willReadFrequently: true });
@@ -13312,6 +13353,24 @@ void main() {
 
             const jobId = ++this._colorCountJobId;
             const worker = this.ensureColorCountWorker();
+
+            // Preferred path: hand the worker the image and let IT do the
+            // expensive read. Nothing large is allocated on this thread, so a
+            // recount can no longer land on the start of a stroke.
+            if (worker && !this._colorCountNoBitmap &&
+                typeof createImageBitmap === 'function' && !mainData) {
+                createImageBitmap(this.ui.cMain).then((bmp) => {
+                    if (jobId !== this._colorCountJobId) { bmp.close(); return; }
+                    const transfer = [bmp];
+                    const payload = { jobId, bitmap: bmp, selData: null };
+                    if (selData) { payload.selData = selData.buffer; transfer.push(selData.buffer); }
+                    worker.postMessage(payload, transfer);
+                }).catch(() => {
+                    this._colorCountNoBitmap = true;
+                });
+                return;
+            }
+
             if (worker && mainData) {
                 try {
                     const transfer = [mainData.buffer];
@@ -14249,17 +14308,31 @@ void main() {
             // does too — roughly 30 ms of quiet per megapixel, up to 4 s.
             return Math.min(4000, Math.round(mp * 30));
         }
+        /* How still the pointer has to be before a recount is allowed. Between
+         * two strokes there is often a pause of a few hundred milliseconds
+         * while the hand repositions; starting a ~124 ms read in that gap lands
+         * squarely on the beginning of the next stroke, which then loses its
+         * first moves and comes out straight. */
+        colorCountQuietMs() {
+            return Math.min(1500, this.colorCountIntervalMs());
+        }
         deferColorCounts() {
             if (this._colorCountPending) return;
-            // Never in the middle of a stroke: it would compete with drawing for
-            // the main thread, which is exactly when it is most noticeable.
+            const now = performance.now();
             const interval = this.colorCountIntervalMs();
-            const elapsed = performance.now() - this._colorCountLastAt;
-            if (this.state.isDrawing || elapsed < interval) {
+            const elapsed = now - this._colorCountLastAt;
+            const quiet = now - (this._lastPointerActivityAt || 0);
+            const quietNeeded = this.colorCountQuietMs();
+            // Never mid-stroke, never before the interval, and never until the
+            // pointer has actually been still.
+            if (this.state.isDrawing || elapsed < interval || quiet < quietNeeded) {
                 if (this._colorCountTimer) return;
-                const wait = this.state.isDrawing
-                    ? interval
-                    : Math.max(0, Math.round(interval - elapsed));
+                const wait = Math.max(
+                    this.state.isDrawing ? interval : 0,
+                    Math.round(interval - elapsed),
+                    Math.round(quietNeeded - quiet),
+                    16
+                );
                 this._colorCountTimer = setTimeout(() => {
                     this._colorCountTimer = null;
                     this.deferColorCounts();
