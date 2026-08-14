@@ -1417,6 +1417,13 @@
     };
 
     engine.endStroke = function () {
+        // endStroke() doubles as a cleanup call — the paint engine invokes it
+        // whenever it needs to guarantee no stroke is in flight (closing a
+        // modal, switching document, snapshotting a tab). Only a stroke that
+        // was genuinely in progress may record an undo step; otherwise every
+        // such cleanup call appends a phantom history entry AND truncates the
+        // redo stack, because saveState() drops everything after the cursor.
+        var wasDrawing = _state.isDrawing;
         _state.isDrawing = false;
         _hideRopeSvg();
         _stopAirbrush();
@@ -1450,7 +1457,7 @@
         _flushPending(true);
         _state.strokePoints = [];
         _state.lastProcessedIdx = 0;
-        if (app.saveState && typeof app.saveState === 'function') {
+        if (wasDrawing && app.saveState && typeof app.saveState === 'function') {
             app.saveState();
         }
     };

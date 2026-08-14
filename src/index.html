@@ -39,7 +39,7 @@
         </button>
         <!-- [END THIRD-PARTY ASSET - LICENSED LOGIC RESUMES BELOW] -->
         <span class="title-sep" aria-hidden="true"></span>
-        <span class="title-filename" id="title-filename">Untitled</span>
+        <span id="title-filename" class="title-filename" data-tauri-drag-region></span>
     </div>
     <div class="title-controls">
         <button class="title-btn" id="title-minimize" title="Minimize" aria-label="Minimize window" data-tauri-drag-region="false"></button>
@@ -879,6 +879,26 @@
     </div>
 </div>
 
+<div id="tab-close-confirm-modal" style="display:none">
+    <div class="window">
+        <div class="title-bar">
+            <span>CDpaint</span>
+            <div class="close-btn" id="tab-close-dismiss">&#10005;</div>
+        </div>
+        <div class="message-area">
+            <div class="body-text">Do you want to save changes to <span id="tab-close-filename">your file</span> before closing this tab?</div>
+        </div>
+        <div class="separator"></div>
+        <div class="button-area">
+            <div class="btn-row">
+                <button class="btn-primary" id="tab-close-save" autofocus>Save</button>
+                <button id="tab-close-discard">Don't Save</button>
+                <button id="tab-close-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- all the dialogs live down here -->
 <div id="modal-info">
     <div class="window">
@@ -1585,38 +1605,66 @@
 </div>
 
 <div id="modal-new" class="modal-mask">
-    <div class="modal-window">
-        <h3>New Image</h3>
-        <div class="form-group">
-            <label>Preset:</label>
-            <select id="new-preset" onchange="PaintApp.applyNewPreset()">
-                <option value="custom">Custom</option>
-                <option value="gba-sprite">Pokemon GBA Sprite (64x64, 4bpp)</option>
-                <option value="gba-tile">GBA Tile (8x8, 4bpp)</option>
-                <option value="gb">Game Boy (160x144, 2bpp)</option>
-            </select>
+    <div class="modal-window" id="new-window">
+        <div class="modal-header">
+            <span class="modal-title">New Image</span>
+            <div class="close-btn" onclick="PaintApp.closeModals()"><span>&#10005;</span></div>
         </div>
-        <div class="form-group">
-            <label>Width:</label> <input type="number" id="new-w" value="800">
-        </div>
-        <div class="form-group">
-            <label>Height:</label> <input type="number" id="new-h" value="600">
-        </div>
-        <div class="form-group">
-            <label>Color Depth:</label>
-            <select id="new-depth">
-                <option value="24">24bpp (Full Color)</option>
-                <option value="16">16bpp (RGB565)</option>
-                <option value="15">15bpp (RGB555)</option>
-                <option value="8">8bpp (256 Colors)</option>
-                <option value="4">4bpp (16 Colors)</option>
-                <option value="2">2bpp (4 Colors)</option>
-                <option value="1">1bpp (Monochrome)</option>
-            </select>
+        <div class="modal-body">
+            <div class="form-group">
+                <label for="new-preset">Template:</label>
+                <select id="new-preset" onchange="PaintApp.applyNewPreset()">
+                    <option value="custom">Custom</option>
+                    <option value="hd-1080p">HD 1920 &#215; 1080</option>
+                    <option value="hd-720p">HD 1280 &#215; 720</option>
+                    <option value="square">Square 1080 &#215; 1080</option>
+                    <option value="portrait">Portrait 1080 &#215; 1350</option>
+                    <option value="icon-512">Icon 512 &#215; 512</option>
+                    <option value="icon-256">Icon 256 &#215; 256</option>
+                    <option value="gba-sprite">Pok&#233;mon GBA Sprite (64&#215;64, 4bpp)</option>
+                    <option value="gba-tile">GBA Tile (8&#215;8, 4bpp)</option>
+                    <option value="gb">Game Boy (160&#215;144, 2bpp)</option>
+                </select>
+            </div>
+            <div class="new-size-row">
+                <div class="form-group">
+                    <label for="new-w">Width:</label>
+                    <input type="number" id="new-w" min="1" max="65535" value="800">
+                </div>
+                <button class="btn new-swap" type="button" title="Swap width and height" onclick="PaintApp.swapNewDimensions()">&#8644;</button>
+                <div class="form-group">
+                    <label for="new-h">Height:</label>
+                    <input type="number" id="new-h" min="1" max="65535" value="600">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="new-depth">Color Depth:</label>
+                <select id="new-depth">
+                    <option value="24">24bpp (Full Color)</option>
+                    <option value="16">16bpp (RGB565)</option>
+                    <option value="15">15bpp (RGB555)</option>
+                    <option value="8">8bpp (256 Colors)</option>
+                    <option value="4">4bpp (16 Colors)</option>
+                    <option value="2">2bpp (4 Colors)</option>
+                    <option value="1">1bpp (Monochrome)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="new-bg">Background:</label>
+                <select id="new-bg" onchange="PaintApp.onNewBgChange()">
+                    <option value="white">White</option>
+                    <option value="transparent">Transparent</option>
+                    <option value="custom">Custom color&#8230;</option>
+                </select>
+            </div>
+            <div class="form-group new-bg-custom" id="new-bg-custom-group" style="display:none">
+                <label for="new-bg-color">Background color:</label>
+                <input type="color" id="new-bg-color" value="#ffffff">
+            </div>
         </div>
         <div class="modal-btns">
-            <button onclick="PaintApp.createNewCanvas()">Create</button>
-            <button onclick="PaintApp.closeModals()">Cancel</button>
+            <button class="btn btn-ok" type="button" onclick="PaintApp.createNewCanvas()">Create</button>
+            <button class="btn" type="button" onclick="PaintApp.closeModals()">Cancel</button>
         </div>
     </div>
 </div>
@@ -2435,6 +2483,7 @@
 <script defer src="js/gradient-engine.js"></script>
 <script type="module">import * as __wandAlgorithms from './js/wand-algorithms.js'; window.__wandAlgorithms = __wandAlgorithms;</script>
 <script defer src="js/paint-engine.js"></script>
+<script defer src="js/tab-system.js"></script>
 <script defer src="js/project-browser.js"></script>
 <script defer src="js/palette-panel.js"></script>
 <script defer src="js/sprite-preview.js"></script>

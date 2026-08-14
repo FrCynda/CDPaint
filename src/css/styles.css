@@ -140,7 +140,7 @@
         /* Layout for the title bar, tab row, and ribbon. Heights are fixed so the canvas area can fill the remaining viewport precisely. */
 
         #title-bar { height: 21px; display: flex; align-items: center; padding: 0 10px 0 10px; background: var(--titlebar-bg); z-index: 101; }
-        #title-bar .title-left { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+        #title-bar .title-left { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; min-width: 0; }
         #title-bar .app-icon { width: 16px; height: 16px; image-rendering: pixelated; }
         #title-bar .title-action {
             width: 28px;
@@ -266,7 +266,79 @@
             text-overflow: ellipsis;
             max-width: 240px;
         }
-        #title-bar .title-controls { display: flex; align-items: stretch; height: 100%; margin-right: -10px; }
+        #title-bar .title-controls { display: flex; align-items: stretch; height: 100%; margin-left: auto; margin-right: -10px; }
+        /* Document tabs live between the title actions and the window controls. */
+        /* Minimalist tabs: plain labels, no chrome. The title bar is only 21px
+           tall, so weight + text contrast carry the active state — no borders,
+           no fills, no badges. Tabs close via middle-click or Ctrl+W. */
+        #title-bar .tab-strip {
+            /* Take only the width the labels need, so the rest of the title bar
+               stays draggable. */
+            flex: 0 1 auto;
+            min-width: 0;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 0;
+            margin-left: 2px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            scrollbar-width: none;
+        }
+        #title-bar .tab-strip::-webkit-scrollbar { height: 0; }
+        #title-bar .tab-strip.hidden { display: none; }
+        #title-bar .doc-tab {
+            flex: 0 1 auto;
+            display: flex;
+            align-items: center;
+            min-width: 0;
+            max-width: 180px;
+            height: 100%;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: var(--titlebar-filename);
+            font-size: 12px;
+            font-weight: 400;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            opacity: 0.42;
+            transition: opacity .1s ease;
+        }
+        /* Hover is a barely-there lift — no background, no movement. */
+        #title-bar .doc-tab:hover { opacity: 0.72; }
+        #title-bar .doc-tab.active,
+        #title-bar .doc-tab.active:hover { opacity: 1; font-weight: 600; }
+        #title-bar .doc-tab.dragging { opacity: 0.55; }
+        #title-bar .doc-tab-title {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+        #title-bar .title-filename.hidden { display: none; }
+        #title-bar .doc-tab-add {
+            flex: 0 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 100%;
+            margin-left: 12px;
+            border: 0;
+            background: transparent;
+            color: var(--titlebar-filename);
+            font-size: 14px;
+            font-weight: 400;
+            line-height: 1;
+            cursor: pointer;
+            opacity: 0.32;
+            transition: opacity .1s ease;
+        }
+        #title-bar .doc-tab-add:hover { opacity: 0.75; }
+        #tab-close-confirm-modal { display: none; }
         #title-bar .title-btn {
             width: 46px;
             border: 0;
@@ -4906,6 +4978,29 @@
         .form-group { margin-bottom: 10px; }
         .form-group label { display: block; font-weight: bold; margin-bottom: 4px; }
         .form-group select, .form-group input { width: 100%; padding: 4px; }
+
+        /* New Image dialog (matches the .window/.title-bar modal style of other dialogs) */
+        #modal-new .modal-window { width: 420px; }
+        #modal-new .modal-header {
+            display: flex; align-items: center; justify-content: space-between;
+            background: var(--win-blue, #0078d7); color: #fff;
+            margin: -15px -15px 12px -15px; padding: 8px 10px;
+            border-top-left-radius: 2px; border-top-right-radius: 2px;
+        }
+        #modal-new .modal-title { font-weight: 600; font-size: 13px; }
+        #modal-new .modal-header .close-btn { position: static; color: #fff; border: none; background: transparent; }
+        #modal-new .modal-header .close-btn:hover { background: rgba(255,255,255,0.18); }
+        #modal-new .modal-body { display: flex; flex-direction: column; }
+        #modal-new .new-size-row { display: flex; align-items: flex-end; gap: 8px; }
+        #modal-new .new-size-row .form-group { flex: 1; }
+        #modal-new .new-swap { height: 28px; margin-bottom: 10px; }
+        #modal-new .modal-btns { border-top: 1px solid rgba(128,128,128,0.25); padding-top: 12px; margin-top: 4px; }
+        body.dark-refined-mode #modal-new .modal-header { background: var(--dr-a2); }
+        body.primeval-forest-mode #modal-new .modal-header { background: var(--pf-a2); }
+        body.abyssal-ocean-mode #modal-new .modal-header { background: var(--ao-a2); }
+        body.crimson-dusk-mode #modal-new .modal-header { background: var(--cd-a2); }
+        body.gilded-obsidian-mode #modal-new .modal-header { background: var(--go-a2); }
+        body.test-mode #modal-new .modal-header { background: var(--tm-a1); color: var(--tm-t1); }
         .ribbon-card {
             display: flex;
             flex-direction: column;
