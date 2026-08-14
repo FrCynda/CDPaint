@@ -11649,6 +11649,7 @@ void main() {
 
         onMouseDown(e) {
             this._lastPointerActivityAt = performance.now();
+            this._lastDrawMoveAt = this._lastPointerActivityAt;
             this.flushDeferredSave();
             if (this.state.isPanning) return;
             if (e.button === 1) return;
@@ -12467,14 +12468,22 @@ void main() {
                 const isRight = e.buttons===2;
                 const color = this.getActiveDrawColor(isRight || this.config.tool==='eraser');
 
-                // Follow every position the browser folded into this event.
                 // When a frame is lost — a big brush takes real time to paint —
-                // the browser delivers one move holding the latest position and
-                // the intermediate ones inside it. Using only the latest turns
-                // the whole gap into one straight segment, which is what a
-                // stroke looked like whenever the app fell behind. Constrained
-                // (ctrl) strokes are straight by definition, so they skip this.
-                const coalesced = (!e.ctrlKey && e.getCoalescedEvents)
+                // the browser delivers one move holding the latest position with
+                // the skipped ones folded inside it. Using only the latest turns
+                // that whole gap into one straight segment.
+                //
+                // Only when a frame was actually lost, though. Pointers sample
+                // far faster than the display refreshes, and positions are whole
+                // pixels here, so drawing through every raw sample turns one
+                // clean line into a chain of short rounded ones — visibly bumpy
+                // on a 1px pencil. Keeping up means keeping the old behaviour.
+                // Constrained (ctrl) strokes are straight by definition.
+                const now = performance.now();
+                const gap = now - (this._lastDrawMoveAt || now);
+                this._lastDrawMoveAt = now;
+                const fellBehind = gap > 24;      // more than about a frame and a half
+                const coalesced = (fellBehind && !e.ctrlKey && e.getCoalescedEvents)
                     ? e.getCoalescedEvents() : null;
                 if (coalesced && coalesced.length > 1) {
                     for (const ce of coalesced) {

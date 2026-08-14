@@ -210,6 +210,10 @@ await withPage(async (page) => {
             });
 
             stage.dispatchEvent(mk('pointerdown', 100, 100, 1));
+            // Stand in for a lost frame. The skipped positions are only used
+            // when the app actually fell behind — during normal drawing they
+            // would just add rounding noise.
+            PaintApp._lastDrawMoveAt = performance.now() - 400;
 
             // An L: right along the top, then down. A straight line from start
             // to finish would cut the corner diagonally instead.
@@ -236,6 +240,60 @@ await withPage(async (page) => {
         check('it did NOT cut straight across the corner',
             r.onDiagonal === false,
             'the skipped positions were thrown away and the stroke went straight');
+    }
+
+    console.log('\n== 3c. keeping up draws exactly the line it always did ==');
+    {
+        // Pointers sample far faster than the screen refreshes, and positions
+        // are whole pixels, so drawing through every raw sample chains together
+        // short rounded segments instead of one clean line — bumps on a 1px
+        // pencil. While the app keeps up, the extra samples must be ignored.
+        const r = await page.eval(`(() => {
+            const stage = PaintApp.ui.stage;
+            const mk = (type, x, y, buttons) => {
+                const b = PaintApp.bounds;
+                return new PointerEvent(type, {
+                    bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse',
+                    isPrimary: true, buttons, button: 0, pressure: 0.5,
+                    clientX: b.left + x, clientY: b.top + y
+                });
+            };
+            // Sub-pixel wobble of the kind a real mouse produces.
+            const wobble = (x, y) => [
+                [x + 2, y + 0.4], [x + 4, y - 0.3], [x + 6, y + 0.45], [x + 8, y - 0.4], [x + 10, y]
+            ];
+
+            const draw = (useCoalesced) => {
+                __p.doc(800, 600);
+                PaintApp.config.tool = 'pencil';
+                PaintApp.config.lineWidth = 1;
+                stage.dispatchEvent(mk('pointerdown', 100, 300, 1));
+                for (let seg = 0; seg < 30; seg++) {
+                    const x = 100 + seg * 10;
+                    const y = 300 + Math.round(Math.sin(seg / 5) * 60);
+                    const ev = mk('pointermove', x + 10, y, 1);
+                    if (useCoalesced) {
+                        Object.defineProperty(ev, 'getCoalescedEvents', {
+                            value: () => wobble(x, y).map(([cx, cy]) => mk('pointermove', cx, cy, 1))
+                        });
+                    }
+                    // Keeping up: no gap between moves.
+                    PaintApp._lastDrawMoveAt = performance.now();
+                    window.dispatchEvent(ev);
+                }
+                window.dispatchEvent(mk('pointerup', 400, 300, 0));
+                PaintApp.flushDeferredSave();
+                return { hash: __p.hash(), inked: __p.inked() };
+            };
+
+            const withSamples = draw(true);
+            const without = draw(false);
+            return { withSamples, without };
+        })()`);
+        check('the curve drew', r.without.inked > 200, String(r.without.inked));
+        check('a curve drawn while keeping up is identical either way',
+            r.withSamples.hash === r.without.hash,
+            `${r.withSamples.inked} vs ${r.without.inked} pixels — the extra samples added rounding noise`);
     }
 
     console.log('\n== 4. the pause is gone ==');
