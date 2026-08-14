@@ -14233,12 +14233,32 @@ void main() {
             this.state.outlineAnimId = null;
             this.state.outlineLastTime = 0;
         }
+        /* Counting the colours in use means reading the whole canvas back — at
+         * 13000x13000 that is a 676 MB allocation and about 140 ms, and the
+         * allocation churn costs more again. It is a status-bar number, so it
+         * does not need to keep up with the brush. How long to leave it alone
+         * scales with how expensive it is. */
+        colorCountIntervalMs() {
+            const px = (this.config.width || 0) * (this.config.height || 0);
+            const mp = px / (1024 * 1024);
+            if (mp <= 1) return this._colorCountMinIntervalMs;   // 1 MP or less: as before
+            if (mp <= 4) return 400;
+            if (mp <= 16) return 900;
+            // Past that the read dominates and scales with area, so the wait
+            // does too — roughly 30 ms of quiet per megapixel, up to 4 s.
+            return Math.min(4000, Math.round(mp * 30));
+        }
         deferColorCounts() {
             if (this._colorCountPending) return;
+            // Never in the middle of a stroke: it would compete with drawing for
+            // the main thread, which is exactly when it is most noticeable.
+            const interval = this.colorCountIntervalMs();
             const elapsed = performance.now() - this._colorCountLastAt;
-            if (elapsed < this._colorCountMinIntervalMs) {
+            if (this.state.isDrawing || elapsed < interval) {
                 if (this._colorCountTimer) return;
-                const wait = Math.max(0, Math.round(this._colorCountMinIntervalMs - elapsed));
+                const wait = this.state.isDrawing
+                    ? interval
+                    : Math.max(0, Math.round(interval - elapsed));
                 this._colorCountTimer = setTimeout(() => {
                     this._colorCountTimer = null;
                     this.deferColorCounts();
@@ -14252,7 +14272,9 @@ void main() {
                 this.updateColorCounts();
             };
             if (window.requestIdleCallback) {
-                requestIdleCallback(run, { timeout: 200 });
+                // A big canvas waits for genuine idle rather than forcing itself
+                // in after 200 ms, which lands right on the end of a stroke.
+                requestIdleCallback(run, { timeout: Math.max(200, interval) });
             } else {
                 setTimeout(run, 0);
             }
