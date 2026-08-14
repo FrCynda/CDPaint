@@ -1216,7 +1216,8 @@
             this._lastRotationStatusText = this.ui.statusRotation ? this.ui.statusRotation.textContent : 'Rot: 0.00°';
             this.ctx = this.trackCtx(this.ui.cMain.getContext('2d', {willReadFrequently:true}));
             this.markAllDirty();
-            this.ctxTemp = this.ui.cTemp.getContext('2d', { willReadFrequently: true });
+            this.ctxTemp = this.trackCtx(this.ui.cTemp.getContext('2d', { willReadFrequently: true }), 'temp');
+            this.markCleanDirty('temp');
             this.disableSmoothing(this.ctx);
             this.disableSmoothing(this.ctxTemp);
             this.gl = null;
@@ -12982,14 +12983,14 @@ void main() {
                 if (['pencil','eraser'].includes(this.config.tool)) {
                     this.flushPendingStrokes();
                 }
-                this.ctx.drawImage(this.ui.cTemp, 0, 0);
-                this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
+                this.stampTempCanvas();
+                this.clearTempCanvas();
                 this.saveState();
             }
         }
 
         renderActiveShape() {
-            this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
+            this.clearTempCanvas();
             const s = this.state.activeShape;
             if (!s) return;
             this.drawActiveShape(s, true);
@@ -19388,21 +19389,69 @@ void main() {
          * does not fully understand falls back to "assume everything changed".
          * The failure mode is a slow capture, never a wrong one.
          */
-        markAllDirty() {
-            this._dirtyRect = null;      // null means "unknown — read it all"
-            this._dirtyKnown = false;
-        }
-        markCleanDirty() {
-            this._dirtyRect = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
-            this._dirtyKnown = true;
-        }
-        markDirtyRect(x0, y0, x1, y1) {
-            if (!this._dirtyKnown) return;             // already unknown; stays that way
-            if (!(isFinite(x0) && isFinite(y0) && isFinite(x1) && isFinite(y1))) {
-                this.markAllDirty();
+        /* Copy the preview onto the artwork, but only the part a stroke
+         * actually reached. Copying the whole preview told history that the
+         * entire canvas had changed — on a 13000x13000 document that meant
+         * reading back every pixel, which is what made the app freeze after
+         * letting go of the mouse. Pencil and eraser draw straight to the
+         * artwork, so for them the preview is empty and there is nothing to
+         * copy at all. Falls back to the whole surface if the region is
+         * unknown. */
+        stampTempCanvas() {
+            const r = this.currentDirtyRect('temp');
+            if (r === null) {
+                this.ctx.drawImage(this.ui.cTemp, 0, 0);
                 return;
             }
-            const r = this._dirtyRect;
+            if (r.x1 < r.x0 || r.y1 < r.y0) return;   // nothing was drawn on it
+            const w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1;
+            this.ctx.drawImage(this.ui.cTemp, r.x0, r.y0, w, h, r.x0, r.y0, w, h);
+        }
+
+        /* Wipe the preview canvas. Only the part holding something is cleared:
+         * on a 13000x13000 document clearing all of it costs about 100 ms, and
+         * a stroke covers a tiny fraction of that. Falls back to the whole
+         * surface whenever the tracked region is unknown. */
+        clearTempCanvas() {
+            const r = this.currentDirtyRect('temp');
+            if (r === null) {
+                this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+            } else if (r.x1 >= r.x0 && r.y1 >= r.y0) {
+                this.ctxTemp.clearRect(r.x0, r.y0, r.x1 - r.x0 + 1, r.y1 - r.y0 + 1);
+            }
+            this.markCleanDirty('temp');
+        }
+
+        /* Two surfaces are tracked separately: 'main' is the artwork, which is
+         * what history captures, and 'temp' is the preview a stroke is drawn on
+         * before being stamped down. Knowing the preview's extent is what keeps
+         * that stamp from claiming the whole canvas. */
+        _region(key) {
+            if (!this._dirtyRegions) this._dirtyRegions = {};
+            let r = this._dirtyRegions[key || 'main'];
+            if (!r) r = this._dirtyRegions[key || 'main'] = { rect: null, known: false };
+            return r;
+        }
+        markAllDirty(key) {
+            const r = this._region(key);
+            r.rect = null;               // null means "unknown — read it all"
+            r.known = false;
+            if (!key || key === 'main') { this._dirtyRect = null; this._dirtyKnown = false; }
+        }
+        markCleanDirty(key) {
+            const r = this._region(key);
+            r.rect = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+            r.known = true;
+            if (!key || key === 'main') { this._dirtyRect = r.rect; this._dirtyKnown = true; }
+        }
+        markDirtyRect(x0, y0, x1, y1, key) {
+            const reg = this._region(key);
+            if (!reg.known) return;                    // already unknown; stays that way
+            if (!(isFinite(x0) && isFinite(y0) && isFinite(x1) && isFinite(y1))) {
+                this.markAllDirty(key);
+                return;
+            }
+            const r = reg.rect;
             if (x0 < r.x0) r.x0 = x0;
             if (y0 < r.y0) r.y0 = y0;
             if (x1 > r.x1) r.x1 = x1;
@@ -19410,9 +19459,10 @@ void main() {
         }
         /* The rectangle to capture, clamped to the canvas, or null for all of
          * it. An empty region means nothing was drawn since the last step. */
-        currentDirtyRect() {
-            if (!this._dirtyKnown || !this._dirtyRect) return null;
-            const r = this._dirtyRect;
+        currentDirtyRect(key) {
+            const reg = this._region(key);
+            if (!reg.known || !reg.rect) return null;
+            const r = reg.rect;
             if (r.x1 < r.x0 || r.y1 < r.y0) return { x0: 0, y0: 0, x1: -1, y1: -1 };
             return {
                 x0: Math.max(0, Math.floor(r.x0)),
@@ -19425,9 +19475,10 @@ void main() {
         /* Wrap a 2D context so every drawing call reports the area it affects.
          * The wrapper follows the transform itself, so a rotated or scaled
          * brush stamp still reports where it actually landed. */
-        trackCtx(ctx) {
+        trackCtx(ctx, key) {
             if (!ctx || ctx.__tracked) return ctx;
             const app = this;
+            const K = key || 'main';
             // Current transform, plus a stack for save()/restore().
             let m = [1, 0, 0, 1, 0, 0];
             const stack = [];
@@ -19439,7 +19490,7 @@ void main() {
             // Map a user-space rect through the transform and report its bounds.
             const emit = (x, y, w, h, pad) => {
                 if (!(isFinite(x) && isFinite(y) && isFinite(w) && isFinite(h))) {
-                    app.markAllDirty(); return;
+                    app.markAllDirty(K); return;
                 }
                 const px = [x, x + w, x, x + w], py = [y, y, y + h, y + h];
                 let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -19451,7 +19502,7 @@ void main() {
                 }
                 // Antialiasing, line width and rounding all bleed outwards.
                 const g = (pad || 0) + 2;
-                app.markDirtyRect(x0 - g, y0 - g, x1 + g, y1 + g);
+                app.markDirtyRect(x0 - g, y0 - g, x1 + g, y1 + g, K);
             };
             // A blur or a filter paints outside the geometry it was given.
             const spreads = () => (ctx.shadowBlur > 0) ||
@@ -19461,15 +19512,25 @@ void main() {
             // Everything that draws and whose extent we can work out.
             const geo = {
                 fillRect:   (a) => emit(a[0], a[1], a[2], a[3], 0),
-                clearRect:  (a) => emit(a[0], a[1], a[2], a[3], 0),
+                clearRect:  (a) => {
+                    // Wiping the whole preview leaves it empty, so its region
+                    // resets rather than growing to cover the canvas. A partial
+                    // clear still expands it, which over-reports and is safe.
+                    if (K === 'temp' && a[0] <= 0 && a[1] <= 0 &&
+                        a[2] >= app.config.width && a[3] >= app.config.height) {
+                        app.markCleanDirty('temp');
+                        return;
+                    }
+                    emit(a[0], a[1], a[2], a[3], 0);
+                },
                 strokeRect: (a) => emit(a[0], a[1], a[2], a[3], lw()),
-                fillText:     () => app.markAllDirty(),
-                strokeText:   () => app.markAllDirty(),
+                fillText:     () => app.markAllDirty(K),
+                strokeText:   () => app.markAllDirty(K),
                 putImageData: (a) => {
                     // putImageData ignores the transform entirely.
                     const img = a[0];
-                    if (!img) { app.markAllDirty(); return; }
-                    app.markDirtyRect(a[1], a[2], a[1] + img.width, a[2] + img.height);
+                    if (!img) { app.markAllDirty(K); return; }
+                    app.markDirtyRect(a[1], a[2], a[1] + img.width, a[2] + img.height, K);
                 },
                 drawImage: (a) => {
                     const src = a[0];
@@ -19490,7 +19551,7 @@ void main() {
                 if (y < pb.y0) pb.y0 = y; if (y > pb.y1) pb.y1 = y;
             };
             const paintPath = (pad) => {
-                if (!pb || pb === false) { app.markAllDirty(); return; }
+                if (!pb || pb === false) { app.markAllDirty(K); return; }
                 emit(pb.x0, pb.y0, pb.x1 - pb.x0, pb.y1 - pb.y0, pad);
             };
             const path = {
@@ -19546,12 +19607,12 @@ void main() {
                         if (handler) {
                             // A shadow or filter paints beyond the geometry, so
                             // the computed rectangle would be too small.
-                            if ((geo[prop] || path[prop]) && spreads()) app.markAllDirty();
+                            if ((geo[prop] || path[prop]) && spreads()) app.markAllDirty(K);
                             else handler(args);
                         } else if (!inert.has(prop)) {
                             // Something that draws in a way this wrapper does
                             // not model. Assume the worst; correctness first.
-                            app.markAllDirty();
+                            app.markAllDirty(K);
                         }
                         return v.apply(target, args);
                     };
