@@ -11649,6 +11649,7 @@ void main() {
 
         onMouseDown(e) {
             this._lastPointerActivityAt = performance.now();
+            this.flushDeferredSave();
             if (this.state.isPanning) return;
             if (e.button === 1) return;
             if (this.state.quantizeBusy) return;
@@ -13052,7 +13053,7 @@ void main() {
                 }
                 this.stampTempCanvas();
                 this.clearTempCanvas();
-                this.saveState();
+                this.saveStateDeferred();
             }
         }
 
@@ -19506,6 +19507,47 @@ void main() {
          * does not fully understand falls back to "assume everything changed".
          * The failure mode is a slow capture, never a wrong one.
          */
+        /* Recording an undo step has to read the canvas back, and that read
+         * waits for whatever was just painted to finish on the GPU. After a
+         * fat brush stroke that wait is most of half a second, during which
+         * nothing else can happen — the tail of the stroke cannot appear and a
+         * second stroke cannot start.
+         *
+         * Letting the browser get on with it first and recording a moment later
+         * costs the same total work but takes it off the path between one
+         * stroke and the next. Anything that would touch the canvas flushes the
+         * pending record first, so history can never merge two edits into one
+         * step or record them out of order. */
+        saveStateDeferred() {
+            if (this._deferredSave) return;
+            this._deferredSave = true;
+            const run = () => {
+                if (!this._deferredSave) return;      // already flushed
+                this._deferredSave = false;
+                this._deferredSaveTimer = null;
+                this.saveState();
+            };
+            // One frame lets the paint land, then idle time does the recording.
+            requestAnimationFrame(() => {
+                if (!this._deferredSave) return;
+                if (window.requestIdleCallback) {
+                    this._deferredSaveTimer = requestIdleCallback(run, { timeout: 120 });
+                } else {
+                    this._deferredSaveTimer = setTimeout(run, 0);
+                }
+            });
+        }
+        flushDeferredSave() {
+            if (!this._deferredSave) return;
+            this._deferredSave = false;
+            if (this._deferredSaveTimer != null) {
+                if (window.cancelIdleCallback) { try { cancelIdleCallback(this._deferredSaveTimer); } catch (e) {} }
+                clearTimeout(this._deferredSaveTimer);
+                this._deferredSaveTimer = null;
+            }
+            this.saveState();
+        }
+
         /* Copy the preview onto the artwork, but only the part a stroke
          * actually reached. Copying the whole preview told history that the
          * entire canvas had changed — on a 13000x13000 document that meant
@@ -19810,6 +19852,7 @@ void main() {
             }
         }
         restoreHistoryEntry(entry, stepIdx) {
+            this.flushDeferredSave();
             // The canvas is about to be replaced from history, so nothing known
             // about what changed since the last step still applies.
             this.markAllDirty();
@@ -19971,6 +20014,11 @@ void main() {
         }
 
         saveState() {
+            // An outstanding record describes the canvas as it was BEFORE
+            // whatever is being recorded now, so it has to go in first. Safe
+            // against recursion: flushDeferredSave clears its flag before it
+            // calls back in here.
+            this.flushDeferredSave();
             // Truncate forward history and release the discarded entries. Refs
             // always point backwards, so nothing kept can reference a dropped
             // entry — but go through the ref-aware path anyway so this stays
@@ -20108,6 +20156,7 @@ void main() {
             this.state.selectionCutStep = null;
         }
         undo() {
+            this.flushDeferredSave();
             if (this.state.isDrawing && this.config.tool === 'paintbrush') return;
             // For an active Magic Wand selection, cancel it silently (do NOT commit
             // pixels to the canvas) so the canvas snapshot in history remains the
@@ -20174,6 +20223,7 @@ void main() {
             this.updateTitleBarActions();
         }
         redo() {
+            this.flushDeferredSave();
             if (this.state.isDrawing && this.config.tool === 'paintbrush') return;
             this.cancelPendingStrokes();
             if (this.state.curveUndo) {
@@ -25356,6 +25406,11 @@ self.onmessage = function(e) {
         try {
             Object.defineProperty(app, 'ctx', {
                 get() {
+                    // Every drawing path reaches the canvas through here, so it
+                    // is the one place that can guarantee an outstanding undo
+                    // record is written BEFORE anything changes the pixels it
+                    // was meant to describe.
+                    if (app._deferredSave) app.flushDeferredSave();
                     if (!mgr.active || !mgr.layers.length) return _holder.ctx;
                     const l = mgr.layers[mgr.activeIdx];
                     // Return a no-op proxy context for locked layers to prevent drawing
