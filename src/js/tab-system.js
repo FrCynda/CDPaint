@@ -172,9 +172,16 @@
         app.paletteLab = rec.paletteLab;
         app.paletteLocked = rec.paletteLocked;
         try {
-            const fresh = app.ui.cMain.getContext('2d', { willReadFrequently: true });
+            // Must stay wrapped: history captures only the region the wrapper
+            // says changed, so handing back a bare context here would silently
+            // switch that off for the rest of the session.
+            const fresh = app.trackCtx
+                ? app.trackCtx(app.ui.cMain.getContext('2d', { willReadFrequently: true }))
+                : app.ui.cMain.getContext('2d', { willReadFrequently: true });
             app.ctx = fresh;
             app.disableSmoothing(fresh);
+            // A different document is on the canvas now.
+            if (app.markAllDirty) app.markAllDirty();
         } catch (e) { /* ignore */ }
         app.config.zoom = rec.zoom != null ? rec.zoom : 1;
         applyZoomState();

@@ -48,6 +48,7 @@ function fakeCanvas(tag) {
 const cMain = fakeCanvas('cMain');
 const mgr = { active: false, layers: [], activeIdx: 0, nextId: 2 };
 let renders = 0;
+let dirtyResets = 0;
 
 const harness = `
 ${extractFn('_newCanvas')}
@@ -61,7 +62,10 @@ const sandbox = {
     app: {
         ui: { cMain, cTemp: { style: {} }, stage: { classList: { add() {}, remove() {} } } },
         config: { width: 8, height: 8 },
-        disableSmoothing() {}
+        disableSmoothing() {},
+        // Crossing the layered/flat boundary changes what cMain holds, so the
+        // engine drops its record of which region is dirty.
+        markAllDirty() { dirtyResets++; }
     },
     document: { createElement: () => fakeCanvas() },
     _holder: { ctx: cMain.getContext() },
@@ -150,6 +154,20 @@ console.log('\n== 6. collapsing an already-collapsed stack is safe ==');
     _collapseToBase({ fresh: true });
     check('no render attempted with nothing to flatten', renders === before);
     check('still empty and inactive', mgr.layers.length === 0 && mgr.active === false);
+}
+
+console.log('\n== dirty tracking is dropped at the layer boundary ==');
+{
+    // Capture only reads the region it believes changed. cMain switches between
+    // holding the artwork and holding the composite, so a stale region here
+    // would mean history quietly missing part of the picture.
+    mgr.layers.length = 0; mgr.active = false;
+    dirtyResets = 0;
+    _activate();
+    check('activating layers drops it', dirtyResets >= 1, String(dirtyResets));
+    dirtyResets = 0;
+    _collapseToBase();
+    check('collapsing back drops it too', dirtyResets >= 1, String(dirtyResets));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
