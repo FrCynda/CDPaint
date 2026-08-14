@@ -19269,8 +19269,9 @@ void main() {
             }
         }
         // Layered history entries reference unchanged layers from an *earlier*
-        // entry instead of re-cloning them (layer-system's saveState builds
-        // { ref: prevSnap } snaps). Walk every surviving entry's ref chains and
+        // entry instead of re-cloning them (the saveState installed by
+        // installLayerSystem, at the foot of this file, builds { ref: prevSnap }
+        // snaps). Walk every surviving entry's ref chains and
         // collect the owned snaps they terminate at, so eviction can tell
         // "nothing points here any more" from "an older entry owns the pixels a
         // newer entry still displays".
