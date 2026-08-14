@@ -1251,8 +1251,11 @@
                 // Threshold set low enough that typical working sizes (> 512×512) benefit;
                 // anything smaller than a small sprite is stored as a flat snapshot instead.
                 thresholdPixels: 200 * 200,
-                anchorInterval: 10,        // store full anchor every N steps (dead config)
-                maxDeltaWalk: 30           // force anchor if delta chain exceeds this (dead config)
+                // A step stores only the tiles it changed, plus a link to the
+                // step before. Every Nth step instead stores the whole grid, so
+                // restoring never walks back further than N steps. Raising this
+                // makes steps cheaper and restores slower.
+                anchorInterval: 20
             };
             this.historyLimitEnabled = true;
             // A count, not a memory guard — historyByteBudget() does that. Kept
@@ -3899,10 +3902,12 @@
                 // tile changed, and a big canvas has thousands of them. Counting
                 // only the pixel data made a 13000px document look almost free
                 // when each step really costs ~80 KB of bookkeeping.
-                // This is only the fallback for an entry captured without a
-                // recorded cost; it treats every tile as owned, which
-                // over-counts shared ones and so errs towards trimming early.
-                bytes += entry.tiles.length * 8;
+                // Only the tiles this entry actually holds — a delta holds just
+                // what changed. This is the fallback for an entry captured
+                // without a recorded cost; it treats every tile it holds as
+                // owned, so it over-counts a shared one and errs towards
+                // trimming early rather than late.
+                bytes += entry.tiles.length * 8 + 64;
                 for (const t of entry.tiles) bytes += 48 + (t.rle ? t.rle.length : 0);
             } else if (entry.snaps) {
                 for (const sv of entry.snaps) {
@@ -3953,6 +3958,10 @@
             if (overflow <= 0) return 0;
 
             const evicted = target.history.splice(0, overflow);
+            // The oldest survivor may be a delta on an entry we just dropped.
+            // Flatten it while the dropped entries are still reachable, or its
+            // tiles resolve to nothing and undo restores a blank canvas.
+            if (target.history.length) this._anchorEntry(target.history[0]);
             // Survivors first: eviction must not close pixels they still ref.
             this._releaseHistoryEntries(evicted, target.history);
             target.step = Math.max(-1, (target.step || 0) - overflow);
@@ -19268,7 +19277,11 @@ void main() {
             }
             return true;
         }
-        captureTiledSnapshot(canvas, prevTiles) {
+        /* Capture the canvas as tiles. With `prevMap` supplied, only tiles that
+         * differ from it are returned — the entry becomes a delta on the step
+         * before it. With `anchor` set, every tile is returned, so the entry
+         * stands alone and bounds how far a restore has to walk back. */
+        captureTiledSnapshot(canvas, prevMap, anchor) {
             const tileSize = this.tileHistory.tileSize;
             const width = canvas.width;
             const height = canvas.height;
@@ -19278,13 +19291,6 @@ void main() {
             const maxTileBytes = tileSize * tileSize * 4;
             if (!this._tileCopyBuf || this._tileCopyBuf.length < maxTileBytes) {
                 this._tileCopyBuf = new Uint8ClampedArray(maxTileBytes);
-            }
-            let prevMap = null;
-            if (prevTiles) {
-                prevMap = new Map();
-                for (const t of prevTiles) {
-                    prevMap.set(t.x + ',' + t.y, t);
-                }
             }
             for (let y = 0; y < height; y += tileSize) {
                 const stripH = Math.min(tileSize, height - y);
@@ -19307,7 +19313,9 @@ void main() {
                         if (prevSolid && prevSolid.solid &&
                             prevSolid.solid[0] === solid[0] && prevSolid.solid[1] === solid[1] &&
                             prevSolid.solid[2] === solid[2] && prevSolid.solid[3] === solid[3]) {
-                            tiles.push(prevSolid);
+                            // Unchanged: an anchor still has to carry it, a
+                            // delta leaves it to the step it came from.
+                            if (anchor) tiles.push(prevSolid);
                         } else {
                             tiles.push({ x, y, w, h, solid });
                             ownedBytes += 48;            // a fresh descriptor object
@@ -19317,13 +19325,10 @@ void main() {
                         if (prevMap) {
                             const prev = prevMap.get(x + ',' + y);
                             if (prev && prev.rle && this._rleEqual(prev.rle, rle)) {
-                                // Identical to the previous step: reuse the whole
-                                // descriptor, not just the pixel array. Tiles are
-                                // never mutated after capture, and on a 13000px
-                                // canvas a step has ~10,000 of them — minting
-                                // fresh objects for the ones that did not change
-                                // cost half a megabyte per step on its own.
-                                tiles.push(prev);
+                                // Unchanged. Tiles are never mutated after
+                                // capture, so an anchor can reuse the whole
+                                // descriptor; a delta omits it entirely.
+                                if (anchor) tiles.push(prev);
                             } else {
                                 tiles.push({ x, y, w, h, rle });
                                 ownedBytes += 48 + rle.length;
@@ -19335,13 +19340,57 @@ void main() {
                     }
                 }
             }
-            // One array slot per tile is held whether the tile changed or not.
-            ownedBytes += tiles.length * 8;
+            // One array slot per tile the entry actually holds. A delta holds
+            // only what changed, which is the whole point.
+            ownedBytes += tiles.length * 8 + 64;
             return { width, height, tileSize, tiles, ownedBytes };
         }
+        /* A tiled entry stores only the tiles that step CHANGED, plus a link to
+         * the step before it. Resolving walks back to the nearest anchor — an
+         * entry holding a full grid — and replays forward so newer tiles win.
+         *
+         * Before this, every entry carried a slot for every tile in the
+         * document whether or not anything had happened to it: ~10,000 slots,
+         * about 81 KB, on a 13000px canvas, paid per step even for a single dab.
+         */
+        _resolveTiles(entry) {
+            const chain = [];
+            let e = entry, guard = 0;
+            while (e) {
+                chain.push(e);
+                if (!e.base) break;
+                e = e.base;
+                // The anchor interval bounds this; the guard is for a chain
+                // that somehow lost its anchor, so restore degrades rather
+                // than hanging.
+                if (++guard > 100000) { console.warn('[History] runaway tile chain'); break; }
+            }
+            const map = new Map();
+            for (let i = chain.length - 1; i >= 0; i--) {
+                for (const t of chain[i].tiles) map.set(t.x + ',' + t.y, t);
+            }
+            return map;
+        }
+
+        /* Flatten an entry so it no longer depends on anything earlier. Needed
+         * before the entry it links through is dropped — by eviction from the
+         * front, or by removing one from the middle. */
+        _anchorEntry(entry) {
+            if (!entry || !entry.tiles || !entry.base) return;
+            entry.tiles = Array.from(this._resolveTiles(entry).values());
+            entry.base = null;
+            entry._chain = 0;
+            // It now owns everything it holds, so the cached cost is stale.
+            entry._bytes = undefined;
+            this._entryBytes(entry);
+        }
+
         applyTiledSnapshot(snapshot) {
             const ctx = this.ctx;
-            const { width, height, tiles } = snapshot;
+            const { width, height } = snapshot;
+            const tiles = snapshot.base
+                ? Array.from(this._resolveTiles(snapshot).values())
+                : snapshot.tiles;
             for (const tile of tiles) {
                 if (tile.solid) continue;
                 const data = tile.rle ? this._rleDecode(tile.rle, tile.w, tile.h) : tile.data;
@@ -19534,10 +19583,23 @@ void main() {
             }
             if (this.tileHistory.enabled) {
                 const prevEntry = this.state.history[this.state.step];
-                const prevTiles = prevEntry && prevEntry.tiles && prevEntry.width === this.ui.cMain.width && prevEntry.height === this.ui.cMain.height ? prevEntry.tiles : null;
-                const tiles = this.captureTiledSnapshot(this.ui.cMain, prevTiles);
+                // Only build on the previous step when it describes the same
+                // grid; a resize or a different tile size has to start fresh.
+                const canChain = !!(prevEntry && prevEntry.tiles &&
+                    prevEntry.width === this.ui.cMain.width &&
+                    prevEntry.height === this.ui.cMain.height &&
+                    prevEntry.tileSize === this.tileHistory.tileSize);
+                const chainLen = canChain ? (prevEntry._chain || 0) + 1 : 0;
+                // Anchor periodically so a restore never walks back further
+                // than this many steps.
+                const anchor = !canChain || chainLen >= this.tileHistory.anchorInterval;
+                const prevMap = canChain ? this._resolveTiles(prevEntry) : null;
+                const tiles = this.captureTiledSnapshot(this.ui.cMain, prevMap, anchor);
                 this.state.history.push({
                     tiles: tiles.tiles, width: tiles.width, height: tiles.height,
+                    tileSize: tiles.tileSize,
+                    base: anchor ? null : prevEntry,
+                    _chain: anchor ? 0 : chainLen,
                     _bytes: tiles.ownedBytes
                 });
                 this.state.step++;
@@ -19624,6 +19686,10 @@ void main() {
             const cutStep = this.state.selectionCutStep;
             if (cutStep === null) return;
             if (cutStep >= 0 && cutStep < this.state.history.length) {
+                // The step after this one may be a delta built on it. Flatten
+                // that one first, while this entry's tiles can still be reached.
+                const next = this.state.history[cutStep + 1];
+                if (next && next.base) this._anchorEntry(next);
                 const [evicted] = this.state.history.splice(cutStep, 1);
                 // This removes an entry from the MIDDLE of the history, so
                 // entries after it survive and may reference its layer pixels.
