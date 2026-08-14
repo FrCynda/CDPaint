@@ -1256,6 +1256,7 @@
             };
             this.historyLimitEnabled = true;
             this.historyLimit = 50;
+            this.HISTORY_MIN_STEPS = 8;
             this._historyAdaptive = false;
             this._tileCopyBuf = null;
             this.bounds = { left: 0, top: 0 };
@@ -3840,32 +3841,87 @@
                 this._syncHistoryLimitInput();
             }
         }
-        // Hard safety cap: even with the user limit disabled, never retain unbounded
-        // history. Scale the ceiling by canvas size so a "limit disabled" footgun on an
-        // 8000² doc can't hold 500 × ~256 MB (~128 GB). Modeled per-entry cost is the
-        // worst-case full-canvas snapshot (W*H*4); tiled entries are typically far smaller,
-        // so this estimate is conservative (smaller cap) in the safe direction.
+        // Count ceiling only. Memory is governed by the byte budget below, which
+        // measures what history is actually holding — this used to model every
+        // entry as a full-canvas snapshot (W*H*4) and so allowed just 8 steps on
+        // an 8000² document even though a real step costs a few kilobytes.
         historyHardCap(width, height) {
-            const px = (width || 0) * (height || 0);
-            if (px <= 0) return 500;
-            return Math.max(8, Math.min(500, Math.floor((2 * 1024 * 1024 * 1024) / (px * 4))));
+            return 500;
         }
 
         // Entries to keep for a document of the given size, honouring the user's
-        // limit setting and the hard cap.
+        // limit setting and the count ceiling.
         historyBudgetFor(width, height) {
             return this.historyLimitEnabled
                 ? Math.max(1, this.historyLimit || 1)
                 : this.historyHardCap(width, height);
         }
 
-        // Drop the oldest entries of `target` ({history, step}) down to
-        // maxEntries. Works on the live state or on a background tab's stored
-        // document. Returns how many entries were evicted.
-        _trimHistoryTarget(target, maxEntries) {
+        // How much memory history may hold. deviceMemory is coarse and most
+        // browsers cap it at 8, so treat it as a hint rather than a measurement.
+        historyByteBudget() {
+            const gb = navigator.deviceMemory || 8;
+            const quarter = gb * 0.25 * 1024 * 1024 * 1024;
+            return Math.max(256 * 1024 * 1024, Math.min(2 * 1024 * 1024 * 1024, quarter));
+        }
+
+        // Bytes an entry newly owns. Anything shared with an earlier entry —
+        // an unchanged tile, a layer snapshot reached through a ref — belongs to
+        // whoever owns it, and counting it twice would evict far too eagerly.
+        _entryBytes(entry) {
+            if (!entry) return 0;
+            if (typeof entry._bytes === 'number') return entry._bytes;
+            let bytes = 0;
+            if (entry.tiles) {
+                for (const t of entry.tiles) bytes += t.rle ? t.rle.length : 8;
+            } else if (entry.snaps) {
+                for (const sv of entry.snaps) {
+                    if (sv.ref) continue;
+                    const c = sv.snap || sv.bitmap;
+                    if (c) bytes += (c.width || 0) * (c.height || 0) * 4;
+                    if (sv.mask && sv.mask.canvas) {
+                        bytes += sv.mask.canvas.width * sv.mask.canvas.height * 4;
+                    }
+                }
+            } else {
+                bytes = (entry.width || 0) * (entry.height || 0) * 4;
+            }
+            entry._bytes = bytes;
+            return bytes;
+        }
+
+        historyBytes(target) {
+            const h = (target || this.state).history;
+            if (!Array.isArray(h)) return 0;
+            let total = 0;
+            for (const e of h) total += this._entryBytes(e);
+            return total;
+        }
+
+        // Drop the oldest entries of `target` ({history, step}) until it is
+        // within both the count limit and the byte budget. Works on the live
+        // state or on a background tab's stored document. Returns how many
+        // entries were evicted.
+        _trimHistoryTarget(target, maxEntries, byteBudget) {
             if (!target || !Array.isArray(target.history)) return 0;
-            const overflow = target.history.length - maxEntries;
+            // Always keep some undo, however large the document: a byte
+            // budget that leaves you with one step is not an undo system.
+            const minSteps = this.HISTORY_MIN_STEPS || 8;
+            let overflow = Math.max(0, target.history.length - maxEntries);
+
+            if (byteBudget > 0) {
+                let bytes = 0;
+                for (let i = overflow; i < target.history.length; i++) {
+                    bytes += this._entryBytes(target.history[i]);
+                }
+                while (bytes > byteBudget &&
+                       target.history.length - overflow > minSteps) {
+                    bytes -= this._entryBytes(target.history[overflow]);
+                    overflow++;
+                }
+            }
             if (overflow <= 0) return 0;
+
             const evicted = target.history.splice(0, overflow);
             // Survivors first: eviction must not close pixels they still ref.
             this._releaseHistoryEntries(evicted, target.history);
@@ -3876,7 +3932,8 @@
         enforceHistoryLimit() {
             const overflow = this._trimHistoryTarget(
                 this.state,
-                this.historyBudgetFor(this.config.width, this.config.height)
+                this.historyBudgetFor(this.config.width, this.config.height),
+                this.historyByteBudget()
             );
             if (!overflow) return;
             if (typeof this.state.selectionCutStep === 'number') {
@@ -3889,7 +3946,11 @@
         // Trim a document that isn't currently on screen (a background tab).
         // Same ceiling as the live document, sized to *that* document's canvas.
         trimBackgroundHistory(docState, width, height) {
-            return this._trimHistoryTarget(docState, this.historyBudgetFor(width, height));
+            return this._trimHistoryTarget(
+                docState,
+                this.historyBudgetFor(width, height),
+                this.historyByteBudget()
+            );
         }
         initTauriFileOpenListener() {
             const tauri = window.__TAURI__;
@@ -19110,25 +19171,31 @@ void main() {
         shouldUseTiledHistory(w, h) {
             return (w * h) >= this.tileHistory.thresholdPixels;
         }
+        // The tile is the smallest thing history can store or share, so tile
+        // size IS undo granularity. This used to grow with the canvas — 1024 px
+        // above 16 MP — which meant touching one pixel on a big document
+        // recorded a megapixel of tile, exactly where fine granularity matters
+        // most. A fixed small tile costs a longer tile list and buys a ~64x
+        // cheaper brush dab; Krita runs 64 px tiles on far larger images.
         _chooseTileSize(w, h) {
-            const totalPixels = w * h;
-            if (totalPixels <= 1024 * 1024) return 128;
-            if (totalPixels <= 4 * 1024 * 1024) return 256;
-            if (totalPixels <= 16 * 1024 * 1024) return 512;
-            return 1024;
+            return 128;
         }
         _applyMemoryBudget() {
             const gb = navigator.deviceMemory || 8;
             // Adaptive undo depth by canvas size. Each tiled/flat history entry can be
             // up to a full-canvas snapshot for detailed art, so a fixed limit of 50 is
             // catastrophic on huge docs. Only auto-tune when adaptive mode is enabled.
+            // Memory is enforced by historyByteBudget() now, which measures what
+            // history actually holds. These numbers used to assume a step cost a
+            // whole canvas and dropped to 12 on a large document — which today
+            // would throw away hundreds of affordable undo steps. They stay only
+            // as a gentle count preference for people who want one.
             if (this._historyAdaptive) {
                 const px = (this.config.width || 0) * (this.config.height || 0);
-                let limit = 50;
-                if (px >= 64 * 1024 * 1024) limit = 12;
-                else if (px >= 16 * 1024 * 1024) limit = 20;
-                else if (px >= 2 * 1024 * 1024) limit = 30;
-                if (gb <= 4 && limit > 20) limit = 20;
+                let limit = 200;
+                if (px >= 64 * 1024 * 1024) limit = 100;
+                else if (px >= 16 * 1024 * 1024) limit = 150;
+                if (gb <= 4) limit = Math.min(limit, 75);
                 this.historyLimit = limit;
                 this._syncHistoryLimitInput();
             }
@@ -19186,6 +19253,7 @@ void main() {
             const height = canvas.height;
             const ctx = canvas.getContext('2d');
             const tiles = [];
+            let ownedBytes = 0;
             const maxTileBytes = tileSize * tileSize * 4;
             if (!this._tileCopyBuf || this._tileCopyBuf.length < maxTileBytes) {
                 this._tileCopyBuf = new Uint8ClampedArray(maxTileBytes);
@@ -19212,22 +19280,28 @@ void main() {
                     const solid = this.getSolidTileColor(tileData);
                     if (solid) {
                         tiles.push({ x, y, w, h, solid });
+                        ownedBytes += 8;                 // four channels plus the object
                     } else {
                         const rle = this._rleEncode(tileData);
                         if (prevMap) {
                             const prev = prevMap.get(x + ',' + y);
                             if (prev && prev.rle && this._rleEqual(prev.rle, rle)) {
+                                // Identical to the previous step: share the array
+                                // rather than keeping a second copy of it, and
+                                // charge the bytes to whoever owns them.
                                 tiles.push({ x, y, w, h, rle: prev.rle });
                             } else {
                                 tiles.push({ x, y, w, h, rle });
+                                ownedBytes += rle.length;
                             }
                         } else {
                             tiles.push({ x, y, w, h, rle });
+                            ownedBytes += rle.length;
                         }
                     }
                 }
             }
-            return { width, height, tileSize, tiles };
+            return { width, height, tileSize, tiles, ownedBytes };
         }
         applyTiledSnapshot(snapshot) {
             const ctx = this.ctx;
@@ -19298,20 +19372,41 @@ void main() {
         _releaseHistoryEntries(evicted, survivors) {
             if (!evicted || !evicted.length) return;
             const inUse = this._collectOwnedSnapsInUse(survivors);
+            // Masks are shared directly rather than through a ref chain, so a
+            // survivor can point at an evicted entry's mask object. Collect
+            // those separately or freeing one blanks a mask still in use.
+            const masksInUse = new Set();
+            for (const e of (survivors || [])) {
+                if (!e || !e.snaps) continue;
+                for (const sv of e.snaps) if (sv.mask) masksInUse.add(sv.mask);
+            }
+            const drop = (canvas) => {
+                // Zeroing frees the pixel buffer immediately; dropping the
+                // reference alone leaves it to the collector.
+                if (canvas) { try { canvas.width = 0; canvas.height = 0; } catch (_) {} }
+            };
             for (const entry of evicted) {
                 if (!entry) continue;
                 if (entry.bitmap) {
                     try { entry.bitmap.close(); } catch (_) {}
                     entry.bitmap = null;
                 }
+                drop(entry.canvas);
+                entry.canvas = null;
                 if (!entry.snaps) continue;
                 for (const sv of entry.snaps) {
+                    if (sv.mask && !masksInUse.has(sv.mask)) {
+                        drop(sv.mask.canvas);
+                        sv.mask = null;
+                    }
                     if (sv.ref) continue;        // this entry is not the owner
                     if (inUse.has(sv)) continue; // a survivor still resolves here
                     if (sv.bitmap) {
                         try { sv.bitmap.close(); } catch (_) {}
                         sv.bitmap = null;
                     }
+                    drop(sv.snap);
+                    sv.snap = null;
                 }
             }
         }
@@ -19405,7 +19500,10 @@ void main() {
                 const prevEntry = this.state.history[this.state.step];
                 const prevTiles = prevEntry && prevEntry.tiles && prevEntry.width === this.ui.cMain.width && prevEntry.height === this.ui.cMain.height ? prevEntry.tiles : null;
                 const tiles = this.captureTiledSnapshot(this.ui.cMain, prevTiles);
-                this.state.history.push({ tiles: tiles.tiles, width: tiles.width, height: tiles.height });
+                this.state.history.push({
+                    tiles: tiles.tiles, width: tiles.width, height: tiles.height,
+                    _bytes: tiles.ownedBytes
+                });
                 this.state.step++;
                 this.enforceHistoryLimit();
                 this.state.isDirty = true;
@@ -24761,7 +24859,13 @@ self.onmessage = function(e) {
                     // Editing a mask redirects every tool onto the mask canvas,
                     // so painting reveals and erasing hides, without ever
                     // touching the artwork underneath.
-                    if (_isMaskEditing(l)) return l.mask.ctx;
+                    if (_isMaskEditing(l)) {
+                        // Note it separately from the layer's own pixels, so a
+                        // stroke on the artwork does not force history to clone
+                        // a mask that has not changed.
+                        l._maskDirty = true;
+                        return l.mask.ctx;
+                    }
                     return (l && l.ctx) || _holder.ctx;
                 },
                 set(v) { _holder.ctx = v; },
@@ -25550,6 +25654,7 @@ self.onmessage = function(e) {
             // Start fully revealed — the mask should change nothing until painted.
             l.mask = _makeMask(app.config.width, app.config.height, !(opts && opts.hidden));
             l._dirty = true;
+            l._maskDirty = true;
         }
         function _removeMask(l, apply) {
             if (!l || !l.mask) return;
@@ -25562,6 +25667,7 @@ self.onmessage = function(e) {
             }
             l.mask = null;
             l._dirty = true;
+            l._maskDirty = true;
         }
         /* While a mask is being edited, drawing tools paint the MASK rather than
          * the layer's pixels — paint to reveal, erase to hide. Only one mask can
@@ -26445,37 +26551,53 @@ self.onmessage = function(e) {
             const prevSnaps = (prevEntry && prevEntry._lsys) ? prevEntry.snaps : null;
 
             // Snapshot only dirty layers; reference the previous snap for clean ones.
+            let ownedBytes = 0;
             const snaps = mgr.layers.map((l, i) => {
-                if (!l._dirty && prevSnaps && prevSnaps[i] && prevSnaps[i].id === l.id) {
+                const prev = (prevSnaps && prevSnaps[i] && prevSnaps[i].id === l.id)
+                    ? prevSnaps[i] : null;
+                // A mask is only re-copied when the mask itself was painted on.
+                // Drawing on the artwork used to clone the mask as well, which
+                // doubled the cost of every stroke on a masked layer.
+                let mask;
+                if (prev && prev.mask && !l._maskDirty) {
+                    mask = prev.mask;
+                } else {
+                    mask = _snapshotMask(l);
+                    if (mask && mask.canvas) {
+                        ownedBytes += mask.canvas.width * mask.canvas.height * 4;
+                    }
+                }
+
+                if (!l._dirty && prev) {
                     // Layer unchanged — share the previous entry's snap by reference.
                     return { id: l.id, name: l.name, visible: l.visible, opacity: l.opacity,
                              blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock, locked: l.locked,
                              parentId: l.parentId, isGroup: !!l.isGroup, clipped: !!l.clipped,
-                             // Layer is unchanged, so its mask is too — share the
-                             // previous snapshot rather than cloning the canvas again.
-                             mask: prevSnaps[i].mask || _snapshotMask(l),
-                             isBase: l.isBase, snap: null, bitmap: null, ref: prevSnaps[i] };
+                             mask,
+                             isBase: l.isBase, snap: null, bitmap: null, ref: prev };
                 }
                 // Dirty — clone the canvas now (always safe / synchronous fallback).
                 const snap = document.createElement('canvas');
                 snap.width  = l.canvas.width;
                 snap.height = l.canvas.height;
                 snap.getContext('2d').drawImage(l.canvas, 0, 0);
+                ownedBytes += snap.width * snap.height * 4;
                 return { id: l.id, name: l.name, visible: l.visible, opacity: l.opacity,
                          blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock, locked: l.locked,
                          parentId: l.parentId, isGroup: !!l.isGroup, clipped: !!l.clipped,
-                         mask: _snapshotMask(l),
+                         mask,
                          isBase: l.isBase, snap, bitmap: null, ref: null };
             });
 
             // Clear dirty flags now that we've snapshotted.
-            for (const l of mgr.layers) l._dirty = false;
+            for (const l of mgr.layers) { l._dirty = false; l._maskDirty = false; }
 
             const entry = {
                 _lsys: true, snaps,
                 // activeIdx intentionally omitted - layer selection is navigation, not a document edit
                 width:  this.config.width,
-                height: this.config.height
+                height: this.config.height,
+                _bytes: ownedBytes
             };
             this.state.history.push(entry);
             this.state.step++;
@@ -26501,7 +26623,13 @@ self.onmessage = function(e) {
                         for (const r of results) {
                             if (!r) continue;
                             snaps[r.i].bitmap = r.bmp;
-                            snaps[r.i].snap   = null;
+                            // Zero the canvas before dropping it: that releases
+                            // the pixel buffer now rather than at the next
+                            // collection, which is the difference between a
+                            // steady footprint and a sawtooth one.
+                            const old = snaps[r.i].snap;
+                            if (old) { old.width = 0; old.height = 0; }
+                            snaps[r.i].snap = null;
                         }
                     });
                 }
