@@ -1102,12 +1102,13 @@
         #btn-grid-modes .btn-small { width: 48px; height: 20px; line-height: 20px; padding: 0; display: flex; align-items: center; justify-content: center; }
 
         /* ══════════════════════════════════════════════════════════
-           FREEHAND BRUSH + PAINT BRUSH SIDEBARS — Fluent-style flyout
+           LEFT FLYOUT SIDEBARS — Fluent-style, shared chrome
+           Freehand brush · Paint brush · Gradient · Project browser
            ══════════════════════════════════════════════════════════ */
 
         /* Shared panel: acrylic-tinted background, flat square edge,
            Windows 10-style flyout — no rounding, no drop shadow. */
-        #freehand-sidebar, #paintbrush-sidebar, #gradient-sidebar {
+        #freehand-sidebar, #paintbrush-sidebar, #gradient-sidebar, #project-panel {
             position: fixed; top: 145px; bottom: 24px; left: -296px;
             width: 280px; z-index: 9988;
             background: #f5f6f7;
@@ -1117,10 +1118,10 @@
             transition: left .24s cubic-bezier(.16,1,.3,1);
             pointer-events: auto;
         }
-        #freehand-sidebar *, #paintbrush-sidebar *, #gradient-sidebar * { pointer-events: auto; }
+        #freehand-sidebar *, #paintbrush-sidebar *, #gradient-sidebar *, #project-panel * { pointer-events: auto; }
         #freehand-sidebar.open, #paintbrush-sidebar.open, #gradient-sidebar.open { left: 0; }
 
-        #freehand-sidebar-header, #paintbrush-sidebar-header, #gradient-sidebar-header {
+        #freehand-sidebar-header, #paintbrush-sidebar-header, #gradient-sidebar-header, #project-header {
             display: flex; align-items: center; justify-content: space-between;
             padding: 6px 6px 6px 10px;
             font-size: 12px; font-weight: 600;
@@ -1128,8 +1129,8 @@
             border-bottom: 1px solid color-mix(in srgb, var(--section-divider, #e0e0e0) 80%, transparent);
             flex-shrink: 0;
         }
-        #freehand-sidebar-header > span, #paintbrush-sidebar-header > span, #gradient-sidebar-header > span { flex: 1; }
-        #freehand-collapse-btn, #paintbrush-collapse-btn, #gradient-collapse-btn {
+        #freehand-sidebar-header > span, #paintbrush-sidebar-header > span, #gradient-sidebar-header > span, #project-header > span { flex: 1; }
+        #freehand-collapse-btn, #paintbrush-collapse-btn, #gradient-collapse-btn, #project-collapse {
             background: none; border: none; cursor: pointer; font-size: 11px;
             color: var(--section-title-color); padding: 0; line-height: 1;
             width: 24px; height: 24px; border-radius: 2px;
@@ -1137,13 +1138,14 @@
             margin-left: auto;
             transition: transform .15s cubic-bezier(.16,1,.3,1), background .12s ease;
         }
-        #freehand-collapse-btn:hover, #paintbrush-collapse-btn:hover, #gradient-collapse-btn:hover {
+        #freehand-collapse-btn:hover, #paintbrush-collapse-btn:hover, #gradient-collapse-btn:hover, #project-collapse:hover {
             background: color-mix(in srgb, var(--app-text-color, #111) 8%, transparent);
         }
-        #freehand-collapse-btn:active, #paintbrush-collapse-btn:active, #gradient-collapse-btn:active {
+        #freehand-collapse-btn:active, #paintbrush-collapse-btn:active, #gradient-collapse-btn:active, #project-collapse:active {
             background: color-mix(in srgb, var(--app-text-color, #111) 14%, transparent);
         }
         #freehand-collapse-btn.collapsed, #paintbrush-collapse-btn.collapsed, #gradient-collapse-btn.collapsed { transform: rotate(-90deg); }
+        #freehand-collapse-btn svg, #paintbrush-collapse-btn svg, #gradient-collapse-btn svg, #project-collapse svg { width: 11px; height: 11px; flex: none; }
 
         #freehand-sidebar-body, #paintbrush-sidebar-body, #gradient-sidebar-body {
             flex: 1; overflow-y: auto; padding: 10px 12px 6px;
@@ -1196,7 +1198,7 @@
         .fh-hidden { visibility: hidden; pointer-events: none; }
         #fh-capStart-row, #fh-easingStart-row, #fh-capEnd-row, #fh-easingEnd-row { min-height: 22px; }
 
-        #freehand-reopen-btn, #pb-reopen-btn, #gradient-reopen-btn {
+        #freehand-reopen-btn, #pb-reopen-btn, #gradient-reopen-btn, #project-expand {
             position: fixed; left: 0; top: 145px;
             z-index: 10000; width: 24px; height: 24px; padding: 0;
             background: #f5f6f7;
@@ -1206,8 +1208,16 @@
             font-size: 10px; color: var(--section-title-color);
             transition: color .12s ease;
         }
-        #freehand-reopen-btn:hover, #pb-reopen-btn:hover, #gradient-reopen-btn:hover { color: var(--win-blue); }
+        #freehand-reopen-btn:hover, #pb-reopen-btn:hover, #gradient-reopen-btn:hover, #project-expand:hover { color: var(--win-blue); }
         #freehand-reopen-btn.show, #pb-reopen-btn.show, #gradient-reopen-btn.show { display: flex; }
+        /* An edge tab and an open flyout both want the left edge — one panel can
+           be open while a different one is collapsed. Tuck the tab against the
+           open panel's outer edge (280px + its 1px border) instead of letting it
+           sit on top of that panel's title. */
+        body.left-flyout-open #freehand-reopen-btn,
+        body.left-flyout-open #pb-reopen-btn,
+        body.left-flyout-open #gradient-reopen-btn,
+        body.left-flyout-open #project-expand { left: 281px; }
 
         .sb-close-x {
             width: 24px; height: 24px; border: none; background: transparent;
@@ -5175,7 +5185,10 @@
         #freehand-collapse-btn svg path,
         #paintbrush-collapse-btn svg path,
         #pb-reopen-btn svg path,
+        #gradient-collapse-btn svg path,
+        #gradient-reopen-btn svg path,
         #project-collapse svg path,
+        #project-expand svg path,
         #pb-more-toggle .pb-arrow path { fill: #000000; }
 
         /* Export Studio Styles */
@@ -5860,23 +5873,15 @@ body.violet-haze-mode #swap-colors-btn:hover{background:var(--vh-s5) !important;
 .toast--warning{background:#fef9e7;color:#7d6608;border:1px solid #f9e79f;}
 @keyframes toast-in{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
 
-/* pokeemerald project asset browser */
-#project-panel{position:fixed;left:-336px;top:145px;bottom:24px;width:320px;z-index:9988;display:flex;flex-direction:column;background:#f5f6f7;color:var(--app-text-color);border-right:1px solid var(--border-ribbon,#dadbdc);border-radius:0;font-size:12px;overflow:hidden;transition:left .24s cubic-bezier(.16,1,.3,1);}
+/* pokeemerald project asset browser.
+   Panel shell, header, collapse button and edge tab all come from the shared
+   left-flyout rules up top (see "LEFT FLYOUT SIDEBARS") so this panel matches
+   the freehand/paintbrush/gradient sidebars. Only its own bits live here. */
+#project-panel{color:var(--app-text-color);font-size:12px;overflow:hidden;}
 #project-panel:not(.project-collapsed){left:0;}
 #project-panel.project-closed{display:none;}
-#project-expand{position:fixed;left:0;top:145px;z-index:60;display:none;width:24px;height:24px;border:1px solid var(--border-ribbon,#dadbdc);border-left:none;background:#f5f6f7;color:var(--section-title-color);cursor:pointer;border-radius:0 4px 4px 0;padding:0;transition:background .1s,color .1s;align-items:center;justify-content:center;}
-#project-expand:hover{background:var(--win-blue);color:#fff;}
 body.project-panel-collapsed #project-expand{display:flex;}
-#project-header{display:flex;align-items:center;justify-content:space-between;padding:6px 6px 6px 10px;font-weight:600;color:var(--app-text-color);border-bottom:1px solid color-mix(in srgb,var(--section-divider,#e0e0e0) 80%, transparent);flex-shrink:0;}
-#project-title{font-weight:600;letter-spacing:0.4px;font-size:12.5px;}
 #project-actions{display:flex;gap:2px;align-items:center;}
-#project-actions button{width:24px;height:24px;border:none;background:transparent;cursor:pointer;font-size:13px;line-height:1;border-radius:2px;display:flex;align-items:center;justify-content:center;margin-left:2px;transition:background .12s ease,color .12s ease;}
-#project-collapse svg{width:11px;height:11px;flex:none;}
-#project-collapse{width:24px;height:24px;margin-left:0;color:var(--section-title-color);}
-#project-collapse:hover{background:color-mix(in srgb,var(--app-text-color,#111) 8%, transparent);color:var(--app-text-color);}
-#project-close{color:#e81123;}
-#project-close:hover{background:#e81123;color:#fff;}
-#project-close:active{background:#c20b1c;color:#fff;}
 .proj-actionbar{display:flex;gap:4px;padding:4px 6px;border-bottom:1px solid color-mix(in srgb,var(--section-divider,#e0e0e0) 80%, transparent);flex-shrink:0;}
 .proj-actionbar button{font-size:10px;padding:2px 6px;border:1px solid var(--btn-small-border);background:var(--btn-small-bg);color:var(--app-text-color);border-radius:3px;cursor:pointer;line-height:1.4;transition:background .12s ease,border-color .12s ease;}
 .proj-actionbar button:hover:not(:disabled){background:var(--btn-hover-bg);border-color:var(--btn-hover-border);}
