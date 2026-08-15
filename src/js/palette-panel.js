@@ -189,12 +189,26 @@
                 sw.style.backgroundColor = hex;
                 sw.dataset.fixedPaletteColor = hex;
                 sw.draggable = true;
-                sw.title = hex + '  (drag to move, double-click to edit)';
+                sw.dataset.slot = String(i);
+                var isActivePalette = app && app.state && palette.id === app.state.activePaletteId;
+                sw.title = 'Slot ' + i + ' — ' + hex +
+                    (isActivePalette ? '  (click to paint with, drag to move, double-click to edit)'
+                                     : '  (drag to move, double-click to edit)');
+                if (isActivePalette && app.paletteSlotFor && app.paletteSlotFor(app.config.activeSlot) === i) {
+                    sw.dataset.activeSlot = 'true';
+                }
                 sw.addEventListener('dragstart', makeDragStart(palette.id, i));
                 sw.addEventListener('dragover', function (e) { e.preventDefault(); });
                 sw.addEventListener('drop', makeDrop(palette.id, i));
                 (function (idx) {
                     sw.addEventListener('dblclick', function () { editColor(palette.id, idx); });
+                    // Clicking a swatch of the palette that's driving the canvas
+                    // picks that SLOT to paint with — which matters where two slots
+                    // share a colour but differ in the shiny palette.
+                    if (!isActivePalette) return;
+                    sw.addEventListener('click', function () {
+                        if (app.pickPaletteSlot) app.pickPaletteSlot(idx, app.config.activeSlot);
+                    });
                 })(i);
                 swatchWrap.appendChild(sw);
             } else {

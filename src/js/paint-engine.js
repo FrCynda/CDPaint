@@ -910,6 +910,8 @@
                 width: 800, height: 600, zoom: 1.0,
                 tool: 'pencil',
                 c1: '#000000', c2: '#ffffff', activeSlot: 1,
+                // Which palette slot each colour holds, or -1 for a free colour.
+                paletteSlot: { 1: -1, 2: -1 },
                 lineWidth: 1.0, eraserWidth: 10.0, shapeWidth: 1.0,
                 transparentSelection: true,
                 dragRotate: false,
@@ -1910,6 +1912,60 @@
             } else {
                 this.ui.statusSelColors.style.display = 'none';
             }
+            this.updateProjectConformance(total);
+        }
+        /* What still stands between this canvas and the ROM, as one line.
+           It is always on screen for a project asset and never in the way, so the
+           limits are something you glance at rather than something you discover
+           when the build fails. */
+        projectConformance(colorCount) {
+            if (!this.state.projectImage || !this.state.projectFile) return null;
+            const profile = this.inferProfile(this.state.projectFile);
+            const w = this.config.width, h = this.config.height;
+            const parts = [];
+            let ok = true;
+
+            const sizes = profile.allowedResolutions;
+            const sizeOk = !sizes || sizes.some(r => r[0] === w && r[1] === h);
+            if (!sizeOk) ok = false;
+            parts.push({ text: `${w}×${h}`, ok: sizeOk });
+
+            const max = this.maxColorsForProfile(profile);
+            const used = Number.isFinite(colorCount) ? colorCount : this._lastKnownColorCount;
+            if (Number.isFinite(used)) {
+                const colorsOk = used <= max;
+                if (!colorsOk) ok = false;
+                parts.push({ text: `${used}/${max} colours`, ok: colorsOk });
+            }
+
+            if (profile.tileAligned || w % 8 === 0) {
+                const tileOk = w % 8 === 0 && h % 8 === 0;
+                if (profile.tileAligned && !tileOk) ok = false;
+                parts.push({ text: tileOk ? 'tiles ✓' : 'not 8×8', ok: tileOk });
+            }
+
+            const slot = this.paletteSlotFor(this.config.activeSlot);
+            if (slot >= 0) parts.push({ text: `slot ${slot}`, ok: true });
+
+            return { label: profile.label, parts, ok };
+        }
+        updateProjectConformance(colorCount) {
+            const el = this.ui.statusConformance || document.getElementById('status-conformance');
+            if (!el) return;
+            this.ui.statusConformance = el;
+            const info = this.projectConformance(colorCount);
+            if (!info) { el.style.display = 'none'; el.textContent = ''; return; }
+            el.style.display = 'block';
+            el.textContent = '';
+            el.title = info.label;
+            info.parts.forEach((p, i) => {
+                if (i) el.appendChild(document.createTextNode(' · '));
+                const span = document.createElement('span');
+                span.textContent = p.text;
+                if (!p.ok) span.className = 'conformance-bad';
+                el.appendChild(span);
+            });
+            el.classList.toggle('conformance-ok', info.ok);
         }
 
         initializeBlankDocument() {
@@ -18659,19 +18715,44 @@ void main() {
             if (!this.ui.cqPalette) return;
             this.ui.cqPalette.innerHTML = '';
             const pal = this.palette || [];
-            pal.forEach(c => {
+            pal.forEach((c, index) => {
                 const d = document.createElement('div');
                 d.className = 'mini-swatch';
                 const hex = this.rgbToHex(c.r, c.g, c.b);
                 d.style.backgroundColor = hex;
                 d.dataset.fixedPaletteColor = hex;
+                d.dataset.slot = String(index);
+                d.title = 'Slot ' + index + ' — ' + hex;
+                if (this.paletteSlotFor(this.config.activeSlot) === index) d.dataset.activeSlot = 'true';
                 d.onclick = () => {
-                    this.setColor(this.rgbToHex(c.r, c.g, c.b), this.config.activeSlot);
+                    // Remember which slot this was, not just what colour it is. Two
+                    // slots can hold the same colour and mean different things —
+                    // that is the whole reason a shiny palette works.
+                    this.pickPaletteSlot(index, this.config.activeSlot);
                     this.closeModals();
                 };
                 this.ui.cqPalette.appendChild(d);
             });
             this.enforceFixedPaletteSwatchStyles();
+        }
+        paletteSlotFor(colorSlot) {
+            const map = this.config.paletteSlot;
+            if (!map) return -1;
+            const idx = map[colorSlot === 2 ? 2 : 1];
+            return Number.isInteger(idx) ? idx : -1;
+        }
+        /* Choose a palette slot as the drawing colour. The colour follows from the
+           slot, never the other way around. */
+        pickPaletteSlot(index, colorSlot) {
+            const pal = this.palette || [];
+            const c = pal[index];
+            if (!c) return;
+            this.setColor(this.rgbToHex(c.r, c.g, c.b), colorSlot);
+            if (!this.config.paletteSlot) this.config.paletteSlot = { 1: -1, 2: -1 };
+            this.config.paletteSlot[colorSlot === 2 ? 2 : 1] = index;
+            this.renderQuantPalette();
+            this.updateProjectConformance();
+            if (window.PalettePanel && window.PalettePanel.render) window.PalettePanel.render();
         }
         applyQuantColor() {
             const cfg = this.getDepthConfig();
@@ -18691,6 +18772,10 @@ void main() {
             this.closeModals();
         }
         setColor(c, s) {
+            // A colour arriving from anywhere but the palette strip (picker,
+            // eyedropper, swap) is just a colour — it no longer names a slot.
+            // pickPaletteSlot() re-establishes the link straight after this call.
+            if (this.config.paletteSlot) this.config.paletteSlot[s === 2 ? 2 : 1] = -1;
             if(s===1) {
                 this.config.c1=c;
                 const c1 = document.getElementById('c1-disp');
@@ -21925,7 +22010,9 @@ void main() {
             this.state.hasDocument = true;
             this.state.filePath = sourcePath || '';
             this.state.fileName = fallbackName || this.getFilenameFromPath(sourcePath || '');
+            this.config.paletteSlot = { 1: -1, 2: -1 };
             this.renderQuantPalette();
+            this.updateProjectConformance();
             if (this.onPalettesChanged) this.onPalettesChanged();
             this.saveState();
             this.markSaved(this.state.fileName);
@@ -21981,7 +22068,16 @@ void main() {
             const exact = new Map();
             for (let i = 0; i < palette.length; i++) {
                 const key = (palette[i].r << 16) | (palette[i].g << 8) | palette[i].b;
-                if (!exact.has(key)) exact.set(key, i); // first slot wins; ties are resolved by the baseline
+                if (!exact.has(key)) exact.set(key, i); // first slot wins unless a picked slot says otherwise
+            }
+            /* Where the artist picked a slot off the palette strip, painted pixels
+               resolve to that slot rather than to the first one sharing its colour.
+               Without this, painting with Magikarp's slot 14 would land on slot 11
+               and only show up as wrong in the shiny palette. */
+            for (const colorSlot of [1, 2]) {
+                const picked = this.paletteSlotFor(colorSlot);
+                const c = picked >= 0 ? palette[picked] : null;
+                if (c) exact.set((c.r << 16) | (c.g << 8) | c.b, picked);
             }
 
             const indices = new Uint8Array(w * h);

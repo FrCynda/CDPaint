@@ -298,6 +298,56 @@ await withPage(async (page) => {
             JSON.stringify(res.slot11Pixel) === '[246,189,82,255]', JSON.stringify(res.slot11Pixel));
     }
 
+    /* Painting with a picked slot must write THAT slot, even when another slot
+       holds the same colour. Slots 11 and 14 of the Magikarp palette are the case. */
+    console.log('\npainting resolves to the picked slot');
+    {
+        const fx = FIXTURES[0];
+        const truth = readPng(fx.png);
+        const res = await page.eval(`(async () => {
+            const bin = atob("${fx.png.toString('base64')}");
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            await PaintApp.applyProjectImageBytes(bytes, 'front.png', '', []);
+            const w = PaintApp.config.width, h = PaintApp.config.height;
+            // Pick slot 14 (222,24,0 — the same red as slot 11) and paint one pixel.
+            PaintApp.pickPaletteSlot(14, 1);
+            const before = PaintApp.paletteSlotFor(1);
+            const img = PaintApp.ctx.getImageData(0, 0, w, h);
+            const target = 40 * w + 40;
+            img.data[target * 4] = 222; img.data[target * 4 + 1] = 24;
+            img.data[target * 4 + 2] = 0; img.data[target * 4 + 3] = 255;
+            PaintApp.ctx.putImageData(img, 0, 0);
+            const out = PaintApp.buildProjectIndices(
+                PaintApp.ctx.getImageData(0, 0, w, h).data, w, h);
+            const conformance = PaintApp.projectConformance(3);
+            // Setting the colour any other way drops the slot link, and the same
+            // pixel falls back to the first slot holding that colour.
+            PaintApp.setColor('#de1800', 1);
+            const fallback = PaintApp.buildProjectIndices(
+                PaintApp.ctx.getImageData(0, 0, w, h).data, w, h);
+            return {
+                pickedSlot: before, clearedSlot: PaintApp.paletteSlotFor(1),
+                painted: out[target], fallbackPainted: fallback[target],
+                indices: Array.from(out), target, conformance
+            };
+        })()`);
+        check('picking a slot records it', res.pickedSlot === 14, `got ${res.pickedSlot}`);
+        check('painted pixel takes the picked slot', res.painted === 14, `got ${res.painted}`);
+        check('setting a colour any other way drops the slot link',
+            res.clearedSlot === -1, `got ${res.clearedSlot}`);
+        check('without a picked slot it falls back to the first match',
+            res.fallbackPainted === 11, `got ${res.fallbackPainted}`);
+        const collateral = res.indices.reduce(
+            (n, v, i) => n + (i !== res.target && v !== truth.indices[i] ? 1 : 0), 0);
+        check('no other pixel is touched', collateral === 0, `${collateral} changed`);
+        check('conformance reports the asset as insertable',
+            res.conformance && res.conformance.ok === true, JSON.stringify(res.conformance));
+        check('conformance names the slot being painted with',
+            !!(res.conformance && res.conformance.parts.some(p => p.text === 'slot 14')),
+            JSON.stringify(res.conformance && res.conformance.parts));
+    }
+
     /* The palette write path: decomp .pal files are 0-255 multiples of 8. */
     console.log('\npalette serialisation');
     const pal = await page.eval(`(() => {
