@@ -132,10 +132,17 @@ Full suite: 23 suites · 14,203 assertions · 0 failed.
 
 *The two things people currently leave CDPaint for.*
 
-- **1.1** Index-native editing. The palette panel becomes the colour picker: you select slot 7,
-  not `#83EEC5`. Brushes write indices. A seventeenth colour has nowhere to go.
+- **1.1 ◐ PARTLY DONE (15 Aug 2026)** — the palette strip now picks a *slot*, not a colour.
+  Clicking a swatch in the palette panel (or the quantise dialog) records the slot; painted
+  pixels resolve to it, so painting with Magikarp's slot 14 writes 14 rather than 11. Setting
+  the colour any other way drops the link and the first-match fallback applies. The slot in hand
+  is ringed in the palette that's driving the canvas.
+  *Still to do:* brushes writing indices directly rather than the save reconciling at the end,
+  which also removes the need for the baseline diff and makes the 16-colour ceiling structural
+  rather than advisory.
 - **1.2** Palette editing that repaints live — change slot 9, the canvas updates, nothing
-  re-quantises.
+  re-quantises. (`remapProjectCanvasToPalette` from 0.8 is the mechanism; it needs wiring to
+  single-slot edits.)
 - **1.3** Frames as first-class: frame tabs, onion skin, playback at the game's real speed, for
   anim (2), icon (2) and overworld (9-frame, 144×32) sheets.
 - **1.4** Frame-aware canvas — draw on frame 1 with frame 2 ghosted; all frames share one palette
@@ -148,8 +155,11 @@ Full suite: 23 suites · 14,203 assertions · 0 failed.
 
 *Freedom while drawing, impossible to ship broken.*
 
-- **2.1** Persistent readout for the open asset: size, colours used vs allowed, slot 0 clear,
-  8×8 tile alignment, palette match. Green means insertable.
+- **2.1 ◐ PARTLY DONE (15 Aug 2026)** — a conformance readout lives in the status bar for project
+  assets: size, colours against the budget the file's real bit depth allows, 8×8 tile alignment,
+  and the slot in hand. Green means insertable.
+  *Still to do:* a "slot 0 clear" check, and surfacing it somewhere larger than the status bar
+  when it goes red.
 - **2.2** **Fit to target** — one action that closes the gap (resize, quantise, clear slot 0),
   with a before/after diff.
 - **2.3** Sketch mode: full RGB and layers while exploring, with the strip showing the distance
