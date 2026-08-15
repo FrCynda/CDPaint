@@ -24314,29 +24314,20 @@ self.onmessage = function(e) {
             if (!Number.isFinite(count) || count < 0) {
                 throw new Error('Invalid JASC-PAL file');
             }
-            let maxVal = 0;
-            for (let i = 3; i < 3 + count; i++) {
-                if (!lines[i]) continue;
-                const parts = lines[i].trim().split(/\s+/);
-                if (parts.length < 3) continue;
-                for (let k = 0; k < 3; k++) {
-                    const v = Number(parts[k]);
-                    if (Number.isFinite(v)) maxVal = Math.max(maxVal, v);
-                }
-            }
-            const isGba = maxVal > 0 && maxVal <= 31;
-            const scale = isGba ? (255 / 31) : 1;
+            /* Decomp palettes are always 0-255. Guessing the scale from the largest
+               channel used to inflate any legitimately dark palette by 8x — a shadow
+               ramp of 0-31 values is a real palette, not a differently-scaled one. */
             const pal = [];
             for (let i = 3; i < 3 + count; i++) {
                 if (!lines[i]) continue;
                 const parts = lines[i].trim().split(/\s+/);
                 if (parts.length < 3) continue;
                 const r = Number(parts[0]), g = Number(parts[1]), b = Number(parts[2]);
-                if (![r, g, b].every(v => Number.isFinite(v) && v >= 0 && v <= (isGba ? 31 : 255))) continue;
-                pal.push({ r: Math.round(r * scale), g: Math.round(g * scale), b: Math.round(b * scale), a: i === 3 ? 0 : 255 });
+                if (![r, g, b].every(v => Number.isFinite(v) && v >= 0 && v <= 255)) continue;
+                pal.push({ r, g, b, a: i === 3 ? 0 : 255 });
             }
             if (!pal.length) throw new Error('Palette file had no valid colors');
-            return { colors: pal, isGba };
+            return { colors: pal, isGba: false };
         }
         applyGbaPaletteText(text) {
             let parsed;
@@ -25019,6 +25010,7 @@ self.onmessage = function(e) {
             this.basePalette = e.colors;
             this.palette = e.colors;
             this.state.activePaletteId = paletteId;
+            this.paletteLab = null;
             this.renderQuantPalette();
             this.saveState();
             if (this.onPalettesChanged) this.onPalettesChanged();
