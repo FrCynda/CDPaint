@@ -1135,6 +1135,10 @@
             this._wandSelectedCutoff = -1;
             this._wandMaskBuf = null;
             this._wandEntered = null;
+            // Preview worker back-pressure: the jobId currently being computed
+            // (null when idle) and the newest request waiting for it to finish.
+            this._wandWorkerInFlight = null;
+            this._wandWorkerPending = null;
             this.saveReminderMinutes = 60;
             this.saveReminderEnabled = true;
             this.saveReminderTimer = null;
@@ -1294,6 +1298,9 @@
             this._historyAdaptive = false;
             this._tileCopyBuf = null;
             this.bounds = { left: 0, top: 0 };
+            // Set once the startup layout has settled — until then nothing about
+            // the canvas position is allowed to animate.
+            this._startupSettled = false;
             this.zoomLevels = [6.25, 12.5, 25, 50];
             for(let i=100; i<=1000; i+=100) this.zoomLevels.push(i);
             for(let i=1200; i<=3000; i+=200) this.zoomLevels.push(i);
@@ -1667,11 +1674,30 @@
                     return stride;
                 }
 
-                function maskToSvgPath(mask, w, h, bufs) {
+                function maskToSvgPath(mask, w, h, bufs, clip) {
                     const edges = [];
-                    for (let y = 0; y < h; y++) {
+                    // Only trace what the viewport can actually show. The ants
+                    // overlay is clipped to this same rectangle, so every edge
+                    // outside it is built, strung into the path, handed to the
+                    // DOM and then thrown away by the clip — on a canvas much
+                    // larger than the window that is the bulk of the work.
+                    let y0 = 0, y1 = h, x0 = 0, x1 = w;
+                    if (clip) {
+                        if (!clip.visible) return '';
+                        x0 = clip.x < 0 ? 0 : (clip.x > w ? w : clip.x | 0);
+                        y0 = clip.y < 0 ? 0 : (clip.y > h ? h : clip.y | 0);
+                        const cx1 = clip.x + clip.w, cy1 = clip.y + clip.h;
+                        x1 = cx1 < 0 ? 0 : (cx1 > w ? w : Math.ceil(cx1));
+                        y1 = cy1 < 0 ? 0 : (cy1 > h ? h : Math.ceil(cy1));
+                        if (x1 <= x0 || y1 <= y0) return '';
+                    }
+                    // Neighbour lookups below still read the full mask, so an
+                    // edge on the crop border is emitted exactly as it would be
+                    // without cropping; contours simply end there instead of
+                    // closing, which the tracer already handles.
+                    for (let y = y0; y < y1; y++) {
                         const row = y * w, rowP = (y - 1) * w, rowN = (y + 1) * w;
-                        for (let x = 0; x < w; x++) {
+                        for (let x = x0; x < x1; x++) {
                             if (!mask[row + x]) continue;
                             const x1 = x + 1, y1 = y + 1;
                             if (y === 0 || !mask[rowP + x]) { edges.push(x, y, x1, y); }
@@ -1786,6 +1812,29 @@
                     return parts.join('');
                 }
 
+                /* Only the newest tolerance is ever drawn, so only the newest
+                 * one is worth computing. Messages that pile up while a job is
+                 * running are collapsed: each one just overwrites the pending
+                 * request, and the actual work is deferred to a timer task,
+                 * which runs after every message already sitting in the queue.
+                 * Without this the worker works through the whole backlog of a
+                 * drag one tolerance at a time and finishes long after the user
+                 * has let go — which is what made it look frozen, and left the
+                 * next wand click queued behind the last one's leftovers. */
+                let gPending = null, gScheduled = false;
+
+                function runPending() {
+                    gScheduled = false;
+                    const msg = gPending;
+                    gPending = null;
+                    if (!msg || !gKeyArr) return;
+                    const mask = gMaskBuf;
+                    const result = applyToleranceIncremental(gKeyArr, gSortedIdx, gPrevCutoff, msg.tolerance, mask, gW);
+                    gPrevCutoff = result.cutoff;
+                    const pathStr = maskToSvgPath(mask, gW, gH, gBufs, msg.clip);
+                    self.postMessage({ jobId: msg.jobId, pathStr: pathStr });
+                }
+
                 self.onmessage = function (e) {
                     const msg = e.data || {};
                     if (msg.type === 'init') {
@@ -1794,15 +1843,13 @@
                         gW = msg.w; gH = msg.h;
                         gMaskBuf = new Uint8Array(gW * gH);
                         gPrevCutoff = 0;
+                        gPending = null;
                         return;
                     }
                     if (msg.type === 'update') {
                         if (!gKeyArr) return;
-                        const mask = gMaskBuf;
-                        const result = applyToleranceIncremental(gKeyArr, gSortedIdx, gPrevCutoff, msg.tolerance, mask, gW);
-                        gPrevCutoff = result.cutoff;
-                        const pathStr = maskToSvgPath(mask, gW, gH, gBufs);
-                        self.postMessage({ jobId: msg.jobId, pathStr: pathStr });
+                        gPending = msg;
+                        if (!gScheduled) { gScheduled = true; setTimeout(runPending, 0); }
                     }
                 };
             `;
@@ -1820,9 +1867,25 @@
                 worker.onmessage = (event) => {
                     const payload = event && event.data ? event.data : null;
                     if (!payload) return;
-                    // Stale job (superseded by a newer tolerance/drag) — drop it.
-                    if (this.state.wandJobId !== payload.jobId) return;
+                    // Anything that isn't the job we are waiting for belongs to
+                    // an abandoned drag — the slot was cleared when that session
+                    // ended, so its result is not ours to draw.
+                    if (this._wandWorkerInFlight !== payload.jobId) return;
+                    this._wandWorkerInFlight = null;
+                    // Restart the worker on the newest tolerance first, so it
+                    // computes while the main thread does the DOM write.
+                    const pending = this._wandWorkerPending;
+                    this._wandWorkerPending = null;
+                    if (pending) this._postWandWorkerUpdate(pending.tolerance, pending.jobId);
                     if (!this.state.wandActive) return;
+                    // Deliberately no "is this still the newest jobId" test. Only
+                    // one job runs at a time and it always carries the newest
+                    // tolerance known when it started, so its result is the best
+                    // outline available — drawing it and letting the next one
+                    // replace it is what keeps the ants moving. Testing against
+                    // the newest scheduled id instead threw away every result
+                    // that took longer than a frame to compute, which on a large
+                    // canvas is all of them.
                     const w = this.config.width, h = this.config.height;
                     this.ctxTemp.clearRect(0, 0, w, h);
                     this._applyWandSvgPreview(payload.pathStr);
@@ -1850,6 +1913,11 @@
          */
         _initWandPreviewWorker(diff, keyArr, sortedIdx, w, h) {
             this._wandWorkerReady = false;
+            // A new session: anything still outstanding belongs to the previous
+            // one. Its reply carries an old jobId, so it will neither be drawn
+            // nor mistaken for this session's in-flight job.
+            this._wandWorkerInFlight = null;
+            this._wandWorkerPending = null;
             const worker = this.ensureWandPreviewWorker();
             if (!worker || !diff) return;
             try {
@@ -1882,7 +1950,17 @@
             if (!this._wandWorkerReady) return false;
             const worker = this._wandPreviewWorker;
             if (!worker) return false;
-            worker.postMessage({ type: 'update', jobId, tolerance });
+            // At most one job in flight. A drag generates a new tolerance every
+            // frame, but only the newest one is ever drawn — queueing the rest
+            // just builds a backlog that outlives the drag.
+            if (this._wandWorkerInFlight !== null && this._wandWorkerInFlight !== undefined) {
+                this._wandWorkerPending = { tolerance, jobId };
+                return true;
+            }
+            this._wandWorkerInFlight = jobId;
+            // Cull to what the viewport shows; the overlay is clipped to this
+            // same rectangle, so nothing visible is lost.
+            worker.postMessage({ type: 'update', jobId, tolerance, clip: this._antsClipRectInCanvasPx() });
             return true;
         }
 
@@ -2936,6 +3014,13 @@
             this.revealStartupWindow();
             Promise.resolve(this.initTauriFileOpenListener());
             this.setActiveTab('home');
+            /* One frame for the initial layout pass, one for the centring that
+               rides on it — after that the canvas has stopped moving on its own,
+               so the handles can be pinned to it and allowed to animate again. */
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                this._startupSettled = true;
+                this.updateBounds();
+            }));
         }
 
         deferHeavyInit() {
@@ -2971,6 +3056,10 @@
             if (!handles) return;
             const vpRect = this.ui.viewport.getBoundingClientRect();
             const rect = this.bounds;
+            // Before the first real measurement `bounds` is a stub with no size.
+            // Writing NaN offsets from it leaves every handle at its static spot
+            // — the top-left of the viewport — so bail and stay hidden instead.
+            if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return;
             const size = 6;
             const half = size / 2;
             const baseX = rect.left - vpRect.left + this.ui.viewport.scrollLeft;
@@ -2994,6 +3083,7 @@
             set(this.ui.resizerTL, leftX, topY);
             set(this.ui.resizerTR, edgeX, topY);
             set(this.ui.resizerBL, leftX, edgeY);
+            handles.classList.add('positioned');
         }
         refreshSelectionUiFromState() {
             if (!this.ui || !this.ui.selControls) return;
@@ -9871,6 +9961,37 @@ self.onmessage = (e) => {
             return { x: clipLeft, y: clipTop, w, h, visible: w > 0 && h > 0 };
         }
 
+        /**
+         * The same viewport rectangle as _computeAntsClipRect(), but expressed
+         * in canvas pixels instead of screen pixels.
+         *
+         * _computeAntsClipRect() returns the rectangle in the ants overlay's own
+         * coordinate space, which is what the SVG clipPath on #svg-ants-wrap
+         * needs — that space is screen pixels, because the zoom is applied by
+         * the `matrix(z 0 0 z 0 0)` transform on the paths inside the wrapper,
+         * not by the wrapper itself.
+         *
+         * Cropping a MASK is a different job: masks are indexed in canvas
+         * pixels. The two spaces coincide at 100% zoom and nowhere else, so
+         * using the screen-space rectangle directly cropped the preview to a
+         * corner when zoomed out and to the wrong place when zoomed in.
+         */
+        _antsClipRectInCanvasPx() {
+            const clip = this._computeAntsClipRect();
+            if (!clip || !clip.visible) return clip;
+            const z = this.config.zoom || 1;
+            // A pixel of slack absorbs the rounding on both conversions; the
+            // SVG clip trims the overshoot anyway.
+            const margin = 1;
+            return {
+                x: (clip.x / z) - margin,
+                y: (clip.y / z) - margin,
+                w: (clip.w / z) + (margin * 2),
+                h: (clip.h / z) + (margin * 2),
+                visible: true
+            };
+        }
+
         updateGlobalOverlays(creatingOverride = null) {
             if (this._overlayRaf) {
                 cancelAnimationFrame(this._overlayRaf);
@@ -11786,7 +11907,14 @@ void main() {
                 this._wandMaskBuf = new Uint8Array(w * h);
                 this._wandSelectedCutoff = -1;
                 this._initWandPreviewWorker(diff, keyArr, this._wandSortedIdx, w, h);
-                this.magicWandSelectAsync(p.x, p.y, this.state.wandTol, this.getSelectionOp(e), this.state.wandBase);
+                // Preview only — the pointer is still down. Building the real
+                // selection here would lift the matched pixels and leave a
+                // C2-filled hole behind, and the first preview frame clears
+                // cTemp (where the lifted pixels are drawn), so the hole shows
+                // through as a C2-coloured blob until pointer-up rebuilds
+                // everything from wandBase. The commit happens in onMouseUp.
+                this.state.wandOp = this.getSelectionOp(e);
+                this._scheduleWandFrame();
                 return;
             }
             if(this.state.shapeEditMode && this.state.activeShape) {
@@ -12966,6 +13094,10 @@ void main() {
                 this.state.wandDiff        = null;
                 this.state.wandStartScreen = null;
                 if (this._wandSelectRaf) { cancelAnimationFrame(this._wandSelectRaf); this._wandSelectRaf = null; }
+                // The drag is over: a preview queued behind the running job
+                // would be computed for a threshold nobody will ever see, and
+                // would compete with the commit below for the worker.
+                this._wandWorkerPending = null;
                 if (wandBase && wandStart) {
                     this._clearWandSvgPreview();
                     this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
@@ -17677,45 +17809,41 @@ void main() {
                 document.getElementById('gradient-sidebar')?.classList.contains('open') ||
                 (document.getElementById('project-panel') && !document.getElementById('project-panel').classList.contains('project-collapsed'));
             const shift = this.config.anchorCanvas && anyOpen ? 290 : 0;
+            // Lets the collapsed panels' edge tabs step aside for whichever
+            // panel is open — see .left-flyout-open in the stylesheet.
+            document.body.classList.toggle('left-flyout-open', !!anyOpen);
             if (!this.ui.viewport) return;
-            if (smoothHandles) {
-                const hc = document.getElementById('canvas-resize-handles');
-                if (hc) hc.classList.add('smooth');
-                clearTimeout(this._handleSmoothTimer);
-                this._handleSmoothTimer = setTimeout(() => {
-                    const el = document.getElementById('canvas-resize-handles');
-                    if (el) el.classList.remove('smooth');
-                }, 300);
-            }
-            let predictedBounds = null;
-            if (smoothHandles && this.bounds) {
-                const wasOpen = this.ui.viewport.classList.contains('sidebar-open');
-                const willBeOpen = shift !== 0;
-                if (wasOpen !== willBeOpen) {
-                    const delta = willBeOpen ? 280 : -280;
-                    predictedBounds = {
-                        left: this.bounds.left + delta,
-                        top: this.bounds.top,
-                        right: this.bounds.right + delta,
-                        bottom: this.bounds.bottom,
-                        width: this.bounds.width,
-                        height: this.bounds.height
-                    };
-                }
-            }
             this.ui.viewport.classList.toggle('sidebar-open', shift !== 0);
-            if (predictedBounds) {
-                const saved = this.bounds;
-                this.bounds = predictedBounds;
-                this.updateCanvasResizeHandles();
-                this.bounds = saved;
-                if (this.config.anchorCanvas) {
-                    this.requestGlobalOverlayUpdate();
-                }
-            } else if (this.config.anchorCanvas) {
+            // The panel slides the canvas over a CSS transition, so the canvas is
+            // in a new place every frame until it lands. Follow it frame by frame
+            // rather than jumping the handles to where the canvas is predicted to
+            // end up — a prediction is wrong the instant a second toggle
+            // interrupts the first, which is what spamming a tool button does.
+            if (smoothHandles && this._startupSettled) {
+                this._followCanvasWhileShifting();
+            } else {
                 this.updateBounds();
                 this.requestGlobalOverlayUpdate();
             }
+        }
+        /* Pin the handles to the canvas for as long as a panel is sliding it.
+           Each new toggle pushes the deadline out, so an interrupted slide is
+           followed just as closely as one that runs to completion. */
+        _followCanvasWhileShifting() {
+            // The transition is 240ms; the margin covers the frame it starts on
+            // and leaves the handles settled on the final position.
+            this._canvasFollowUntil = performance.now() + 400;
+            if (this._canvasFollowRaf) return;
+            const step = () => {
+                this.updateBounds();
+                this.updateGlobalOverlays();
+                if (performance.now() >= this._canvasFollowUntil) {
+                    this._canvasFollowRaf = null;
+                    return;
+                }
+                this._canvasFollowRaf = requestAnimationFrame(step);
+            };
+            this._canvasFollowRaf = requestAnimationFrame(step);
         }
         clampCanvasOffset(off) {
             if (!this.config.anchorCanvas || !this.ui.viewport) return off;
@@ -23266,13 +23394,33 @@ self.onmessage = function(e) {
                     }
                 }
             }
-            for (let i = 0; i < w * h; i++) {
-                if (combined[i]) {
-                    const di = i * 4;
-                    canvasData[di] = bg.r;
-                    canvasData[di+1] = bg.g;
-                    canvasData[di+2] = bg.b;
-                    canvasData[di+3] = 255;
+            // Lifting the selected pixels leaves a hole. On an opaque layer that
+            // hole is the background colour, as in MS Paint. A layer that carries
+            // real alpha has to stay transparent instead — otherwise every lasso
+            // or wand selection floods the empty parts of the layer with C2, and
+            // it shows straight through the gaps in the floating selection.
+            // Same rule the deferred rectangular cut already follows.
+            const cutLayer = this.layerMgr && this.layerMgr.active && this.layerMgr.layers[this.layerMgr.activeIdx];
+            const cutTransparent = !!(cutLayer && cutLayer.alpha !== false);
+            if (cutTransparent) {
+                for (let i = 0; i < w * h; i++) {
+                    if (combined[i]) {
+                        const di = i * 4;
+                        canvasData[di] = 0;
+                        canvasData[di+1] = 0;
+                        canvasData[di+2] = 0;
+                        canvasData[di+3] = 0;
+                    }
+                }
+            } else {
+                for (let i = 0; i < w * h; i++) {
+                    if (combined[i]) {
+                        const di = i * 4;
+                        canvasData[di] = bg.r;
+                        canvasData[di+1] = bg.g;
+                        canvasData[di+2] = bg.b;
+                        canvasData[di+3] = 255;
+                    }
                 }
             }
             const outImg = this.ctx.createImageData(w, h);
@@ -23399,7 +23547,22 @@ self.onmessage = function(e) {
             } else {
                 visited.fill(0);
             }
-            const stack = [{ x: Math.floor(startX), y: Math.floor(startY) }];
+            // Flood-fill frontier, as interleaved x,y. A plain array of {x,y}
+            // allocates four objects per visited pixel — tens of millions of
+            // them on a large canvas, which is most of the multi-second stall
+            // on mouse-up.
+            //
+            // Depth is bounded by 4 entries per accepted pixel, but a real
+            // region never comes close, so the buffer starts modest and doubles
+            // if a genuinely awkward shape needs it rather than reserving the
+            // worst case (which at 16 MP would be half a gigabyte).
+            if (!this._wandCommitStack || this._wandCommitStack.length < 8192) {
+                this._wandCommitStack = new Int32Array(Math.max(8192, (width * height) >> 2));
+            }
+            let stack = this._wandCommitStack;
+            let sp = 0;
+            stack[sp++] = Math.floor(startX);
+            stack[sp++] = Math.floor(startY);
 
             const diff = this.state.wandDiff;
             const useDiff = diff && diff.length === width * height;
@@ -23441,8 +23604,8 @@ self.onmessage = function(e) {
                     }
                 }
             } else {
-                while (stack.length) {
-                    const { x, y } = stack.pop();
+                while (sp > 0) {
+                    const y = stack[--sp], x = stack[--sp];
                     if (x < 0 || y < 0 || x >= width || y >= height) continue;
                     const vi = y * width + x;
                     if (visited[vi]) continue;
@@ -23450,10 +23613,16 @@ self.onmessage = function(e) {
                     if (!match(idx, vi)) continue;
                     visited[vi] = 1;
                     md[idx] = 0; md[idx + 1] = 0; md[idx + 2] = 0; md[idx + 3] = 255;
-                    stack.push({ x: x + 1, y });
-                    stack.push({ x: x - 1, y });
-                    stack.push({ x, y: y + 1 });
-                    stack.push({ x, y: y - 1 });
+                    if (sp + 8 > stack.length) {
+                        const bigger = new Int32Array(stack.length * 2);
+                        bigger.set(stack);
+                        stack = bigger;
+                        this._wandCommitStack = stack;
+                    }
+                    stack[sp++] = x + 1; stack[sp++] = y;
+                    stack[sp++] = x - 1; stack[sp++] = y;
+                    stack[sp++] = x;     stack[sp++] = y + 1;
+                    stack[sp++] = x;     stack[sp++] = y - 1;
                 }
             }
             mctx.putImageData(mimg, 0, 0);
@@ -23547,7 +23716,7 @@ self.onmessage = function(e) {
                 }
                 // Stale job — leave current ants visible; next job will overwrite.
                 if (this.state.wandJobId !== jobId) return;
-                const pathStr = this._maskToSvgPath(mask, w, h);
+                const pathStr = this._maskToSvgPath(mask, w, h, this._antsClipRectInCanvasPx());
                 if (this.state.wandJobId !== jobId) return;
                 this.ctxTemp.clearRect(0, 0, w, h);
                 this._applyWandSvgPreview(pathStr);
@@ -23579,7 +23748,7 @@ self.onmessage = function(e) {
             }
             // Stale job — leave current ants visible; next job will overwrite.
             if (this.state.wandJobId !== jobId) return;
-            const pathStr = this._maskToSvgPath(mask, w, h);
+            const pathStr = this._maskToSvgPath(mask, w, h, this._antsClipRectInCanvasPx());
             if (this.state.wandJobId !== jobId) return;
             this.ctxTemp.clearRect(0, 0, w, h);
             this._applyWandSvgPreview(pathStr);
@@ -23640,18 +23809,32 @@ self.onmessage = function(e) {
             }
             return buf;
         }
-        _maskToSvgPath(mask, w, h) {
+        _maskToSvgPath(mask, w, h, clip) {
             if (!mask) return '';
+            // Same viewport crop the worker applies — see maskToSvgPath in
+            // ensureWandPreviewWorker(). Neighbour lookups still read the full
+            // mask, so the edges that survive are exactly the ones the overlay
+            // clip would have kept anyway.
+            let cy0 = 0, cy1 = h, cx0 = 0, cx1 = w;
+            if (clip) {
+                if (!clip.visible) return '';
+                cx0 = clip.x < 0 ? 0 : (clip.x > w ? w : clip.x | 0);
+                cy0 = clip.y < 0 ? 0 : (clip.y > h ? h : clip.y | 0);
+                const rx = clip.x + clip.w, ry = clip.y + clip.h;
+                cx1 = rx < 0 ? 0 : (rx > w ? w : Math.ceil(rx));
+                cy1 = ry < 0 ? 0 : (ry > h ? h : Math.ceil(ry));
+                if (cx1 <= cx0 || cy1 <= cy0) return '';
+            }
 
             // ÔöÇÔöÇ 1. Collect directed boundary edges ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
             // Winding: CCW around each selected pixel, matching buildMaskOutlineData.
             // Stored as flat array [ax,ay,bx,by, ax,ay,bx,by, ...].
             const edges = [];
-            for (let y = 0; y < h; y++) {
+            for (let y = cy0; y < cy1; y++) {
                 const row  = y * w;
                 const rowP = (y - 1) * w;
                 const rowN = (y + 1) * w;
-                for (let x = 0; x < w; x++) {
+                for (let x = cx0; x < cx1; x++) {
                     if (!mask[row + x]) continue;
                     const x1 = x + 1, y1 = y + 1;
                     if (y === 0   || !mask[rowP + x])   { edges.push(x,  y,  x1, y);  }
@@ -27901,10 +28084,12 @@ self.onmessage = function(e) {
                     this._wandMaskBuf = new Uint8Array(w * h);
                     this._wandSelectedCutoff = -1;
                     this._initWandPreviewWorker(diff, keyArr, this._wandSortedIdx, w, h);
-                    this.magicWandSelectAsync(
-                        this.state.wandStart.x, this.state.wandStart.y,
-                        this.state.wandTol, this.getSelectionOp(e), compData
-                    );
+                    // Preview only, as in the unlayered path above. The base
+                    // handler already scheduled a frame; re-scheduling here is a
+                    // no-op that lets the queued frame run against the composite
+                    // diff installed just now instead of the layer-only one.
+                    this.state.wandOp = this.getSelectionOp(e);
+                    this._scheduleWandFrame();
                 }
             }
         };

@@ -11,7 +11,7 @@
  *   - a CDP client exposing eval()/run() against the live page
  */
 import { createServer } from 'http';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { readFile } from 'fs/promises';
 import { existsSync, readdirSync, rmSync } from 'fs';
 import { extname, join, normalize, dirname } from 'path';
@@ -70,6 +70,21 @@ export async function startServer(root, port = 0) {
     });
     await new Promise(r => server.listen(port, '127.0.0.1', r));
     return { server, port: server.address().port };
+}
+
+/* Chromium spawns a tree of processes. On Windows killing the one we
+ * launched leaves the renderers running, and enough of those accumulating
+ * over a run makes later suites fail with "Execution context was
+ * destroyed" — a false failure that looks like a real bug in the app. */
+function killTree(proc) {
+    if (!proc || proc.killed || proc.pid == null) return;
+    if (process.platform === 'win32') {
+        try {
+            spawnSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
+            return;
+        } catch { /* fall through to the plain kill */ }
+    }
+    try { proc.kill(); } catch {}
 }
 
 class Session {
@@ -141,6 +156,56 @@ class Session {
     }
     errors() { return this.logs.filter(l => l.type === 'pageerror' || l.type === 'error'); }
     clearLogs() { this.logs.length = 0; }
+
+    /* Wait for a CDP event by name. Register BEFORE the call that triggers it. */
+    waitFor(method, timeoutMs = 30000) {
+        return new Promise((resolve, reject) => {
+            const done = (fn, arg) => {
+                clearTimeout(timer);
+                this.ws.removeEventListener('message', onMessage);
+                fn(arg);
+            };
+            const onMessage = (ev) => {
+                const msg = JSON.parse(ev.data);
+                if (msg.method === method) done(resolve, msg.params);
+            };
+            const timer = setTimeout(
+                () => done(reject, new Error(`timed out waiting for ${method}`)), timeoutMs);
+            this.ws.addEventListener('message', onMessage);
+        });
+    }
+
+    /* Reload with `source` installed on the fresh document, which is the only
+     * way to observe the app's first frames — withPage() has already waited
+     * past them by the time a suite runs.
+     *
+     * The reload tears down the execution context the socket is talking to, so
+     * evaluating anything before the new document has loaded races it and comes
+     * back as "Inspected target navigated or closed". Wait for the load event,
+     * then poll for the engine. */
+    async reloadWith(source) {
+        await this.send('Page.addScriptToEvaluateOnNewDocument', { source });
+        const loaded = this.waitFor('Page.loadEventFired');
+        await this.send('Page.reload', {});
+        await loaded;
+        this.clearLogs();
+        for (let attempt = 0; ; attempt++) {
+            try {
+                return await this.eval(`await new Promise((resolve, reject) => {
+                    const t0 = Date.now();
+                    (function poll() {
+                        if (window.PaintApp && PaintApp.ui && PaintApp.ui.cMain) return resolve(true);
+                        if (Date.now() - t0 > 20000) return reject(new Error('PaintApp never appeared'));
+                        setTimeout(poll, 50);
+                    })();
+                })`);
+            } catch (e) {
+                // The old context can still be going away as the load event lands.
+                if (attempt >= 4 || !/navigated|destroyed/i.test(e.message)) throw e;
+                await new Promise(r => setTimeout(r, 200));
+            }
+        }
+    }
 }
 
 /* Boot the app, hand the page to fn, then tear everything down. */
@@ -186,7 +251,7 @@ export async function withPage(fn, opts = {}) {
                 if (target) wsUrl = target.webSocketDebuggerUrl;
             } catch { /* not up yet */ }
         }
-        if (!wsUrl) { try { proc.kill(); } catch {} }
+        if (!wsUrl) { killTree(proc); }
     }
     if (!wsUrl) { server.close(); throw new Error('browser did not start'); }
 
@@ -212,12 +277,19 @@ export async function withPage(fn, opts = {}) {
         return await fn(session);
     } finally {
         try { ws.close(); } catch {}
-        proc.kill();
+        killTree(proc);
         server.close();
         // Throw-away profiles would otherwise pile up in the temp directory,
-        // one per suite per run.
+        // one per suite per run. The browser has only just been killed and may
+        // still hold its files open for a moment, so a single attempt loses the
+        // race and leaves the directory behind — hundreds of them accumulate
+        // over a session, and the suite gets flakier the more there are. Give
+        // the handles a moment to close and try again.
         for (const dir of profiles) {
-            try { rmSync(dir, { recursive: true, force: true }); } catch { /* still locked */ }
+            for (let attempt = 0; attempt < 5; attempt++) {
+                try { rmSync(dir, { recursive: true, force: true }); break; }
+                catch { await new Promise(r => setTimeout(r, 120)); }
+            }
         }
     }
 }
