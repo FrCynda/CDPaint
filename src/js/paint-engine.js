@@ -171,6 +171,25 @@
             }
             return this.deflateStored(input);
         }
+        /* Mirror of deflate() for reading PNG image data back out.
+           There is no stored-block fallback here: unlike writing, we don't get to
+           choose the encoding, so a caller with neither pako nor DecompressionStream
+           has to be told it can't read the pixels rather than handed wrong ones. */
+        static async inflate(bytes) {
+            const input = this.toBytes(bytes);
+            if (window.pako && typeof window.pako.inflate === 'function') {
+                return window.pako.inflate(input);
+            }
+            if (typeof DecompressionStream !== 'function') {
+                throw new Error('No inflate available (needs DecompressionStream or pako)');
+            }
+            const stream = new DecompressionStream('deflate');
+            const writer = stream.writable.getWriter();
+            writer.write(input);
+            writer.close();
+            const out = await new Response(stream.readable).arrayBuffer();
+            return new Uint8Array(out);
+        }
     }
 
     /**
@@ -975,6 +994,10 @@
                 projectFile: null,
                 projectImage: false,
                 projectBitDepth: 4,
+                projectIndices: null,
+                projectBaseline: null,
+                projectTrns: null,
+                projectTransparentIndex: -1,
                 lastMouse: null,
                 transPick: false,
                 outlinePhase: 0,
@@ -1031,6 +1054,7 @@
                 'history', 'step',
                 'fileName', 'filePath', 'fileHandle',
                 'projectFile', 'projectHandle', 'projectImage', 'projectBitDepth',
+                'projectIndices', 'projectBaseline', 'projectTrns', 'projectTransparentIndex',
                 'palettes', 'activePaletteId', 'previewPaletteId', 'previewSnapshot',
                 'isDirty', 'canvasOffset'
             ]);
@@ -4071,6 +4095,10 @@
             this.state.previewSnapshot = null;
             this.state.projectImage = false;
             this.state.projectBitDepth = 4;
+            this.state.projectIndices = null;
+            this.state.projectBaseline = null;
+            this.state.projectTrns = null;
+            this.state.projectTransparentIndex = -1;
             if (this.onPalettesChanged) this.onPalettesChanged();
             if (!_skipUnsavedCheck && this.hasUnsavedChanges()) {
                 return new Promise((resolve) => {
@@ -21683,8 +21711,9 @@ void main() {
                 if (bytes[i] !== sig[i]) throw new Error('File is not a PNG');
             }
             let pos = 8;
-            let width = 0, height = 0, bitDepth = 8, colorType = 0;
+            let width = 0, height = 0, bitDepth = 8, colorType = 0, interlace = 0;
             let palette = null, trns = null;
+            const idat = [];
             while (pos + 8 <= bytes.length) {
                 const len = (bytes[pos] << 24) | (bytes[pos + 1] << 16) | (bytes[pos + 2] << 8) | bytes[pos + 3];
                 const type = String.fromCharCode(bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]);
@@ -21695,6 +21724,9 @@ void main() {
                     height = (bytes[dataStart + 4] << 24) | (bytes[dataStart + 5] << 16) | (bytes[dataStart + 6] << 8) | bytes[dataStart + 7];
                     bitDepth = bytes[dataStart + 8];
                     colorType = bytes[dataStart + 9];
+                    interlace = bytes[dataStart + 12];
+                } else if (type === 'IDAT') {
+                    idat.push(bytes.subarray(dataStart, dataEnd));
                 } else if (type === 'PLTE') {
                     const count = Math.floor(len / 3);
                     palette = [];
@@ -21712,7 +21744,93 @@ void main() {
             if (palette && trns) {
                 for (let i = 0; i < trns.length && i < palette.length; i++) palette[i].a = trns[i];
             }
-            return { width, height, bitDepth, colorType, palette, trns };
+            return { width, height, bitDepth, colorType, palette, trns, idat, interlace };
+        }
+        /* The per-pixel palette indices, straight from the file.
+           These are the real content of an indexed PNG: two palette slots can hold
+           the same RGB (26% of pokeemerald species palettes do), and only the index
+           says which one a pixel meant — which matters because the shiny palette
+           may give those two slots different colours. Reconstructing indices from
+           RGB cannot tell them apart, so we decode them instead of guessing.
+           Returns null for anything we can't read exactly; callers fall back. */
+        async decodePngIndices(meta) {
+            if (!meta || meta.colorType !== 3 || meta.interlace !== 0) return null;
+            if (!meta.idat || !meta.idat.length) return null;
+            const { width: w, height: h, bitDepth: depth } = meta;
+            if (![1, 2, 4, 8].includes(depth) || w <= 0 || h <= 0) return null;
+
+            let joined;
+            if (meta.idat.length === 1) {
+                joined = meta.idat[0];
+            } else {
+                let total = 0;
+                for (const c of meta.idat) total += c.length;
+                joined = new Uint8Array(total);
+                let at = 0;
+                for (const c of meta.idat) { joined.set(c, at); at += c.length; }
+            }
+
+            let raw;
+            try {
+                raw = CompressionCompat.toBytes(await CompressionCompat.inflate(joined));
+            } catch (err) {
+                console.warn('Could not inflate PNG image data', err);
+                return null;
+            }
+
+            const rowBytes = Math.ceil((w * depth) / 8);
+            if (raw.length < h * (rowBytes + 1)) return null;
+
+            // Undo PNG row filters. Sub-byte depths filter on whole bytes, so the
+            // "previous pixel" distance is 1 for every indexed image.
+            const flat = new Uint8Array(h * rowBytes);
+            for (let y = 0; y < h; y++) {
+                const filter = raw[y * (rowBytes + 1)];
+                const src = y * (rowBytes + 1) + 1;
+                const cur = y * rowBytes;
+                const prev = cur - rowBytes;
+                for (let x = 0; x < rowBytes; x++) {
+                    const a = x >= 1 ? flat[cur + x - 1] : 0;
+                    const b = y > 0 ? flat[prev + x] : 0;
+                    const c = (x >= 1 && y > 0) ? flat[prev + x - 1] : 0;
+                    let v = raw[src + x];
+                    if (filter === 1) v += a;
+                    else if (filter === 2) v += b;
+                    else if (filter === 3) v += (a + b) >> 1;
+                    else if (filter === 4) {
+                        const p = a + b - c;
+                        const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+                        v += (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c);
+                    } else if (filter !== 0) {
+                        return null; // unknown filter: better no answer than a wrong one
+                    }
+                    flat[cur + x] = v & 0xff;
+                }
+            }
+
+            const indices = new Uint8Array(w * h);
+            if (depth === 8) {
+                for (let y = 0; y < h; y++) indices.set(flat.subarray(y * rowBytes, y * rowBytes + w), y * w);
+            } else {
+                const perByte = 8 / depth;
+                const mask = (1 << depth) - 1;
+                for (let y = 0; y < h; y++) {
+                    const row = y * rowBytes, out = y * w;
+                    for (let x = 0; x < w; x++) {
+                        const shift = 8 - depth - (x % perByte) * depth;
+                        indices[out + x] = (flat[row + ((x / perByte) | 0)] >> shift) & mask;
+                    }
+                }
+            }
+            return indices;
+        }
+        /* Which palette slot means "not drawn". Taken from the file's own tRNS
+           chunk rather than from palette alpha, because a loaded .pal marks its
+           first entry transparent whether or not that is true for this asset. */
+        transparentIndexFromTrns(trns) {
+            if (!trns) return -1;
+            for (let i = 0; i < trns.length; i++) if (trns[i] === 0) return i;
+            return -1;
         }
         _nearestPaletteIndex(r, g, b) {
             this.ensurePaletteLab();
@@ -21781,13 +21899,29 @@ void main() {
             this.state.palettes = palettes;
             this.state.activePaletteId = active ? active.id : null;
             this.state.projectImage = true;
+            this.state.projectTrns = meta.trns ? new Uint8Array(meta.trns) : null;
+            this.state.projectTransparentIndex = this.transparentIndexFromTrns(meta.trns);
             this.setSize(w, h);
             this.ctx.drawImage(bmp, 0, 0);
             await this.applyCurrentModeToCanvasAsync(this.ctx, w, h, false);
+            // The file's own indices, plus the pixels they produced on screen. Saving
+            // diffs against this baseline so untouched pixels keep their exact slot.
+            const trueIndices = await this.decodePngIndices(meta);
             try {
                 const _snap = this.ctx.getImageData(0, 0, w, h);
-                this.spriteIndices = this.quantizeToIndices(_snap.data, w, h, this.basePalette || this.palette);
-            } catch (e) { this.spriteIndices = null; }
+                this.spriteIndices = (trueIndices && trueIndices.length === w * h)
+                    ? trueIndices
+                    : this.quantizeToIndices(_snap.data, w, h, this.basePalette || this.palette);
+                this.state.projectIndices = this.spriteIndices ? new Uint8Array(this.spriteIndices) : null;
+                this.state.projectBaseline = this.state.projectIndices ? new Uint8ClampedArray(_snap.data) : null;
+            } catch (e) {
+                this.spriteIndices = null;
+                this.state.projectIndices = null;
+                this.state.projectBaseline = null;
+            }
+            if (!trueIndices) {
+                console.warn('Could not decode PNG indices; falling back to nearest-colour reconstruction');
+            }
             this.state.hasDocument = true;
             this.state.filePath = sourcePath || '';
             this.state.fileName = fallbackName || this.getFilenameFromPath(sourcePath || '');
@@ -21830,23 +21964,58 @@ void main() {
                 return false;
             }
         }
+        /* Indices to write for the current canvas.
+           A pixel that still matches what it looked like when the file was opened
+           keeps the index the file gave it — so slots that share an RGB survive the
+           round trip, and a save with no edits changes nothing. Only pixels the user
+           actually painted get matched to the palette, and a transparent pixel means
+           the transparency slot, never "whatever colour is nearest to black". */
+        buildProjectIndices(d, w, h) {
+            const palette = this.palette || [];
+            const baseline = this.state.projectBaseline;
+            const original = this.state.projectIndices;
+            const hasBaseline = !!(baseline && original
+                && baseline.length === d.length && original.length === w * h);
+            const transparentIdx = this.state.projectTransparentIndex;
+
+            const exact = new Map();
+            for (let i = 0; i < palette.length; i++) {
+                const key = (palette[i].r << 16) | (palette[i].g << 8) | palette[i].b;
+                if (!exact.has(key)) exact.set(key, i); // first slot wins; ties are resolved by the baseline
+            }
+
+            const indices = new Uint8Array(w * h);
+            for (let p = 0, q = 0; p < d.length; p += 4, q++) {
+                if (hasBaseline
+                    && d[p] === baseline[p] && d[p + 1] === baseline[p + 1]
+                    && d[p + 2] === baseline[p + 2] && d[p + 3] === baseline[p + 3]) {
+                    indices[q] = original[q];
+                    continue;
+                }
+                if (d[p + 3] < 128 && transparentIdx >= 0) {
+                    indices[q] = transparentIdx;
+                    continue;
+                }
+                const idx = exact.get((d[p] << 16) | (d[p + 1] << 8) | d[p + 2]);
+                indices[q] = idx === undefined
+                    ? this._nearestPaletteIndex(d[p], d[p + 1], d[p + 2])
+                    : idx;
+            }
+            return indices;
+        }
         async saveProjectFile(path) {
             const w = this.config.width, h = this.config.height;
             const imgData = this.ctx.getImageData(0, 0, w, h);
-            const d = imgData.data;
+            const indices = this.buildProjectIndices(imgData.data, w, h);
             const palette = this.palette;
-            const exact = new Map();
-            for (let i = 0; i < palette.length; i++) {
-                exact.set((palette[i].r << 16) | (palette[i].g << 8) | palette[i].b, i);
-            }
-            const indices = new Uint8Array(w * h);
-            for (let p = 0, q = 0; p < d.length; p += 4, q++) {
-                const key = (d[p] << 16) | (d[p + 1] << 8) | d[p + 2];
-                let idx = exact.get(key);
-                if (idx === undefined) idx = this._nearestPaletteIndex(d[p], d[p + 1], d[p + 2]);
-                indices[q] = idx;
-            }
-            const bytes = await this.generateIndexedPNG(w, h, indices, palette, this.state.projectBitDepth || this.bitDepth);
+            // Reproduce the file's own transparency chunk — including its absence.
+            // An empty array means "write none", where null would mean "derive one
+            // from palette alpha" and would add a tRNS that tilesets never had.
+            const bytes = await this.generateIndexedPNG(
+                w, h, indices, palette,
+                this.state.projectBitDepth || this.bitDepth,
+                this.state.projectTrns || new Uint8Array(0)
+            );
             if (this.getTauriInvokeFn()) {
                 const normalizedPath = this.normalizeIncomingPath(path);
                 await this.tauriWriteAllowedFile(normalizedPath, bytes);
@@ -24164,29 +24333,52 @@ self.onmessage = function(e) {
             }
             return palettes;
         }
+        /* Sizes and depths here were read out of pokeemerald, not remembered.
+           A profile that rejects a stock asset is worse than no profile at all: it
+           teaches people to click through the warning that was meant to save them. */
         getTargetProfiles() {
             return {
-                'pokemon-front': { label: 'Pokémon front sprite', bitDepth: 4, maxColors: 16, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64], [80, 80], [96, 96]] },
-                'pokemon-back': { label: 'Pokémon back sprite', bitDepth: 4, maxColors: 16, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[80, 80], [96, 96], [128, 128]] },
-                'pokemon-icon': { label: 'Pokémon icon', bitDepth: 4, maxColors: 16, palettes: ['Normal'], strictResolution: true, allowedResolutions: [[32, 32], [64, 64]] },
-                'interface': { label: 'Interface graphic', bitDepth: 4, maxColors: 16, palettes: ['Normal'], strictResolution: false },
-                'default': { label: 'Project asset', bitDepth: 4, maxColors: 16, palettes: ['Normal'], strictResolution: false }
+                'pokemon-front': { label: 'Pokémon front sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64]] },
+                'pokemon-anim-front': { label: 'Pokémon animated front sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 128], [64, 64]] },
+                'pokemon-back': { label: 'Pokémon back sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64]] },
+                'pokemon-icon': { label: 'Pokémon icon', bitDepth: 4, palettes: ['Icon palette'], strictResolution: true, allowedResolutions: [[32, 64], [32, 32]] },
+                'pokemon-footprint': { label: 'Pokémon footprint', bitDepth: 1, maxColors: 2, palettes: [], strictResolution: true, allowedResolutions: [[16, 16]] },
+                'pokemon-overworld': { label: 'Pokémon overworld sprite', bitDepth: 4, palettes: ['Overworld normal', 'Overworld shiny'], strictResolution: false },
+                'object-event': { label: 'Overworld object sprite', bitDepth: 4, palettes: [], strictResolution: false },
+                'trainer': { label: 'Trainer sprite', bitDepth: 4, palettes: [], strictResolution: true, allowedResolutions: [[64, 64]] },
+                'item-icon': { label: 'Item icon', bitDepth: 4, palettes: [], strictResolution: true, allowedResolutions: [[24, 24]] },
+                'tileset': { label: 'Tileset', bitDepth: 4, palettes: [], strictResolution: false, requiredWidth: 128, tileAligned: true },
+                'interface': { label: 'Interface graphic', bitDepth: 4, palettes: [], strictResolution: false },
+                'default': { label: 'Project asset', bitDepth: 4, palettes: [], strictResolution: false }
             };
         }
         inferProfile(sourcePath) {
             const profiles = this.getTargetProfiles();
-            const raw = (sourcePath || '').replace(/\\/g, '/');
-            const low = raw.toLowerCase();
+            const low = (sourcePath || '').replace(/\\/g, '/').toLowerCase();
+            const file = low.split('/').pop() || '';
+            const base = file.replace(/\.[^.]+$/, '').replace(/_gba$/, '');
+            if (low.includes('/tilesets/') || base === 'tiles') return profiles['tileset'];
             if (low.includes('graphics/pokemon/')) {
-                const file = low.split('/').pop() || '';
-                if (file.includes('icon')) return profiles['pokemon-icon'];
-                if (file.startsWith('back') || file.includes('back')) return profiles['pokemon-back'];
-                if (file.startsWith('front') || file.includes('front') || file.includes('anim')) return profiles['pokemon-front'];
-                if (file.includes('overworld') || file.includes('footprint')) return profiles['interface'];
-                return profiles['pokemon-front'];
+                if (base === 'footprint') return profiles['pokemon-footprint'];
+                if (base.includes('icon')) return profiles['pokemon-icon'];
+                if (base.includes('overworld')) return profiles['pokemon-overworld'];
+                if (base.startsWith('anim_front')) return profiles['pokemon-anim-front'];
+                if (base.includes('back')) return profiles['pokemon-back'];
+                if (base.includes('front')) return profiles['pokemon-front'];
+                return profiles['default'];
             }
+            if (low.includes('graphics/object_events/')) return profiles['object-event'];
+            if (low.includes('graphics/trainers/')) return profiles['trainer'];
+            if (low.includes('graphics/items/')) return profiles['item-icon'];
             if (low.includes('graphics/interface')) return profiles['interface'];
             return profiles['default'];
+        }
+        /* How many colours this asset can actually hold: the bit depth the file was
+           opened at decides it, not an assumption that everything is 4bpp. */
+        maxColorsForProfile(profile) {
+            if (profile && Number.isFinite(profile.maxColors)) return profile.maxColors;
+            const depth = this.state.projectBitDepth || (profile && profile.bitDepth) || 4;
+            return 1 << depth;
         }
         findOffendingColors(paletteColors, d, tol) {
             const exact = new Map();
@@ -24232,6 +24424,12 @@ self.onmessage = function(e) {
                     }
                 }
             }
+            if (profile.requiredWidth && w !== profile.requiredWidth) {
+                errors.push({ field: 'resolution', message: `${profile.label} must be ${profile.requiredWidth}px wide; this is ${w}px.`, hint: `Tile sheets are laid out ${profile.requiredWidth}px across.`, warn: false });
+            }
+            if (profile.tileAligned && (w % 8 !== 0 || h % 8 !== 0)) {
+                errors.push({ field: 'resolution', message: `${w}x${h} is not a whole number of 8x8 tiles.`, hint: 'Both dimensions need to be multiples of 8.', warn: false });
+            }
             const imgData = this.ctx.getImageData(0, 0, w, h);
             const d = imgData.data;
             const distinct = new Map();
@@ -24240,8 +24438,9 @@ self.onmessage = function(e) {
                 distinct.set((d[p] << 16) | (d[p + 1] << 8) | d[p + 2], true);
             }
             const distinctCount = distinct.size;
-            if (distinctCount > profile.maxColors) {
-                errors.push({ field: 'colors', message: `Artwork uses ${distinctCount} distinct colors; ROM allows ${profile.maxColors}.`, hint: `Reduce to ${profile.maxColors} or fewer colors before exporting.`, warn: false });
+            const maxColors = this.maxColorsForProfile(profile);
+            if (distinctCount > maxColors) {
+                errors.push({ field: 'colors', message: `Artwork uses ${distinctCount} distinct colors; this asset holds ${maxColors}.`, hint: `Reduce to ${maxColors} or fewer colors before exporting.`, warn: false });
             }
             const tol = 24;
             const palEntries = (this.state.palettes || []).filter(pe => pe.source === 'pal');
@@ -24255,14 +24454,22 @@ self.onmessage = function(e) {
             const blocking = errors.filter(e => !e.warn);
             return { ok: blocking.length === 0, errors };
         }
+        /* Decomp .pal files are JASC-PAL with 0-255 channels — the 8-bit spelling of
+           the GBA's 15-bit colour. Writing the raw 0-31 values instead makes gbagfx
+           compile a near-black palette into the ROM.
+           The conversion mirrors gbagfx exactly: 8-bit down to 5-bit by >> 3, and
+           back up by (v * 255) / 31 truncated. Bulbasaur's 205 205 172 survives that
+           round trip unchanged, which is the point — reading and re-writing a
+           palette you didn't edit must not move a single channel. */
+        toGbaChannel(v) {
+            const five = Math.max(0, Math.min(255, Math.round(v))) >> 3;
+            return Math.floor((five * 255) / 31);
+        }
         serializeJascPal(colors) {
-            let out = 'JASC-PAL\n0100\n' + colors.length + '\n';
+            let out = 'JASC-PAL\r\n0100\r\n' + colors.length + '\r\n';
             for (let i = 0; i < colors.length; i++) {
                 const c = colors[i];
-                const r = Math.round((c.r * 31) / 255);
-                const g = Math.round((c.g * 31) / 255);
-                const b = Math.round((c.b * 31) / 255);
-                out += r + ' ' + g + ' ' + b + '\n';
+                out += this.toGbaChannel(c.r) + ' ' + this.toGbaChannel(c.g) + ' ' + this.toGbaChannel(c.b) + '\r\n';
             }
             return out;
         }
@@ -24652,6 +24859,33 @@ self.onmessage = function(e) {
             if (this.onPalettesChanged) this.onPalettesChanged();
             showToast('Shiny palette generated', 'info');
         }
+        /* Repaint a project asset under a different palette, index by index.
+           The index map is untouched, so the baseline that saving diffs against is
+           re-taken here: the pixels are new but they still mean the same slots. */
+        remapProjectCanvasToPalette(imgData, entry, paletteId, w, h) {
+            const d = imgData.data;
+            const colors = entry.colors;
+            const transparentIdx = this.state.projectTransparentIndex;
+            for (let p = 0, q = 0; p < d.length; p += 4, q++) {
+                const slot = this.spriteIndices[q];
+                if (slot === transparentIdx) {
+                    d[p] = 0; d[p + 1] = 0; d[p + 2] = 0; d[p + 3] = 0;
+                    continue;
+                }
+                const c = colors[slot] || colors[0];
+                d[p] = c.r; d[p + 1] = c.g; d[p + 2] = c.b; d[p + 3] = 255;
+            }
+            this.ctx.putImageData(imgData, 0, 0);
+            this.basePalette = colors;
+            this.palette = colors;
+            this.paletteLab = null;
+            this.state.activePaletteId = paletteId;
+            this.state.projectIndices = new Uint8Array(this.spriteIndices);
+            this.state.projectBaseline = new Uint8ClampedArray(d);
+            this.renderQuantPalette();
+            this.saveState();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+        }
         remapCanvasToPalette(paletteId) {
             const e = this.getPaletteById(paletteId);
             if (!e || !e.colors || !e.colors.length) { showToast('No palette to remap to', 'warning'); return; }
@@ -24660,6 +24894,14 @@ self.onmessage = function(e) {
             let imgData;
             try { imgData = this.ctx.getImageData(0, 0, w, h); }
             catch (err) { showToast('Cannot read canvas', 'error'); return; }
+            /* For a project asset the indices ARE the artwork — swapping to the shiny
+               palette recolours it without moving a pixel. Repaint straight from the
+               index map instead of re-deriving indices from RGB, which would collapse
+               slots that happen to share a colour in whichever palette we came from. */
+            if (this.state.projectImage && this.spriteIndices && this.spriteIndices.length === w * h) {
+                this.remapProjectCanvasToPalette(imgData, e, paletteId, w, h);
+                return;
+            }
             const d = imgData.data;
             const exact = new Set();
             for (let i = 0; i < e.colors.length; i++) {
