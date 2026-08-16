@@ -26480,6 +26480,19 @@ self.onmessage = function(e) {
             if (this.layerMgr && this.layerMgr.active && this.layerMgr.layers.length > 1) {
                 return this.saveAsORA();
             }
+            /* A tiled screen was assembled out of three files and has to go back
+               into three files. Writing the canvas as one PNG would replace a
+               tile sheet with a picture and leave the tilemap pointing at
+               nothing, so this comes before the ordinary project save. */
+            if (window.TiledScreen && window.TiledScreen.isOpen()) {
+                try {
+                    return await window.TiledScreen.save();
+                } catch (e) {
+                    console.error('Screen save failed', e);
+                    showToast('Screen save failed: ' + this.getErrorText(e), 'error');
+                    return;
+                }
+            }
             /* Project (pokeemerald) images are written back as indexed PNG with the
                exact original palette/indices and no injected CDPaint metadata. */
             if (this.state.projectFile && this.state.projectImage && this.palette && this.palette.length) {

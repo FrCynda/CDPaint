@@ -460,7 +460,9 @@ fn resolve_path_dots(path: &Path) -> PathBuf {
 fn is_allowed_write_extension(ext: Option<&str>) -> bool {
     matches!(
         ext.unwrap_or("").to_ascii_lowercase().as_str(),
-        "png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp" | "pal"
+        // `.bin` is here so a retiled screen can write its tilemap back beside
+        // its tiles. It is the only non-picture this app produces.
+        "png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp" | "pal" | "bin"
     )
 }
 
@@ -541,7 +543,11 @@ fn scan_dir(dir: &Path, depth: usize, out: &mut ProjectNode) -> std::io::Result<
                 .extension()
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_ascii_lowercase());
-            if matches!(ext.as_deref(), Some("png") | Some("pal")) {
+            /* `.bin` is a tilemap. The browser never draws a row for one, but a
+               tiles.png cannot be recognised as a screen without seeing whether
+               its map.bin is there — and a screen is what the editor opens
+               assembled rather than as a jumbled sheet. */
+            if matches!(ext.as_deref(), Some("png") | Some("pal") | Some("bin")) {
                 file_entries.push((fname, p, meta.len()));
             }
         }

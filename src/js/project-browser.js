@@ -195,9 +195,15 @@
     }
 
     /* `offers` is [{node, why}] — the resolver's answers, best first. The engine
-       wants the bare nodes, the badges want the reasons. */
-    function fileRow(pngNode, offers) {
+       wants the bare nodes, the badges want the reasons. `siblingNames` is the
+       rest of the folder, which is what tells a tile sheet apart from a
+       picture: `tiles.png` with a `map.bin` beside it is a screen and opens
+       assembled, the same file alone is just a jumble of 8×8 squares. */
+    function fileRow(pngNode, offers, siblingNames) {
         var palNodes = (offers || []).map(function (o) { return o.node; });
+        var screen = window.TiledScreen && pngNode.path
+            ? window.TiledScreen.match(rel(pngNode.path), siblingNames)
+            : null;
         var row = document.createElement('div');
         row.className = 'proj-row proj-row-file';
 
@@ -210,6 +216,17 @@
         label.className = 'proj-name';
         label.textContent = pngNode.name;
         row.appendChild(label);
+
+        if (screen) {
+            // Say so before it is clicked, because the thumbnail beside it is
+            // the tile sheet and looks nothing like what will open.
+            var tag = document.createElement('span');
+            tag.className = 'proj-screen-tag';
+            tag.textContent = 'screen';
+            tag.title = 'Opens assembled from ' + screen.mapPath.replace(/^.*\//, '') +
+                '; saving writes the tiles and the tilemap back';
+            row.appendChild(tag);
+        }
 
         if (offers && offers.length) {
             var badgeWrap = document.createElement('span');
@@ -224,6 +241,17 @@
             var app = getApp();
             if (!app || typeof app.openProjectImage !== 'function') {
                 showToast('Image viewer is not ready', 'warning');
+                return;
+            }
+            if (screen) {
+                window.TiledScreen.open(screen, pngNode).catch(function (e) {
+                    // A screen that will not assemble still has a tile sheet
+                    // worth opening, so fall back rather than leaving a dead row.
+                    showToast('Could not assemble that screen: ' +
+                        (e && e.message ? e.message : e), 'warning');
+                    if (pngNode.handle) app.openProjectImageFromHandle(pngNode, palNodes);
+                    else app.openProjectImage(pngNode.path, palNodes);
+                });
                 return;
             }
             if (pngNode.handle) app.openProjectImageFromHandle(pngNode, palNodes);
@@ -320,8 +348,12 @@
         var pngByBase = {};
         var pals = [];
         var shared = [];
+        // Every filename in the folder, tilemaps included. Nothing draws a row
+        // for a .bin, but a tiles.png is only a screen because one is there.
+        var siblingNames = [];
         (node.children || []).forEach(function (c) {
             if (c.kind !== 'file') return;
+            siblingNames.push(c.name);
             var lower = (c.name || '').toLowerCase();
             if (lower.endsWith('.png')) {
                 var base = c.name.slice(0, -4);
@@ -335,7 +367,7 @@
         // PNG rows with associated palette badges.
         Object.keys(pngByBase).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); }).forEach(function (base) {
             var png = pngByBase[base];
-            container.appendChild(fileRow(png, palettesForNode(png, pals, shared)));
+            container.appendChild(fileRow(png, palettesForNode(png, pals, shared), siblingNames));
         });
 
         // Standalone pal files (no matching png, not normal/shiny).
