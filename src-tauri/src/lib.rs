@@ -642,9 +642,12 @@ const SOURCE_MARKERS: [&str; 10] = [
     "#define P_",
     // The battle environment table. It names no files itself — the graphics
     // header does that — so none of the markers above reach it, and without it
-    // the battle preview has no backdrops to offer.
-    "gBattleEnvironmentInfo",
-    "gBattleTerrainTable",
+    // the battle preview has no backdrops to offer. Matched by its entry
+    // constant rather than its own name: the table has been called
+    // gBattleEnvironmentInfo, sBattleEnvironmentTable and sBattleTerrainTable
+    // across the projects this has to open, and a fork may rename it again.
+    "BATTLE_ENVIRONMENT_",
+    "BATTLE_TERRAIN_",
 ];
 const MAX_SOURCE_BYTES: usize = 96 * 1024 * 1024;
 

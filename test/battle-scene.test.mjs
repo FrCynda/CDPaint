@@ -98,6 +98,56 @@ const struct BattleEnvironment gBattleEnvironmentInfo[BATTLE_ENVIRONMENT_COUNT] 
         envs[0].tilemap === 'gBattleEnvironmentTilemap_TallGrass', JSON.stringify(envs[0]));
     check('an environment whose files do not resolve is dropped, not half-drawn',
         resolveEnvironments(envs, { pathsBySymbol: new Map() }).length === 0);
+
+    /* The macro is token-pasting, and what it pastes is only knowable from its
+       definition — which is why the definition is read rather than the prefix
+       assumed. A fork that renames the symbols renames them here too. */
+    const forked = parseEnvironments(`
+#define SCENE(Bg)                          \\
+{                                          \\
+    .tileset = gCoolBattleTiles_##Bg,      \\
+    .tilemap = gCoolBattleTilemap_##Bg,    \\
+}
+const struct BattleEnvironment gBattleEnvironmentInfo[] = {
+    [BATTLE_ENVIRONMENT_VOLCANO] = { .name = _("Volcano"), .background = SCENE(Volcano),
+                                     .palette = gCoolBattlePalette_Volcano },
+};`);
+    check('a fork’s own background macro is expanded from its definition',
+        forked.length === 1 && forked[0].tiles === 'gCoolBattleTiles_Volcano' &&
+        forked[0].tilemap === 'gCoolBattleTilemap_Volcano', JSON.stringify(forked));
+
+    /* Vanilla writes the fields out in full and has no `.name`; older checkouts
+       of both projects spell the whole thing TERRAIN. Neither is exotic — they
+       are what most existing fan projects are branched from. */
+    const vanilla = parseEnvironments(`
+static const struct BattleBackground sBattleTerrainTable[] =
+{
+    [BATTLE_TERRAIN_LONG_GRASS] =
+    {
+        .tileset = gBattleTerrainTiles_LongGrass,
+        .tilemap = gBattleTerrainTilemap_LongGrass,
+        .entryTileset = gBattleTerrainAnimTiles_LongGrass,
+        .entryTilemap = gBattleTerrainAnimTilemap_LongGrass,
+        .palette = gBattleTerrainPalette_LongGrass,
+    },
+};`);
+    check('the vanilla table shape is read without a macro',
+        vanilla.length === 1 && vanilla[0].tiles === 'gBattleTerrainTiles_LongGrass' &&
+        vanilla[0].tilemap === 'gBattleTerrainTilemap_LongGrass' &&
+        vanilla[0].palette === 'gBattleTerrainPalette_LongGrass', JSON.stringify(vanilla));
+    check('and names itself from the constant when the project gives no name',
+        vanilla[0] && vanilla[0].label === 'long_grass', vanilla[0] && vanilla[0].label);
+
+    /* `[BATTLE_ENVIRONMENT_CAVE]` also keys the camouflage and nature-power
+       tables. Anchoring on the entry key instead of the table's name is what
+       makes all three dialects readable, so the guard against reading the wrong
+       table has to be the entry's own contents. */
+    check('a table keyed the same way but holding no scenery is ignored',
+        parseEnvironments(`
+static const u16 sCamouflageTypes[] = {
+    [BATTLE_ENVIRONMENT_CAVE] = { TYPE_ROCK },
+    [BATTLE_ENVIRONMENT_WATER] = { TYPE_WATER },
+};`).length === 0);
 }
 
 /* ── against a real decomp, when one is there ────────────────────────────── */
@@ -116,7 +166,11 @@ if (!DECOMP) {
             if (n.isDirectory()) walk(p, r);
             else if (/\.(c|h|inc)$/i.test(n.name)) {
                 const text = readFileSync(p, 'utf8');
-                if (/INCBIN_U|INCGFX_U|gBattleEnvironmentInfo/.test(text)) files.push({ path: r, text });
+                // In step with SOURCE_MARKERS; the environment table names no
+                // files of its own, so it is found by its entry constant.
+                if (/INCBIN_U|INCGFX_U|BATTLE_ENVIRONMENT_|BATTLE_TERRAIN_/.test(text)) {
+                    files.push({ path: r, text });
+                }
             }
         }
     })(join(DECOMP, 'src'), 'src');

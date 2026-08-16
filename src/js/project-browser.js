@@ -476,10 +476,13 @@
        when the repo root itself was picked. That is a real limitation and not
        worth papering over: with no index every resolver falls back to
        convention, which is what the panel did before there was one. */
-    // Keep in step with SOURCE_MARKERS in src-tauri/src/lib.rs. The last two are
-    // the battle environment table, which declares no files of its own and so
-    // matches none of the others.
-    var SOURCE_MARKERS = /INCBIN_U|INCGFX_U|SpriteFrameImage|ObjectEventGraphicsInfo|OBJ_EVENT_PAL_TAG_|PicYOffset|y_offset|#define P_|gBattleEnvironmentInfo|gBattleTerrainTable/;
+    /* Keep in step with SOURCE_MARKERS in src-tauri/src/lib.rs. The last two are
+       the battle environment table, which declares no files of its own and so
+       matches none of the others. They match the entry *constant* rather than
+       the table's name because the table has been called three different things
+       and a fork may call it a fourth; the constant is what the game's own
+       headers define. */
+    var SOURCE_MARKERS = /INCBIN_U|INCGFX_U|SpriteFrameImage|ObjectEventGraphicsInfo|OBJ_EVENT_PAL_TAG_|PicYOffset|y_offset|#define P_|BATTLE_ENVIRONMENT_|BATTLE_TERRAIN_/;
 
     async function readSourcesFsa(handle, rel, depth, out) {
         if (depth > MAX_SCAN_DEPTH || typeof handle.entries !== 'function') return out;

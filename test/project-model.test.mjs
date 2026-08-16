@@ -35,6 +35,9 @@ const u32 gBattleAnimSplash[] = INCGFX_U32("graphics/battle_anims/unused/water_s
 const u32 gFooTiles[] = INCBIN_U32("graphics/foo/tiles.4bpp");
 const u32 gFooMap[] = INCGFX_U32("graphics/foo/bg.bin", ".smolTM");
 const u8 gCrashFont[] = INCBIN_U8("graphics/crash_screen/font.1bpp");
+const u32 gBattleTerrainTiles_Cave[] = INCBIN_U32("graphics/battle_terrain/cave/tiles.4bpp.lz");
+const u32 gBattleTerrainTilemap_Cave[] = INCBIN_U32("graphics/battle_terrain/cave/map.bin.lz");
+const u32 gBattleTerrainPalette_Cave[] = INCBIN_U32("graphics/battle_terrain/cave/palette.gbapal");
 `}];
     const idx = PM.buildIndex(sources);
     check('reads the two-argument INCGFX form',
@@ -56,6 +59,19 @@ const u8 gCrashFont[] = INCBIN_U8("graphics/crash_screen/font.1bpp");
         !idx.palettePaths.has('graphics/foo/bg.bin'));
     check('records palette declarations as palettes',
         idx.palettePaths.has('graphics/pokemon/bulbasaur/normal.pal'));
+
+    /* Vanilla declares the build's own output. `tiles.4bpp.lz` is not in a
+       fresh checkout — the file an artist opens is `tiles.png` beside it — so a
+       project branched from vanilla rather than from the expansion resolved
+       nothing at all until the compression suffix was dropped first. */
+    check('a compressed vanilla declaration points at the artwork, not the build output',
+        idx.depthByPath.get('graphics/battle_terrain/cave/tiles.png') === 4 &&
+        !idx.depthByPath.has('graphics/battle_terrain/cave/tiles.4bpp.lz'),
+        JSON.stringify([...idx.depthByPath.keys()].filter(k => k.includes('cave'))));
+    check('and its tilemap and palette come back as the plain files beside it',
+        (idx.pathsBySymbol.get('gBattleTerrainTilemap_Cave') || [])[0] === 'graphics/battle_terrain/cave/map.bin' &&
+        idx.palettePaths.has('graphics/battle_terrain/cave/palette.pal'),
+        JSON.stringify(idx.pathsBySymbol.get('gBattleTerrainTilemap_Cave')));
     check('maps symbol to file',
         idx.pathBySymbol.get('gMonFrontPic_Bulbasaur') === 'graphics/pokemon/bulbasaur/anim_front.png');
     check('targetDepthFor tolerates a windows path',
