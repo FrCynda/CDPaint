@@ -5971,6 +5971,12 @@ body.project-panel-collapsed #project-expand{display:flex;}
 .bp-header .bp-side,.bp-header .bp-zoom{border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;font-size:10px;padding:1px 3px;}
 .bp-header .bp-close{border:0;background:transparent;cursor:pointer;font-size:14px;}
 .bp-scene{display:block;image-rendering:pixelated;background:#000;max-width:100%;}
+.bp-legend{display:flex;flex-wrap:wrap;gap:4px 10px;padding:5px 9px;font-size:10px;opacity:.75;}
+.bp-legend-item{display:inline-flex;align-items:center;gap:4px;}
+.bp-swatch{width:9px;height:9px;border-radius:2px;flex:0 0 auto;border:1px solid rgba(0,0,0,.25);}
+.bp-swatch-sky{background:#8ec7e8;}
+.bp-swatch-ground{background:#c8b98a;}
+.bp-swatch-health{background:#fff;}
 .bp-readout{padding:7px 9px;display:flex;flex-direction:column;gap:5px;border-top:1px solid var(--s6,#cfcfcf);}
 .bp-measured{font-variant-numeric:tabular-nums;}
 .bp-note,.bp-where{font-size:10px;opacity:.7;}

@@ -68,6 +68,28 @@ await withPage(async (page) => {
     })()`);
 
     check('the asset opened as a project image', res && res.ok && !res.error, res && res.error);
+
+    /* Opening through a directory handle has no disk path to pass, and passing
+       nothing left `state.projectFile` holding "anim_front.png" — which matches
+       no profile, so the sheet stopped being two frames and became one 64×128
+       picture, drawn into the battle scene at twice its proper height. Every
+       decomp rule keys on this string; it has to be the project-relative path. */
+    const handleOpen = await page.eval(`(async () => {
+        const bytes = new Uint8Array(${JSON.stringify(bytes)});
+        await PaintApp.applyProjectImageBytes(bytes, 'anim_front.png', '', [], ${JSON.stringify(PATH)});
+        return {
+            projectFile: PaintApp.state.projectFile,
+            filePath: PaintApp.state.filePath,
+            frames: PaintApp.projectFrameLayout()
+        };
+    })()`);
+    check('a handle-opened asset keeps its project-relative identity',
+        handleOpen.projectFile === PATH, handleOpen.projectFile);
+    check('and is still cut into frames rather than read as one tall picture',
+        handleOpen.frames && handleOpen.frames.count === 2 && handleOpen.frames.h === 64,
+        JSON.stringify(handleOpen.frames));
+    check('without inventing a disk path it cannot reopen from',
+        handleOpen.filePath === '', JSON.stringify(handleOpen.filePath));
     check('sprite-coords is loaded in the page', res.hasModule);
     check('the sheet is read as two frames', res.frames && res.frames.count === 2,
         JSON.stringify(res.frames));
