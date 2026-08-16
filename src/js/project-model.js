@@ -100,7 +100,13 @@ function readDeclaration(symbol, args) {
     const formatPal = format && /gbapal/.test(format);
 
     const out = [];
-    for (const file of files) {
+    for (const raw of files) {
+        /* The expansion declares the source PNG and lets the build compress it.
+           Vanilla declares the build's own output — `tiles.4bpp.lz` — which is
+           not in a fresh checkout at all; the file an artist edits is the .png
+           beside it. Dropping the compression suffix first means the rest of
+           this reads both dialects without knowing there are two. */
+        const file = raw.replace(/\.(lz|rl|smol)$/i, '');
         const own = /\.(\d)bpp$/.exec(file);
         const ownPal = /\.(gbapal|pal)$/.test(file);
         const bpp = formatBpp || own;
