@@ -132,40 +132,153 @@ Full suite: 23 suites · 14,203 assertions · 0 failed.
 
 *The two things people currently leave CDPaint for.*
 
-- **1.1 ◐ PARTLY DONE (15 Aug 2026)** — the palette strip now picks a *slot*, not a colour.
-  Clicking a swatch in the palette panel (or the quantise dialog) records the slot; painted
-  pixels resolve to it, so painting with Magikarp's slot 14 writes 14 rather than 11. Setting
-  the colour any other way drops the link and the first-match fallback applies. The slot in hand
-  is ringed in the palette that's driving the canvas.
-  *Still to do:* brushes writing indices directly rather than the save reconciling at the end,
-  which also removes the need for the baseline diff and makes the 16-colour ceiling structural
-  rather than advisory.
-- **1.2** Palette editing that repaints live — change slot 9, the canvas updates, nothing
-  re-quantises. (`remapProjectCanvasToPalette` from 0.8 is the mechanism; it needs wiring to
-  single-slot edits.)
-- **1.3** Frames as first-class: frame tabs, onion skin, playback at the game's real speed, for
-  anim (2), icon (2) and overworld (9-frame, 144×32) sheets.
-- **1.4** Frame-aware canvas — draw on frame 1 with frame 2 ghosted; all frames share one palette
-  by construction.
-- **1.5** 1:1 preview pane while zoomed in.
+- **1.1 ✅ DONE (15 Aug 2026)** — index-native editing.
+  - The palette strip picks a *slot*, not a colour. Clicking a swatch in the palette panel (or
+    the quantise dialog) records the slot; painted pixels resolve to it, so painting with
+    Magikarp's slot 14 writes 14 rather than 11. Setting the colour any other way drops the link
+    and the first-match fallback applies. The slot in hand is ringed in the palette that's
+    driving the canvas.
+  - **The index map is now the document.** `state.projectIndices` is live: every committed step
+    folds the canvas back into it (`commitProjectIndices`, called at the top of both `saveState`
+    paths) and pins the result to the history entry, so undo and redo restore the slots along
+    with the pixels. The map moved onto `state` and into `DOCUMENT_STATE_KEYS`, so it survives a
+    tab switch; `spriteIndices` is now an accessor onto it.
+  - **The RGB baseline is gone.** `state.projectBaseline` — the full-canvas bitmap captured at
+    load that saving used to diff against — no longer exists. The map *is* the baseline: a pixel
+    still showing the colour of the slot it holds was not painted. Saving writes the map.
+  - **The colour ceiling is structural.** `paintProjectIndicesOnto` repaints the surface from the
+    map at the end of each step, so a blended or antialiased pixel does not survive the step it
+    was made in — it lands on the slot it resolved to, and what is on screen is what the file
+    will contain. Only the box that moved is written back, so tiled history keeps its deltas.
+  - Every document-replacing path now calls `clearProjectAssetState()`. Without it a plain PNG
+    opened after an asset would inherit its palette and get snapped onto its slots.
+  - **Known limit, deliberate:** painting slot 14 over a pixel that already holds slot 11 of the
+    *same* colour is indistinguishable from not painting at all, and the conservative reading
+    wins — renumbering on a guess is how the shiny palette gets silently rewritten (F3). Telling
+    the two apart needs per-pixel stroke coverage, not a colour comparison. An explicit
+    "assign slot to selection" action would close it without the guesswork.
+  - With layers active the map is read from the composite and the canvas is *not* snapped: the
+    layers underneath still hold the unsnapped pixels and would paint them back. Free RGB work
+    on an asset is Sketch mode's job (2.3).
+  - Tests: 9 new assertions in `project-roundtrip.mjs` (64 total) covering the live map, the
+    snap, undo/redo of the map, and the absence of the baseline.
+- **1.2 ✅ DONE (15 Aug 2026)** — palette editing that repaints live. Editing the palette of a
+  project asset is now a document edit, not a view setting, because the canvas *is* that palette
+  rendered through the index map.
+  - **Slot edit** (`updatePaletteColor`) → `repaintProjectFromPalette()` repaints every pixel
+    holding that slot and nothing else. No re-quantise, no index moves. Records a step.
+  - **Reorder / move between palettes** → `renumberProjectIndices(table)` moves the artwork with
+    the colour, by slot table rather than by RGB so duplicate slots don't merge. The picture is
+    byte-identical afterwards; only the numbers under it change.
+  - Dragging a slot *out* of the palette driving the canvas is refused while any pixel stands on
+    it — there is no honest place to send those pixels. An unused slot goes through, and
+    everything above it shifts down with the artwork.
+  - **The palette travels with history**, alongside the index map (`attachProjectStep` /
+    `restoreProjectStep`). This closes a corruption that predates 1.1: swapping normal→shiny has
+    always been a history step, but undo restored only the pixels — leaving the canvas showing
+    one palette while `activePaletteId` named another, so the next edit renumbered the whole
+    asset against colours it never used.
+  - `setActivePalette` on a project asset now routes through `remapCanvasToPalette`. Choosing
+    which palette drives the canvas *is* the normal/shiny toggle; it cannot be a silent switch.
+    `removePalette` repaints the same way when the palette that went away was the active one.
+  - With layers active the canvas does not follow a palette edit (the layers hold RGB the map
+    does not describe). The palette still changes. Sketch mode (2.3) is where that belongs.
+  - Tests: 15 more assertions in `project-roundtrip.mjs` (79 total).
+- **1.3 ✅ DONE (16 Aug 2026)** — frames as first-class.
+  **The insight that shaped it:** Gen 3 animation is not a file format. A two-frame front sprite
+  is one 64×128 PNG holding two 64×64 pictures; a walking sheet is one 144×32 PNG holding nine
+  16×32 ones. So a frame is a *rectangle of the canvas*, not a second document — which means
+  every frame shares one palette and one index map by construction, and all of 1.1/1.2 applies to
+  frames unchanged with nothing new underneath.
+  - `projectFrameLayout()` reads the sheet off the profile: `anim_front` → 2×(64×64) stacked,
+    `icon` → 2×(32×32) stacked, overworld/object-event → horizontal. A still 64×64 front sprite
+    reports *no* frames rather than inventing one.
+  - **Playback at the game's real speed** — 8 game frames held at the GBA's actual 59.7275 Hz
+    (7.47 fps, 134 ms), not a rounded 60. It walks the strip, never the canvas: the frame being
+    edited does not move while it plays.
+  - **Onion skin** ghosts the previous frame (40%) and the next (22%) over the frame being
+    worked on, on its own canvas above the artwork and below the tool preview — so it can never
+    be painted on or saved. This is **1.4**, and it fell out of 1.3 as predicted.
+  - Frame strip (`src/js/frame-strip.js`, same chrome as the palette/preview panels): thumbnails
+    off the display surface at integer zoom, play/stop, onion toggle, frame count, hold, and a
+    live `16×32 · 7.5 fps · 134ms/frame` readout. It appears only for a sheet with more than one
+    frame and hides itself again otherwise.
+  - Choosing a frame is navigation, not an edit — it never enters the undo stack, matching how
+    the layer system treats layer selection.
+  - **Known limit:** the frame count for overworld sheets is a *guess* (largest division landing
+    on an 8×8 tile boundary). The real width lives in `ObjectEventGraphicsInfo` in the project's
+    C, which nothing reads yet — that is Phase 3 work. Until then the count is adjustable in the
+    strip, which rescues any sheet the guess gets wrong.
+  - Tests: 29 new assertions (108 total in `project-roundtrip.mjs`) over layout, geometry,
+    playback timing, onion containment, and the strip's own DOM.
+- **1.4 ✅ DONE (16 Aug 2026)** — delivered by 1.3's onion skin. Draw on one frame with its
+  neighbours ghosted; all frames share one palette because they share one image.
+- **1.5 ✅ DONE (16 Aug 2026)** — the 1:1 preview pane. The Sprite Preview panel already existed
+  but was neither 1:1 (it CSS-upscaled cropped thumbnails to ~128px) nor live (it only redrew on
+  palette changes, despite its docstring claiming otherwise). Now: true integer pixel scale with
+  1× labelled *game size*, one pane per palette so normal and shiny are both checkable at once,
+  following the active frame of a sheet — and the playing frame while the strip plays — and
+  repainting on every committed edit. The bounding-box crop is gone: once it updates live, a crop
+  resizes the pane under the cursor every time a pixel near an edge changes.
 
 **Done when:** a spriter can do a full sprite + animation pass without opening GraphicsGale.
+**Status:** met, bar the 1:1 preview pane (1.5). Both dialects GraphicsGale had and CDPaint
+didn't — native indexed editing and an animation timeline with onion skin — are now spoken.
 
 ## Phase 2 — The conformance strip
 
 *Freedom while drawing, impossible to ship broken.*
 
-- **2.1 ◐ PARTLY DONE (15 Aug 2026)** — a conformance readout lives in the status bar for project
+- **2.1 ✅ DONE (16 Aug 2026)** — the conformance readout lives in the status bar for project
   assets: size, colours against the budget the file's real bit depth allows, 8×8 tile alignment,
   and the slot in hand. Green means insertable.
-  *Still to do:* a "slot 0 clear" check, and surfacing it somewhere larger than the status bar
-  when it goes red.
-- **2.2** **Fit to target** — one action that closes the gap (resize, quantise, clear slot 0),
-  with a before/after diff.
+  - **Slot 0 check** — a file carrying a tRNS is expected to keep its background on that slot.
+    Nothing standing on it means the background is opaque, which is finding F1 waiting to happen
+    and is *invisible in the editor*, because there is no battle scene behind the canvas.
+  - **Red gets a banner.** A bar above the status bar names what will not build and carries the
+    Fit to target button. Dismissing it is remembered against that exact set of problems, so
+    hiding one does not hide the next, different one.
+- **2.2 ✅ DONE (16 Aug 2026)** — **Fit to target**.
+  - Four fixes: resize to the profile's box, pad to 8×8 for tilesets, reduce to the colour
+    budget, clear slot 0. Each is offered only when it applies, each is individually switchable.
+  - **They are pure functions over a document value** (`{w, h, map, colors, transparentIdx}`),
+    not operations on the live canvas. That is what makes the dialog's "after" a real render of
+    the real result rather than a description of one — and it means the operations that can
+    destroy someone's work are each testable in isolation.
+  - `Clear slot 0` flood-fills inward from the edges through whichever slot the border is mostly
+    made of, so a colour that also appears *inside* the sprite is not hollowed out with it.
+  - `Reduce colours` merges the least-used slots into their nearest surviving neighbour — the
+    smallest number of pixels that have to change — and never merges away the transparency slot.
+  - `Resize` pads or crops **bottom-anchored and horizontally centred**, because a Gen 3 sprite's
+    `y_offset` is measured up from the bottom edge: top-anchoring would move the sprite in game
+    even though the file came out the right size.
+  - Ordered slot 0 → colours → size when several run, so clearing the background drops a colour
+    before anything is merged, and padding lands on the final transparency slot. One history
+    step, so one undo.
+  - *Found while building it:* `addPaletteColorTo` changed the palette — half of a project
+    asset's document since 1.2 — without recording a step, so undo dropped back to a palette the
+    canvas no longer matched. Fixed.
 - **2.3** Sketch mode: full RGB and layers while exploring, with the strip showing the distance
   the whole time. Insertion gated on green.
-- **2.4** Validate without building: run the checks `gbagfx` runs, in milliseconds.
-- **2.5** Project-wide audit — every asset that would fail a build, listed.
+- **2.4 ✅ DONE (16 Aug 2026)** — `validateProjectAsset(bytes, path)` runs off a file's bytes,
+  needing neither the document nor a compiler.
+  **It reports two kinds of problem, kept apart on purpose**, because they are routinely
+  confused and only one of them stops anything:
+  - **won't build** — `gbagfx` refuses it and `make` halts: not indexed, a dimension that is not
+    a whole number of 8×8 tiles, a tileset that is not 128px wide, more palette entries than the
+    target depth holds, or an *index* the target depth cannot express (an 8bpp PNG converts to a
+    4bpp asset happily right up until one pixel uses index 16).
+  - **wrong in game** — it builds perfectly and then looks wrong: the wrong size for the slot, an
+    opaque background where the sprite wanted transparency. Nothing in the toolchain ever says a
+    word about these.
+- **2.5 ✅ DONE (16 Aug 2026)** — **Audit** button in the project panel. Walks every PNG in the
+  hooked folder through 2.4 and reports `N assets · N clean · N won't build · N wrong in game`,
+  grouped by kind, each row naming the file's real shape and clicking through to open it. Reads
+  are sequential with the panel updated as it goes — a decomp holds thousands of PNGs and firing
+  them all at once buries the main thread.
+  *Found while building it:* `decodePngIndices` is async, and two of the new checks called it
+  without awaiting — so they silently never ran. The tests caught it; a `Promise` is truthy and
+  has no `.length`, so the loops just did nothing.
 
 **Done when:** an artist can spend an hour experimenting and still cannot produce a file that
 breaks the build.
@@ -242,12 +355,14 @@ Folder watching, recent/pinned assets, per-species notes, session restore.
 1. ~~**Phase 0**~~ — done. F1, F2, F3, F5, F6 closed; F8's hardcoded 16-colour assumption is
    closed on the validation side (the Advanced Export Studio still hardcodes 4bpp/16 — that is
    the remaining half of F8).
-2. **1.1 + 1.3** — index-native editing and frames. This is what makes the app someone's only tool.
-   1.1 is now cheap: `spriteIndices` already holds the true map, so brushes writing slots is a
-   change of input, not of representation.
-3. **2.1 + 2.2** — the conformance strip and Fit to target. Changes how the tool *feels*.
+2. ~~**Phase 1**~~ — done, 1.1 through 1.5. Both GraphicsGale dialects are spoken.
+3. ~~**2.1, 2.2, 2.4, 2.5**~~ — done. **2.3** (sketch mode) is what is left of Phase 2, and it is
+   now more a decision than a build: layered/off-palette work already behaves as a sketch —
+   1.1 deliberately does not snap the canvas while layers are active, and 1.2 does not repaint
+   through them. What is missing is saying so in the interface and gating insertion on green.
 4. **3.3 + 3.4** — battle preview and automatic coordinates. The reason to switch.
-5. **5.1** — import-and-fit, the on-ramp that gets outside art into the project at all.
+5. **5.1** — import-and-fit, the on-ramp that gets outside art into the project at all. Now
+   largely a matter of pointing 2.2's fixes at an incoming PNG instead of an open one.
 
 Still open from the audit: **F4** (palette pairing — Phase 3.2), **F7** (`.pal` entry 0 forced
 transparent — now harmless for saving, since transparency comes from tRNS, but still wrong for
