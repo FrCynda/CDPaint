@@ -2033,20 +2033,27 @@
                 parts.push({ text: tileOk ? 'tiles ✓' : 'not 8×8', ok: tileOk });
             }
 
-            /* A file that carries a tRNS is expected to keep its background on that
-               slot. Nothing standing on it means the background is opaque — which
-               is the "why has my sprite got a black box round it" bug (F1), and it
-               is invisible in the editor because the editor has no battle scene
-               behind the canvas. Worth a red light of its own. */
-            const tIdx = this.state.projectTransparentIndex;
-            if (tIdx >= 0) {
+            /* Nothing standing on the transparent slot means the background is
+               opaque — the "why has my sprite got a black box round it" bug (F1),
+               invisible in the editor because the editor has no battle scene behind
+               the canvas. Worth a red light of its own.
+
+               The slot is 0, not whatever the PNG's tRNS names. Transparency here
+               is a hardware rule — the GBA draws palette entry 0 of a sprite as
+               see-through — and tRNS is only how a PNG viewer is told about it. The
+               two disagree in the wild: togedemaru's front sprite carries a tRNS
+               naming slot 15, which nothing stands on, while slot 0 holds the
+               background exactly as it should. Reading tRNS called that broken.
+               `projectTransparentIndex` still drives *saving*, where matching the
+               file's own chunk is the right thing to do. */
+            if (profile.wantsTransparency) {
                 const map = this.state.projectIndices;
                 let clear = 0;
-                if (map) for (let q = 0; q < map.length; q++) if (map[q] === tIdx) clear++;
+                if (map) for (let q = 0; q < map.length; q++) if (map[q] === 0) clear++;
                 const clearOk = clear > 0;
                 if (!clearOk) ok = false;
                 parts.push({
-                    text: clearOk ? `slot ${tIdx} clear` : `slot ${tIdx} unused — opaque background`,
+                    text: clearOk ? 'slot 0 clear' : 'slot 0 unused — opaque background',
                     ok: clearOk
                 });
             }
@@ -22551,16 +22558,38 @@ void main() {
            Two different questions get asked about a Gen 3 asset and they are
            routinely confused, so this keeps them apart:
 
-             build — gbagfx would refuse it, and `make` stops. Not indexed, a
-                     dimension that is not a whole number of 8×8 tiles, an index
-                     the target bit depth cannot express.
-             game  — it builds perfectly and then looks wrong. The wrong size for
-                     the slot, an opaque background where the sprite wanted
-                     transparency. Nothing in the toolchain will ever tell you.
+             build — gbagfx would refuse it, and `make` stops.
+             game  — it builds perfectly and then looks wrong. Nothing in the
+                     toolchain will ever say a word about these.
 
            Both matter; only one of them stops the build, and an artist deserves to
            know which they are looking at. Runs off the file's bytes, so it needs
-           neither the document nor a compiler. */
+           neither the document nor a compiler.
+
+           Every build rule below was read out of gbagfx's own source, not
+           remembered, because the folklore is wrong in both directions:
+
+             convert_png.c:90   colour type must be GRAY or PALETTE. A greyscale
+                                PNG is perfectly acceptable — 64 stock expansion
+                                assets are greyscale and build fine.
+             convert_png.c:129  bit depth must be 1, 2, 4 or 8.
+             gfx.c:416,419      width and height must each be a multiple of 8.
+
+           And nothing anywhere compares the PLTE length to the target depth. A
+           4bpp asset whose PNG carries 256 palette entries builds without
+           complaint (gfx.c:371 handles that case explicitly), which is how 196
+           stock expansion assets were being called broken.
+
+           The reverse error matters more. ConvertBitDepth (convert_png.c) reduces
+           an over-deep index with
+
+               pixel = value % (1 << destBitDepth)
+
+           so an 8bpp PNG using index 20 does *not* fail a 4bpp build — it becomes
+           index 4 and the sprite renders in the wrong colours. That is the worst
+           shape a problem can have: clean build, wrong picture, no diagnostic. It
+           belongs in `game`, and it has to be checked always rather than only when
+           some other check happened to pass. */
         async validateProjectAsset(bytes, path) {
             const profile = this.inferProfile(path);
             const out = { path, label: profile.label, problems: [], info: null };
@@ -22577,31 +22606,48 @@ void main() {
             const colors = (meta.palette && meta.palette.length) || 0;
             out.info = { w, h, depth, colors, indexed: meta.colorType === 3, trns: !!meta.trns };
 
-            if (meta.colorType !== 3) {
+            // Greyscale (0) and palette (3) are what gbagfx accepts; anything with
+            // real colour channels it refuses outright.
+            if (meta.colorType !== 3 && meta.colorType !== 0) {
                 fail('build', 'notIndexed',
-                    `colour type ${meta.colorType} — gbagfx needs an indexed PNG`);
+                    `colour type ${meta.colorType} — gbagfx takes indexed or greyscale only`);
             }
-            // Everything the GBA draws is built out of 8×8 tiles; a partial tile has
-            // nowhere to go.
-            if (w % 8 || h % 8) fail('build', 'tiles', `${w}×${h} is not a whole number of 8×8 tiles`);
+            if (![1, 2, 4, 8].includes(depth)) {
+                fail('build', 'depth', `${depth}-bit; gbagfx takes 1, 2, 4 or 8`);
+            }
+            /* Everything the GBA *draws* is built out of 8×8 tiles; a partial tile
+               has nowhere to go. A palette stored as a picture is never drawn, so
+               the rule does not apply to it — 16×1 is exactly right for one. */
+            if (!profile.notArtwork && (w % 8 || h % 8)) {
+                fail('build', 'tiles', `${w}×${h} is not a whole number of 8×8 tiles`);
+            }
             if (profile.requiredWidth && w !== profile.requiredWidth) {
                 fail('build', 'width', `tilesets must be ${profile.requiredWidth}px wide, not ${w}`);
             }
 
-            /* The target depth is the profile's, not the file's: converting an 8bpp
-               PNG to a 4bpp asset is fine right up until a pixel uses index 16. */
-            const target = profile.bitDepth || 4;
+            /* The target depth is the slot's, not the file's. A PLTE longer than
+               the target holds is not a problem by itself — only an *index* the
+               target cannot express, and that one is silent.
+
+               Where the path does not say what the slot is (`depthGuessed`), the
+               file's own depth is the only evidence there is, and asserting 4bpp
+               anyway accused 100 stock 8bpp assets of drawing the wrong colours.
+               Silence beats a confident wrong answer; the project's own INCBIN line
+               is the real authority and reading it is 3.1's job. */
+            const target = (!profile.depthGuessed && profile.bitDepth) || depth || 4;
             const budget = Number.isFinite(profile.maxColors) ? profile.maxColors : (1 << target);
-            if (colors > budget) {
-                fail('build', 'palette', `${colors} palette entries; ${target}bpp holds ${budget}`);
-            } else if (meta.colorType === 3 && depth > target) {
-                const idx = await this.decodePngIndices(meta);
-                if (idx) {
+            let idx = null;
+            const indices = async () => (idx !== null ? idx : (idx = await this.decodePngIndices(meta)));
+
+            if (meta.colorType === 3 && (depth > target || colors > budget)) {
+                const px = await indices();
+                if (px) {
                     let worst = -1;
-                    for (let q = 0; q < idx.length; q++) if (idx[q] > worst) worst = idx[q];
+                    for (let q = 0; q < px.length; q++) if (px[q] > worst) worst = px[q];
                     if (worst >= budget) {
-                        fail('build', 'index',
-                            `uses index ${worst}; ${target}bpp only reaches ${budget - 1}`);
+                        fail('game', 'index',
+                            `uses index ${worst}, which a ${target}bpp slot cannot hold — ` +
+                            `it builds, then draws it as index ${worst % budget}`);
                     }
                 }
             }
@@ -22611,15 +22657,21 @@ void main() {
                 fail('game', 'size',
                     `${w}×${h}; this slot expects ${sizes.map(r => r[0] + '×' + r[1]).join(' or ')}`);
             }
-            if (meta.trns) {
-                const t = this.transparentIndexFromTrns(meta.trns);
-                const idx = t >= 0 ? await this.decodePngIndices(meta) : null;
-                if (idx) {
+
+            /* Transparency is a hardware rule, not a file one: the GBA draws
+               palette entry 0 of a sprite as see-through, whatever the PNG's tRNS
+               happens to say. Trusting tRNS instead flagged togedemaru's front
+               sprite — its tRNS names slot 15, which nothing stands on, while slot
+               0 holds the background exactly as it should. Ask the question the
+               hardware asks. */
+            if (profile.wantsTransparency) {
+                const px = await indices();
+                if (px) {
                     let clear = 0;
-                    for (let q = 0; q < idx.length; q++) if (idx[q] === t) clear++;
+                    for (let q = 0; q < px.length; q++) if (px[q] === 0) clear++;
                     if (!clear) {
                         fail('game', 'slot0',
-                            `nothing on slot ${t}; the background will be solid in game`);
+                            'nothing on slot 0; the background will be solid in game');
                     }
                 }
             }
@@ -25424,34 +25476,86 @@ self.onmessage = function(e) {
             }
             return palettes;
         }
-        /* Sizes and depths here were read out of pokeemerald, not remembered.
-           A profile that rejects a stock asset is worse than no profile at all: it
-           teaches people to click through the warning that was meant to save them. */
+        /* Sizes and depths here were counted across a whole pokeemerald-expansion
+           working copy, not remembered. A profile that rejects a stock asset is
+           worse than no profile at all: it teaches people to click through the
+           warning that was meant to save them.
+
+           The counts behind each `allowedResolutions` (expansion 1.16.4, 11,234
+           PNGs) are in the comments, because the temptation when something new
+           trips a profile is to widen it, and the count says whether widening is
+           honest or is just silencing the one asset in front of you.
+
+           `strictResolution: false` is a real answer, not a cop-out. Object-event
+           sheets came back in eleven different shapes; there is no box to hold
+           them to, and pretending otherwise is how F5 happened. */
         getTargetProfiles() {
             return {
-                'pokemon-front': { label: 'Pokémon front sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64]] },
-                'pokemon-anim-front': { label: 'Pokémon animated front sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 128], [64, 64]], frames: { size: [64, 64] } },
-                'pokemon-back': { label: 'Pokémon back sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64]] },
-                'pokemon-icon': { label: 'Pokémon icon', bitDepth: 4, palettes: ['Icon palette'], strictResolution: true, allowedResolutions: [[32, 64], [32, 32]], frames: { size: [32, 32] } },
+                // 202 stock files, every one 64×64.
+                'pokemon-front': { label: 'Pokémon front sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64]], wantsTransparency: true },
+                // 1,211 stock files, every one 64×128 (two stacked 64×64 frames).
+                'pokemon-anim-front': { label: 'Pokémon animated front sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 128], [64, 64]], frames: { size: [64, 64] }, wantsTransparency: true },
+                // 1,409 at 64×64 and one at 64×128 (deoxys, whose forms share a sheet).
+                'pokemon-back': { label: 'Pokémon back sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64], [64, 128]], wantsTransparency: true },
+                // 1,414 stock files, every one 32×64. Expansion writes these 8bpp
+                // with a 16-entry palette; the depth is the target's, not the file's.
+                'pokemon-icon': { label: 'Pokémon icon', bitDepth: 4, palettes: ['Icon palette'], strictResolution: true, allowedResolutions: [[32, 64], [32, 32]], frames: { size: [32, 32] }, wantsTransparency: true },
+                // Form icons (deoxys' 128×64 speed icon) are not the standard slot.
+                'pokemon-icon-variant': { label: 'Pokémon form icon', bitDepth: 4, palettes: ['Icon palette'], strictResolution: false, wantsTransparency: true },
                 'pokemon-footprint': { label: 'Pokémon footprint', bitDepth: 1, maxColors: 2, palettes: [], strictResolution: true, allowedResolutions: [[16, 16]] },
-                'pokemon-overworld': { label: 'Pokémon overworld sprite', bitDepth: 4, palettes: ['Overworld normal', 'Overworld shiny'], strictResolution: false, frames: { axis: 'x', counts: [9, 6, 4, 3, 2] } },
-                'object-event': { label: 'Overworld object sprite', bitDepth: 4, palettes: [], strictResolution: false, frames: { axis: 'x', counts: [9, 6, 4, 3, 2] } },
-                'trainer': { label: 'Trainer sprite', bitDepth: 4, palettes: [], strictResolution: true, allowedResolutions: [[64, 64]] },
-                'item-icon': { label: 'Item icon', bitDepth: 4, palettes: [], strictResolution: true, allowedResolutions: [[24, 24]] },
+                // 192×32 (1,039), 256×32 (57) and 384×64 (27) all occur. Frame width
+                // is the sheet's height in the square cases, so no fixed box.
+                'pokemon-overworld': { label: 'Pokémon overworld sprite', bitDepth: 4, palettes: ['Overworld normal', 'Overworld shiny'], strictResolution: false, frames: { axis: 'x', counts: [9, 6, 4, 3, 2] }, wantsTransparency: true },
+                /* A palette stored as a picture: one row of pixels, one per slot.
+                   pawmi/normal.png is 16×1, which is neither tile-aligned nor
+                   artwork, and reading it as a sprite produced a build error for a
+                   file that is not a sprite at all. */
+                'palette-image': { label: 'Palette image', bitDepth: 4, palettes: [], strictResolution: false, tileAligned: false, notArtwork: true },
+                'object-event': { label: 'Overworld object sprite', bitDepth: 4, palettes: [], strictResolution: false, frames: { axis: 'x', counts: [9, 6, 4, 3, 2] }, wantsTransparency: true },
+                // 180 stock front pics, every one 64×64.
+                'trainer-front': { label: 'Trainer front sprite', bitDepth: 4, palettes: [], strictResolution: true, allowedResolutions: [[64, 64]], wantsTransparency: true },
+                // Back pics are animation sheets: 64×256 (8) and 64×320 (2).
+                'trainer-back': { label: 'Trainer back sprite', bitDepth: 4, palettes: [], strictResolution: false, frames: { axis: 'y', size: [64, 64] }, wantsTransparency: true },
+                // 619 stock icons, every one 24×24.
+                'item-icon': { label: 'Item icon', bitDepth: 4, palettes: [], strictResolution: true, allowedResolutions: [[24, 24]], wantsTransparency: true },
+                // 138 stock tile sheets, every one 128px wide.
                 'tileset': { label: 'Tileset', bitDepth: 4, palettes: [], strictResolution: false, requiredWidth: 128, tileAligned: true },
-                'interface': { label: 'Interface graphic', bitDepth: 4, palettes: [], strictResolution: false },
-                'default': { label: 'Project asset', bitDepth: 4, palettes: [], strictResolution: false }
+                /* Tileset *animation* frames live under the tileset but are not the
+                   sheet: 176 of them, in shapes from 16×16 to 64×48. Holding them to
+                   the 128px sheet rule was 216 of the false alarms on a stock repo. */
+                'tileset-anim': { label: 'Tileset animation frame', bitDepth: 4, palettes: [], strictResolution: false, tileAligned: true },
+                /* `depthGuessed` means exactly that: nothing about the path says
+                   what depth the slot is, and 4 is only the common case. 32 stock
+                   assets are 8bpp and would be judged against 16 colours here. */
+                'interface': { label: 'Interface graphic', bitDepth: 4, palettes: [], strictResolution: false, depthGuessed: true },
+                'default': { label: 'Project asset', bitDepth: 4, palettes: [], strictResolution: false, depthGuessed: true }
             };
         }
+        /* Path → profile. Deliberately anchored rather than substring-matched:
+           `base === 'tiles'` used to claim the map_preview folder's own tiles.png
+           for the tileset profile and then fail it for not being 128px wide. */
         inferProfile(sourcePath) {
             const profiles = this.getTargetProfiles();
             const low = (sourcePath || '').replace(/\\/g, '/').toLowerCase();
             const file = low.split('/').pop() || '';
             const base = file.replace(/\.[^.]+$/, '').replace(/_gba$/, '');
-            if (low.includes('/tilesets/') || base === 'tiles') return profiles['tileset'];
+
+            /* Inside a tileset folder only `tiles.png` is the sheet. The animation
+               frames sit beside it — sometimes under `anim/`, sometimes just as
+               0.png, 1.png, 2.png — and they are 16×256 or 8×24 or whatever the
+               animation needs. Keying on the folder alone held six of those to the
+               sheet's 128px width. */
+            if (low.includes('data/tilesets/') || low.includes('/tilesets/')) {
+                return base === 'tiles' ? profiles['tileset'] : profiles['tileset-anim'];
+            }
+            /* Species folders nest: graphics/pokemon/<species>/ and, for alternate
+               forms, graphics/pokemon/<species>/<form>/. Both end in the same set of
+               file names, so matching on the name still works. */
             if (low.includes('graphics/pokemon/')) {
                 if (base === 'footprint') return profiles['pokemon-footprint'];
-                if (base.includes('icon')) return profiles['pokemon-icon'];
+                if (base === 'normal' || base === 'shiny') return profiles['palette-image'];
+                if (base === 'icon') return profiles['pokemon-icon'];
+                if (base.startsWith('icon')) return profiles['pokemon-icon-variant'];
                 if (base.includes('overworld')) return profiles['pokemon-overworld'];
                 if (base.startsWith('anim_front')) return profiles['pokemon-anim-front'];
                 if (base.includes('back')) return profiles['pokemon-back'];
@@ -25459,8 +25563,10 @@ self.onmessage = function(e) {
                 return profiles['default'];
             }
             if (low.includes('graphics/object_events/')) return profiles['object-event'];
-            if (low.includes('graphics/trainers/')) return profiles['trainer'];
-            if (low.includes('graphics/items/')) return profiles['item-icon'];
+            if (low.includes('graphics/trainers/')) {
+                return low.includes('/back_pics/') ? profiles['trainer-back'] : profiles['trainer-front'];
+            }
+            if (low.includes('graphics/items/icons')) return profiles['item-icon'];
             if (low.includes('graphics/interface')) return profiles['interface'];
             return profiles['default'];
         }
@@ -25657,9 +25763,22 @@ self.onmessage = function(e) {
 
         /* How many colours this asset can actually hold: the bit depth the file was
            opened at decides it, not an assumption that everything is 4bpp. */
+        /* The colour budget belongs to the *slot*, not to the file sitting in it.
+           An expansion icon.png is an 8bpp PNG that becomes a 4bpp asset, so taking
+           the budget from the file hands the artist 256 colours for a slot that
+           holds 16 — it builds, and the icon comes out wrong.
+
+           Where the slot's depth is genuinely unknown (a loose interface graphic
+           that could be either), the file's own depth is the better guess of the
+           two. Neither is authority: the project declares the real answer, in the
+           `.4bpp` / `.8bpp` extension on the INCBIN/INCGFX line that names the
+           file. Reading that is the asset model's job (3.1); until it exists this
+           prefers the slot wherever the slot is actually known. */
         maxColorsForProfile(profile) {
             if (profile && Number.isFinite(profile.maxColors)) return profile.maxColors;
-            const depth = this.state.projectBitDepth || (profile && profile.bitDepth) || 4;
+            const depth = (profile && !profile.depthGuessed && profile.bitDepth)
+                || this.state.projectBitDepth
+                || (profile && profile.bitDepth) || 4;
             return 1 << depth;
         }
         findOffendingColors(paletteColors, d, tol) {
