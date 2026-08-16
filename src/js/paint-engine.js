@@ -22173,7 +22173,15 @@ void main() {
                 return false;
             }
         }
-        async applyProjectImageBytes(bytes, fallbackName, sourcePath, palNodes) {
+        /* `sourcePath` is where the bytes came from on disk; `identity` is what the
+           asset *is* within the project. They are the same thing when a real path
+           was opened, but a directory handle has no path — only a project-relative
+           one — and that relative path is what every decomp rule keys on. Which
+           frames the sheet holds, what size it should be, which species declares
+           its coordinates: all of it is `inferProfile(state.projectFile)`, and all
+           of it silently degrades to the `default` profile when that is a bare
+           filename. Hence two arguments rather than one. */
+        async applyProjectImageBytes(bytes, fallbackName, sourcePath, palNodes, identity) {
             const meta = this.parsePngPalette(bytes);
             if (meta.colorType !== 3 || !meta.palette || !meta.palette.length) {
                 if (sourcePath) {
@@ -22186,7 +22194,7 @@ void main() {
             const blob = new Blob([bytes], { type: 'image/png' });
             const bmp = await createImageBitmap(blob);
             const w = meta.width, h = meta.height;
-            this.state.projectFile = sourcePath || fallbackName;
+            this.state.projectFile = identity || sourcePath || fallbackName;
             this.state.history = [];
             this.state.step = -1;
             if (this.state.selection) this.cancelSelection();
@@ -22266,7 +22274,9 @@ void main() {
                 else if (typeof node.handle.getFile === 'function') file = await node.handle.getFile();
                 else { showToast('Unsupported file handle', 'warning'); return false; }
                 const bytes = new Uint8Array(await file.arrayBuffer());
-                const ok = await this.applyProjectImageBytes(bytes, node.name, '', palNodes);
+                // No disk path to record, but `node.path` is the project-relative
+                // one the tree walked to get here — that is the asset's identity.
+                const ok = await this.applyProjectImageBytes(bytes, node.name, '', palNodes, node.path || '');
                 if (ok) {
                     this.state.projectHandle = node.handle || null;
                 }

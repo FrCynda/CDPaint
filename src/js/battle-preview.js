@@ -43,7 +43,7 @@
     function getApp() { return window.PaintApp; }
     function project() { return window.PokeProject; }
 
-    var panel = null, sceneEl = null, readoutEl = null, sideEl = null, zoomEl = null;
+    var panel = null, sceneEl = null, readoutEl = null, sideEl = null, zoomEl = null, legendEl = null;
     var zoom = 2, raf = null, playingFrame = null, sideOverride = null;
     var frameCanvas = null;
     /* Closing has to mean closed. Every committed edit re-renders, so a plain
@@ -375,6 +375,21 @@
 
         sceneEl = el('canvas', 'bp-scene');
         panel.appendChild(sceneEl);
+
+        /* Without this the scene is three coloured shapes. It was described back
+           to me as "a blue section with a white square and a brown section",
+           which is exactly what it is if you do not already know what it means. */
+        legendEl = el('div', 'bp-legend');
+        [['sky', 'battle screen, 240×160'],
+         ['ground', 'where the feet should land'],
+         ['health', 'health bar']].forEach(function (pair) {
+            var item = el('span', 'bp-legend-item');
+            item.appendChild(el('i', 'bp-swatch bp-swatch-' + pair[0]));
+            item.appendChild(el('span', null, pair[1]));
+            legendEl.appendChild(item);
+        });
+        panel.appendChild(legendEl);
+
         readoutEl = el('div', 'bp-readout');
         panel.appendChild(readoutEl);
 

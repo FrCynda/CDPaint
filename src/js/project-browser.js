@@ -34,13 +34,6 @@
     var model = null;
     var nodeByRel = null;   // repo-relative path → the scanned node
 
-    /* The repo-relative path of the asset the panel last opened.
-       The engine cannot supply this: opening through a file handle — which is
-       every open in browser mode — leaves `state.projectFile` holding the bare
-       filename, because there is no path to hold. The panel is the only place
-       that knows which node was clicked, so it is the place that remembers. */
-    var openedRel = null;
-
     function getApp() { return window.PaintApp; }
 
     function isTauriEnv() {
@@ -233,7 +226,6 @@
                 showToast('Image viewer is not ready', 'warning');
                 return;
             }
-            openedRel = relOf(pngNode);
             if (pngNode.handle) app.openProjectImageFromHandle(pngNode, palNodes);
             else app.openProjectImage(pngNode.path, palNodes);
         });
@@ -447,14 +439,10 @@
         return p;
     }
 
-    /* What the declarations call the asset the engine currently has open.
-       Prefer what the panel remembered when the row was clicked, since that is
-       the only source that survives a handle-based open; check the filename
-       matches first, so a file opened some other way since does not inherit the
-       last row's identity. */
+    /* What the declarations call the asset the engine currently has open. The
+       engine holds an absolute path on desktop and an already-relative one from
+       a directory handle; both arrive here and leave repo-relative. */
     function rel(path) {
-        var base = function (p) { return String(p || '').replace(/^.*[\\/]/, '').toLowerCase(); };
-        if (openedRel && base(openedRel) === base(path)) return openedRel;
         return relOf({ path: path });
     }
 
@@ -798,7 +786,6 @@
         lastTree = null;
         nodeByRel = null;
         model = null;
-        openedRel = null;
         treeEl.textContent = '';
         setStatus('');
         setLoading(false);
@@ -861,7 +848,6 @@
             return (n.path || n.name) === result.path;
         });
         if (!found) return;
-        openedRel = relOf(found);
         if (found.handle) app.openProjectImageFromHandle(found, []);
         else app.openProjectImage(found.path, []);
     }
