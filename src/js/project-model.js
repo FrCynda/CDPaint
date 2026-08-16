@@ -84,8 +84,11 @@ const nameOf = (p) => stripExt(baseOf(p));
    starting with a dot is a format, one starting with a dash is a gbagfx flag,
    and anything else is a file.
 
-   Returns [] for the lines naming something we do not care about (tilemaps and
-   other .bin blobs). */
+   Returns [] for the lines naming something we do not care about. Tilemaps
+   used to be in that bin; the battle-scene preview reassembles a background out
+   of tiles + tilemap + palette, so they are resolved now. They carry no depth
+   and are not palettes, so they only ever add symbol↔path entries — the depth
+   and pairing counts are untouched. */
 function readDeclaration(symbol, args) {
     const files = args.filter(a => a && a[0] !== '.' && a[0] !== '-');
     const format = args.find(a => a && a[0] === '.') || null;
@@ -120,6 +123,10 @@ function readDeclaration(symbol, args) {
                 symbol, kind: 'palette', depth: null,
                 path: /\.gbapal$/.test(file) ? stripExt(file) + '.pal' : file
             });
+        } else if (/\.bin$/i.test(file) || (format && /tilemap|TM$/i.test(format))) {
+            // `INCGFX_U32("…/map.bin", ".smolTM")` — the format is a compression
+            // the build applies; the file beside it is a plain tilemap.
+            out.push({ symbol, kind: 'tilemap', depth: null, path: file });
         }
     }
     return out;

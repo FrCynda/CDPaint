@@ -138,7 +138,7 @@ await withPage(async (page) => {
         };
         const written = [];
         window.PokeProject = Object.assign({}, window.PokeProject, {
-            model: () => ({ stub: true }),
+            model: () => ({ root: '/coord-stub', sourceText: new Map() }),
             coordsFor: () => [declared],
             writeCoord: (rec, field, value) => { written.push([field, value]); return Promise.resolve(true); }
         });
@@ -245,6 +245,96 @@ await withPage(async (page) => {
     })()`);
     check('a stale index map falls back to the canvas instead of blanking',
         /8px above the bottom edge/.test(stale.text), stale.text);
+
+    /* The backdrop, end to end through the panel: a project that declares one
+       environment, whose three files the panel fetches and reassembles. The
+       tileset is one solid tile of colour 1, so a correct render paints the
+       whole screen that colour — anything else (bands, black, transparent) is
+       distinguishable at a glance. */
+    const tilesPng = Array.from(makePng({
+        w: 8, h: 8, depth: 4,
+        palette: [[0, 0, 0], [10, 200, 60], [0, 0, 0], [0, 0, 0]],
+        trns: [0, 255, 255, 255],
+        indices: new Uint8Array(64).fill(1)
+    }));
+    // 32x32 entries, tile 0, palette bank 2 → colours 0..15 of the file.
+    const mapBin = [];
+    for (let i = 0; i < 1024; i++) { mapBin.push(0x00, 0x20); }
+    const palText = 'JASC-PAL\r\n0100\r\n16\r\n' +
+        ['0 0 0', '10 200 60'].concat(Array(14).fill('0 0 0')).join('\r\n') + '\r\n';
+
+    /* The opponent's health box is a 64×32 OAM sprite. A solid one lands
+       somewhere specific or it does not; the backdrop behind it is a different
+       colour, so both the blit and its placement are one pixel read each. */
+    const boxPng = Array.from(makePng({
+        w: 64, h: 32, depth: 4,
+        palette: [[0, 0, 0], [210, 40, 190], [0, 0, 0], [0, 0, 0]],
+        trns: [0, 255, 255, 255],
+        indices: new Uint8Array(64 * 32).fill(1)
+    }));
+
+    const scene = await page.eval(`(async () => {
+        const files = {
+            't.png': new Uint8Array(${JSON.stringify(tilesPng)}),
+            'm.bin': new Uint8Array(${JSON.stringify(mapBin)}),
+            'p.pal': new TextEncoder().encode(${JSON.stringify(palText)}),
+            'hb.png': new Uint8Array(${JSON.stringify(boxPng)})
+        };
+        window.PokeProject = Object.assign({}, window.PokeProject, {
+            // A real model carries a root; the panel keys its cache on it.
+            model: () => ({
+                root: '/env-stub', sourceText: new Map(),
+                index: { pathsBySymbol: new Map([['gHealthboxSinglesOpponentGfx', ['hb.png']]]) }
+            }),
+            coordsFor: () => [],
+            environments: () => ([{
+                id: 'BATTLE_ENVIRONMENT_CAVE', label: 'Cave',
+                tilesPath: 't.png', tilemapPath: 'm.bin', palettePath: 'p.pal'
+            }]),
+            readBytes: (p) => files[p] ? Promise.resolve(files[p]) : Promise.reject(new Error(p))
+        });
+        window.BattlePreview.open();
+        const panel = document.getElementById('battle-preview');
+        const c = panel.querySelector('.bp-scene');
+        // Screen pixel → canvas pixel; the panel picks its own scale to fit.
+        const at = (x, y) => {
+            const s = c.width / 240;
+            return Array.from(c.getContext('2d').getImageData(
+                Math.floor((x + 0.5) * s), Math.floor((y + 0.5) * s), 1, 1).data);
+        };
+        // Both fetches are async; the panel repaints itself when the bytes land.
+        for (let i = 0; i < 80; i++) {
+            await new Promise(r => setTimeout(r, 25));
+            if (at(4, 4)[1] > 150 && at(20, 20)[0] > 150) break;
+        }
+        const env = panel.querySelector('.bp-env');
+        return {
+            topLeft: at(4, 4),
+            inBox: at(20, 20),
+            leftOfBox: at(4, 20),
+            belowBox: at(20, 60),
+            options: env ? Array.from(env.options).map(o => o.textContent) : null,
+            envHidden: env ? env.hidden : null
+        };
+    })()`);
+
+    check('the panel fetches the environment and paints the project’s backdrop',
+        scene.topLeft[1] > 150 && scene.topLeft[0] < 80,
+        `top-left pixel rgba(${scene.topLeft})`);
+    check('and offers it by the name the project gives it',
+        scene.envHidden === false && JSON.stringify(scene.options) === '["Cave"]',
+        `${scene.envHidden} ${JSON.stringify(scene.options)}`);
+
+    /* The health box is a 64×32 sprite centred on sBattlerHealthboxCoords
+       {44,30}, so its art occupies x 12..75, y 14..45 — placing it by its
+       top-left instead would put it a box-width off, which these three
+       samples separate. */
+    check('the project’s own health box is drawn, not a white placeholder',
+        scene.inBox[0] > 150 && scene.inBox[2] > 150 && scene.inBox[1] < 100,
+        `pixel inside the box rgba(${scene.inBox})`);
+    check('and it is centred on the coordinates rather than hung off them',
+        scene.leftOfBox[1] > 150 && scene.belowBox[1] > 150,
+        `left rgba(${scene.leftOfBox}), below rgba(${scene.belowBox})`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

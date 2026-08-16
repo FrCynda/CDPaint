@@ -299,9 +299,18 @@ breaks the build.
   240×160 screen with the sprite where `sBattlerCoords` + `y_offset` will actually put it, the
   foot line it is supposed to reach, and the healthbox it must not run into. Follows the active
   frame and repaints on every committed edit.
-  *Simplification:* the scene is bands and a ground line, not real backdrop tiles — compositing
-  a `battle_environment` backdrop means decoding its tileset and tilemap, and the ground line
-  already carries the judgement. Marked `ponytail:` in the file with the upgrade path.
+
+  **The backdrop and healthbox are the project's own graphics** (16 Aug 2026, `battle-scene.js`).
+  A GBA background is a 256-tile sheet, a tilemap and a palette, and all three are *uncompressed
+  on disk* — the `.smol` in their declarations is applied by the build — so the scene reassembles
+  with no decompressor. Two facts had to be read rather than guessed, and both are recorded in
+  the file: `battle_bg.c:872` loads the palette at `BG_PLTT_ID(2)`, so a map entry naming bank 3
+  wants colours 16–31 of the 48-colour file; and `map.bin` is two 32×32 screenblocks, not one
+  64-wide map. All **23 declared environments resolve and render**, offered by the name the
+  project gives them. The healthbox sheets need no tilemap — their `-mwidth/-mheight` flags
+  reorder tiles for OAM, not for the eye.
+  *Remaining ceiling:* the sprite stands still. `pokemon_animation.c` holds 154 animations, 95 in
+  use across 1,233 species; the top 20 cover 79% of them. Porting those is 3.7.
 - **3.4 ✅ DONE (16 Aug 2026)** — automatic sprite coordinates. `src/js/sprite-coords.js` reads
   both layouts (expansion `species_info/*.h`, vanilla `*_pic_coordinates.h`), measures the
   artwork, and writes a corrected value back through one narrow Rust command that refuses if the
@@ -318,6 +327,10 @@ breaks the build.
   shiny generator by hue-rotating the normal palette; palette edits propagate to every asset
   that shares them, with a written-files preview.
 - **3.6** Family view — evolution line pinned beside the canvas for style consistency.
+- **3.7** Species battle animations in the preview. Each species declares a `.frontAnimId`, and
+  each animation is a per-frame callback moving `sprite->x2/y2` and setting an affine matrix in
+  1/256 fixed point — portable to canvas transforms one at a time. A species whose animation is
+  not ported stands still and says which one it should be playing, rather than pretending.
 
 **Done when:** you can tell a sprite is wrong before you build the ROM.
 
@@ -385,8 +398,9 @@ Folder watching, recent/pinned assets, per-species notes, session restore.
    1.1 deliberately does not snap the canvas while layers are active, and 1.2 does not repaint
    through them. What is missing is saying so in the interface and gating insertion on green.
 4. ~~**3.1 – 3.4**~~ — done. The asset model, the palette resolver, the battle preview and
-   automatic coordinates. **3.5** (palette as a lens) and **3.6** (family view) are what is left
-   of Phase 3, and both are comfort rather than correctness.
+   automatic coordinates, the latter two now drawing the project's real backdrops and healthbox.
+   **3.5** (palette as a lens), **3.6** (family view) and **3.7** (battle animations) are what is
+   left of Phase 3, and all three are comfort rather than correctness.
 5. **5.1** — import-and-fit, the on-ramp that gets outside art into the project at all. Now
    largely a matter of pointing 2.2's fixes at an incoming PNG instead of an open one, and 3.4's
    measurement at its coordinates.
