@@ -145,39 +145,55 @@ export function resolveEnvironments(envs, index) {
     return out;
 }
 
-/* One 240×160 frame of background, as RGBA.
+/* One screen of tiled background, as RGBA.
  *
  * `tiles` is the decoded tiles.png — {indices, width} — `pal` the parsed
  * palette, `map` a Uint16Array of the tilemap. Returns a plain object rather
  * than ImageData so this runs in node.
+ *
+ * Defaults describe a battle background: 240×160, palette at BG row 2. A map
+ * preview is the same construction at 256×160 and row 13, which is why the
+ * options exist rather than a second copy of this loop.
  */
-export function renderBackground(tiles, pal, map) {
-    if (!tiles || !tiles.indices || !pal || !pal.length || !map || map.length < MAP_W * 20) return null;
-    const data = new Uint8ClampedArray(SCREEN_W * SCREEN_H * 4);
+export function renderBackground(tiles, pal, map, opts) {
+    const o = opts || {};
+    const width = o.width || SCREEN_W;
+    const height = o.height || SCREEN_H;
+    const base = o.paletteBase == null ? PALETTE_BASE : o.paletteBase;
+    const stride = o.mapStride || MAP_W;
+
+    const cols = Math.ceil(width / TILE);
+    const rows = Math.ceil(height / TILE);
+    if (!tiles || !tiles.indices || !pal || !pal.length || !map || map.length < stride * rows) return null;
+    const data = new Uint8ClampedArray(width * height * 4);
     const tilesPerRow = (tiles.width / TILE) | 0;
     if (!tilesPerRow) return null;
 
-    const cols = Math.ceil(SCREEN_W / TILE);   // 30
-    const rows = Math.ceil(SCREEN_H / TILE);   // 20
-
     for (let my = 0; my < rows; my++) {
         for (let mx = 0; mx < cols; mx++) {
-            const e = map[my * MAP_W + mx];
+            const e = map[my * stride + mx];
             const id = e & 0x3ff;
             const hflip = e & 0x400, vflip = e & 0x800;
-            const bank = ((e >> 12) & 0xf) - PALETTE_BASE;
+            const bank = ((e >> 12) & 0xf) - base;
             if (bank < 0) continue;            // a row this palette does not cover
             const tx = (id % tilesPerRow) * TILE, ty = ((id / tilesPerRow) | 0) * TILE;
 
             for (let y = 0; y < TILE; y++) {
                 const py = my * TILE + y;
-                if (py >= SCREEN_H) break;
+                if (py >= height) break;
                 const sy = vflip ? TILE - 1 - y : y;
                 const srcRow = (ty + sy) * tiles.width + tx;
-                let out = (py * SCREEN_W + mx * TILE) * 4;
+                let out = (py * width + mx * TILE) * 4;
                 for (let x = 0; x < TILE; x++, out += 4) {
-                    if (mx * TILE + x >= SCREEN_W) break;
-                    const ci = tiles.indices[srcRow + (hflip ? TILE - 1 - x : x)];
+                    if (mx * TILE + x >= width) break;
+                    /* Low nibble only. A 4bpp sheet has nothing above it, but a
+                       map preview's sheet is an 8bpp PNG whose high nibble
+                       carries the palette bank a second time — gbagfx does the
+                       same mask at gfx.c:339 before applying the tilemap's
+                       bank, and the two disagree in files Tilemap Studio wrote,
+                       where the sheet says bank 0 for everything. The tilemap
+                       is the one the hardware believes. */
+                    const ci = tiles.indices[srcRow + (hflip ? TILE - 1 - x : x)] & 0xf;
                     if (!ci) continue;         // colour 0 is transparent on a BG
                     const c = pal[bank * 16 + ci];
                     if (!c) continue;
@@ -186,7 +202,51 @@ export function renderBackground(tiles, pal, map) {
             }
         }
     }
-    return { data, width: SCREEN_W, height: SCREEN_H };
+    return { data, width, height };
+}
+
+/* The same assembly, but as palette indices rather than colour.
+ *
+ * What an editor needs: one byte per pixel holding the whole-palette index —
+ * bank in the high nibble, colour in the low one — so painting stays indexed
+ * and saving can put the picture back into tiles. Rendering to RGBA and reading
+ * colours back would lose that, because two banks can hold the same colour.
+ */
+export function assembleIndices(tiles, map, opts) {
+    const o = opts || {};
+    const width = o.width || SCREEN_W;
+    const height = o.height || SCREEN_H;
+    const base = o.paletteBase == null ? PALETTE_BASE : o.paletteBase;
+    const stride = o.mapStride || MAP_W;
+
+    const cols = Math.ceil(width / TILE), rows = Math.ceil(height / TILE);
+    if (!tiles || !tiles.indices || !map || map.length < stride * rows) return null;
+    const tilesPerRow = (tiles.width / TILE) | 0;
+    if (!tilesPerRow) return null;
+
+    const out = new Uint8Array(width * height);
+    for (let my = 0; my < rows; my++) {
+        for (let mx = 0; mx < cols; mx++) {
+            const e = map[my * stride + mx];
+            const id = e & 0x3ff;
+            const hflip = e & 0x400, vflip = e & 0x800;
+            const bank = ((e >> 12) & 0xf) - base;
+            if (bank < 0) continue;
+            const tx = (id % tilesPerRow) * TILE, ty = ((id / tilesPerRow) | 0) * TILE;
+            for (let y = 0; y < TILE; y++) {
+                const py = my * TILE + y;
+                if (py >= height) break;
+                const srcRow = (ty + (vflip ? TILE - 1 - y : y)) * tiles.width + tx;
+                for (let x = 0; x < TILE; x++) {
+                    const pxx = mx * TILE + x;
+                    if (pxx >= width) break;
+                    const ci = tiles.indices[srcRow + (hflip ? TILE - 1 - x : x)] & 0xf;
+                    out[py * width + pxx] = bank * 16 + ci;
+                }
+            }
+        }
+    }
+    return { indices: out, width, height };
 }
 
 /* An indexed image as RGBA, with one index knocked out.

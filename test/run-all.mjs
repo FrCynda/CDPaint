@@ -52,7 +52,7 @@ if (only !== 'browser') {
 
     console.log('\nunit');
     for (const f of ['wand-algorithms.test.mjs', 'project-model.test.mjs', 'sprite-coords.test.mjs',
-                     'battle-scene.test.mjs']) {
+                     'battle-scene.test.mjs', 'retile.test.mjs']) {
         const p = join(HERE, f);
         if (existsSync(p)) tally(run(f.replace(/\.test\.mjs$|\.mjs$/, ''), p));
     }
