@@ -44,8 +44,16 @@ const u8 gCrashFont[] = INCBIN_U8("graphics/crash_screen/font.1bpp");
     check('reads the one-argument INCBIN form, implying the .png',
         idx.depthByPath.get('graphics/foo/tiles.png') === 4);
     check('reads 1bpp', idx.depthByPath.get('graphics/crash_screen/font.png') === 1);
-    check('ignores tilemaps and other blobs',
+    check('gives a tilemap no depth, and does not invent a .png beside it',
         !idx.depthByPath.has('graphics/foo/bg.bin') && !idx.depthByPath.has('graphics/foo/bg.png'));
+    /* Tilemaps used to be dropped entirely. The battle-scene preview resolves a
+       backdrop through its symbol, so they are indexed now — as paths only, so
+       neither the depth count nor the palette set moves. */
+    check('but does resolve it by symbol, for the code that reassembles a background',
+        (idx.pathsBySymbol.get('gFooMap') || [])[0] === 'graphics/foo/bg.bin',
+        JSON.stringify(idx.pathsBySymbol.get('gFooMap')));
+    check('and a tilemap is never mistaken for a palette',
+        !idx.palettePaths.has('graphics/foo/bg.bin'));
     check('records palette declarations as palettes',
         idx.palettePaths.has('graphics/pokemon/bulbasaur/normal.pal'));
     check('maps symbol to file',

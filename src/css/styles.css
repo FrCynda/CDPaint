@@ -5968,7 +5968,9 @@ body.project-panel-collapsed #project-expand{display:flex;}
 .bp-header{display:flex;align-items:center;gap:8px;padding:5px 8px;cursor:move;background:var(--s5,#fff);border-bottom:1px solid var(--s6,#cfcfcf);}
 .bp-header .bp-title{font-weight:600;}
 .bp-header .bp-side{margin-left:auto;}
-.bp-header .bp-side,.bp-header .bp-zoom{border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;font-size:10px;padding:1px 3px;}
+.bp-header .bp-side,.bp-header .bp-zoom,.bp-header .bp-env{border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;font-size:10px;padding:1px 3px;}
+.bp-header .bp-env{max-width:88px;}
+.bp-header .bp-env[hidden]{display:none;}
 .bp-header .bp-close{border:0;background:transparent;cursor:pointer;font-size:14px;}
 /* Line 1477 makes every canvas in the document `position:absolute`, because the
    editing stack is layers piled at 0,0. A canvas in a panel is not that — it is
@@ -5985,8 +5987,9 @@ body.project-panel-collapsed #project-expand{display:flex;}
 .bp-legend{display:flex;flex-wrap:wrap;gap:4px 10px;padding:5px 9px;font-size:10px;opacity:.75;}
 .bp-legend-item{display:inline-flex;align-items:center;gap:4px;}
 .bp-swatch{width:9px;height:9px;border-radius:2px;flex:0 0 auto;border:1px solid rgba(0,0,0,.25);}
-.bp-swatch-sky{background:#8ec7e8;}
-.bp-swatch-ground{background:#c8b98a;}
+/* The foot markers are lines in the scene, so they read as lines here too. */
+.bp-swatch-foot{background:rgb(20,90,20);height:3px;border-radius:0;border:0;}
+.bp-swatch-miss{background:rgb(190,30,30);height:3px;border-radius:0;border:0;}
 .bp-swatch-health{background:#fff;}
 .bp-readout{padding:7px 9px;display:flex;flex-direction:column;gap:5px;border-top:1px solid var(--s6,#cfcfcf);}
 .bp-measured{font-variant-numeric:tabular-nums;}
