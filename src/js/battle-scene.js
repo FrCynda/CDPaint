@@ -1,0 +1,179 @@
+/* The battle background, rebuilt from what the project ships.
+ *
+ * A GBA background is not a picture. It is a 256-tile sheet (`tiles.png`,
+ * 4bpp), a 32×32 grid of 16-bit entries saying which tile goes where
+ * (`map.bin`), and a palette (`palette.pal`). The ROM stores all three
+ * compressed; the *files on disk are not*, because the compression happens in
+ * the build. So the whole thing can be reassembled here with no decompressor:
+ * read the PNG the app already knows how to read, read 2048 little-endian u16s,
+ * and blit.
+ *
+ * Two details that are not guessable and were read out of the decomp rather
+ * than assumed:
+ *
+ *   - `battle_bg.c:872` does `LoadPalette(…, BG_PLTT_ID(2), 3 * PLTT_SIZE_4BPP)`.
+ *     The 48-colour file lands in BG palette rows 2, 3 and 4, so a map entry
+ *     naming bank 3 wants colours 16..31 of the file, not 48..63. Ignoring that
+ *     offset renders the whole scene out of a palette it never uses.
+ *
+ *   - `map.bin` is 4096 bytes, a 64×32 map, and a GBA stores that as *two 32×32
+ *     screenblocks* rather than as one 64-wide array. Reading it row-major at a
+ *     stride of 64 interleaves the two and produces a convincing-looking scene
+ *     that is wrong. Screenblock 0 (entries 0..1023, stride 32) is the battle
+ *     scene, and it is the one whose platforms sit under sBattlerCoords;
+ *     screenblock 1 is its near-twin — 929 of 1024 entries identical — and
+ *     holds no platforms, being the other half of the intro slide.
+ *
+ * Colour 0 of any bank is transparent on a GBA background, which is what leaves
+ * the message-box area of the map empty: the game draws the textbox over it.
+ * Rendering it as transparent rather than as black is what makes that read as a
+ * hole rather than as scenery.
+ */
+
+export const SCREEN_W = 240;
+export const SCREEN_H = 160;
+const MAP_W = 32, TILE = 8;
+
+/* BG palette row the environment palette is loaded into. battle_bg.c:872. */
+export const PALETTE_BASE = 2;
+
+/* JASC-PAL, 0–255 per channel. The decomp writes every palette this way and
+   PaintEngine already reads it; this is the same format read without a
+   PaintEngine to hand, so the scene can be built and tested outside a browser. */
+export function parseJascPal(text) {
+    const lines = String(text).split(/\r?\n/);
+    if (lines[0] !== 'JASC-PAL' || lines[1] !== '0100') return null;
+    const out = [];
+    for (let i = 3; i < lines.length; i++) {
+        const m = lines[i].trim().match(/^(\d+)\s+(\d+)\s+(\d+)$/);
+        if (m) out.push({ r: +m[1], g: +m[2], b: +m[3] });
+    }
+    return out.length ? out : null;
+}
+
+/* The environments the project declares, in the order it declares them.
+ *
+ * Read rather than hardcoded because the whole point of this app is forks: an
+ * added environment should appear in the cycler without anyone editing CDPaint.
+ * `.background = ENVIRONMENT_BACKGROUND(TallGrass)` is a macro naming a pair of
+ * symbols by suffix, which is why the suffix is what gets captured. */
+export function parseEnvironments(sourceText) {
+    const text = String(sourceText || '');
+    const table = text.indexOf('gBattleEnvironmentInfo');
+    if (table < 0) return [];
+    const out = [];
+    const entry = /\[(BATTLE_ENVIRONMENT_[A-Z0-9_]+)\]\s*=\s*\{/g;
+    entry.lastIndex = table;
+    let m;
+    while ((m = entry.exec(text))) {
+        // Take the block up to the next entry, or a reasonable slice at the end.
+        const next = text.indexOf('[BATTLE_ENVIRONMENT_', m.index + 1);
+        const body = text.slice(m.index, next < 0 ? m.index + 4000 : next);
+        const bg = body.match(/\.background\s*=\s*ENVIRONMENT_BACKGROUND\(\s*(\w+)\s*\)/);
+        const pal = body.match(/\.palette\s*=\s*(\w+)/);
+        if (!bg || !pal) continue;
+        const name = body.match(/\.name\s*=\s*_\("([^"]*)"\)/);
+        out.push({
+            id: m[1],
+            label: name ? name[1] : m[1].replace('BATTLE_ENVIRONMENT_', '').toLowerCase(),
+            tiles: 'gBattleEnvironmentTiles_' + bg[1],
+            tilemap: 'gBattleEnvironmentTilemap_' + bg[1],
+            palette: pal[1]
+        });
+    }
+    return out;
+}
+
+/* Symbols → the files that back them, using the index the project browser
+   already builds out of every INCBIN/INCGFX in the tree. An environment whose
+   three files are not all resolvable is dropped rather than half-drawn. */
+export function resolveEnvironments(envs, index) {
+    if (!index || !index.pathsBySymbol) return [];
+    const one = (sym) => {
+        const paths = index.pathsBySymbol.get(sym);
+        return paths && paths.length ? paths[0] : null;
+    };
+    const out = [];
+    for (const e of envs) {
+        const tiles = one(e.tiles), tilemap = one(e.tilemap), palette = one(e.palette);
+        if (!tiles || !tilemap || !palette) continue;
+        out.push(Object.assign({}, e, { tilesPath: tiles, tilemapPath: tilemap, palettePath: palette }));
+    }
+    return out;
+}
+
+/* One 240×160 frame of background, as RGBA.
+ *
+ * `tiles` is the decoded tiles.png — {indices, width} — `pal` the parsed
+ * palette, `map` a Uint16Array of the tilemap. Returns a plain object rather
+ * than ImageData so this runs in node.
+ */
+export function renderBackground(tiles, pal, map) {
+    if (!tiles || !tiles.indices || !pal || !pal.length || !map || map.length < MAP_W * 20) return null;
+    const data = new Uint8ClampedArray(SCREEN_W * SCREEN_H * 4);
+    const tilesPerRow = (tiles.width / TILE) | 0;
+    if (!tilesPerRow) return null;
+
+    const cols = Math.ceil(SCREEN_W / TILE);   // 30
+    const rows = Math.ceil(SCREEN_H / TILE);   // 20
+
+    for (let my = 0; my < rows; my++) {
+        for (let mx = 0; mx < cols; mx++) {
+            const e = map[my * MAP_W + mx];
+            const id = e & 0x3ff;
+            const hflip = e & 0x400, vflip = e & 0x800;
+            const bank = ((e >> 12) & 0xf) - PALETTE_BASE;
+            if (bank < 0) continue;            // a row this palette does not cover
+            const tx = (id % tilesPerRow) * TILE, ty = ((id / tilesPerRow) | 0) * TILE;
+
+            for (let y = 0; y < TILE; y++) {
+                const py = my * TILE + y;
+                if (py >= SCREEN_H) break;
+                const sy = vflip ? TILE - 1 - y : y;
+                const srcRow = (ty + sy) * tiles.width + tx;
+                let out = (py * SCREEN_W + mx * TILE) * 4;
+                for (let x = 0; x < TILE; x++, out += 4) {
+                    if (mx * TILE + x >= SCREEN_W) break;
+                    const ci = tiles.indices[srcRow + (hflip ? TILE - 1 - x : x)];
+                    if (!ci) continue;         // colour 0 is transparent on a BG
+                    const c = pal[bank * 16 + ci];
+                    if (!c) continue;
+                    data[out] = c.r; data[out + 1] = c.g; data[out + 2] = c.b; data[out + 3] = 255;
+                }
+            }
+        }
+    }
+    return { data, width: SCREEN_W, height: SCREEN_H };
+}
+
+/* An indexed image as RGBA, with one index knocked out.
+ *
+ * The interface sheets (the healthbox and friends) are ordinary 4bpp PNGs whose
+ * on-screen appearance is the file's own layout — the `-mwidth/-mheight` flags
+ * in their declarations reorder tiles for the ROM's OAM, not for the eye. So
+ * they need no tilemap, only their own palette and their transparent index. */
+export function indexedToRgba(indices, width, height, palette, transparentIndex) {
+    if (!indices || !palette || !width || !height) return null;
+    if (indices.length < width * height) return null;
+    const data = new Uint8ClampedArray(width * height * 4);
+    const ti = transparentIndex < 0 ? 0 : transparentIndex;
+    for (let i = 0, o = 0; i < width * height; i++, o += 4) {
+        const ci = indices[i];
+        if (ci === ti) continue;
+        const c = palette[ci];
+        if (!c) continue;
+        data[o] = c.r; data[o + 1] = c.g; data[o + 2] = c.b; data[o + 3] = 255;
+    }
+    return { data, width, height };
+}
+
+/* map.bin as u16s. Written little-endian by the build, and a DataView read
+   keeps that true on a big-endian host rather than trusting the platform. */
+export function parseTilemap(bytes) {
+    if (!bytes || bytes.length < 2) return null;
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const view = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    const out = new Uint16Array(b.byteLength >> 1);
+    for (let i = 0; i < out.length; i++) out[i] = view.getUint16(i * 2, true);
+    return out;
+}

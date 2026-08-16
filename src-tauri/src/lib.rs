@@ -470,7 +470,12 @@ fn read_image_file(path: String) -> Result<Vec<u8>, String> {
     if !p.is_file() {
         return Err("path is not an existing file".into());
     }
-    if !is_image_extension(p.extension().and_then(|e| e.to_str())) {
+    // `.bin` is here and not in `is_image_extension` on purpose: a tilemap is
+    // graphics data this reader should hand over, but it is not something the
+    // app should offer to *open* as a picture, and `is_image_path` decides that.
+    let ext = p.extension().and_then(|e| e.to_str());
+    let is_tilemap = ext.map(|e| e.eq_ignore_ascii_case("bin")).unwrap_or(false);
+    if !is_image_extension(ext) && !is_tilemap {
         return Err("only image files can be read".into());
     }
     std::fs::read(&p).map_err(|e| format!("read failed: {}", e))
@@ -623,7 +628,10 @@ struct ProjectSources {
     skipped: usize,
 }
 
-const SOURCE_MARKERS: [&str; 8] = [
+// Keep in step with SOURCE_MARKERS in src/js/project-browser.js — browser mode
+// filters with its own copy, and a file only one of them keeps is a feature
+// that works on the desktop and not in the browser, or the reverse.
+const SOURCE_MARKERS: [&str; 10] = [
     "INCBIN_U",
     "INCGFX_U",
     "SpriteFrameImage",
@@ -632,6 +640,11 @@ const SOURCE_MARKERS: [&str; 8] = [
     "PicYOffset",
     "y_offset",
     "#define P_",
+    // The battle environment table. It names no files itself — the graphics
+    // header does that — so none of the markers above reach it, and without it
+    // the battle preview has no backdrops to offer.
+    "gBattleEnvironmentInfo",
+    "gBattleTerrainTable",
 ];
 const MAX_SOURCE_BYTES: usize = 96 * 1024 * 1024;
 

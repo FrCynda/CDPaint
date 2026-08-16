@@ -476,7 +476,10 @@
        when the repo root itself was picked. That is a real limitation and not
        worth papering over: with no index every resolver falls back to
        convention, which is what the panel did before there was one. */
-    var SOURCE_MARKERS = /INCBIN_U|INCGFX_U|SpriteFrameImage|ObjectEventGraphicsInfo|OBJ_EVENT_PAL_TAG_|PicYOffset|y_offset|#define P_/;
+    // Keep in step with SOURCE_MARKERS in src-tauri/src/lib.rs. The last two are
+    // the battle environment table, which declares no files of its own and so
+    // matches none of the others.
+    var SOURCE_MARKERS = /INCBIN_U|INCGFX_U|SpriteFrameImage|ObjectEventGraphicsInfo|OBJ_EVENT_PAL_TAG_|PicYOffset|y_offset|#define P_|gBattleEnvironmentInfo|gBattleTerrainTable/;
 
     async function readSourcesFsa(handle, rel, depth, out) {
         if (depth > MAX_SCAN_DEPTH || typeof handle.entries !== 'function') return out;
@@ -965,6 +968,37 @@
         });
     }
 
+    /* Any file in the project by its repo-relative path, as bytes.
+       The tree only ever scanned .png and .pal, so a tilemap has no node and no
+       handle to read through — this walks to it instead. Desktop hands the path
+       to Rust; browser walks the directory handle a segment at a time. */
+    function readBytes(relPath) {
+        var parts = String(relPath || '').split('/').filter(Boolean);
+        if (!parts.length) return Promise.reject(new Error('no path'));
+        if (isTauriEnv()) {
+            if (!model || !model.root) return Promise.reject(new Error('no project root'));
+            return readNodeBytes({ path: model.root.replace(/[\\/]$/, '') + '/' + parts.join('/') });
+        }
+        if (!currentRoot || currentRoot.kind !== 'fsa') return Promise.reject(new Error('no project'));
+        return (async function () {
+            var dir = currentRoot.handle;
+            for (var i = 0; i < parts.length - 1; i++) dir = await dir.getDirectoryHandle(parts[i]);
+            var fh = await dir.getFileHandle(parts[parts.length - 1]);
+            return new Uint8Array(await (await fh.getFile()).arrayBuffer());
+        })();
+    }
+
+    /* The battle environments the project declares, each resolved to its three
+       files. Empty until a decomp is hooked, which is the caller's cue to draw
+       its own approximation instead. */
+    function environments() {
+        if (!model || !window.BattleScene) return [];
+        var text = [];
+        model.sourceText.forEach(function (t) { text.push(t); });
+        return window.BattleScene.resolveEnvironments(
+            window.BattleScene.parseEnvironments(text.join('\n')), model.index);
+    }
+
     window.PokeProject = {
         open: openPanel,
         close: closePanel,
@@ -972,6 +1006,8 @@
         assets: function () { return collectPngs(lastTree, []); },
         model: function () { return model; },
         rel: rel,
+        readBytes: readBytes,
+        environments: environments,
         coordsFor: function (path) {
             if (!model) return [];
             return model.coordsByPath.get(rel(path)) || [];

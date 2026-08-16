@@ -23,21 +23,30 @@
  * species, exactly when y_offset matches the artwork. That line is the whole
  * check, and it is drawn.
  *
- * ponytail: the scene is schematic — bands and a ground line, not the real
- * backdrop tiles. Compositing a real battle_environment backdrop means
- * decoding its tileset and tilemap, which is a lot of code for a judgement the
- * ground line already supports. Upgrade path: render the backdrop into an
- * offscreen canvas and use it in place of the bands; nothing else moves.
+ * The backdrop behind it is the project's own — every environment it declares,
+ * reassembled from tiles + tilemap + palette by battle-scene.js and cycled
+ * through here. The coloured bands are still the fallback for when no decomp is
+ * hooked, or when a fork's environments do not resolve.
  */
 (function () {
     'use strict';
 
     var SCREEN_W = 240, SCREEN_H = 160, BOX = 64;
 
-    /* From sBattlerCoords / sBattlerHealthboxCoords, BATTLE_COORDS_SINGLES. */
+    /* From sBattlerCoords / sBattlerHealthboxCoords, BATTLE_COORDS_SINGLES.
+       `boxW`/`boxH` are the healthbox *OAM sprite* size, not the art's: the
+       sprite's x,y is its centre, so the art starts at (x - boxW/2, y - boxH/2).
+       The opponent's is 64×32 and the player's 64×64, which is what the
+       `-mheight 4` and `-mheight 8` on their declarations in graphics.c say. */
     var SIDES = {
-        front: { label: 'Opponent', x: 176, y: 40, box: [44, 30], boxW: 64, boxH: 32 },
-        back: { label: 'Player', x: 72, y: 80, box: [158, 88], boxW: 64, boxH: 40 }
+        front: {
+            label: 'Opponent', x: 176, y: 40, box: [44, 30], boxW: 64, boxH: 32,
+            healthbox: 'gHealthboxSinglesOpponentGfx'
+        },
+        back: {
+            label: 'Player', x: 72, y: 80, box: [158, 88], boxW: 64, boxH: 64,
+            healthbox: 'gHealthboxSinglesPlayerGfx'
+        }
     };
 
     function getApp() { return window.PaintApp; }
@@ -51,6 +60,24 @@
        which asset it was dismissed for, and the next one shows it again. */
     var hiddenFor = null;
     var zoomChosen = false;
+
+    /* The backdrops, and the one being shown. `envList` is null until a decomp
+       has been asked; [] means asked and there were none, which is a different
+       thing and must not retrigger the load on every repaint. Each entry gets a
+       canvas once, because a background is 38k pixels of tile blitting and the
+       panel repaints on every stroke. */
+    var envList = null, envIndex = 0, envEl = null;
+    var envCanvas = {};      // label → canvas, or 'pending' / 'failed'
+    var hbCanvas = {};       // healthbox symbol → the same
+    /* Which project the list was read from, as a value rather than as an object
+       identity: `model()` is free to hand back a fresh wrapper each call, and
+       keying on identity then rebuilt the list — and threw away every cached
+       backdrop — on every repaint, which is a refetch per stroke. */
+    var envSig;
+    function projectSignature(m) {
+        if (!m) return '';
+        return (m.root || '') + '|' + (m.sourceText ? m.sourceText.size : 0);
+    }
 
     function el(tag, cls, text) {
         var n = document.createElement(tag);
@@ -134,6 +161,37 @@
             window.SpriteCoords.boundsOf(source, w, h, ti, frame));
     }
 
+    /* Knock the transparent index out of a rendered frame.
+     *
+     * The editor paints index 0 as whatever colour the palette gives it, which
+     * is right on the canvas — you cannot pick a colour you cannot see. In the
+     * battle it is transparent, so leaving it opaque draws every sprite inside a
+     * flat 64×64 slab of its own background colour, sitting on the backdrop like
+     * a sticker. The index map says which pixels those are; when it is out of
+     * step with the canvas (a resize, until the next commit) nothing is cut
+     * rather than something wrong being cut. */
+    function cutTransparentIndex(canvas, frame) {
+        var app = getApp();
+        var w = app.config.width, h = app.config.height;
+        var idx = app.spriteIndices;
+        if (!idx || idx.length !== w * h || !canvas.width || !canvas.height) return;
+        var rect = app.projectFrameRect(frame) || { x: 0, y: 0, w: w, h: h };
+        if (rect.w !== canvas.width || rect.h !== canvas.height) return;
+
+        var ti = app.state.projectTransparentIndex;
+        if (ti < 0) ti = 0;
+        var ctx = canvas.getContext('2d');
+        var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        var d = img.data, cut = false;
+        for (var y = 0; y < rect.h; y++) {
+            var src = (rect.y + y) * w + rect.x, out = y * rect.w * 4 + 3;
+            for (var x = 0; x < rect.w; x++, out += 4) {
+                if (idx[src + x] === ti) { d[out] = 0; cut = true; }
+            }
+        }
+        if (cut) ctx.putImageData(img, 0, 0);
+    }
+
     /* The declared record for this asset, if the project declares one. */
     function declaration() {
         var app = getApp(), p = project();
@@ -142,6 +200,101 @@
         if (!recs || !recs.length) return null;
         var want = sideFor(app.state.projectFile);
         return recs.find(function (r) { return r.kind === want; }) || recs[0];
+    }
+
+    /* The environment list, asked for once. */
+    function loadEnvironments() {
+        var p = project();
+        var m = (p && p.model) ? p.model() : null;
+        var sig = projectSignature(m);
+        if (envList !== null && envSig === sig) return;
+        envSig = sig;
+        envCanvas = {};
+        hbCanvas = {};
+        if (!p || !p.environments || !m) { envList = []; if (envEl) envEl.hidden = true; return; }
+        try { envList = p.environments() || []; } catch (e) { envList = []; }
+        if (envList.length && envEl) {
+            envEl.textContent = '';
+            envList.forEach(function (e, i) {
+                var opt = document.createElement('option');
+                opt.value = String(i);
+                opt.textContent = e.label;
+                envEl.appendChild(opt);
+            });
+            envEl.value = String(Math.min(envIndex, envList.length - 1));
+        }
+        if (envEl) envEl.hidden = !envList.length;
+    }
+
+    /* One environment's backdrop, blitted once and kept.
+       Returns a canvas, or null while it is still being read — the scene draws
+       its bands in the meantime and repaints when the bytes land. */
+    function backdrop() {
+        if (!envList || !envList.length || !window.BattleScene) return null;
+        var env = envList[Math.min(envIndex, envList.length - 1)];
+        if (!env) return null;
+        var got = envCanvas[env.label];
+        if (got === 'pending' || got === 'failed') return null;
+        if (got) return got;
+
+        envCanvas[env.label] = 'pending';
+        var p = project(), BS = window.BattleScene, app = getApp();
+        Promise.all([
+            p.readBytes(env.tilesPath),
+            p.readBytes(env.tilemapPath),
+            p.readBytes(env.palettePath)
+        ]).then(function (parts) {
+            // The engine already knows how to turn an indexed PNG into indices;
+            // no second decoder here.
+            var meta = app.parsePngPalette(parts[0]);
+            return Promise.resolve(app.decodePngIndices(meta)).then(function (indices) {
+                if (!indices) throw new Error('tileset is not an indexed PNG');
+                var pal = BS.parseJascPal(new TextDecoder('latin1').decode(parts[2]));
+                var map = BS.parseTilemap(parts[1]);
+                var bg = BS.renderBackground(
+                    { indices: indices, width: meta.width }, pal, map);
+                if (!bg) throw new Error('background did not render');
+                var c = document.createElement('canvas');
+                c.width = bg.width; c.height = bg.height;
+                c.getContext('2d').putImageData(new ImageData(bg.data, bg.width, bg.height), 0, 0);
+                envCanvas[env.label] = c;
+                render();
+            });
+        }).catch(function () { envCanvas[env.label] = 'failed'; });
+        return null;
+    }
+
+    /* The health box, from the project's own interface sheet.
+       Same shape as backdrop(): a canvas once it has been read, null until. */
+    function healthbox(side) {
+        var sym = side.healthbox;
+        if (!sym || !window.BattleScene) return null;
+        var got = hbCanvas[sym];
+        if (got === 'pending' || got === 'failed') return null;
+        if (got) return got;
+
+        var p = project(), m = p && p.model && p.model();
+        if (!m || !m.index || !p.readBytes) return null;
+        var paths = m.index.pathsBySymbol && m.index.pathsBySymbol.get(sym);
+        if (!paths || !paths.length) { hbCanvas[sym] = 'failed'; return null; }
+
+        hbCanvas[sym] = 'pending';
+        var app = getApp();
+        p.readBytes(paths[0]).then(function (bytes) {
+            var meta = app.parsePngPalette(bytes);
+            return Promise.resolve(app.decodePngIndices(meta)).then(function (indices) {
+                var ti = meta.trns ? app.transparentIndexFromTrns(meta.trns) : 0;
+                var img = window.BattleScene.indexedToRgba(
+                    indices, meta.width, meta.height, meta.palette, ti);
+                if (!img) throw new Error('healthbox did not decode');
+                var c = document.createElement('canvas');
+                c.width = img.width; c.height = img.height;
+                c.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+                hbCanvas[sym] = c;
+                render();
+            });
+        }).catch(function () { hbCanvas[sym] = 'failed'; });
+        return null;
     }
 
     function drawScene(computed, declared) {
@@ -159,10 +312,21 @@
         // The line the artwork's bottom row is supposed to land on.
         var footLine = side.y + 31;
 
-        ctx.fillStyle = '#8ec7e8';
-        ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
-        ctx.fillStyle = '#c8b98a';
-        ctx.fillRect(0, footLine, SCREEN_W, SCREEN_H - footLine);
+        /* The project's own backdrop when there is one. Black behind it because
+           colour 0 of a GBA background is transparent, and the message-box strip
+           at the bottom of the map is exactly that — the game draws the textbox
+           over it, and this does not pretend to. */
+        var bg = backdrop();
+        if (bg) {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+            ctx.drawImage(bg, 0, 0);
+        } else {
+            ctx.fillStyle = '#8ec7e8';
+            ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+            ctx.fillStyle = '#c8b98a';
+            ctx.fillRect(0, footLine, SCREEN_W, SCREEN_H - footLine);
+        }
 
         /* The sprite where the game puts it: box centred on (x, y + yOffset),
            drawn with the *declared* offset when there is one, because the point
@@ -202,11 +366,16 @@
         }
 
         // The healthbox, so a tall sprite that runs into it can be seen doing so.
-        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-        ctx.fillStyle = 'rgba(255,255,255,0.25)';
         var hx = side.box[0] - side.boxW / 2, hy = side.box[1] - side.boxH / 2;
-        ctx.fillRect(hx, hy, side.boxW, side.boxH);
-        ctx.strokeRect(hx + 0.5, hy + 0.5, side.boxW - 1, side.boxH - 1);
+        var hb = healthbox(side);
+        if (hb) {
+            ctx.drawImage(hb, hx, hy);
+        } else {
+            ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+            ctx.fillStyle = 'rgba(255,255,255,0.25)';
+            ctx.fillRect(hx, hy, side.boxW, side.boxH);
+            ctx.strokeRect(hx + 0.5, hy + 0.5, side.boxW - 1, side.boxH - 1);
+        }
 
         ctx.restore();
     }
@@ -312,8 +481,10 @@
         var frame = playingFrame === null ? app.activeFrameIndex() : playingFrame;
         try {
             app.renderPalettePreviewInto(frameCanvas, app.state.activePaletteId, { frame: frame, scale: 1 });
+            cutTransparentIndex(frameCanvas, frame);
         } catch (e) { /* canvas not readable yet */ }
 
+        loadEnvironments();
         var computed = measure();
         var declared = declaration();
         if (sideEl) sideEl.value = sideFor(path);
@@ -344,6 +515,12 @@
         sideEl.title = 'Which side of the battle this sprite is drawn on';
         sideEl.onchange = function () { sideOverride = sideEl.value; render(); };
         header.appendChild(sideEl);
+
+        envEl = el('select', 'bp-env');
+        envEl.hidden = true;      // until a decomp turns out to declare some
+        envEl.title = 'Battle backdrop';
+        envEl.onchange = function () { envIndex = parseInt(envEl.value, 10) || 0; render(); };
+        header.appendChild(envEl);
 
         zoomEl = el('select', 'bp-zoom');
         [1, 2, 3].forEach(function (z) {
@@ -376,12 +553,14 @@
         sceneEl = el('canvas', 'bp-scene');
         panel.appendChild(sceneEl);
 
-        /* Without this the scene is three coloured shapes. It was described back
+        /* Without this the scene is a few coloured shapes. It was described back
            to me as "a blue section with a white square and a brown section",
-           which is exactly what it is if you do not already know what it means. */
+           which is exactly what it is if you do not already know what it means.
+           The markers are what the legend names, not the backdrop, because the
+           backdrop is now the project's own art and speaks for itself. */
         legendEl = el('div', 'bp-legend');
-        [['sky', 'battle screen, 240×160'],
-         ['ground', 'where the feet should land'],
+        [['foot', 'where the feet should land'],
+         ['miss', 'where they land instead'],
          ['health', 'health bar']].forEach(function (pair) {
             var item = el('span', 'bp-legend-item');
             item.appendChild(el('i', 'bp-swatch bp-swatch-' + pair[0]));
