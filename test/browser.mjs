@@ -13,7 +13,7 @@
 import { createServer } from 'http';
 import { spawn, spawnSync } from 'child_process';
 import { readFile } from 'fs/promises';
-import { existsSync, readdirSync, rmSync } from 'fs';
+import { existsSync, readdirSync, rmSync, statSync } from 'fs';
 import { extname, join, normalize, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir, tmpdir } from 'os';
@@ -208,10 +208,36 @@ class Session {
     }
 }
 
+/* Delete profile directories left behind by earlier runs.
+ *
+ * The teardown below already tries five times to remove its own, and on a busy
+ * machine it still loses the race often enough that they pile up — a dozen is
+ * enough to start failing later suites with "Execution context was destroyed",
+ * which reads exactly like a real bug in the app and is not one. Sweeping at
+ * launch is the only reliable moment: nothing this process cares about exists
+ * yet. Anything under two minutes old might belong to a run happening now, so
+ * leave it alone.
+ */
+function sweepStaleProfiles() {
+    const dir = tmpdir();
+    const cutoff = Date.now() - 120000;
+    let names;
+    try { names = readdirSync(dir); } catch { return; }
+    for (const name of names) {
+        if (!name.startsWith('cdpaint-test-')) continue;
+        const full = join(dir, name);
+        try {
+            if (statSync(full).mtimeMs > cutoff) continue;
+            rmSync(full, { recursive: true, force: true });
+        } catch { /* in use, or gone already */ }
+    }
+}
+
 /* Boot the app, hand the page to fn, then tear everything down. */
 export async function withPage(fn, opts = {}) {
     const chrome = opts.browser || findBrowser();
     if (!chrome) throw new Error('no Chromium found — see findBrowser()');
+    sweepStaleProfiles();
 
     const root = opts.root || REPO_ROOT;
     const page = opts.page || '/src/index.html';
@@ -265,15 +291,32 @@ export async function withPage(fn, opts = {}) {
     await session.send('Page.enable');
 
     try {
-        // The engine builds itself from deferred scripts; wait for it to exist.
-        await session.eval(`await new Promise((resolve, reject) => {
-            const t0 = Date.now();
-            (function poll() {
-                if (window.PaintApp && PaintApp.ui && PaintApp.ui.cMain) return resolve(true);
-                if (Date.now() - t0 > 20000) return reject(new Error('PaintApp never appeared'));
-                setTimeout(poll, 50);
-            })();
-        })`);
+        /* The engine builds itself from deferred scripts; wait for it to exist.
+         *
+         * We attach as soon as /json/list reports a target, which can be before
+         * the document has committed — so this first eval races the navigation
+         * and the context it is running in gets torn down underneath it. That
+         * surfaces as "Execution context was destroyed", looks exactly like a
+         * crash in the app, and is not one: the new document is on its way and
+         * the very next attempt lands in it. reloadWith() has always retried for
+         * the same reason; the boot path needs it just as much, and without it a
+         * busy machine loses this race several times per run. */
+        for (let attempt = 0; ; attempt++) {
+            try {
+                await session.eval(`await new Promise((resolve, reject) => {
+                    const t0 = Date.now();
+                    (function poll() {
+                        if (window.PaintApp && PaintApp.ui && PaintApp.ui.cMain) return resolve(true);
+                        if (Date.now() - t0 > 20000) return reject(new Error('PaintApp never appeared'));
+                        setTimeout(poll, 50);
+                    })();
+                })`);
+                break;
+            } catch (e) {
+                if (attempt >= 4 || !/navigated|destroyed/i.test(e.message)) throw e;
+                await new Promise(r => setTimeout(r, 200));
+            }
+        }
         return await fn(session);
     } finally {
         try { ws.close(); } catch {}
