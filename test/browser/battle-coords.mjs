@@ -173,6 +173,35 @@ await withPage(async (page) => {
     check('the scene is a 240×160 screen at an integer scale',
         ui.sceneW % 240 === 0 && ui.sceneH % 160 === 0 && ui.sceneW / 240 === ui.sceneH / 160,
         `${ui.sceneW}×${ui.sceneH}`);
+
+    /* This file opens with a global `canvas { position: absolute }`. A canvas
+       that does not opt out leaves the flow entirely: it paints from the panel's
+       top-left over the title bar, the panel collapses to the height of the text
+       around it, and the scene spills across the app underneath. It looked like
+       a translucent sheet of colour dumped over the toolbar. Cheap to assert,
+       and the failure mode is pure confusion. */
+    const flow = await page.eval(`(() => {
+        window.BattlePreview.open();   // the block above closed it
+        const p = document.getElementById('battle-preview');
+        const s = p.querySelector('.bp-scene');
+        const pr = p.getBoundingClientRect(), sr = s.getBoundingClientRect();
+        return {
+            position: getComputedStyle(s).position,
+            sceneBottom: Math.round(sr.bottom), panelBottom: Math.round(pr.bottom),
+            headerTop: Math.round(p.querySelector('.bp-header').getBoundingClientRect().top),
+            sceneTop: Math.round(sr.top),
+            cssW: Math.round(sr.width), attrW: s.width
+        };
+    })()`);
+    check('the scene stays in the panel flow rather than escaping the global canvas rule',
+        flow.position !== 'absolute' && flow.position !== 'fixed', flow.position);
+    check('so the panel is tall enough to contain it',
+        flow.sceneBottom <= flow.panelBottom,
+        `scene ends ${flow.sceneBottom}, panel ends ${flow.panelBottom}`);
+    check('and the title bar is above the scene, not under it',
+        flow.headerTop < flow.sceneTop, `header ${flow.headerTop}, scene ${flow.sceneTop}`);
+    check('the scene is never squashed off its integer scale',
+        flow.cssW === flow.attrW, `${flow.cssW} shown for ${flow.attrW} drawn`);
     check('a declared offset 6 too small is reported as floating',
         /6px too high/.test(ui.text), ui.text);
     check('and the measured value is offered as the fix',
