@@ -996,10 +996,19 @@
                 projectFile: null,
                 projectImage: false,
                 projectBitDepth: 4,
+                // The live index map of a project asset — one palette slot per
+                // pixel, kept in step with the canvas by every committed edit.
+                // Replaced wholesale, never written in place, so a history entry
+                // can hold the array itself instead of a copy.
                 projectIndices: null,
-                projectBaseline: null,
                 projectTrns: null,
                 projectTransparentIndex: -1,
+                // Which frame of a multi-frame sheet is being worked on, and how
+                // the sheet is read. See projectFrameLayout().
+                activeFrame: 0,
+                frameCountOverride: null,
+                frameHold: 0,
+                onionSkin: false,
                 lastMouse: null,
                 transPick: false,
                 outlinePhase: 0,
@@ -1056,7 +1065,8 @@
                 'history', 'step',
                 'fileName', 'filePath', 'fileHandle',
                 'projectFile', 'projectHandle', 'projectImage', 'projectBitDepth',
-                'projectIndices', 'projectBaseline', 'projectTrns', 'projectTransparentIndex',
+                'projectIndices', 'projectTrns', 'projectTransparentIndex',
+                'activeFrame', 'frameCountOverride', 'frameHold', 'onionSkin',
                 'palettes', 'activePaletteId', 'previewPaletteId', 'previewSnapshot',
                 'isDirty', 'canvasOffset'
             ]);
@@ -1177,6 +1187,7 @@
                 stage: document.getElementById('canvas-stage'),
                 cMain: /** @type {HTMLCanvasElement} */ (document.getElementById('layer-main')),
                 cTemp: /** @type {HTMLCanvasElement} */ (document.getElementById('layer-temp')),
+                frameOnion: /** @type {HTMLCanvasElement} */ (document.getElementById('frame-onion')),
                 coords: document.getElementById('status-coords'),
                 statusSelectionSize: document.getElementById('status-selection-size'),
                 statusRotation: document.getElementById('status-rotation'),
@@ -2022,6 +2033,24 @@
                 parts.push({ text: tileOk ? 'tiles ✓' : 'not 8×8', ok: tileOk });
             }
 
+            /* A file that carries a tRNS is expected to keep its background on that
+               slot. Nothing standing on it means the background is opaque — which
+               is the "why has my sprite got a black box round it" bug (F1), and it
+               is invisible in the editor because the editor has no battle scene
+               behind the canvas. Worth a red light of its own. */
+            const tIdx = this.state.projectTransparentIndex;
+            if (tIdx >= 0) {
+                const map = this.state.projectIndices;
+                let clear = 0;
+                if (map) for (let q = 0; q < map.length; q++) if (map[q] === tIdx) clear++;
+                const clearOk = clear > 0;
+                if (!clearOk) ok = false;
+                parts.push({
+                    text: clearOk ? `slot ${tIdx} clear` : `slot ${tIdx} unused — opaque background`,
+                    ok: clearOk
+                });
+            }
+
             const slot = this.paletteSlotFor(this.config.activeSlot);
             if (slot >= 0) parts.push({ text: `slot ${slot}`, ok: true });
 
@@ -2044,6 +2073,35 @@
                 el.appendChild(span);
             });
             el.classList.toggle('conformance-ok', info.ok);
+            this.updateConformanceBanner(info);
+        }
+
+        /* The status line is a glance; when the asset would not build, that is not
+           enough. Raise a bar that cannot be missed and put the fix on it.
+           Dismissing is remembered against the exact set of problems, so hiding it
+           does not also hide the next, different one. */
+        updateConformanceBanner(info) {
+            const bar = this.ui.conformanceBanner
+                || (this.ui.conformanceBanner = document.getElementById('conformance-banner'));
+            if (!bar) return;
+            const bad = info && !info.ok ? info.parts.filter(p => !p.ok) : [];
+            if (!bad.length) {
+                bar.style.display = 'none';
+                this._conformanceDismissed = null;
+                return;
+            }
+            const key = bad.map(p => p.text).join(' · ');
+            if (this._conformanceDismissed === key) { bar.style.display = 'none'; return; }
+            const text = bar.querySelector('#cb-text');
+            if (text) text.textContent = `${info.label} won’t build: ${key}`;
+            bar.style.display = 'flex';
+        }
+        dismissConformanceBanner() {
+            const info = this.projectConformance();
+            const bad = info && !info.ok ? info.parts.filter(p => !p.ok) : [];
+            this._conformanceDismissed = bad.map(p => p.text).join(' · ');
+            const bar = this.ui.conformanceBanner || document.getElementById('conformance-banner');
+            if (bar) bar.style.display = 'none';
         }
 
         initializeBlankDocument() {
@@ -4124,6 +4182,9 @@
             } else {
                 bytes = (entry.width || 0) * (entry.height || 0) * 4;
             }
+            // A project asset's step also carries its index map. Shared arrays
+            // belong to the step that first held them; see attachProjectStep.
+            if (entry.projectIndices && !entry._sharesIndices) bytes += entry.projectIndices.length;
             entry._bytes = bytes;
             return bytes;
         }
@@ -4232,7 +4293,11 @@
             this.initializeBlankDocument();
             return Promise.resolve();
         }
-        async openFileFromPath(path, _skipUnsavedCheck = false) {
+        /* Forget that the document was a project asset. Every path that replaces
+           the document has to call this: the index map and the palettes it names
+           belong to one file, and a document that inherits them would be snapped
+           onto the previous asset's slots on its first committed edit. */
+        clearProjectAssetState() {
             this.state.projectFile = null;
             this.state.projectHandle = null;
             this.state.palettes = [];
@@ -4242,10 +4307,19 @@
             this.state.projectImage = false;
             this.state.projectBitDepth = 4;
             this.state.projectIndices = null;
-            this.state.projectBaseline = null;
             this.state.projectTrns = null;
             this.state.projectTransparentIndex = -1;
+            this.stopFramePlayback();
+            this.state.activeFrame = 0;
+            this.state.frameCountOverride = null;
+            this.state.frameHold = 0;
+            this.state.onionSkin = false;
+            this.updateFrameOverlays();
             if (this.onPalettesChanged) this.onPalettesChanged();
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+        async openFileFromPath(path, _skipUnsavedCheck = false) {
+            this.clearProjectAssetState();
             if (!_skipUnsavedCheck && this.hasUnsavedChanges()) {
                 return new Promise((resolve) => {
                     this.showOpenConfirm(async () => {
@@ -19568,6 +19642,7 @@ void main() {
             this.ui.cMain.height=h;
             this.ui.cTemp.width=w;
             this.ui.cTemp.height=h;
+            if (this.ui.frameOnion) { this.ui.frameOnion.width=w; this.ui.frameOnion.height=h; }
             // Resizing a canvas resets its context state — clear the smoothing guard
             // so disableSmoothing() re-applies the properties on the next call.
             this.ctx._smoothingDisabled = false;
@@ -20117,6 +20192,7 @@ void main() {
             } else if (entry.canvas) {
                 this.ctx.drawImage(entry.canvas, 0, 0);
             }
+            this.restoreProjectStep(entry);
         }
         // Layered history entries reference unchanged layers from an *earlier*
         // entry instead of re-cloning them (the saveState installed by
@@ -20269,6 +20345,10 @@ void main() {
             // against recursion: flushDeferredSave clears its flag before it
             // calls back in here.
             this.flushDeferredSave();
+            // Fold the canvas into the index map BEFORE the snapshot is taken:
+            // snapping can move pixels, and the entry has to record the pixels
+            // that the map describes, or undo would restore the two out of step.
+            this.commitProjectIndices();
             // Truncate forward history and release the discarded entries. Refs
             // always point backwards, so nothing kept can reference a dropped
             // entry — but go through the ref-aware path anyway so this stays
@@ -20351,6 +20431,9 @@ void main() {
                 this.deferColorCounts();
                 this.updateTitleBarActions();
             }
+            // The slots this step describes travel with it, so undo puts the index
+            // map back as well as the pixels.
+            this.attachProjectStep(this.state.history[this.state.step]);
             // Attach a wand-selection snapshot to the current history entry so that
             // step-by-step undo/redo can restore the exact selection state after each
             // individual Magic Wand click rather than clearing the whole selection at once.
@@ -22112,25 +22195,32 @@ void main() {
             this.state.palettes = palettes;
             this.state.activePaletteId = active ? active.id : null;
             this.state.projectImage = true;
+            // Drop the outgoing document's map before a pixel of this one lands:
+            // anything that commits in between must resolve from scratch rather
+            // than snap this artwork onto the last asset's slots.
+            this.state.projectIndices = null;
+            // Likewise its frame reading — a count the artist fixed by hand for one
+            // sheet says nothing about the next.
+            this.stopFramePlayback();
+            this.state.activeFrame = 0;
+            this.state.frameCountOverride = null;
+            this.state.frameHold = 0;
             this.state.projectTrns = meta.trns ? new Uint8Array(meta.trns) : null;
             this.state.projectTransparentIndex = this.transparentIndexFromTrns(meta.trns);
             this.setSize(w, h);
             this.ctx.drawImage(bmp, 0, 0);
             await this.applyCurrentModeToCanvasAsync(this.ctx, w, h, false);
-            // The file's own indices, plus the pixels they produced on screen. Saving
-            // diffs against this baseline so untouched pixels keep their exact slot.
+            // The file's own indices seed the live map. From here the map is the
+            // document: every committed edit folds the canvas back into it, so
+            // nothing has to remember what the file looked like on disk.
             const trueIndices = await this.decodePngIndices(meta);
             try {
-                const _snap = this.ctx.getImageData(0, 0, w, h);
-                this.spriteIndices = (trueIndices && trueIndices.length === w * h)
+                this.state.projectIndices = (trueIndices && trueIndices.length === w * h)
                     ? trueIndices
-                    : this.quantizeToIndices(_snap.data, w, h, this.basePalette || this.palette);
-                this.state.projectIndices = this.spriteIndices ? new Uint8Array(this.spriteIndices) : null;
-                this.state.projectBaseline = this.state.projectIndices ? new Uint8ClampedArray(_snap.data) : null;
+                    : this.quantizeToIndices(this.ctx.getImageData(0, 0, w, h).data, w, h,
+                        this.basePalette || this.palette);
             } catch (e) {
-                this.spriteIndices = null;
                 this.state.projectIndices = null;
-                this.state.projectBaseline = null;
             }
             if (!trueIndices) {
                 console.warn('Could not decode PNG indices; falling back to nearest-colour reconstruction');
@@ -22141,7 +22231,9 @@ void main() {
             this.config.paletteSlot = { 1: -1, 2: -1 };
             this.renderQuantPalette();
             this.updateProjectConformance();
+            this.updateFrameOverlays();
             if (this.onPalettesChanged) this.onPalettesChanged();
+            if (this.onFramesChanged) this.onFramesChanged();
             this.saveState();
             this.markSaved(this.state.fileName);
             this.addRecentFile({ name: this.state.fileName, path: sourcePath || '' });
@@ -22179,18 +22271,47 @@ void main() {
                 return false;
             }
         }
-        /* Indices to write for the current canvas.
-           A pixel that still matches what it looked like when the file was opened
-           keeps the index the file gave it — so slots that share an RGB survive the
-           round trip, and a save with no edits changes nothing. Only pixels the user
-           actually painted get matched to the palette, and a transparent pixel means
-           the transparency slot, never "whatever colour is nearest to black". */
+        /* The live index map. It lives on `state` so a tab switch carries it with
+           the rest of the document; `spriteIndices` is the name the drawing code
+           has always used for it. */
+        get spriteIndices() { return this.state ? this.state.projectIndices : null; }
+        set spriteIndices(v) { if (this.state) this.state.projectIndices = v; }
+
+        /* Where a project asset's pixels actually are.
+           Single-layer editing draws straight onto cMain, so `ctx` is the surface
+           and can be written back to. With layers active `ctx` is the *active
+           layer* while the file gets the composite, so read cMain instead — and
+           don't snap it, because the layers underneath still hold the unsnapped
+           pixels and would paint them straight back on the next composite. */
+        projectIndexSurface() {
+            const mgr = this.layerMgr;
+            if (!mgr || !mgr.active || mgr.layers.length <= 1) return { ctx: this.ctx, canSnap: true };
+            let ctx = null;
+            try { ctx = this.ui.cMain.getContext('2d', { willReadFrequently: true }); } catch (e) {}
+            return { ctx, canSnap: false };
+        }
+
+        /* Indices for the pixels in `d`.
+           The index map is the document, so it is also the baseline: a pixel still
+           showing the colour of the slot it holds was not painted and keeps that
+           slot — which is how two slots sharing an RGB both survive a round trip.
+           Anything else was just painted, and resolves to the slot in hand, then to
+           a slot holding exactly that colour, then to the nearest one. A transparent
+           pixel means the transparency slot, never "whatever is nearest to black".
+
+           Pure: it reads the map and returns a new one. commitProjectIndices() is
+           what installs the result.
+
+           Known limit: painting slot 14 over a pixel that already holds slot 11 of
+           the *same* colour is indistinguishable from not painting at all, and the
+           conservative reading wins — renumbering on a guess is how the shiny
+           palette gets silently rewritten (finding F3). Telling the two apart needs
+           per-pixel stroke coverage, not a colour comparison. */
         buildProjectIndices(d, w, h) {
             const palette = this.palette || [];
-            const baseline = this.state.projectBaseline;
-            const original = this.state.projectIndices;
-            const hasBaseline = !!(baseline && original
-                && baseline.length === d.length && original.length === w * h);
+            const n = w * h;
+            const map = this.state.projectIndices;
+            const known = (map && map.length === n) ? map : null;
             const transparentIdx = this.state.projectTransparentIndex;
 
             const exact = new Map();
@@ -22208,15 +22329,22 @@ void main() {
                 if (c) exact.set((c.r << 16) | (c.g << 8) | c.b, picked);
             }
 
-            const indices = new Uint8Array(w * h);
-            for (let p = 0, q = 0; p < d.length; p += 4, q++) {
-                if (hasBaseline
-                    && d[p] === baseline[p] && d[p + 1] === baseline[p + 1]
-                    && d[p + 2] === baseline[p + 2] && d[p + 3] === baseline[p + 3]) {
-                    indices[q] = original[q];
-                    continue;
+            const indices = new Uint8Array(n);
+            for (let p = 0, q = 0; q < n; p += 4, q++) {
+                const a = d[p + 3];
+                if (known) {
+                    const slot = known[q];
+                    if (slot === transparentIdx) {
+                        if (a < 128) { indices[q] = slot; continue; }
+                    } else {
+                        const c = palette[slot];
+                        if (c && a >= 128 && d[p] === c.r && d[p + 1] === c.g && d[p + 2] === c.b) {
+                            indices[q] = slot;
+                            continue;
+                        }
+                    }
                 }
-                if (d[p + 3] < 128 && transparentIdx >= 0) {
+                if (a < 128 && transparentIdx >= 0) {
                     indices[q] = transparentIdx;
                     continue;
                 }
@@ -22227,9 +22355,700 @@ void main() {
             }
             return indices;
         }
+
+        /* Repaint the surface from the map, so what is on screen is exactly what
+           the file will contain. This is what makes the colour ceiling structural:
+           a blended or antialiased pixel does not survive the step it was made in,
+           it lands on the slot it resolved to. */
+        paintProjectIndicesOnto(img, indices, ctx, w) {
+            const d = img.data;
+            const palette = this.palette || [];
+            const transparentIdx = this.state.projectTransparentIndex;
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            const touch = (q) => {
+                const x = q % w, y = (q / w) | 0;
+                if (x < x0) x0 = x; if (x > x1) x1 = x;
+                if (y < y0) y0 = y; if (y > y1) y1 = y;
+            };
+            for (let p = 0, q = 0; q < indices.length; p += 4, q++) {
+                const slot = indices[q];
+                if (slot === transparentIdx) {
+                    if (d[p + 3] === 0) continue;
+                    d[p] = 0; d[p + 1] = 0; d[p + 2] = 0; d[p + 3] = 0;
+                    touch(q);
+                    continue;
+                }
+                // Erased, on an asset with no transparency slot to erase to. There
+                // is nothing honest to draw, so leave the pixel alone rather than
+                // inventing an opaque colour underneath the artist's eraser.
+                if (d[p + 3] < 128) continue;
+                const c = palette[slot];
+                if (!c) continue;
+                if (d[p] === c.r && d[p + 1] === c.g && d[p + 2] === c.b && d[p + 3] === 255) continue;
+                d[p] = c.r; d[p + 1] = c.g; d[p + 2] = c.b; d[p + 3] = 255;
+                touch(q);
+            }
+            if (x1 < x0) return false;
+            // Write back only the box that moved. A full-canvas putImageData would
+            // report the whole surface as dirty and cost tiled history its deltas
+            // on every step, on exactly the assets big enough to use them.
+            const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+            const sub = ctx.createImageData(bw, bh);
+            for (let y = 0; y < bh; y++) {
+                const from = ((y0 + y) * w + x0) * 4;
+                sub.data.set(d.subarray(from, from + bw * 4), y * bw * 4);
+            }
+            ctx.putImageData(sub, x0, y0);
+            return true;
+        }
+
+        /* Fold the canvas back into the index map and pull the canvas onto the
+           palette. Runs at the top of every committed step, which is what keeps
+           the map live while painting — the save then writes the map rather than
+           reconstructing one from RGB. */
+        commitProjectIndices() {
+            if (!this.state.projectImage) return null;
+            if (this.state.previewPaletteId) return this.state.projectIndices; // showing someone else's colours
+            const palette = this.palette;
+            if (!palette || !palette.length) return null;
+            const w = this.config.width, h = this.config.height;
+            if (!w || !h) return null;
+            const { ctx, canSnap } = this.projectIndexSurface();
+            if (!ctx) return null;
+            let img;
+            try { img = ctx.getImageData(0, 0, w, h); }
+            catch (e) { return this.state.projectIndices; }
+            const indices = this.buildProjectIndices(img.data, w, h);
+            if (canSnap) this.paintProjectIndicesOnto(img, indices, ctx, w);
+            // Steps that left every slot alone keep the array they had, so history
+            // shares one copy instead of one per step.
+            const cur = this.state.projectIndices;
+            if (cur && cur.length === indices.length) {
+                let same = true;
+                for (let q = 0; q < indices.length; q++) {
+                    if (cur[q] !== indices[q]) { same = false; break; }
+                }
+                if (same) return cur;
+            }
+            this.state.projectIndices = indices;
+            return indices;
+        }
+
+        /* Repaint a project asset from its index map under whatever the palette
+           says now. Change slot 9 and every pixel holding slot 9 follows — nothing
+           re-quantises, no index moves, and the pixels that were already right are
+           left alone (paintProjectIndicesOnto only writes the box that moved).
+           Records a step, so the edit is undoable along with the palette itself. */
+        repaintProjectFromPalette() {
+            if (!this.state.projectImage) return false;
+            if (this.state.previewPaletteId) return false; // a preview is not an edit
+            const w = this.config.width, h = this.config.height;
+            const map = this.state.projectIndices;
+            if (!map || map.length !== w * h) return false;
+            const { ctx, canSnap } = this.projectIndexSurface();
+            // With layers active the artwork is spread across canvases the map does
+            // not describe; repainting the composite would be undone by the next
+            // render. The palette still changes — the canvas just will not follow.
+            if (!ctx || !canSnap) return false;
+            let img;
+            try { img = ctx.getImageData(0, 0, w, h); }
+            catch (e) { return false; }
+            const changed = this.paintProjectIndicesOnto(img, map, ctx, w);
+            this.saveState();
+            return changed;
+        }
+
+        /* Renumber the map through `table`, which maps an old slot to a new one.
+           Reordering a palette moves colours between slots; the artwork has to
+           follow, or "move slot 3 to slot 7" silently recolours the sprite instead
+           of renaming a slot. The pixels do not change, so there is nothing to
+           repaint — only the numbers underneath them. */
+        renumberProjectIndices(table) {
+            if (!this.state.projectImage) return false;
+            const map = this.state.projectIndices;
+            if (!map || !table) return false;
+            const next = new Uint8Array(map.length);
+            let moved = false;
+            for (let q = 0; q < map.length; q++) {
+                const to = table[map[q]];
+                next[q] = to === undefined ? map[q] : to;
+                if (next[q] !== map[q]) moved = true;
+            }
+            if (!moved) return false;
+            this.state.projectIndices = next;
+            return true;
+        }
+
+        /* The colours the map is being read through, flattened. A project asset's
+           document is the pair — indices alone mean nothing without them, which is
+           why both have to travel with history. */
+        projectPaletteSnapshot() {
+            const colors = this.palette;
+            if (!colors || !colors.length) return null;
+            const out = new Uint8Array(colors.length * 4);
+            for (let i = 0; i < colors.length; i++) {
+                const c = colors[i];
+                out[i * 4] = c.r; out[i * 4 + 1] = c.g; out[i * 4 + 2] = c.b;
+                out[i * 4 + 3] = c.a === undefined ? 255 : c.a;
+            }
+            return out;
+        }
+
+        /* Pin the index map and the palette to the history entry just pushed, so
+           undo restores what the pixels MEAN as well as the pixels. Neither is
+           written in place, so the entry can hold them directly.
+
+           Without the palette half, undoing a slot edit — or the normal/shiny swap,
+           which has always been a history step — would leave the canvas showing one
+           palette while the map was read through another, and the next committed
+           edit would renumber the whole asset against colours it never used. */
+        attachProjectStep(entry) {
+            if (!entry || !this.state.projectImage) return;
+            const prev = this.state.history[this.state.step - 1];
+            const idx = this.state.projectIndices;
+            if (idx) {
+                entry.projectIndices = idx;
+                entry._sharesIndices = !!(prev && prev.projectIndices === idx);
+                if (!entry._sharesIndices && typeof entry._bytes === 'number') entry._bytes += idx.length;
+            }
+            const pal = this.projectPaletteSnapshot();
+            if (!pal) return;
+            // Most steps do not touch the palette; those share the previous one.
+            const before = prev && prev.projectPalette;
+            const same = !!(before && before.length === pal.length
+                && before.every((v, i) => v === pal[i]));
+            entry.projectPalette = same ? before : pal;
+            entry.projectPaletteId = this.state.activePaletteId;
+            // Both saveState paths converge here for a project asset, which makes
+            // it the one place the frame views can be sure the pixels have settled.
+            this.refreshFrameViews();
+        }
+
+        restoreProjectStep(entry) {
+            if (!this.state.projectImage || !entry) return;
+            if (entry.projectIndices) this.state.projectIndices = entry.projectIndices;
+            this.refreshFrameViews();
+            const pal = entry.projectPalette;
+            const target = pal ? this.getPaletteById(entry.projectPaletteId) : null;
+            if (!target) return;
+            // Write the values back into the live array rather than replacing it:
+            // palette, basePalette and the palette record all point at that one
+            // array, and swapping it would leave two of the three stale.
+            const colors = target.colors;
+            colors.length = pal.length / 4;
+            for (let i = 0; i < colors.length; i++) {
+                colors[i] = { r: pal[i * 4], g: pal[i * 4 + 1], b: pal[i * 4 + 2], a: pal[i * 4 + 3] };
+            }
+            this.palette = colors;
+            this.basePalette = colors;
+            this.state.activePaletteId = entry.projectPaletteId;
+            this.paletteLab = null;
+            this.renderQuantPalette();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+
+        /* ── Validation without a build ─────────────────────────────────────
+           Two different questions get asked about a Gen 3 asset and they are
+           routinely confused, so this keeps them apart:
+
+             build — gbagfx would refuse it, and `make` stops. Not indexed, a
+                     dimension that is not a whole number of 8×8 tiles, an index
+                     the target bit depth cannot express.
+             game  — it builds perfectly and then looks wrong. The wrong size for
+                     the slot, an opaque background where the sprite wanted
+                     transparency. Nothing in the toolchain will ever tell you.
+
+           Both matter; only one of them stops the build, and an artist deserves to
+           know which they are looking at. Runs off the file's bytes, so it needs
+           neither the document nor a compiler. */
+        async validateProjectAsset(bytes, path) {
+            const profile = this.inferProfile(path);
+            const out = { path, label: profile.label, problems: [], info: null };
+            const fail = (kind, id, text) => out.problems.push({ kind, id, text });
+
+            let meta = null;
+            try { meta = this.parsePngPalette(bytes); } catch (e) { /* not a PNG */ }
+            if (!meta || !meta.width || !meta.height) {
+                fail('build', 'unreadable', 'not a readable PNG');
+                out.ok = false; out.buildOk = false;
+                return out;
+            }
+            const w = meta.width, h = meta.height, depth = meta.bitDepth || 8;
+            const colors = (meta.palette && meta.palette.length) || 0;
+            out.info = { w, h, depth, colors, indexed: meta.colorType === 3, trns: !!meta.trns };
+
+            if (meta.colorType !== 3) {
+                fail('build', 'notIndexed',
+                    `colour type ${meta.colorType} — gbagfx needs an indexed PNG`);
+            }
+            // Everything the GBA draws is built out of 8×8 tiles; a partial tile has
+            // nowhere to go.
+            if (w % 8 || h % 8) fail('build', 'tiles', `${w}×${h} is not a whole number of 8×8 tiles`);
+            if (profile.requiredWidth && w !== profile.requiredWidth) {
+                fail('build', 'width', `tilesets must be ${profile.requiredWidth}px wide, not ${w}`);
+            }
+
+            /* The target depth is the profile's, not the file's: converting an 8bpp
+               PNG to a 4bpp asset is fine right up until a pixel uses index 16. */
+            const target = profile.bitDepth || 4;
+            const budget = Number.isFinite(profile.maxColors) ? profile.maxColors : (1 << target);
+            if (colors > budget) {
+                fail('build', 'palette', `${colors} palette entries; ${target}bpp holds ${budget}`);
+            } else if (meta.colorType === 3 && depth > target) {
+                const idx = await this.decodePngIndices(meta);
+                if (idx) {
+                    let worst = -1;
+                    for (let q = 0; q < idx.length; q++) if (idx[q] > worst) worst = idx[q];
+                    if (worst >= budget) {
+                        fail('build', 'index',
+                            `uses index ${worst}; ${target}bpp only reaches ${budget - 1}`);
+                    }
+                }
+            }
+
+            const sizes = profile.allowedResolutions;
+            if (sizes && !sizes.some(r => r[0] === w && r[1] === h)) {
+                fail('game', 'size',
+                    `${w}×${h}; this slot expects ${sizes.map(r => r[0] + '×' + r[1]).join(' or ')}`);
+            }
+            if (meta.trns) {
+                const t = this.transparentIndexFromTrns(meta.trns);
+                const idx = t >= 0 ? await this.decodePngIndices(meta) : null;
+                if (idx) {
+                    let clear = 0;
+                    for (let q = 0; q < idx.length; q++) if (idx[q] === t) clear++;
+                    if (!clear) {
+                        fail('game', 'slot0',
+                            `nothing on slot ${t}; the background will be solid in game`);
+                    }
+                }
+            }
+
+            out.buildOk = !out.problems.some(p => p.kind === 'build');
+            out.ok = out.problems.length === 0;
+            return out;
+        }
+
+        /* Every asset that would fail, listed. `read` turns an entry into bytes;
+           the caller owns that because desktop and browser mode get at files in
+           completely different ways. Reads are sequential on purpose — a decomp has
+           thousands of PNGs and firing them all at once buries the main thread. */
+        async auditProjectAssets(entries, read, onProgress) {
+            const results = [];
+            let done = 0;
+            for (const entry of (entries || [])) {
+                let result;
+                try {
+                    result = await this.validateProjectAsset(await read(entry), entry.path || entry.name);
+                } catch (e) {
+                    result = {
+                        path: entry.path || entry.name, label: 'Project asset', info: null,
+                        ok: false, buildOk: false,
+                        problems: [{ kind: 'build', id: 'unreadable', text: this.getErrorText(e) }]
+                    };
+                }
+                result.name = entry.name;
+                results.push(result);
+                done++;
+                if (onProgress && (done % 25 === 0 || done === entries.length)) {
+                    onProgress(done, entries.length);
+                    // Let the panel paint; a scan of a whole decomp is not instant.
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+            return {
+                total: results.length,
+                clean: results.filter(r => r.ok).length,
+                wontBuild: results.filter(r => !r.buildOk),
+                wrongInGame: results.filter(r => r.buildOk && !r.ok),
+                results
+            };
+        }
+
+        /* ── Fit to target ──────────────────────────────────────────────────
+           Everything here works on a plain value — size, index map, palette,
+           transparency slot — rather than on the live canvas. That is what lets
+           the dialog show a real "after" instead of a description of one: the
+           fixes are run on a copy, drawn, and only installed if the artist says
+           yes. It also means each fix is a small pure function that can be tested
+           on its own, which matters, because these are the operations that can
+           destroy someone's work. */
+        projectDocValue() {
+            if (!this.state.projectImage) return null;
+            const map = this.state.projectIndices;
+            const w = this.config.width, h = this.config.height;
+            if (!map || map.length !== w * h) return null;
+            return {
+                w, h,
+                map: new Uint8Array(map),
+                colors: (this.palette || []).map(c => ({ r: c.r, g: c.g, b: c.b, a: c.a === undefined ? 255 : c.a })),
+                transparentIdx: this.state.projectTransparentIndex
+            };
+        }
+
+        /* Everything the asset would have to change to be insertable, as a list of
+           named fixes. Nothing here touches the document. */
+        planFitToTarget(colorCount) {
+            const doc = this.projectDocValue();
+            if (!doc || !this.state.projectFile) return null;
+            const profile = this.inferProfile(this.state.projectFile);
+            const steps = [];
+
+            const sizes = profile.allowedResolutions;
+            if (sizes && !sizes.some(r => r[0] === doc.w && r[1] === doc.h)) {
+                // The nearest allowed box by area, so a 64×72 goes to 64×64 rather
+                // than to whatever happens to be first in the list.
+                const target = sizes.slice().sort((a, b) =>
+                    Math.abs(a[0] * a[1] - doc.w * doc.h) - Math.abs(b[0] * b[1] - doc.w * doc.h))[0];
+                const loses = target[0] < doc.w || target[1] < doc.h;
+                steps.push({
+                    id: 'size', target,
+                    label: `Resize to ${target[0]}×${target[1]}`,
+                    detail: loses
+                        ? `crops ${doc.w}×${doc.h} — artwork outside the box is lost`
+                        : `pads ${doc.w}×${doc.h} with transparency, bottom-anchored`,
+                    destructive: loses
+                });
+            } else if (profile.tileAligned && (doc.w % 8 || doc.h % 8)) {
+                const target = [Math.ceil(doc.w / 8) * 8, Math.ceil(doc.h / 8) * 8];
+                steps.push({
+                    id: 'size', target,
+                    label: `Pad to ${target[0]}×${target[1]}`,
+                    detail: 'tilesets are cut into 8×8 tiles; a partial tile will not build',
+                    destructive: false
+                });
+            }
+
+            const max = this.maxColorsForProfile(profile);
+            const used = Number.isFinite(colorCount) ? colorCount : doc.colors.length;
+            if (doc.colors.length > max) {
+                steps.push({
+                    id: 'colors', target: max,
+                    label: `Reduce to ${max} colours`,
+                    detail: `${doc.colors.length} in the palette; the least-used merge into their nearest neighbour`,
+                    destructive: true
+                });
+            }
+
+            if (doc.transparentIdx >= 0) {
+                let clear = 0;
+                for (let q = 0; q < doc.map.length; q++) if (doc.map[q] === doc.transparentIdx) clear++;
+                if (!clear) {
+                    steps.push({
+                        id: 'slot0', target: doc.transparentIdx,
+                        label: `Clear slot ${doc.transparentIdx}`,
+                        detail: 'the background is opaque; the border colour becomes transparency',
+                        destructive: false
+                    });
+                }
+            }
+            return { profile, doc, steps, used, max };
+        }
+
+        /* Apply one fix to a document value and hand back a new one. */
+        fitStepApply(doc, step) {
+            if (step.id === 'slot0') return this._fitClearSlot0(doc);
+            if (step.id === 'colors') return this._fitReduceColors(doc, step.target);
+            if (step.id === 'size') return this._fitResize(doc, step.target[0], step.target[1]);
+            return doc;
+        }
+
+        /* Send the background to the transparency slot. Flood-fills inwards from
+           the edges through whichever slot the border is mostly made of, so a
+           colour that also appears INSIDE the sprite is not hollowed out with it. */
+        _fitClearSlot0(doc) {
+            const t = doc.transparentIdx;
+            if (t < 0) return doc;
+            const { w, h, map } = doc;
+            const tally = new Map();
+            const note = (q) => tally.set(map[q], (tally.get(map[q]) || 0) + 1);
+            for (let x = 0; x < w; x++) { note(x); if (h > 1) note((h - 1) * w + x); }
+            for (let y = 1; y < h - 1; y++) { note(y * w); if (w > 1) note(y * w + w - 1); }
+            let bg = -1, best = 0;
+            for (const [slot, n] of tally) if (n > best) { best = n; bg = slot; }
+            if (bg < 0 || bg === t) return doc;
+
+            const out = new Uint8Array(map);
+            const seen = new Uint8Array(w * h);
+            const stack = [];
+            for (let x = 0; x < w; x++) { stack.push(x); stack.push((h - 1) * w + x); }
+            for (let y = 0; y < h; y++) { stack.push(y * w); stack.push(y * w + w - 1); }
+            while (stack.length) {
+                const q = stack.pop();
+                if (q < 0 || q >= w * h || seen[q] || map[q] !== bg) continue;
+                seen[q] = 1;
+                out[q] = t;
+                const x = q % w;
+                if (x > 0) stack.push(q - 1);
+                if (x < w - 1) stack.push(q + 1);
+                if (q >= w) stack.push(q - w);
+                if (q < w * (h - 1)) stack.push(q + w);
+            }
+            return { ...doc, map: out };
+        }
+
+        /* Merge the least-used slots into their nearest surviving neighbour until
+           the palette fits. Least-used first because that is the smallest number of
+           pixels that have to change colour; the transparency slot never merges. */
+        _fitReduceColors(doc, budget) {
+            if (doc.colors.length <= budget) return doc;
+            const counts = new Array(doc.colors.length).fill(0);
+            for (let q = 0; q < doc.map.length; q++) counts[doc.map[q]]++;
+
+            const keep = doc.colors.map((_, i) => i)
+                .sort((a, b) => (counts[b] - counts[a]) || (a - b))
+                .slice(0, budget);
+            if (doc.transparentIdx >= 0 && !keep.includes(doc.transparentIdx)) {
+                keep[keep.length - 1] = doc.transparentIdx;
+            }
+            keep.sort((a, b) => a - b);
+
+            const table = new Array(doc.colors.length);
+            keep.forEach((from, to) => { table[from] = to; });
+            for (let i = 0; i < doc.colors.length; i++) {
+                if (table[i] !== undefined) continue;
+                const c = doc.colors[i];
+                let bestTo = 0, bestDist = Infinity;
+                keep.forEach((k, to) => {
+                    const o = doc.colors[k];
+                    const d = (c.r - o.r) ** 2 + (c.g - o.g) ** 2 + (c.b - o.b) ** 2;
+                    if (d < bestDist) { bestDist = d; bestTo = to; }
+                });
+                table[i] = bestTo;
+            }
+            const out = new Uint8Array(doc.map.length);
+            for (let q = 0; q < doc.map.length; q++) out[q] = table[doc.map[q]];
+            return {
+                ...doc,
+                map: out,
+                colors: keep.map(i => doc.colors[i]),
+                transparentIdx: doc.transparentIdx >= 0 ? table[doc.transparentIdx] : -1
+            };
+        }
+
+        /* Pad or crop to an exact box. Horizontally centred and bottom-anchored,
+           because a Gen 3 sprite's y_offset is measured up from the bottom edge —
+           top-anchoring would move the sprite in game even though the file is the
+           right size. Padding is the transparency slot where there is one. */
+        _fitResize(doc, tw, th) {
+            const fill = doc.transparentIdx >= 0 ? doc.transparentIdx : 0;
+            const out = new Uint8Array(tw * th).fill(fill);
+            const dx = Math.round((tw - doc.w) / 2);
+            const dy = th - doc.h;
+            for (let y = 0; y < doc.h; y++) {
+                const ty = y + dy;
+                if (ty < 0 || ty >= th) continue;
+                for (let x = 0; x < doc.w; x++) {
+                    const tx = x + dx;
+                    if (tx < 0 || tx >= tw) continue;
+                    out[ty * tw + tx] = doc.map[y * doc.w + x];
+                }
+            }
+            return { ...doc, w: tw, h: th, map: out };
+        }
+
+        /* Draw a document value. Used for both halves of the before/after, so the
+           two are guaranteed to be rendered the same way. */
+        renderProjectDocInto(canvas, doc, scale) {
+            if (!canvas || !doc) return false;
+            const z = Math.max(1, Math.round(scale || 1));
+            canvas.width = doc.w * z;
+            canvas.height = doc.h * z;
+            canvas.style.width = canvas.width + 'px';
+            canvas.style.height = canvas.height + 'px';
+            const native = document.createElement('canvas');
+            native.width = doc.w; native.height = doc.h;
+            const nctx = native.getContext('2d');
+            const img = nctx.createImageData(doc.w, doc.h);
+            for (let q = 0; q < doc.map.length; q++) {
+                const slot = doc.map[q];
+                const b4 = q * 4;
+                if (slot === doc.transparentIdx) { img.data[b4 + 3] = 0; continue; }
+                const c = doc.colors[slot] || doc.colors[0] || { r: 0, g: 0, b: 0 };
+                img.data[b4] = c.r; img.data[b4 + 1] = c.g; img.data[b4 + 2] = c.b; img.data[b4 + 3] = 255;
+            }
+            nctx.putImageData(img, 0, 0);
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = false;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(native, 0, 0, canvas.width, canvas.height);
+            return true;
+        }
+
+        /* Install a document value as the live document, in one history step. */
+        applyProjectDoc(doc) {
+            if (!doc) return false;
+            const entry = this.getPaletteById(this.state.activePaletteId);
+            if (entry) {
+                // In place: palette, basePalette and the record share this array.
+                entry.colors.length = doc.colors.length;
+                for (let i = 0; i < doc.colors.length; i++) entry.colors[i] = { ...doc.colors[i] };
+                this.palette = entry.colors;
+                this.basePalette = entry.colors;
+            }
+            this.paletteLab = null;
+            this.state.projectTransparentIndex = doc.transparentIdx;
+            if (doc.transparentIdx >= 0) {
+                const trns = new Uint8Array(doc.transparentIdx + 1).fill(255);
+                trns[doc.transparentIdx] = 0;
+                this.state.projectTrns = trns;
+            }
+            if (doc.w !== this.config.width || doc.h !== this.config.height) {
+                if (this.layerMgr && typeof this.layerMgr.collapseToBase === 'function'
+                    && this.layerMgr.active && this.layerMgr.layers.length > 1) {
+                    this.layerMgr.collapseToBase();
+                }
+                this.setSize(doc.w, doc.h);
+            }
+            this.state.projectIndices = new Uint8Array(doc.map);
+            const ctx = this.ctx;
+            const img = ctx.createImageData(doc.w, doc.h);
+            ctx.clearRect(0, 0, doc.w, doc.h);
+            ctx.putImageData(img, 0, 0);
+            this.paintProjectIndicesOnto(img, this.state.projectIndices, ctx, doc.w);
+            this.renderQuantPalette();
+            this.saveState();
+            this.deferColorCounts();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+            this.refreshFrameViews();
+            return true;
+        }
+
+        /* The dialog. Shows what the asset is now beside what it would become,
+           both drawn by the same function from the same kind of value, with each
+           fix listed and switchable — because "one action closes the gap" is only
+           safe if you can see the gap being closed before you agree to it. */
+        openFitToTarget() {
+            const plan = this.planFitToTarget();
+            if (!plan) { showToast('No project asset open', 'warning'); return; }
+            if (!plan.steps.length) { showToast('Already insertable — nothing to fit', 'info'); return; }
+
+            const chosen = new Set(plan.steps.map(s => s.id));
+            const overlay = document.createElement('div');
+            overlay.id = 'fit-overlay';
+            const box = document.createElement('div');
+            box.id = 'fit-box';
+            overlay.appendChild(box);
+
+            const h3 = document.createElement('h3');
+            h3.textContent = 'Fit to ' + plan.profile.label.toLowerCase();
+            box.appendChild(h3);
+            const sub = document.createElement('div');
+            sub.className = 'fit-sub';
+            sub.textContent = this.getFilenameFromPath(this.state.projectFile || '') || 'this asset';
+            box.appendChild(sub);
+
+            const diff = document.createElement('div');
+            diff.className = 'fit-diff';
+            const beforeC = document.createElement('canvas');
+            const afterC = document.createElement('canvas');
+            [['Now', beforeC], ['After', afterC]].forEach(([caption, canvas]) => {
+                const fig = document.createElement('figure');
+                fig.appendChild(canvas);
+                const cap = document.createElement('figcaption');
+                cap.textContent = caption;
+                fig.appendChild(cap);
+                diff.appendChild(fig);
+            });
+            box.appendChild(diff);
+
+            const list = document.createElement('ul');
+            list.className = 'fit-steps';
+            box.appendChild(list);
+
+            const scale = Math.max(1, Math.min(3, Math.floor(220 / Math.max(plan.doc.w, plan.doc.h)) || 1));
+            const redraw = () => {
+                this.renderProjectDocInto(beforeC, plan.doc, scale);
+                let doc = plan.doc;
+                const order = { slot0: 0, colors: 1, size: 2 };
+                plan.steps.slice()
+                    .filter(s => chosen.has(s.id))
+                    .sort((a, b) => order[a.id] - order[b.id])
+                    .forEach(s => { doc = this.fitStepApply(doc, s); });
+                this.renderProjectDocInto(afterC, doc, scale);
+            };
+
+            plan.steps.forEach((step) => {
+                const li = document.createElement('li');
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = true;
+                cb.onchange = () => {
+                    if (cb.checked) chosen.add(step.id); else chosen.delete(step.id);
+                    redraw();
+                };
+                li.appendChild(cb);
+                const label = document.createElement('label');
+                label.className = 'fit-label';
+                label.textContent = step.label;
+                const detail = document.createElement('span');
+                detail.className = 'fit-detail' + (step.destructive ? ' fit-warn' : '');
+                detail.textContent = step.detail;
+                label.appendChild(detail);
+                label.onclick = () => { cb.checked = !cb.checked; cb.onchange(); };
+                li.appendChild(label);
+                list.appendChild(li);
+            });
+
+            const actions = document.createElement('div');
+            actions.className = 'fit-actions';
+            const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+            const onKey = (e) => { if (e.key === 'Escape') close(); };
+            const cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.textContent = 'Cancel';
+            cancel.onclick = close;
+            const apply = document.createElement('button');
+            apply.type = 'button';
+            apply.className = 'fit-primary';
+            apply.textContent = 'Apply';
+            apply.onclick = () => {
+                close();
+                this.applyFitToTarget(Array.from(chosen));
+            };
+            actions.appendChild(cancel);
+            actions.appendChild(apply);
+            box.appendChild(actions);
+
+            document.addEventListener('keydown', onKey);
+            document.body.appendChild(overlay);
+            redraw();
+        }
+
+        /* Run the chosen fixes and install the result. One step, so one undo. */
+        applyFitToTarget(stepIds, colorCount) {
+            const plan = this.planFitToTarget(colorCount);
+            if (!plan) return null;
+            const wanted = stepIds && stepIds.length
+                ? plan.steps.filter(s => stepIds.includes(s.id))
+                : plan.steps;
+            if (!wanted.length) return null;
+            // Order matters: clearing the background first drops a colour, which can
+            // make the palette fit without merging anything; padding last, so the
+            // pixels it adds are already on the final transparency slot.
+            const order = { slot0: 0, colors: 1, size: 2 };
+            const sorted = wanted.slice().sort((a, b) => order[a.id] - order[b.id]);
+            let doc = plan.doc;
+            for (const step of sorted) doc = this.fitStepApply(doc, step);
+            this.applyProjectDoc(doc);
+            showToast('Fitted to ' + plan.profile.label.toLowerCase(), 'info');
+            return { applied: sorted.map(s => s.id), doc };
+        }
+
+        /* Redraw whatever is showing the frames — the ghost over the canvas and the
+           strip's thumbnails. Cheap and idempotent: both bail immediately when the
+           open asset has no frames, which is most of them. */
+        refreshFrameViews() {
+            this.updateFrameOverlays();
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+
         async saveProjectFile(path) {
             const w = this.config.width, h = this.config.height;
-            const imgData = this.ctx.getImageData(0, 0, w, h);
+            const { ctx } = this.projectIndexSurface();
+            const imgData = (ctx || this.ctx).getImageData(0, 0, w, h);
+            // The map is live, so this only has to catch a canvas that moved since
+            // the last committed step; it never reconciles against a stored bitmap.
             const indices = this.buildProjectIndices(imgData.data, w, h);
             const palette = this.palette;
             // Reproduce the file's own transparency chunk — including its absence.
@@ -22990,6 +23809,7 @@ void main() {
                 this.finalizePastedSelection(c);
             } else {
                 // Replace current document: clear history so undo doesn't revert to previous canvas.
+                this.clearProjectAssetState();
                 this.state.history = [];
                 this.state.step = -1;
                 if (this.state.selection) {
@@ -24380,6 +25200,7 @@ self.onmessage = function(e) {
             if (this.layerMgr && typeof this.layerMgr.collapseToBase === 'function') {
                 this.layerMgr.collapseToBase({ fresh: true });
             }
+            this.clearProjectAssetState();
             this.setSize(w, h);
             this.bitDepth = depth;
             const bg = document.getElementById('new-bg').value;
@@ -24609,12 +25430,12 @@ self.onmessage = function(e) {
         getTargetProfiles() {
             return {
                 'pokemon-front': { label: 'Pokémon front sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64]] },
-                'pokemon-anim-front': { label: 'Pokémon animated front sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 128], [64, 64]] },
+                'pokemon-anim-front': { label: 'Pokémon animated front sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 128], [64, 64]], frames: { size: [64, 64] } },
                 'pokemon-back': { label: 'Pokémon back sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64]] },
-                'pokemon-icon': { label: 'Pokémon icon', bitDepth: 4, palettes: ['Icon palette'], strictResolution: true, allowedResolutions: [[32, 64], [32, 32]] },
+                'pokemon-icon': { label: 'Pokémon icon', bitDepth: 4, palettes: ['Icon palette'], strictResolution: true, allowedResolutions: [[32, 64], [32, 32]], frames: { size: [32, 32] } },
                 'pokemon-footprint': { label: 'Pokémon footprint', bitDepth: 1, maxColors: 2, palettes: [], strictResolution: true, allowedResolutions: [[16, 16]] },
-                'pokemon-overworld': { label: 'Pokémon overworld sprite', bitDepth: 4, palettes: ['Overworld normal', 'Overworld shiny'], strictResolution: false },
-                'object-event': { label: 'Overworld object sprite', bitDepth: 4, palettes: [], strictResolution: false },
+                'pokemon-overworld': { label: 'Pokémon overworld sprite', bitDepth: 4, palettes: ['Overworld normal', 'Overworld shiny'], strictResolution: false, frames: { axis: 'x', counts: [9, 6, 4, 3, 2] } },
+                'object-event': { label: 'Overworld object sprite', bitDepth: 4, palettes: [], strictResolution: false, frames: { axis: 'x', counts: [9, 6, 4, 3, 2] } },
                 'trainer': { label: 'Trainer sprite', bitDepth: 4, palettes: [], strictResolution: true, allowedResolutions: [[64, 64]] },
                 'item-icon': { label: 'Item icon', bitDepth: 4, palettes: [], strictResolution: true, allowedResolutions: [[24, 24]] },
                 'tileset': { label: 'Tileset', bitDepth: 4, palettes: [], strictResolution: false, requiredWidth: 128, tileAligned: true },
@@ -24643,6 +25464,197 @@ self.onmessage = function(e) {
             if (low.includes('graphics/interface')) return profiles['interface'];
             return profiles['default'];
         }
+        /* ── Frames ─────────────────────────────────────────────────────────
+           Gen 3 animation is not a file format. A two-frame front sprite is one
+           64×128 PNG holding two 64×64 pictures; a walking overworld sprite is
+           one 144×32 PNG holding nine 16×32 ones. So a frame here is a rectangle
+           of the canvas, not a separate document — which is also why every frame
+           shares a palette by construction. There is one image and one index map
+           underneath the lot, and 1.1's work applies to all of it unchanged. */
+
+        // The GBA's real refresh, so "8 game frames" means what it means in game.
+        static get GBA_HZ() { return 59.7275; }
+        // Hold per frame, in game frames. The exact per-animation timing lives in
+        // the decomp's anim tables (sMonIconAnims and friends), which nothing here
+        // reads yet — this is the common walking/icon cadence, and it is adjustable.
+        static get DEFAULT_FRAME_HOLD() { return 8; }
+
+        projectFrameLayout() {
+            if (!this.state.projectImage || !this.state.projectFile) return null;
+            const spec = this.inferProfile(this.state.projectFile).frames;
+            if (!spec) return null;
+            const w = this.config.width, h = this.config.height;
+            if (!w || !h) return null;
+            const axis = spec.axis === 'x' ? 'x' : 'y';
+            const along = axis === 'x' ? w : h;
+
+            let count = null;
+            const forced = this.state.frameCountOverride;
+            if (Number.isInteger(forced) && forced > 1) {
+                // The artist said so. Only refuse when the sheet cannot be cut that way.
+                if (along % forced) return null;
+                count = forced;
+            } else if (spec.size) {
+                const fw = spec.size[0], fh = spec.size[1];
+                if (w % fw || h % fh) return null;
+                count = (w / fw) * (h / fh);
+            } else {
+                /* Frame width for an overworld sheet really comes from
+                   ObjectEventGraphicsInfo in the C, which nothing here reads yet.
+                   Until it does: take the first division that lands on a whole 8×8
+                   tile boundary, largest count first, since that is what a walking
+                   sheet looks like. Wrong guesses are why the count is adjustable. */
+                for (const c of (spec.counts || [])) {
+                    if (along % c) continue;
+                    if ((along / c) % 8) continue;
+                    count = c;
+                    break;
+                }
+            }
+            if (!count || count < 2) return null;
+
+            const fw = axis === 'x' ? w / count : w;
+            const fh = axis === 'x' ? h : h / count;
+            if (!Number.isInteger(fw) || !Number.isInteger(fh)) return null;
+            const cols = w / fw, rows = h / fh;
+            const hold = this.state.frameHold > 0
+                ? this.state.frameHold
+                : (spec.hold || this.constructor.DEFAULT_FRAME_HOLD);
+            return {
+                count: cols * rows, cols, rows, w: fw, h: fh, axis, hold,
+                ms: hold * 1000 / this.constructor.GBA_HZ
+            };
+        }
+
+        projectFrameRect(index) {
+            const layout = this.projectFrameLayout();
+            if (!layout || index < 0 || index >= layout.count) return null;
+            const col = index % layout.cols, row = (index / layout.cols) | 0;
+            return { x: col * layout.w, y: row * layout.h, w: layout.w, h: layout.h };
+        }
+
+        activeFrameIndex() {
+            const layout = this.projectFrameLayout();
+            if (!layout) return 0;
+            const i = this.state.activeFrame | 0;
+            return i >= 0 && i < layout.count ? i : 0;
+        }
+
+        setActiveFrame(index) {
+            const layout = this.projectFrameLayout();
+            if (!layout) return;
+            const next = ((index % layout.count) + layout.count) % layout.count;
+            if (next === this.state.activeFrame) return;
+            this.state.activeFrame = next;
+            // Which frame you are looking at is navigation, not an edit — it does
+            // not touch a pixel, so it does not belong in the undo stack.
+            this.updateFrameOverlays();
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+        stepFrame(delta) { this.setActiveFrame(this.activeFrameIndex() + (delta || 1)); }
+
+        setFrameCountOverride(count) {
+            this.state.frameCountOverride = (Number.isInteger(count) && count > 1) ? count : null;
+            this.state.activeFrame = 0;
+            this.updateFrameOverlays();
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+        setFrameHold(gameFrames) {
+            const v = Math.max(1, Math.min(120, Math.round(gameFrames) || 0));
+            this.state.frameHold = v;
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+        toggleOnionSkin(on) {
+            this.state.onionSkin = on === undefined ? !this.state.onionSkin : !!on;
+            this.updateFrameOverlays();
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+
+        /* Draw one frame into a target canvas at an integer scale, straight off the
+           display surface — so it shows exactly what is on the canvas, palette edits
+           and all, with no second rendering path to drift out of step. */
+        renderProjectFrameInto(canvas, index, scale) {
+            const rect = this.projectFrameRect(index);
+            if (!canvas || !rect) return false;
+            const z = Math.max(1, Math.round(scale || 1));
+            canvas.width = rect.w * z;
+            canvas.height = rect.h * z;
+            const ctx = canvas.getContext('2d');
+            this.disableSmoothing(ctx);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            try {
+                ctx.drawImage(this.ui.cMain, rect.x, rect.y, rect.w, rect.h,
+                    0, 0, canvas.width, canvas.height);
+            } catch (e) { return false; }
+            return true;
+        }
+
+        /* Ghost the neighbouring frames over the one being worked on, so a walk
+           cycle can be lined up without flipping back and forth. The ghost lands on
+           its own canvas above the artwork and below the tool preview: it is
+           something to look through, never something that can be painted or saved. */
+        updateFrameOverlays() {
+            const c = this.ui.frameOnion;
+            if (!c) return;
+            const layout = this.projectFrameLayout();
+            const w = this.config.width, h = this.config.height;
+            if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+            const ctx = c.getContext('2d');
+            this.disableSmoothing(ctx);
+            ctx.clearRect(0, 0, w, h);
+            if (!layout || !this.state.onionSkin || layout.count < 2) {
+                c.style.display = 'none';
+                return;
+            }
+            c.style.display = 'block';
+            const at = this.activeFrameIndex();
+            const here = this.projectFrameRect(at);
+            const seen = new Set([at]);
+            // Previous reads stronger than next: it is the frame you just drew.
+            for (const [delta, alpha] of [[-1, 0.4], [1, 0.22]]) {
+                const i = ((at + delta) % layout.count + layout.count) % layout.count;
+                if (seen.has(i)) continue;
+                seen.add(i);
+                const from = this.projectFrameRect(i);
+                ctx.globalAlpha = alpha;
+                try {
+                    ctx.drawImage(this.ui.cMain, from.x, from.y, from.w, from.h,
+                        here.x, here.y, here.w, here.h);
+                } catch (e) { /* canvas not readable yet */ }
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        isFramePlaying() { return !!this._framePlayTimer; }
+        startFramePlayback() {
+            const layout = this.projectFrameLayout();
+            if (!layout || this._framePlayTimer) return false;
+            // Playback walks the preview, not the canvas: the artist keeps the frame
+            // they were editing, and nothing they do is interrupted by the animation.
+            this._framePlayFrame = this.activeFrameIndex();
+            const tick = () => {
+                const l = this.projectFrameLayout();
+                if (!l) { this.stopFramePlayback(); return; }
+                this._framePlayFrame = (this._framePlayFrame + 1) % l.count;
+                if (this.onFramePlayback) this.onFramePlayback(this._framePlayFrame);
+                this._framePlayTimer = setTimeout(tick, l.ms);
+            };
+            this._framePlayTimer = setTimeout(tick, layout.ms);
+            if (this.onFramesChanged) this.onFramesChanged();
+            return true;
+        }
+        stopFramePlayback() {
+            if (this._framePlayTimer) clearTimeout(this._framePlayTimer);
+            this._framePlayTimer = null;
+            this._framePlayFrame = null;
+            if (this.onFramePlayback) this.onFramePlayback(null);
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+        toggleFramePlayback() {
+            if (this._framePlayTimer) this.stopFramePlayback();
+            else this.startFramePlayback();
+        }
+
         /* How many colours this asset can actually hold: the bit depth the file was
            opened at decides it, not an assumption that everything is 4bpp. */
         maxColorsForProfile(profile) {
@@ -24920,11 +25932,29 @@ self.onmessage = function(e) {
         setActivePalette(id) {
             const e = this.getPaletteById(id);
             if (!e) return;
+            /* For a project asset, which palette is active is not a view setting —
+               it is what the index map is read through. Switching has to repaint,
+               or the canvas would keep the old colours while every later edit was
+               resolved against the new ones. That is the normal/shiny toggle. */
+            if (this.state.projectImage && id !== this.state.activePaletteId
+                && this.state.projectIndices
+                && this.state.projectIndices.length === this.config.width * this.config.height) {
+                this.remapCanvasToPalette(id);
+                return;
+            }
             this.palette = e.colors;
             this.paletteLab = null;
             this.state.activePaletteId = id;
             this.renderQuantPalette();
             if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+        /* Is this the palette the canvas is currently being read through? Only that
+           one is part of the document; editing the shiny palette while painting the
+           normal one changes a file on disk, not the artwork on screen. */
+        drivesProjectCanvas(paletteId) {
+            return !!(this.state.projectImage && paletteId
+                && paletteId === this.state.activePaletteId
+                && !this.state.previewPaletteId);
         }
         reorderPaletteColor(paletteId, from, to) {
             const e = this.getPaletteById(paletteId);
@@ -24934,6 +25964,22 @@ self.onmessage = function(e) {
             const moved = arr.splice(from, 1)[0];
             arr.splice(to, 0, moved);
             this.paletteLab = null;
+            /* The indices point INTO this array, so a colour that moved takes every
+               pixel naming it along. Do it by table rather than by colour: two slots
+               can hold the same RGB, and matching on colour would merge them. */
+            if (this.drivesProjectCanvas(paletteId)) {
+                const table = new Array(arr.length);
+                for (let i = 0; i < arr.length; i++) {
+                    if (i === from) table[i] = to;
+                    else if (from < to) table[i] = (i > from && i <= to) ? i - 1 : i;
+                    else table[i] = (i >= to && i < from) ? i + 1 : i;
+                }
+                this.renumberProjectIndices(table);
+                this.renderQuantPalette();
+                this.repaintProjectFromPalette();
+                if (this.onPalettesChanged) this.onPalettesChanged();
+                return;
+            }
             if (paletteId === this.state.activePaletteId) this.renderQuantPalette();
             if (this.state.previewPaletteId) this._recolorPreview();
             else if (this.onPalettesChanged) this.onPalettesChanged();
@@ -24941,9 +25987,15 @@ self.onmessage = function(e) {
         updatePaletteColor(paletteId, index, rgb) {
             const e = this.getPaletteById(paletteId);
             if (!e || index < 0 || index >= e.colors.length) return;
-            e.colors[index] = { r: rgb.r, g: rgb.g, b: rgb.b, a: e.colors[index].a };
+            const was = e.colors[index];
+            if (was.r === rgb.r && was.g === rgb.g && was.b === rgb.b) return;
+            e.colors[index] = { r: rgb.r, g: rgb.g, b: rgb.b, a: was.a };
             this.paletteLab = null;
             if (paletteId === this.state.activePaletteId) this.renderQuantPalette();
+            // The canvas is this palette rendered through the index map, so a slot
+            // edit repaints the pixels holding that slot and nothing else. No
+            // re-quantise, no index moves — the artwork is not being reinterpreted.
+            if (this.drivesProjectCanvas(paletteId)) this.repaintProjectFromPalette();
             if (this.state.previewPaletteId) this._recolorPreview();
             if (this.onPalettesChanged) this.onPalettesChanged();
         }
@@ -24953,6 +26005,12 @@ self.onmessage = function(e) {
             e.colors.push({ r: color.r, g: color.g, b: color.b, a: 255 });
             this.paletteLab = null;
             if (paletteId === this.state.activePaletteId) this.renderQuantPalette();
+            /* Appending moves no index and repaints nothing, but the palette is half
+               of a project asset's document — and a 17th colour on a 4bpp sprite is
+               exactly the kind of change conformance is watching for. Record it, or
+               undo would silently drop back to a palette the canvas no longer
+               matches. */
+            if (this.drivesProjectCanvas(paletteId)) this.saveState();
             if (this.state.previewPaletteId) this._recolorPreview();
             if (this.onPalettesChanged) this.onPalettesChanged();
         }
@@ -24960,27 +26018,76 @@ self.onmessage = function(e) {
             const src = this.getPaletteById(srcId);
             const dst = this.getPaletteById(dstId);
             if (!src || !dst || srcIdx < 0 || srcIdx >= src.colors.length) return;
+            /* Taking a colour OUT of the palette driving the canvas deletes a slot
+               the artwork may be standing on, and there is no honest place to send
+               those pixels. Refuse while the slot is in use; an unused slot is just
+               housekeeping and goes through. */
+            const leavingProject = this.drivesProjectCanvas(srcId) && srcId !== dstId;
+            if (leavingProject) {
+                const map = this.state.projectIndices;
+                let used = 0;
+                if (map) for (let q = 0; q < map.length; q++) if (map[q] === srcIdx) used++;
+                if (used) {
+                    showToast(`Slot ${srcIdx} is used by ${used} pixel(s) — recolour them first`, 'warning');
+                    return;
+                }
+            }
+            const enteringProject = this.drivesProjectCanvas(dstId) && srcId !== dstId;
             const moved = src.colors.splice(srcIdx, 1)[0];
             if (dstIdx < 0 || dstIdx > dst.colors.length) dstIdx = dst.colors.length;
             dst.colors.splice(dstIdx, 0, moved);
             this.paletteLab = null;
+            // A slot left or arrived, so the ones after it all shifted by one and
+            // the artwork has to be renumbered to keep pointing at its own colours.
+            if (leavingProject || enteringProject) {
+                const len = (leavingProject ? src.colors.length + 1 : dst.colors.length);
+                const at = leavingProject ? srcIdx : dstIdx;
+                const table = new Array(len);
+                for (let i = 0; i < len; i++) {
+                    table[i] = leavingProject ? (i > at ? i - 1 : i) : (i >= at ? i + 1 : i);
+                }
+                this.renumberProjectIndices(table);
+                this.renderQuantPalette();
+                this.repaintProjectFromPalette();
+                if (this.onPalettesChanged) this.onPalettesChanged();
+                return;
+            }
             if (srcId === this.state.activePaletteId || dstId === this.state.activePaletteId) this.renderQuantPalette();
             if (this.state.previewPaletteId) this._recolorPreview();
             if (this.onPalettesChanged) this.onPalettesChanged();
         }
-        renderPalettePreviewInto(canvas, paletteId) {
-            if (!canvas) return;
+        /* Show the artwork under a given palette at a true pixel scale.
+           `opts.scale` is an integer multiplier of real pixels — 1 means 1:1, the
+           size the thing will be in the game, which is the whole point of having
+           this pane open while working at 800%. `opts.frame` picks one frame of a
+           sheet; without it the whole file is shown.
+
+           Deliberately NOT cropped to the artwork's bounding box. This refreshes on
+           every edit now, and a crop would make the pane resize under the cursor
+           every time a pixel near an edge changed. Showing the full frame also shows
+           where the sprite sits inside it, which is what 3.4 is about. */
+        renderPalettePreviewInto(canvas, paletteId, opts) {
+            if (!canvas) return false;
             const target = this.getPaletteById(paletteId);
-            if (!target) return;
+            if (!target) return false;
             const w = this.config.width, h = this.config.height;
-            if (!w || !h) { canvas.width = 0; canvas.height = 0; return; }
+            if (!w || !h) { canvas.width = 0; canvas.height = 0; return false; }
+            const o = opts || {};
+            const scale = Math.max(1, Math.round(o.scale || 1));
+            const rect = (o.frame === undefined || o.frame === null)
+                ? { x: 0, y: 0, w, h }
+                : (this.projectFrameRect(o.frame) || { x: 0, y: 0, w, h });
+
             let srcData;
             try { srcData = this.ctx.getImageData(0, 0, w, h); }
-            catch (e) { canvas.width = 0; canvas.height = 0; return; }
+            catch (e) { canvas.width = 0; canvas.height = 0; return false; }
+
             const native = document.createElement('canvas');
             native.width = w; native.height = h;
             const nctx = native.getContext('2d');
             if (this.palette && this.palette.length) {
+                // Repaint through the index map, so this shows what the file would
+                // contain under that palette rather than a nearest-colour guess.
                 const idx = (this.spriteIndices && this.spriteIndices.length === w * h)
                     ? this.spriteIndices
                     : this.quantizeToIndices(srcData.data, w, h, this.basePalette || this.palette);
@@ -24997,32 +26104,19 @@ self.onmessage = function(e) {
             } else {
                 nctx.putImageData(srcData, 0, 0);
             }
-            const sa = srcData.data;
-            let minX = w, minY = h, maxX = -1, maxY = -1;
-            for (let y = 0; y < h; y++) {
-                for (let x = 0; x < w; x++) {
-                    if (sa[(y * w + x) * 4 + 3] > 0) {
-                        if (x < minX) minX = x;
-                        if (x > maxX) maxX = x;
-                        if (y < minY) minY = y;
-                        if (y > maxY) maxY = y;
-                    }
-                }
-            }
-            if (maxX < 0) { canvas.width = 0; canvas.height = 0; return; }
-            const cw = maxX - minX + 1, ch = maxY - minY + 1;
-            canvas.width = cw;
-            canvas.height = ch;
+
+            canvas.width = rect.w * scale;
+            canvas.height = rect.h * scale;
             const cctx = canvas.getContext('2d');
             cctx.imageSmoothingEnabled = false;
-            cctx.clearRect(0, 0, cw, ch);
-            cctx.drawImage(native, minX, minY, cw, ch, 0, 0, cw, ch);
-            const maxSide = Math.max(cw, ch) || 1;
-            let scale = Math.floor(128 / maxSide);
-            if (scale < 1) scale = 1;
-            scale = Math.min(scale, 128 / maxSide);
-            canvas.style.width = Math.round(cw * scale) + 'px';
-            canvas.style.height = Math.round(ch * scale) + 'px';
+            cctx.clearRect(0, 0, canvas.width, canvas.height);
+            cctx.drawImage(native, rect.x, rect.y, rect.w, rect.h, 0, 0, canvas.width, canvas.height);
+            // CSS size tracks the backing store exactly: one artwork pixel is
+            // `scale` screen pixels and no fraction of one, or this stops being a
+            // preview of pixel art and starts being an impression of it.
+            canvas.style.width = canvas.width + 'px';
+            canvas.style.height = canvas.height + 'px';
+            return true;
         }
         addPalette(name) {
             const src = this.palette || [];
@@ -25037,11 +26131,18 @@ self.onmessage = function(e) {
         removePalette(id) {
             const e = this.getPaletteById(id);
             if (!e || e.source === 'embedded') return;
+            const wasDriving = this.drivesProjectCanvas(id);
             this.state.palettes = (this.state.palettes || []).filter(p => p.id !== id);
             if (this.state.activePaletteId === id) {
                 const a = this.state.palettes[0];
                 this.state.activePaletteId = a ? a.id : null;
                 this.palette = a ? a.colors : [];
+                this.basePalette = this.palette;
+                this.paletteLab = null;
+                // The canvas was showing the palette that just went away. Repaint it
+                // under whichever one took over, rather than leaving the pixels and
+                // the map disagreeing about what the artwork is made of.
+                if (wasDriving && a) { this.renderQuantPalette(); this.repaintProjectFromPalette(); }
             }
             if (this.state.previewPaletteId === id) this.exitPreview();
             if (this.onPalettesChanged) this.onPalettesChanged();
@@ -25130,8 +26231,8 @@ self.onmessage = function(e) {
             showToast('Shiny palette generated', 'info');
         }
         /* Repaint a project asset under a different palette, index by index.
-           The index map is untouched, so the baseline that saving diffs against is
-           re-taken here: the pixels are new but they still mean the same slots. */
+           The index map is untouched — the pixels are new but they still mean the
+           same slots, which is the whole point of swapping to shiny. */
         remapProjectCanvasToPalette(imgData, entry, paletteId, w, h) {
             const d = imgData.data;
             const colors = entry.colors;
@@ -25150,8 +26251,6 @@ self.onmessage = function(e) {
             this.palette = colors;
             this.paletteLab = null;
             this.state.activePaletteId = paletteId;
-            this.state.projectIndices = new Uint8Array(this.spriteIndices);
-            this.state.projectBaseline = new Uint8ClampedArray(d);
             this.renderQuantPalette();
             this.saveState();
             if (this.onPalettesChanged) this.onPalettesChanged();
@@ -27622,6 +28721,10 @@ self.onmessage = function(e) {
                 _schedThumb();
                 return;
             }
+            // Same contract as the single-layer path: the index map is folded in
+            // before the snapshot. Layered artwork is read from the composite and
+            // not snapped — see projectIndexSurface().
+            this.commitProjectIndices();
             // Truncate forward history, releasing the discarded entries without
             // closing pixels the surviving entries still reference.
             if (this.state.step < this.state.history.length - 1) {
@@ -27689,6 +28792,7 @@ self.onmessage = function(e) {
             };
             this.state.history.push(entry);
             this.state.step++;
+            this.attachProjectStep(entry);
             this.enforceHistoryLimit();
             this.state.isDirty = true;
             this.deferColorCounts();
@@ -27846,6 +28950,7 @@ self.onmessage = function(e) {
             if (app.ui.cTemp) app.ui.cTemp.style.zIndex = '200';
             if (app.ui.stage) app.ui.stage.classList.add('layers-active');
             _invalidate();
+            this.restoreProjectStep(entry);
             this.requestGlobalOverlayUpdate();
             this.deferColorCounts();
             _refreshList(); _syncBtns(); _syncOpacity();

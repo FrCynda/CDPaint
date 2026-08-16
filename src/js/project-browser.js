@@ -16,6 +16,7 @@
     var expandBtn = document.getElementById('project-expand');
     var hookBtn = document.getElementById('project-hook');
     var refreshBtn = document.getElementById('project-refresh');
+    var auditBtn = document.getElementById('project-audit');
     var unhookBtn = document.getElementById('project-unhook');
     var collapseBtn = document.getElementById('project-collapse');
     var closeBtn = document.getElementById('project-close');
@@ -23,6 +24,8 @@
     var MAX_SCAN_DEPTH = 12;
     var DENYLIST = ['.git', 'node_modules', 'target', '.vscode', '.idea', 'dist'];
     var currentRoot = null;
+    var lastTree = null;
+    var auditing = false;
 
     function getApp() { return window.PaintApp; }
 
@@ -56,6 +59,7 @@
         } catch (e) { /* ignore */ }
         if (refreshBtn) refreshBtn.disabled = !v;
         if (unhookBtn) unhookBtn.disabled = !v;
+        if (auditBtn) auditBtn.disabled = !v;
     }
 
     function setStatus(msg) { if (statusEl) statusEl.textContent = msg || ''; }
@@ -374,6 +378,9 @@
     }
 
     function renderTree(root) {
+        // Keep the scanned tree: the audit walks it rather than hitting the disk
+        // again, and the DOM is a filtered view of it, not the tree itself.
+        lastTree = root;
         treeEl.textContent = '';
         if (!root || !root.children || !root.children.length) {
             var empty = document.createElement('div');
@@ -619,7 +626,139 @@
         closePanel();
     }
 
+    /* ── Audit ──────────────────────────────────────────────────────────────
+       Every PNG in the hooked folder, checked against what gbagfx would accept
+       and what the game expects, without running either. */
+
+    function collectPngs(node, out) {
+        (node && node.children || []).forEach(function (c) {
+            if (c.kind === 'dir') collectPngs(c, out);
+            else if ((c.name || '').toLowerCase().endsWith('.png')) out.push(c);
+        });
+        return out;
+    }
+
+    function readNodeBytes(node) {
+        if (node.handle) {
+            var file = node.handle instanceof File
+                ? Promise.resolve(node.handle)
+                : Promise.resolve(node.handle.getFile());
+            return file.then(function (f) { return f.arrayBuffer(); })
+                .then(function (b) { return new Uint8Array(b); });
+        }
+        return tauriInvoke('read_image_file', { path: node.path || '' })
+            .then(function (data) { return data instanceof Uint8Array ? data : new Uint8Array(data); });
+    }
+
+    function auditRow(result) {
+        var row = document.createElement('div');
+        row.className = 'audit-row';
+        var head = document.createElement('div');
+        head.className = 'audit-path';
+        head.textContent = result.path || result.name;
+        head.title = 'Open this asset';
+        head.onclick = function () { openAssetByPath(result); };
+        row.appendChild(head);
+        var info = result.info;
+        if (info) {
+            var meta = document.createElement('span');
+            meta.className = 'audit-meta';
+            meta.textContent = info.w + '×' + info.h + ' · ' + info.depth + 'bpp · ' + info.colors + ' colours';
+            row.appendChild(meta);
+        }
+        result.problems.forEach(function (p) {
+            var li = document.createElement('div');
+            li.className = 'audit-problem audit-' + p.kind;
+            li.textContent = (p.kind === 'build' ? 'won’t build — ' : 'wrong in game — ') + p.text;
+            row.appendChild(li);
+        });
+        return row;
+    }
+
+    function openAssetByPath(result) {
+        var app = window.PaintApp;
+        if (!app || !lastTree) return;
+        var found = collectPngs(lastTree, []).find(function (n) {
+            return (n.path || n.name) === result.path;
+        });
+        if (!found) return;
+        if (found.handle) app.openProjectImageFromHandle(found, []);
+        else app.openProjectImage(found.path, []);
+    }
+
+    function showAuditReport(report) {
+        var overlay = document.createElement('div');
+        overlay.id = 'audit-overlay';
+        var box = document.createElement('div');
+        box.id = 'audit-box';
+        overlay.appendChild(box);
+
+        var h = document.createElement('h3');
+        h.textContent = 'Project audit';
+        box.appendChild(h);
+        var sub = document.createElement('div');
+        sub.className = 'audit-sub';
+        sub.textContent = report.total + ' assets · ' + report.clean + ' clean · ' +
+            report.wontBuild.length + ' won’t build · ' + report.wrongInGame.length + ' wrong in game';
+        box.appendChild(sub);
+
+        var body = document.createElement('div');
+        body.className = 'audit-body';
+        if (!report.wontBuild.length && !report.wrongInGame.length) {
+            var ok = document.createElement('div');
+            ok.className = 'audit-clean';
+            ok.textContent = 'Nothing to fix — every asset would build and land correctly.';
+            body.appendChild(ok);
+        }
+        [['Won’t build', report.wontBuild], ['Wrong in game', report.wrongInGame]]
+            .forEach(function (pair) {
+                if (!pair[1].length) return;
+                var group = document.createElement('h4');
+                group.textContent = pair[0] + ' (' + pair[1].length + ')';
+                body.appendChild(group);
+                pair[1].forEach(function (r) { body.appendChild(auditRow(r)); });
+            });
+        box.appendChild(body);
+
+        var actions = document.createElement('div');
+        actions.className = 'audit-actions';
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = 'Close';
+        var dismiss = function () { overlay.remove(); document.removeEventListener('keydown', onKey); };
+        var onKey = function (e) { if (e.key === 'Escape') dismiss(); };
+        close.onclick = dismiss;
+        actions.appendChild(close);
+        box.appendChild(actions);
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+    }
+
+    function audit() {
+        var app = window.PaintApp;
+        if (auditing || !app || !app.auditProjectAssets) return;
+        var pngs = collectPngs(lastTree, []);
+        if (!pngs.length) { showToast('Nothing to audit — hook a folder first', 'warning'); return; }
+        auditing = true;
+        if (auditBtn) auditBtn.disabled = true;
+        setStatus('Auditing 0/' + pngs.length + '...');
+        app.auditProjectAssets(pngs, readNodeBytes, function (done, total) {
+            setStatus('Auditing ' + done + '/' + total + '...');
+        }).then(function (report) {
+            setStatus(getRoot() + '  (' + report.total + ' assets, ' +
+                (report.wontBuild.length + report.wrongInGame.length) + ' to fix)');
+            showAuditReport(report);
+        }).catch(function (e) {
+            showToast('Audit failed: ' + (e && e.message ? e.message : e), 'error');
+            setStatus('Audit failed');
+        }).then(function () {
+            auditing = false;
+            if (auditBtn) auditBtn.disabled = !getRoot();
+        });
+    }
+
     if (hookBtn) hookBtn.addEventListener('click', hook);
+    if (auditBtn) auditBtn.addEventListener('click', audit);
     if (refreshBtn) refreshBtn.addEventListener('click', refresh);
     if (unhookBtn) unhookBtn.addEventListener('click', unhook);
     if (collapseBtn) collapseBtn.addEventListener('click', collapsePanel);
@@ -630,6 +769,8 @@
     window.PokeProject = {
         open: openPanel,
         close: closePanel,
+        audit: audit,
+        assets: function () { return collectPngs(lastTree, []); },
         toggle: function () {
             if (document.body.classList.contains('project-panel-open')) collapsePanel();
             else openPanel();
