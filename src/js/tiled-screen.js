@@ -108,12 +108,6 @@
         return !!(current && app && app.state && app.state.projectFile === current.identity);
     }
 
-    function absolute(relPath) {
-        var p = project(), m = p && p.model && p.model();
-        if (!m || !m.root) return null;
-        return String(m.root).replace(/[\\/]+$/, '') + '/' + relPath;
-    }
-
     async function save() {
         var app = getApp();
         if (!isOpen() || !window.Retile) return false;
@@ -153,15 +147,18 @@
             current.palette, current.bitDepth === 4 ? 4 : 8, trnsFor(current.palette.length));
         var mapBytes = window.Retile.tilemapBytes(r.map);
 
-        var tilesAt = absolute(current.descriptor.tilesPath);
-        var mapAt = absolute(current.descriptor.mapPath);
-        if (!tilesAt || !mapAt || typeof app.tauriWriteAllowedFile !== 'function') {
-            toast('Saving a screen needs the desktop app and a hooked project', 'warning');
+        var p = project();
+        if (!p || typeof p.writeBytes !== 'function') {
+            toast('Saving a screen needs a hooked project', 'warning');
             return false;
         }
 
-        await app.tauriWriteAllowedFile(tilesAt, sheetPng);
-        await app.tauriWriteAllowedFile(mapAt, mapBytes);
+        /* Sheet first. If the tilemap write is the one that fails, the tiles on
+           disk are a superset of what the old map points at, so the screen still
+           builds and still renders — the other order leaves a map addressing
+           tiles that are not there. */
+        await p.writeBytes(current.descriptor.tilesPath, sheetPng);
+        await p.writeBytes(current.descriptor.mapPath, mapBytes);
         app.markSaved(current.descriptor.tilesPath.replace(/^.*\//, ''));
         toast('Wrote ' + r.tileCount + ' tiles and a ' + r.map.length + '-cell tilemap', 'success');
         return true;

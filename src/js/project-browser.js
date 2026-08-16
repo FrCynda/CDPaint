@@ -609,7 +609,10 @@
 
     function isAssetName(name) {
         var lower = (name || '').toLowerCase();
-        return lower.endsWith('.png') || lower.endsWith('.pal');
+        // `.bin` draws no row of its own. It is here because a tiles.png is only
+        // a screen if its tilemap is sitting beside it, and the scan is the only
+        // place that can see that. Keep in step with scan_dir in lib.rs.
+        return lower.endsWith('.png') || lower.endsWith('.pal') || lower.endsWith('.bin');
     }
 
     async function scanFsa(handle, relPath, depth) {
@@ -1023,6 +1026,35 @@
         })();
     }
 
+    /* The same walk, writing. The folder is hooked read-only because reading is
+       all the panel ever did; the first write asks to upgrade it, which is one
+       browser prompt the artist answers once per session. */
+    function writeBytes(relPath, bytes) {
+        var parts = String(relPath || '').split('/').filter(Boolean);
+        if (!parts.length) return Promise.reject(new Error('no path'));
+        if (isTauriEnv()) {
+            if (!model || !model.root) return Promise.reject(new Error('no project root'));
+            return window.PaintApp.tauriWriteAllowedFile(
+                model.root.replace(/[\\/]$/, '') + '/' + parts.join('/'), bytes);
+        }
+        if (!currentRoot || currentRoot.kind !== 'fsa') {
+            return Promise.reject(new Error('This project was opened from a file list, which cannot be written back to. Re-hook the folder.'));
+        }
+        return (async function () {
+            var root = currentRoot.handle;
+            if (root.requestPermission) {
+                var perm = await root.requestPermission({ mode: 'readwrite' });
+                if (perm !== 'granted') throw new Error('Permission to write to the project folder was declined');
+            }
+            var dir = root;
+            for (var i = 0; i < parts.length - 1; i++) dir = await dir.getDirectoryHandle(parts[i]);
+            var fh = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+            var w = await fh.createWritable();
+            await w.write(bytes);
+            await w.close();
+        })();
+    }
+
     /* The battle environments the project declares, each resolved to its three
        files. Empty until a decomp is hooked, which is the caller's cue to draw
        its own approximation instead. */
@@ -1042,6 +1074,7 @@
         model: function () { return model; },
         rel: rel,
         readBytes: readBytes,
+        writeBytes: writeBytes,
         environments: environments,
         coordsFor: function (path) {
             if (!model) return [];

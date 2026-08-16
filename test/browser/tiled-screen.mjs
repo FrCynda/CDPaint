@@ -56,12 +56,15 @@ await withPage(async (page) => {
         window.PokeProject = Object.assign({}, window.PokeProject, {
             model: () => ({ root: 'C:/proj', sourceText: new Map() }),
             coordsFor: () => [],
-            readBytes: (p) => files[p] ? Promise.resolve(files[p]) : Promise.reject(new Error(p))
+            readBytes: (p) => files[p] ? Promise.resolve(files[p]) : Promise.reject(new Error(p)),
+            /* Stubbed at the same seam the real one lives at, so this covers
+               both modes — PokeProject.writeBytes is Rust on the desktop and a
+               file handle in the browser, and neither is reachable from here. */
+            writeBytes: (path, bytes) => {
+                window.__written.push({ path, bytes: Array.from(bytes) });
+                return Promise.resolve();
+            }
         });
-        PaintApp.tauriWriteAllowedFile = (path, bytes) => {
-            window.__written.push({ path, bytes: Array.from(bytes) });
-            return Promise.resolve();
-        };
         const desc = window.TiledAsset.describe('graphics/map_preview/x/tiles.png',
             ['tiles.png', 'map.bin', 'palette.pal']);
     `;
@@ -115,7 +118,7 @@ await withPage(async (page) => {
         saved.paths.some(p => /map\.bin$/.test(p)),
         JSON.stringify(saved.paths));
     check('both go beside the originals in the project',
-        saved.paths.every(p => p.indexOf('C:/proj/graphics/map_preview/x/') === 0),
+        saved.paths.every(p => p.indexOf('graphics/map_preview/x/') === 0),
         JSON.stringify(saved.paths));
     check('the grid it writes is the same 640 cells',
         saved.mapLen === 1280, String(saved.mapLen));
