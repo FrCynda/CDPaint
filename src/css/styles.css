@@ -5912,6 +5912,9 @@ body.project-panel-collapsed #project-expand{display:flex;}
 .proj-thumb-missing{opacity:0.25;}
 .proj-pal-dot{width:12px;height:12px;border-radius:50%;background:var(--a1,#0078d7);flex:none;border:1px solid var(--s7,#999);}
 .proj-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Not a button — the whole row already opens it. This only warns that the
+   thumbnail is a tile sheet and the canvas will be the assembled picture. */
+.proj-screen-tag{font-size:10px;font-weight:700;padding:1px 5px;flex:none;border:1px solid var(--s7,#999);background:transparent;color:var(--t1,#222);border-radius:4px;line-height:1.4;opacity:.7;}
 .proj-pal-badges{display:flex;gap:3px;flex:none;}
 .proj-pal-badge{font-size:10px;font-weight:700;padding:1px 5px;border:1px solid var(--s7,#999);background:var(--a1,#0078d7);color:#fff;border-radius:4px;cursor:pointer;line-height:1.4;transition:filter .1s;}
 .proj-pal-badge:hover{filter:brightness(1.12);}
