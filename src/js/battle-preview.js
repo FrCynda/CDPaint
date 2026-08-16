@@ -50,6 +50,7 @@
        class toggle would reopen the panel on the next stroke; this remembers
        which asset it was dismissed for, and the next one shows it again. */
     var hiddenFor = null;
+    var zoomChosen = false;
 
     function el(tag, cls, text) {
         var n = document.createElement(tag);
@@ -95,22 +96,42 @@
         return /^(anim_)?(front|back)(_gba)?\.png$/.test(name);
     }
 
-    /* The artwork's own measurements, for the frame being worked on. */
+    /* The artwork's own measurements, for the frame being worked on.
+     *
+     * The index map is the better source — it is what the file will contain —
+     * but it goes out of step with the canvas whenever something changes the
+     * document's size, and a preview that goes blank after a resize is worse
+     * than one that is a frame behind. So: indices when they still describe
+     * this canvas, the canvas's own alpha otherwise. Both answer the only
+     * question the bounding box asks, which is whether a pixel is drawn. */
     function measure() {
         var app = getApp();
-        if (!app || !app.state || !app.state.projectImage) return null;
-        var idx = app.spriteIndices;
+        if (!app || !app.state || !app.state.projectImage || !window.SpriteCoords) return null;
         var w = app.config.width, h = app.config.height;
-        if (!idx || idx.length !== w * h || !window.SpriteCoords) return null;
-        /* -1 means the file carried no tRNS, not that nothing is transparent.
-           Index 0 is the decomp's convention and gbagfx's default; treating -1
-           as "everything is drawn" would measure every such sprite as filling
-           its frame. */
-        var ti = app.state.projectTransparentIndex;
-        if (ti < 0) ti = 0;
+        if (!w || !h) return null;
         var frame = playingFrame === null ? app.activeFrameIndex() : playingFrame;
-        var bounds = window.SpriteCoords.boundsOf(idx, w, h, ti, frame);
-        return window.SpriteCoords.coordsFromBounds(bounds);
+
+        var idx = app.spriteIndices;
+        var source = null, ti = 0;
+        if (idx && idx.length === w * h) {
+            /* -1 means the file carried no tRNS, not that nothing is
+               transparent. Index 0 is the decomp's convention and gbagfx's
+               default; treating -1 as "everything is drawn" would measure every
+               such sprite as filling its frame. */
+            source = idx;
+            ti = app.state.projectTransparentIndex;
+            if (ti < 0) ti = 0;
+        } else {
+            var data;
+            try { data = app.ctx.getImageData(0, 0, w, h).data; }
+            catch (e) { return null; }
+            // 0 = not drawn, 1 = drawn; the bounding box needs nothing else.
+            source = new Uint8Array(w * h);
+            for (var q = 0; q < w * h; q++) source[q] = data[q * 4 + 3] ? 1 : 0;
+            ti = 0;
+        }
+        return window.SpriteCoords.coordsFromBounds(
+            window.SpriteCoords.boundsOf(source, w, h, ti, frame));
     }
 
     /* The declared record for this asset, if the project declares one. */
@@ -219,10 +240,25 @@
         readoutEl.appendChild(line);
 
         if (!declared) {
+            /* Say what was looked up and what was there to look in. "No
+               coordinates for this asset" on its own is unactionable — it
+               cannot distinguish an unhooked project from a species the fork
+               never declares from a path that failed to resolve, and those
+               want three different things done about them. */
             var p = project();
-            readoutEl.appendChild(el('div', 'bp-note', p && p.model && p.model()
-                ? 'The project declares no coordinates for this asset — the preview uses the measured ones.'
-                : 'No decomp hooked, so nothing to compare against. The preview uses the measured coordinates.'));
+            var m = p && p.model && p.model();
+            if (!m) {
+                readoutEl.appendChild(el('div', 'bp-note',
+                    'No decomp hooked, so nothing to compare against. The preview uses the measured coordinates.'));
+            } else {
+                var app = getApp();
+                var looked = p.rel ? p.rel(app.state.projectFile) : app.state.projectFile;
+                readoutEl.appendChild(el('div', 'bp-note',
+                    'The project declares no coordinates for this asset. The preview uses the measured ones.'));
+                readoutEl.appendChild(el('div', 'bp-where',
+                    'looked up “' + looked + '” · the project declares ' +
+                    (m.coords ? m.coords.length : 0) + ' coordinates'));
+            }
             return;
         }
 
@@ -257,6 +293,18 @@
             return;
         }
         panel.classList.remove('bp-collapsed');
+
+        /* Pick a scale the window can actually show, until the artist picks one
+           themselves. 2× of a 240×160 screen plus the header and the readout
+           wants ~420px; on a shorter window that pushes the readout — the part
+           with the answer in it — off the bottom of the panel. */
+        if (!zoomChosen) {
+            var fits = Math.max(1, Math.min(3, Math.floor((window.innerHeight - 260) / SCREEN_H)));
+            if (zoom !== Math.min(2, fits)) {
+                zoom = Math.min(2, fits);
+                if (zoomEl) zoomEl.value = String(zoom);
+            }
+        }
 
         // The frame, through the active palette, at 1:1 — the scene is a GBA
         // screen and an artwork pixel is one screen pixel in it.
@@ -306,7 +354,11 @@
         });
         zoomEl.value = '2';
         zoomEl.title = 'Scale of the 240×160 screen';
-        zoomEl.onchange = function () { zoom = parseInt(zoomEl.value, 10) || 2; render(); };
+        zoomEl.onchange = function () {
+            zoom = parseInt(zoomEl.value, 10) || 2;
+            zoomChosen = true;   // stop fitting it for them once they have said
+            render();
+        };
         header.appendChild(zoomEl);
 
         var closeBtn = el('button', 'bp-close', '×');

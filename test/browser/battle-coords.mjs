@@ -95,6 +95,8 @@ await withPage(async (page) => {
     check('with no decomp hooked there are no declared coordinates',
         Array.isArray(bare.coords) && bare.coords.length === 0 && bare.model === null,
         JSON.stringify(bare.coords));
+    check('and the readout says so rather than blaming the asset',
+        /No decomp hooked/.test(bare.text), bare.text);
     check('a path with no project root behind it is passed through, slashes normalised',
         bare.rel === 'C:/x/graphics/a.png', bare.rel);
     check('the panel still measures the artwork and says why it cannot compare',
@@ -159,6 +161,18 @@ await withPage(async (page) => {
     check('when they agree there is nothing to fix',
         !ui.agreeFix && /agrees/.test(ui.agreeText), ui.agreeText);
     check('closing the panel survives the next repaint', ui.stayedClosed);
+
+    /* Resizing leaves the index map describing the *old* canvas — applyResize
+       does not rebuild it. The panel must fall back to the canvas rather than
+       go blank, which is what a user sees as "no readout after a resize". */
+    const stale = await page.eval(`(async () => {
+        PaintApp.spriteIndices = new Uint8Array(4);   // what a resize leaves behind
+        window.BattlePreview.open();
+        const panel = document.getElementById('battle-preview');
+        return { text: panel.querySelector('.bp-readout').textContent };
+    })()`);
+    check('a stale index map falls back to the canvas instead of blanking',
+        /8px above the bottom edge/.test(stale.text), stale.text);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
