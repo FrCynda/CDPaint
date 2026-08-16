@@ -51,8 +51,10 @@ if (only !== 'browser') {
     }
 
     console.log('\nunit');
-    const wand = join(HERE, 'wand-algorithms.test.mjs');
-    if (existsSync(wand)) tally(run('wand-algorithms', wand));
+    for (const f of ['wand-algorithms.test.mjs', 'project-model.test.mjs']) {
+        const p = join(HERE, f);
+        if (existsSync(p)) tally(run(f.replace(/\.test\.mjs$|\.mjs$/, ''), p));
+    }
 }
 
 if (only !== 'engine') {
