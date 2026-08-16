@@ -27,6 +27,13 @@
     var lastTree = null;
     var auditing = false;
 
+    /* What the project says about itself — see src/js/project-model.js and
+       src/js/sprite-coords.js. Null until a hooked folder turns out to be a
+       decomp; every reader below falls back to convention when it is, which is
+       what keeps the panel useful on a bare folder of PNGs. */
+    var model = null;
+    var nodeByRel = null;   // repo-relative path → the scanned node
+
     function getApp() { return window.PaintApp; }
 
     function isTauriEnv() {
@@ -149,12 +156,17 @@
         return img;
     }
 
-    function palBadge(palNode, label) {
+    function palBadge(palNode, label, why) {
         var b = document.createElement('button');
         b.type = 'button';
         b.className = 'proj-pal-badge';
         b.textContent = label || 'PAL';
-        b.title = 'Load palette: ' + palNode.name;
+        // The reason the resolver offered this one. "Which palette is this?" has
+        // to be checkable rather than taken on trust — a wrong pairing is how
+        // the shiny sprite silently changes when you save the normal one.
+        b.title = why
+            ? 'Load ' + palNode.name + ' — ' + why
+            : 'Load palette: ' + palNode.name;
         b.addEventListener('click', function (ev) {
             ev.stopPropagation();
             loadPal(palNode);
@@ -182,7 +194,10 @@
         });
     }
 
-    function fileRow(pngNode, palNodes) {
+    /* `offers` is [{node, why}] — the resolver's answers, best first. The engine
+       wants the bare nodes, the badges want the reasons. */
+    function fileRow(pngNode, offers) {
+        var palNodes = (offers || []).map(function (o) { return o.node; });
         var row = document.createElement('div');
         row.className = 'proj-row proj-row-file';
 
@@ -196,10 +211,12 @@
         label.textContent = pngNode.name;
         row.appendChild(label);
 
-        if (palNodes && palNodes.length) {
+        if (offers && offers.length) {
             var badgeWrap = document.createElement('span');
             badgeWrap.className = 'proj-pal-badges';
-            palNodes.forEach(function (pn) { badgeWrap.appendChild(palBadge(pn, labelForPal(pn))); });
+            offers.forEach(function (o) {
+                badgeWrap.appendChild(palBadge(o.node, labelForPal(o.node), o.why));
+            });
             row.appendChild(badgeWrap);
         }
 
@@ -215,11 +232,14 @@
         return row;
     }
 
+    /* Now that the resolver offers several palettes for one asset — sixteen for
+       a tileset, six for an icon — the badge has to say which is which. The
+       stem does that; 'PAL' on all of them would not. */
     function labelForPal(palNode) {
-        var n = palNode.name.toLowerCase();
-        if (n === 'normal.pal') return 'N';
-        if (n === 'shiny.pal') return 'S';
-        return 'PAL';
+        var n = palNode.name.toLowerCase().replace(/\.pal$/, '');
+        if (n === 'normal') return 'N';
+        if (n === 'shiny') return 'S';
+        return n.length > 8 ? n.slice(0, 7) + '…' : n;
     }
 
     function palOnlyRow(palNode) {
@@ -270,6 +290,32 @@
         return wrap;
     }
 
+    /* Which palettes this PNG is actually drawn with.
+       The project's own declarations when we have them — that is the whole
+       point of the asset model, and the four real rules it encodes are the ones
+       "same folder, same name" got wrong (F4). Sibling matching stays as the
+       fallback for a folder that is not a decomp. */
+    function palettesForNode(pngNode, siblingPals, sharedPals) {
+        var rel = relOf(pngNode);
+        if (model && rel && window.ProjectModel) {
+            var found = window.ProjectModel.palettesFor(rel, {
+                index: model.index,
+                exists: function (p) { return nodeByRel.has(p); }
+            }).map(function (c) {
+                var n = nodeByRel.get(c.path);
+                // Paired with the reason rather than stamped onto the node: one
+                // palette is offered to many pictures, for a different reason
+                // each time, and the node is shared between all of them.
+                return n ? { node: n, why: c.why } : null;
+            }).filter(Boolean);
+            if (found.length) return found;
+        }
+        var base = pngNode.name.slice(0, -4).toLowerCase();
+        return siblingPals.filter(function (pn) {
+            return pn.name.slice(0, -4).toLowerCase() === base;
+        }).concat(sharedPals).map(function (pn) { return { node: pn, why: null }; });
+    }
+
     function renderChildren(node, container) {
         var pngByBase = {};
         var pals = [];
@@ -289,12 +335,7 @@
         // PNG rows with associated palette badges.
         Object.keys(pngByBase).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); }).forEach(function (base) {
             var png = pngByBase[base];
-            var assoc = [];
-            pals.forEach(function (pn) {
-                if (pn.name.slice(0, -4).toLowerCase() === base.toLowerCase()) assoc.push(pn);
-            });
-            shared.forEach(function (pn) { assoc.push(pn); });
-            container.appendChild(fileRow(png, assoc));
+            container.appendChild(fileRow(png, palettesForNode(png, pals, shared)));
         });
 
         // Standalone pal files (no matching png, not normal/shiny).
@@ -377,10 +418,118 @@
         panel.insertBefore(search, treeEl);
     }
 
+    /* ── The project model ──────────────────────────────────────────────────
+       Reading `graphics/` tells you a file's name and its pixels. Everything
+       else worth knowing — the depth the slot is built at, which palette binds
+       to it, where the sprite sits in its frame — is declared in the project's
+       C, two directories up. This loads that once per hook. */
+
+    function normSlashes(p) { return String(p || '').replace(/\\/g, '/'); }
+
+    /* A scanned node's path as the declarations spell it: relative to the repo
+       root, forward slashes. Desktop nodes carry an absolute path; browser
+       nodes are already relative to whatever was hooked. */
+    function relOf(node) {
+        var p = normSlashes(node && node.path);
+        if (!p) return '';
+        if (model && model.root) {
+            var root = normSlashes(model.root).replace(/\/$/, '');
+            if (p.toLowerCase().indexOf(root.toLowerCase() + '/') === 0) return p.slice(root.length + 1);
+        }
+        return p;
+    }
+
+    function indexNodes(tree) {
+        var map = new Map();
+        (function walk(n) {
+            (n && n.children || []).forEach(function (c) {
+                if (c.kind === 'dir') walk(c);
+                else map.set(relOf(c), c);
+            });
+        })(tree);
+        return map;
+    }
+
+    function buildModel(root, files, skipped) {
+        var PM = window.ProjectModel, SC = window.SpriteCoords;
+        if (!PM || !files || !files.length) return null;
+        var index = PM.buildIndex(files);
+        var coords = SC ? SC.parseSpeciesCoords(files) : [];
+        return {
+            root: root,
+            index: index,
+            coords: coords,
+            coordsByPath: SC ? SC.coordsIndex(coords, index) : new Map(),
+            sourceText: files.reduce(function (m, f) { m.set(f.path, f.text); return m; }, new Map()),
+            skipped: skipped || 0
+        };
+    }
+
+    /* Browser mode can only see what was hooked, so the model exists there only
+       when the repo root itself was picked. That is a real limitation and not
+       worth papering over: with no index every resolver falls back to
+       convention, which is what the panel did before there was one. */
+    var SOURCE_MARKERS = /INCBIN_U|INCGFX_U|SpriteFrameImage|ObjectEventGraphicsInfo|OBJ_EVENT_PAL_TAG_|PicYOffset|y_offset|#define P_/;
+
+    async function readSourcesFsa(handle, rel, depth, out) {
+        if (depth > MAX_SCAN_DEPTH || typeof handle.entries !== 'function') return out;
+        for await (var pair of handle.entries()) {
+            var name = pair[0], h = pair[1];
+            var childRel = rel ? rel + '/' + name : name;
+            if (h.kind === 'file') {
+                if (!/\.(c|h|inc)$/i.test(name)) continue;
+                var text = await (await h.getFile()).text();
+                if (SOURCE_MARKERS.test(text)) out.push({ path: childRel, text: text });
+            } else if (DENYLIST.indexOf(name) < 0 && name !== 'build') {
+                await readSourcesFsa(h, childRel, depth + 1, out);
+            }
+        }
+        return out;
+    }
+
+    function loadModel(root) {
+        model = null;
+        setStatus('Reading the project…');
+        var got;
+        if (isTauriEnv()) {
+            got = tauriInvoke('read_project_sources', { path: root })
+                .then(function (r) { return buildModel(r.root, r.files, r.skipped); });
+        } else if (currentRoot && currentRoot.kind === 'fsa') {
+            got = (async function () {
+                var files = [];
+                for (var sub of ['src', 'include', 'data']) {
+                    var dir = null;
+                    try { dir = await currentRoot.handle.getDirectoryHandle(sub); } catch (e) { continue; }
+                    await readSourcesFsa(dir, sub, 0, files);
+                }
+                // Paths are already root-relative when the repo root was hooked.
+                return buildModel('', files, 0);
+            })();
+        } else {
+            return Promise.resolve(null);
+        }
+        return got.then(function (m) {
+            model = m;
+            return m;
+        }).catch(function () {
+            // Not a decomp, or unreadable. Conventions still work.
+            model = null;
+            return null;
+        });
+    }
+
+    function modelSummary() {
+        if (!model) return '';
+        var s = model.index.stats;
+        return '  ·  ' + s.depths + ' depths, ' + s.pairs + ' pairings, ' +
+            model.coords.length + ' coordinates';
+    }
+
     function renderTree(root) {
         // Keep the scanned tree: the audit walks it rather than hitting the disk
         // again, and the DOM is a filtered view of it, not the tree itself.
         lastTree = root;
+        nodeByRel = indexNodes(root);
         treeEl.textContent = '';
         if (!root || !root.children || !root.children.length) {
             var empty = document.createElement('div');
@@ -397,11 +546,15 @@
         setStatus('Scanning...');
         setLoading(true);
         return tauriInvoke('scan_project', { path: root }).then(function (tree) {
-            renderTree(tree);
-            var count = countAssets(tree);
-            setStatus(root + '  (' + count + ' assets)');
-            setRoot(root);
-            setLoading(false);
+            // The model first: the palette a row offers comes out of it, so
+            // rendering before it lands would show the fallback and then flip.
+            return loadModel(root).then(function () {
+                renderTree(tree);
+                var count = countAssets(tree);
+                setStatus(root + '  (' + count + ' assets)' + modelSummary());
+                setRoot(root);
+                setLoading(false);
+            });
         }).catch(function (e) {
             setStatus('Scan failed: ' + (e && e.message ? e.message : e));
             showToast('Project scan failed: ' + (e && e.message ? e.message : e), 'error');
@@ -490,11 +643,13 @@
         return promise.then(function (tree) {
             tree.name = root.name;
             tree.path = root.name;
-            renderTree(tree);
-            var count = countAssets(tree);
-            setStatus(root.name + '  (' + count + ' assets)');
-            setRoot(root.name);
-            setLoading(false);
+            return loadModel(root.name).then(function () {
+                renderTree(tree);
+                var count = countAssets(tree);
+                setStatus(root.name + '  (' + count + ' assets)' + modelSummary());
+                setRoot(root.name);
+                setLoading(false);
+            });
         }).catch(function (e) {
             setStatus('Scan failed: ' + (e && e.message ? e.message : e));
             showToast('Project scan failed: ' + (e && e.message ? e.message : e), 'error');
@@ -620,6 +775,10 @@
 
     function unhook() {
         setRoot('');
+        currentRoot = null;
+        lastTree = null;
+        nodeByRel = null;
+        model = null;
         treeEl.textContent = '';
         setStatus('');
         setLoading(false);
@@ -766,11 +925,51 @@
     if (expandBtn) expandBtn.addEventListener('click', openPanel);
     setupSearch();
 
+    /* ── Writing a coordinate back ──────────────────────────────────────────
+       The one place CDPaint edits C. It replaces a single value in place: the
+       byte range the parse recorded, the text expected to be there, and the
+       correction. The Rust side refuses if the file has moved on since it was
+       read, so a stale offset cannot eat somebody's species data. */
+    function writeCoord(record, field, value) {
+        var SC = window.SpriteCoords;
+        if (!model || !SC) return Promise.reject(new Error('No project model loaded'));
+        if (!isTauriEnv()) {
+            return Promise.reject(new Error(
+                'Browser mode has read-only access to the folder — open the project in the desktop app to write coordinates'));
+        }
+        var at = field === 'size' ? record.sizeAt : record.yAt;
+        var text = model.sourceText.get(record.file);
+        if (!at || typeof text !== 'string') return Promise.reject(new Error('Nothing to patch'));
+        var raw = text.slice(at.start, at.end);
+        // Keep the branch's own spacing: `A ? x : y` must not become `A ? x :y`.
+        var lead = /^\s*/.exec(raw)[0], tail = /\s*$/.exec(raw)[0];
+        var replacement = lead + value + tail;
+        var abs = model.root ? model.root.replace(/[\\/]$/, '') + '/' + record.file : record.file;
+        return tauriInvoke('patch_source_file', {
+            path: abs, offset: at.start, expect: raw, replacement: replacement
+        }).then(function () {
+            // Re-read our own copy so the offsets stay true for the next edit.
+            var next = text.slice(0, at.start) + replacement + text.slice(at.end);
+            model.sourceText.set(record.file, next);
+            model.coords = model.coords.filter(function (r) { return r.file !== record.file; })
+                .concat(SC.parseSpeciesCoords([{ path: record.file, text: next }]));
+            model.coordsByPath = SC.coordsIndex(model.coords, model.index);
+            return true;
+        });
+    }
+
     window.PokeProject = {
         open: openPanel,
         close: closePanel,
         audit: audit,
         assets: function () { return collectPngs(lastTree, []); },
+        model: function () { return model; },
+        rel: function (path) { return relOf({ path: path }); },
+        coordsFor: function (path) {
+            if (!model) return [];
+            return model.coordsByPath.get(relOf({ path: path })) || [];
+        },
+        writeCoord: writeCoord,
         toggle: function () {
             if (document.body.classList.contains('project-panel-open')) collapsePanel();
             else openPanel();

@@ -599,6 +599,189 @@ fn scan_project(path: String) -> Result<ProjectNode, String> {
     Ok(root)
 }
 
+/* The project's own C, for the asset model to read.
+ *
+ * A decomp declares three things nothing else can supply — the depth each slot
+ * is built at, which palette a picture binds to, and where a sprite sits in its
+ * frame — and all three live in `src/` and `include/`. Reading them one file at
+ * a time over IPC would be a thousand round trips, so this is one call.
+ *
+ * Two filters keep it honest rather than merely small: only files whose text
+ * actually contains a declaration we parse, and a hard byte ceiling so hooking
+ * something that is not a decomp cannot pull the whole disk into a string. On
+ * pokeemerald-expansion that is 173 files out of 996, 16MB out of 39MB. */
+#[derive(Debug, Clone, Serialize)]
+struct ProjectSource {
+    path: String,
+    text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProjectSources {
+    root: String,
+    files: Vec<ProjectSource>,
+    skipped: usize,
+}
+
+const SOURCE_MARKERS: [&str; 8] = [
+    "INCBIN_U",
+    "INCGFX_U",
+    "SpriteFrameImage",
+    "ObjectEventGraphicsInfo",
+    "OBJ_EVENT_PAL_TAG_",
+    "PicYOffset",
+    "y_offset",
+    "#define P_",
+];
+const MAX_SOURCE_BYTES: usize = 96 * 1024 * 1024;
+
+/* The hooked folder is usually `graphics/`, and the declarations are two levels
+   up. A repo root is the directory that has both `src` and `include` in it —
+   true of pokeemerald, every fork of it, and of nothing else the user is likely
+   to point at. Give up rather than guess if it is not within a few levels. */
+fn find_project_root(start: &Path) -> Option<PathBuf> {
+    let mut dir = Some(start);
+    for _ in 0..6 {
+        let d = dir?;
+        if d.join("src").is_dir() && d.join("include").is_dir() {
+            return Some(d.to_path_buf());
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+fn collect_sources(
+    dir: &Path,
+    root: &Path,
+    depth: usize,
+    out: &mut Vec<ProjectSource>,
+    total: &mut usize,
+    skipped: &mut usize,
+) {
+    if depth > MAX_SCAN_DEPTH || *total >= MAX_SOURCE_BYTES {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let meta = match std::fs::symlink_metadata(&p) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.is_symlink() {
+            continue;
+        }
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if meta.is_dir() {
+            if SCAN_DIR_DENYLIST.iter().any(|d| d.eq_ignore_ascii_case(&fname))
+                || fname.eq_ignore_ascii_case("build")
+            {
+                continue;
+            }
+            collect_sources(&p, root, depth + 1, out, total, skipped);
+        } else if meta.is_file() {
+            let ext = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase());
+            if !matches!(ext.as_deref(), Some("c") | Some("h") | Some("inc")) {
+                continue;
+            }
+            let text = match std::fs::read_to_string(&p) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if !SOURCE_MARKERS.iter().any(|m| text.contains(m)) {
+                continue;
+            }
+            if *total + text.len() > MAX_SOURCE_BYTES {
+                *skipped += 1;
+                continue;
+            }
+            *total += text.len();
+            let rel = p
+                .strip_prefix(root)
+                .unwrap_or(&p)
+                .to_string_lossy()
+                .replace('\\', "/");
+            out.push(ProjectSource { path: rel, text });
+        }
+    }
+}
+
+#[tauri::command]
+fn read_project_sources(path: String) -> Result<ProjectSources, String> {
+    let p = normalize_to_absolute_path(&path)?;
+    if !p.is_dir() {
+        return Err("path is not an existing directory".into());
+    }
+    let root = find_project_root(&p)
+        .ok_or("no decomp found here — expected a folder with src/ and include/ in it")?;
+    let mut files = Vec::new();
+    let mut total = 0usize;
+    let mut skipped = 0usize;
+    for sub in ["src", "include", "data"] {
+        let dir = root.join(sub);
+        if dir.is_dir() {
+            collect_sources(&dir, &root, 0, &mut files, &mut total, &mut skipped);
+        }
+    }
+    Ok(ProjectSources {
+        root: root.to_string_lossy().to_string(),
+        files,
+        skipped,
+    })
+}
+
+/* One value in one declaration, replaced.
+ *
+ * This is the only path by which CDPaint writes C, and it is deliberately the
+ * narrowest one that does the job: a byte range, the text that is expected to
+ * be there, and what to put in its place. If the file has changed since it was
+ * read — someone edited it, or rebased — the expected text will not match and
+ * nothing is written. A whole-file write would have no such check, and losing
+ * somebody's species data to a stale offset is not a bug worth being able to
+ * have. */
+#[tauri::command]
+fn patch_source_file(
+    path: String,
+    offset: usize,
+    expect: String,
+    replacement: String,
+) -> Result<(), String> {
+    let p = normalize_to_absolute_path(&path)?;
+    if !p.is_file() {
+        return Err("path is not an existing file".into());
+    }
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    if !matches!(ext.as_deref(), Some("c") | Some("h") | Some("inc")) {
+        return Err("only project source files can be patched".into());
+    }
+    if find_project_root(p.parent().unwrap_or(&p)).is_none() {
+        return Err("that file is not inside a decomp".into());
+    }
+    let text = std::fs::read_to_string(&p).map_err(|e| format!("read failed: {}", e))?;
+    let end = offset + expect.len();
+    if end > text.len() || !text.is_char_boundary(offset) || !text.is_char_boundary(end) {
+        return Err("the file has changed since it was read".into());
+    }
+    if &text[offset..end] != expect {
+        return Err("the file has changed since it was read".into());
+    }
+    let mut next = String::with_capacity(text.len() + replacement.len());
+    next.push_str(&text[..offset]);
+    next.push_str(&replacement);
+    next.push_str(&text[end..]);
+    std::fs::write(&p, next).map_err(|e| format!("write failed: {}", e))
+}
+
 #[tauri::command]
 fn read_text_file(path: String) -> Result<String, String> {
     let p = normalize_to_absolute_path(&path)?;
@@ -942,6 +1125,8 @@ pub fn run() {
             toggle_current_window_fullscreen,
             pick_export_folder,
             scan_project,
+            read_project_sources,
+            patch_source_file,
             read_text_file
         ])
         .setup(|app| {

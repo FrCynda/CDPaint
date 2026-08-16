@@ -5957,6 +5957,27 @@ body.project-panel-collapsed #project-expand{display:flex;}
 .sp-item{display:flex;flex-direction:column;align-items:center;gap:4px;flex:0 0 auto;}
 .sp-name{font-size:10px;color:var(--t1,#444);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .sp-canvas{position:relative;image-rendering:pixelated;background:#000;border:1px solid var(--s6,#cfcfcf);border-radius:4px;display:block;}
+
+/* Battle-context preview — the sprite where the game will actually draw it. */
+#battle-preview{position:fixed;right:16px;bottom:34px;z-index:9990;display:flex;flex-direction:column;background:var(--s3,#f3f3f3);color:var(--t1,#222);border:1px solid var(--s6,#cfcfcf);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.22);font-size:12px;overflow:hidden;max-width:92vw;}
+#battle-preview.bp-collapsed{display:none;}
+.bp-header{display:flex;align-items:center;gap:8px;padding:5px 8px;cursor:move;background:var(--s5,#fff);border-bottom:1px solid var(--s6,#cfcfcf);}
+.bp-header .bp-title{font-weight:600;}
+.bp-header .bp-side{margin-left:auto;}
+.bp-header .bp-side,.bp-header .bp-zoom{border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;font-size:10px;padding:1px 3px;}
+.bp-header .bp-close{border:0;background:transparent;cursor:pointer;font-size:14px;}
+.bp-scene{display:block;image-rendering:pixelated;background:#000;max-width:100%;}
+.bp-readout{padding:7px 9px;display:flex;flex-direction:column;gap:5px;border-top:1px solid var(--s6,#cfcfcf);}
+.bp-measured{font-variant-numeric:tabular-nums;}
+.bp-note,.bp-where{font-size:10px;opacity:.7;}
+.bp-ok{color:#1c7c2e;}
+.bp-problem{display:flex;align-items:center;gap:8px;}
+.bp-problem-text{flex:1;}
+.bp-problem.bp-wrong .bp-problem-text{color:#b32020;}
+.bp-problem.bp-loose .bp-problem-text{opacity:.7;font-size:10px;}
+.bp-fix{flex:0 0 auto;border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;padding:2px 7px;cursor:pointer;font-size:11px;}
+.bp-fix:hover:not(:disabled){background:var(--s4,#e8e8e8);}
+.bp-fix:disabled{opacity:.5;cursor:default;}
 .pp-swatches .mini-swatch.empty{background:transparent;pointer-events:none;cursor:default;box-shadow:none;border:1px solid transparent;}
 .pp-swatches .mini-swatch.empty:hover{box-shadow:none;border:1px solid transparent;}
 .pp-swatches .mini-swatch.empty::after{content:'';display:block;width:55%;height:55%;margin:22.5% auto;box-sizing:border-box;border:2px dashed var(--palette-mini-swatch-border,#888);border-radius:50%;opacity:.4;}
