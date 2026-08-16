@@ -55,29 +55,72 @@ export function parseJascPal(text) {
  *
  * Read rather than hardcoded because the whole point of this app is forks: an
  * added environment should appear in the cycler without anyone editing CDPaint.
- * `.background = ENVIRONMENT_BACKGROUND(TallGrass)` is a macro naming a pair of
- * symbols by suffix, which is why the suffix is what gets captured. */
+ *
+ * Three dialects are in the wild and none of them is worth privileging. Current
+ * expansion writes `.background = ENVIRONMENT_BACKGROUND(TallGrass)`, a macro
+ * naming a pair of symbols by suffix, plus a `.name` for the UI. Current
+ * vanilla writes `.tileset` and `.tilemap` out in full and has no name. Older
+ * checkouts of both spell the whole thing TERRAIN rather than ENVIRONMENT. So
+ * the anchor is the entry key, not the table's name — which also means a fork
+ * that keeps its environments in a file of its own is found without CDPaint
+ * knowing that file exists.
+ *
+ * An entry that names no background or no palette is skipped rather than
+ * half-drawn: `[BATTLE_ENVIRONMENT_CAVE]` also keys camouflage and nature-power
+ * tables, and those are not scenery. */
+const ENV_KEY = /\[(BATTLE_(?:ENVIRONMENT|TERRAIN)_[A-Z0-9_]+)\]\s*=\s*\{/g;
+
+/* `.background = ENVIRONMENT_BACKGROUND(TallGrass)` is a token-pasting macro,
+   and its definition is the only thing that says what it pastes. Reading it
+   beats assuming `gBattleEnvironmentTiles_`: the same project spelled that
+   `gBattleTerrainTiles_` a year ago, and a fork is free to spell it anything.
+
+   When the definition is not in the text CDPaint was given — it lives in a
+   header nothing else made it read — the current convention is the fallback.
+   That is a guess, but a checked one: a symbol that does not exist is dropped
+   by resolveEnvironments, so the worst case is the environment being missing,
+   which is exactly what returning nothing would have done. */
+function expandBackgroundMacro(text, name, arg) {
+    const def = new RegExp('#define\\s+' + name + '\\s*\\(\\s*\\w+\\s*\\)').exec(text);
+    if (def) {
+        const body = text.slice(def.index, def.index + 600);
+        const t = body.match(/\.tileset\s*=\s*(\w+?)##/);
+        const m = body.match(/\.tilemap\s*=\s*(\w+?)##/);
+        if (t && m) return { tiles: t[1] + arg, tilemap: m[1] + arg };
+    }
+    return { tiles: 'gBattleEnvironmentTiles_' + arg, tilemap: 'gBattleEnvironmentTilemap_' + arg };
+}
+
 export function parseEnvironments(sourceText) {
     const text = String(sourceText || '');
-    const table = text.indexOf('gBattleEnvironmentInfo');
-    if (table < 0) return [];
-    const out = [];
-    const entry = /\[(BATTLE_ENVIRONMENT_[A-Z0-9_]+)\]\s*=\s*\{/g;
-    entry.lastIndex = table;
+    const keys = [];
+    ENV_KEY.lastIndex = 0;
     let m;
-    while ((m = entry.exec(text))) {
-        // Take the block up to the next entry, or a reasonable slice at the end.
-        const next = text.indexOf('[BATTLE_ENVIRONMENT_', m.index + 1);
-        const body = text.slice(m.index, next < 0 ? m.index + 4000 : next);
-        const bg = body.match(/\.background\s*=\s*ENVIRONMENT_BACKGROUND\(\s*(\w+)\s*\)/);
+    while ((m = ENV_KEY.exec(text))) keys.push({ id: m[1], at: m.index });
+    if (!keys.length) return [];
+
+    const out = [], seen = new Set();
+    for (let i = 0; i < keys.length; i++) {
+        const body = text.slice(keys[i].at,
+            i + 1 < keys.length ? keys[i + 1].at : keys[i].at + 4000);
+        const macro = body.match(/\.background\s*=\s*(\w+)\(\s*(\w+)\s*\)/);
+        const expanded = macro ? expandBackgroundMacro(text, macro[1], macro[2]) : null;
+        const tiles = expanded || body.match(/\.tileset\s*=\s*(\w+)/) && {
+            tiles: body.match(/\.tileset\s*=\s*(\w+)/)[1],
+            tilemap: (body.match(/\.tilemap\s*=\s*(\w+)/) || [])[1]
+        };
         const pal = body.match(/\.palette\s*=\s*(\w+)/);
-        if (!bg || !pal) continue;
+        if (!pal || !tiles || !tiles.tiles || !tiles.tilemap) continue;
+        if (seen.has(keys[i].id)) continue;
+        seen.add(keys[i].id);
+
         const name = body.match(/\.name\s*=\s*_\("([^"]*)"\)/);
         out.push({
-            id: m[1],
-            label: name ? name[1] : m[1].replace('BATTLE_ENVIRONMENT_', '').toLowerCase(),
-            tiles: 'gBattleEnvironmentTiles_' + bg[1],
-            tilemap: 'gBattleEnvironmentTilemap_' + bg[1],
+            id: keys[i].id,
+            label: name ? name[1]
+                : keys[i].id.replace(/^BATTLE_(ENVIRONMENT|TERRAIN)_/, '').toLowerCase(),
+            tiles: tiles.tiles,
+            tilemap: tiles.tilemap,
             palette: pal[1]
         });
     }
