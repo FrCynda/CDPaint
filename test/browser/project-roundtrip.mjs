@@ -44,11 +44,12 @@ function chunk(type, data) {
 }
 
 /* Build an indexed PNG. `filter` picks the row filter so the decoder's unfilter
-   paths get exercised, not just filter 0. */
-function makePng({ w, h, depth, palette, trns, indices, filter = 0 }) {
+   paths get exercised, not just filter 0. `colorType` is 3 (palette) unless a
+   test wants greyscale (0), which gbagfx accepts and we must not reject. */
+function makePng({ w, h, depth, palette, trns, indices, filter = 0, colorType = 3 }) {
     const ihdr = Buffer.alloc(13);
     ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4);
-    ihdr[8] = depth; ihdr[9] = 3; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+    ihdr[8] = depth; ihdr[9] = colorType; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
 
     const plte = Buffer.alloc(palette.length * 3);
     palette.forEach((c, i) => { plte[i * 3] = c[0]; plte[i * 3 + 1] = c[1]; plte[i * 3 + 2] = c[2]; });
@@ -79,9 +80,9 @@ function makePng({ w, h, depth, palette, trns, indices, filter = 0 }) {
 
     const parts = [
         Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-        chunk('IHDR', ihdr),
-        chunk('PLTE', plte)
+        chunk('IHDR', ihdr)
     ];
+    if (colorType === 3) parts.push(chunk('PLTE', plte));
     if (trns) parts.push(chunk('tRNS', Buffer.from(trns)));
     parts.push(chunk('IDAT', deflateSync(raw)));
     parts.push(chunk('IEND', Buffer.alloc(0)));
@@ -923,10 +924,28 @@ await withPage(async (page) => {
             w: 64, h: 64, depth: 4, palette: ramp16(12), trns: [0],
             indices: Uint8Array.from({ length: 64 * 64 }, (_, i) => 1 + (i % 15)), filter: 0
         }).toString('base64');
-        // 8bpp using index 200 — builds as an 8bpp asset, never as a 4bpp sprite.
+        // 8bpp using index 200. gbagfx does NOT refuse this: ConvertBitDepth
+        // reduces it with `% 16`, so it builds and then draws index 8.
         const deep = makePng({
             w: 64, h: 64, depth: 8, palette: Array.from({ length: 256 }, (_, i) => [i, 255 - i, i / 2 | 0]),
             trns: [0], indices: Uint8Array.from({ length: 64 * 64 }, (_, i) => i % 201), filter: 0
+        }).toString('base64');
+        /* 8bpp, 256-entry palette, but no index above 15 — which is what a great
+           many stock expansion assets look like. Nothing wrong with it. */
+        const wideTable = makePng({
+            w: 64, h: 64, depth: 8, palette: Array.from({ length: 256 }, (_, i) => [i, 255 - i, i / 2 | 0]),
+            trns: [0], indices: Uint8Array.from({ length: 64 * 64 }, (_, i) => i % 16), filter: 0
+        }).toString('base64');
+        // Greyscale, no palette at all. gbagfx takes PNG_COLOR_TYPE_GRAY happily.
+        const grey = makePng({
+            w: 64, h: 64, depth: 4, palette: [], trns: null, colorType: 0,
+            indices: Uint8Array.from({ length: 64 * 64 }, (_, i) => i % 16), filter: 0
+        }).toString('base64');
+        /* A palette kept as a picture: one pixel per slot, 16×1. Not tile-aligned,
+           and it never needed to be — it is not drawn. */
+        const palImage = makePng({
+            w: 16, h: 1, depth: 8, palette: ramp16(16), trns: [0],
+            indices: Uint8Array.from({ length: 16 }, (_, i) => i), filter: 0
         }).toString('base64');
         // 60x70: not a whole number of tiles, and not the size the slot wants.
         const ragged = makePng({
@@ -945,6 +964,7 @@ await withPage(async (page) => {
                 const r = await PaintApp.validateProjectAsset(un(b64), path);
                 return { ok: r.ok, buildOk: r.buildOk,
                          ids: r.problems.map(p => p.kind + ':' + p.id).sort(),
+                         texts: r.problems.map(p => p.text).join(' | '),
                          info: r.info };
             };
             const out = {
@@ -952,6 +972,11 @@ await withPage(async (page) => {
                 opaque: await check("${opaque}", 'graphics/pokemon/magikarp/front.png'),
                 deep: await check("${deep}", 'graphics/pokemon/magikarp/front.png'),
                 ragged: await check("${ragged}", 'graphics/pokemon/magikarp/front.png'),
+                wideTable: await check("${wideTable}", 'graphics/pokemon/magikarp/front.png'),
+                grey: await check("${grey}", 'graphics/interface/thing.png'),
+                palImage: await check("${palImage}", 'graphics/pokemon/pawmi/normal.png'),
+                // Tileset animation frames are not the 128px sheet.
+                tsAnim: await check("${palImage}", 'data/tilesets/primary/building/anim/tv/0.png'),
                 notPng: await PaintApp.validateProjectAsset(new Uint8Array([1,2,3]), 'graphics/x.png')
             };
             // And the whole-project sweep over the same four.
@@ -984,17 +1009,33 @@ await withPage(async (page) => {
         check('an opaque background builds fine but is wrong in game',
             res.opaque.buildOk === true && JSON.stringify(res.opaque.ids) === '["game:slot0"]',
             JSON.stringify(res.opaque.ids));
-        check('an index a 4bpp slot cannot reach stops the build',
-            res.deep.buildOk === false && res.deep.ids.includes('build:palette'),
+        /* This one used to be asserted the other way round. gbagfx reduces an
+           over-deep index with `% 16` (convert_png.c, ConvertBitDepth) instead of
+           refusing it, so the build succeeds and the picture is wrong — which is
+           the harder problem to find, not the easier one. */
+        check('an index a 4bpp slot cannot reach builds fine and draws wrong',
+            res.deep.buildOk === true && res.deep.ids.includes('game:index'),
             JSON.stringify(res.deep.ids));
+        check('and it names the index that will actually be drawn',
+            /draws it as index 8/.test(res.deep.texts), res.deep.texts);
+        check('a big palette table with small indices is not a problem at all',
+            res.wideTable.ok === true, JSON.stringify(res.wideTable.ids));
+        check('greyscale is accepted — gbagfx takes GRAY as well as PALETTE',
+            res.grey.buildOk === true && !res.grey.ids.includes('build:notIndexed'),
+            JSON.stringify(res.grey.ids));
+        check('a palette stored as a 16×1 picture is not held to tile alignment',
+            res.palImage.buildOk === true && !res.palImage.ids.includes('build:tiles'),
+            JSON.stringify(res.palImage.ids));
+        check('a tileset animation frame is not held to the 128px sheet width',
+            !res.tsAnim.ids.includes('build:width'), JSON.stringify(res.tsAnim.ids));
         check('a ragged size fails as both a build and a game problem',
             res.ragged.ids.includes('build:tiles') && res.ragged.ids.includes('game:size'),
             JSON.stringify(res.ragged.ids));
         check('something that is not a PNG says so, rather than throwing',
             res.notPng.buildOk === false && res.notPng.problems[0].id === 'unreadable');
         check('the sweep separates the two kinds',
-            JSON.stringify(res.report.wontBuild) === '["c","d"]' &&
-            JSON.stringify(res.report.wrongInGame) === '["b"]',
+            JSON.stringify(res.report.wontBuild) === '["d"]' &&
+            JSON.stringify(res.report.wrongInGame) === '["b","c"]',
             JSON.stringify(res.report));
         check('and counts the clean ones', res.report.clean === 1 && res.report.total === 4,
             JSON.stringify(res.report));
@@ -1038,7 +1079,19 @@ await withPage(async (page) => {
             frontFits: fits('graphics/pokemon/bulbasaur/front.png', 64, 64),
             footFits: fits('graphics/pokemon/bulbasaur/footprint.png', 16, 16),
             gbaFits: fits('graphics/pokemon/bulbasaur/back_gba.png', 64, 64),
-            tileset: p('data/tilesets/primary/general/tiles.png').label
+            tileset: p('data/tilesets/primary/general/tiles.png').label,
+            /* Everything below was a false alarm on a stock expansion checkout
+               before the profiles were rebuilt from what the repo actually holds. */
+            tsAnim: p('data/tilesets/primary/building/anim/tv_turned_on/0.png').label,
+            mapPreview: p('graphics/map_preview/dotted_hole/tiles.png').label,
+            backSheet: fits('graphics/trainers/back_pics/brendan.png', 64, 256),
+            frontPic: fits('graphics/trainers/front_pics/brendan.png', 64, 64),
+            deoxysBack: fits('graphics/pokemon/deoxys/back_gba.png', 64, 128),
+            formIcon: p('graphics/pokemon/deoxys/icon_speed_wide.png').label,
+            palImage: p('graphics/pokemon/pawmi/normal.png').label,
+            // Alternate forms nest one folder deeper and must still resolve.
+            formFront: p('graphics/pokemon/lapras/gmax/front.png').label,
+            owWide: fits('graphics/pokemon/araquanid/overworld.png', 384, 64)
         };
     })()`);
     check('anim_front.png 64x128 accepted', profiles.animFits, JSON.stringify(profiles.anim));
@@ -1047,6 +1100,20 @@ await withPage(async (page) => {
     check('footprint.png 16x16 accepted', profiles.footFits);
     check('_gba variants resolve to the same profile', profiles.gbaFits);
     check('tilesets recognised', profiles.tileset === 'Tileset', profiles.tileset);
+    check('tileset animation frames are their own thing',
+        profiles.tsAnim === 'Tileset animation frame', profiles.tsAnim);
+    check('a map preview named tiles.png is not a tileset',
+        profiles.mapPreview !== 'Tileset', profiles.mapPreview);
+    check('trainer back pics are sheets, front pics are not',
+        profiles.backSheet && profiles.frontPic);
+    check('deoxys 64x128 back sheet accepted', profiles.deoxysBack);
+    check('a form icon is not held to the standard icon box',
+        profiles.formIcon === 'Pokémon form icon', profiles.formIcon);
+    check('normal.png is read as a palette, not as artwork',
+        profiles.palImage === 'Palette image', profiles.palImage);
+    check('assets inside a form folder still resolve',
+        profiles.formFront === 'Pokémon front sprite', profiles.formFront);
+    check('overworld sheets are not held to one width', profiles.owWide);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
