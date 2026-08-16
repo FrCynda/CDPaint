@@ -763,6 +763,7 @@
     <div class="proj-actionbar">
         <button type="button" id="project-hook" title="Hook a graphics/ folder">Hook</button>
         <button type="button" id="project-refresh" title="Rescan folder" disabled>Refresh</button>
+        <button type="button" id="project-audit" title="Check every asset without building" disabled>Audit</button>
         <button type="button" id="project-unhook" title="Disconnect" disabled>Unhook</button>
     </div>
     <div id="project-tree" role="tree"></div>
@@ -778,6 +779,9 @@
 <div id="viewport">
     <div id="canvas-stage" style="width: 800px; height: 600px;">
         <canvas id="layer-main" width="800" height="600"></canvas>
+        <!-- Neighbouring frames, ghosted. Above the artwork so it reads, below the
+             tool preview so it can never be painted on or saved. -->
+        <canvas id="frame-onion" width="800" height="600" style="display:none" aria-hidden="true"></canvas>
         <canvas id="layer-temp" width="800" height="600"></canvas>
         <svg id="global-overlay-svg">
             <defs>
@@ -820,6 +824,15 @@
         <div class="resizer r-tr free-only" onmousedown="PaintApp.startCanvasResize(event, 'rt')"></div>
         <div class="resizer r-bl free-only" onmousedown="PaintApp.startCanvasResize(event, 'lb')"></div>
     </div>
+</div>
+
+<!-- Conformance, when it goes red. The status line is a glance; this is the
+     thing you cannot miss, and it carries the one action that fixes it. -->
+<div id="conformance-banner" style="display:none">
+    <span id="cb-icon" aria-hidden="true">!</span>
+    <span id="cb-text"></span>
+    <button type="button" id="cb-fit" onclick="PaintApp.openFitToTarget()">Fit to target</button>
+    <button type="button" id="cb-dismiss" title="Hide until it changes" onclick="PaintApp.dismissConformanceBanner()">×</button>
 </div>
 
 <!-- status bar for coords/zoom/size -->
@@ -2486,6 +2499,7 @@
 <script defer src="js/project-browser.js"></script>
 <script defer src="js/palette-panel.js"></script>
 <script defer src="js/sprite-preview.js"></script>
+<script defer src="js/frame-strip.js"></script>
 <script defer src="js/krita-brush-engine.js"></script>
 <script defer src="freehand-path-engine.js"></script>
 <script defer src="js/perfect-freehand-bundle.js"></script>
