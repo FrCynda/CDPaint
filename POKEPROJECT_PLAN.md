@@ -73,7 +73,7 @@ Other project data worth reading:
 | F1 | **Critical** | Save fills transparent background with a solid colour. Bulbasaur `front.png`: 3364/4096 px changed (82.1%), all `index 0 → index 10`. `saveProjectFile` matches by RGB only and never reads alpha; no tRNS is written. |
 | F2 | **Critical** | `serializeJascPal` writes 0–31 where the decomp uses 0–255. `205 205 172` → `25 25 21`. `parseGbaPaletteText` re-inflates its own output, so the damage is invisible inside CDPaint and lands in the ROM. |
 | F3 | High | `parsePngPalette` never decodes IDAT; indices are re-derived by nearest colour. 26% of sampled species palettes have duplicate RGB slots. Magikarp `normal.pal` slots 11 and 14 are both `222 24 0`; in `shiny.pal` they are `246 189 82` and `230 164 41` — saving the normal sprite silently alters the shiny. |
-| F4 | High | Palette pairing assumes "same folder, same name or normal/shiny". Mispairs `icon.png`, `footprint.png`, expansion `overworld.png`; finds nothing for object events or tilesets. |
+| F4 | ~~High~~ **closed** | Palette pairing assumes "same folder, same name or normal/shiny". Mispairs `icon.png`, `footprint.png`, expansion `overworld.png`; finds nothing for object events or tilesets. *Closed by 3.2: the panel resolves through the project's declarations, then the four conventions.* |
 | F5 | High | `getTargetProfiles` rejects stock assets. `anim_front.png` (64×128) → hard ERROR; icon profile allows 32×32/64×64 but the real file is 32×64. Allowed sizes include 80×80 and 96×96, which are not Gen 3. |
 | F6 | Medium | Scale is guessed from the max channel value, so a legitimate 0–255 dark ramp is multiplied by ~8. |
 | F7 | Medium | `a: i === 3 ? 0 : 255` forces slot 0 transparent for every palette, including tileset palettes 01–15 and 8bpp UI art. |
@@ -287,23 +287,47 @@ breaks the build.
 
 *The features only a project-aware editor can have.*
 
-- **3.1** Asset model (plumbing): one record per asset — path, kind, dimensions, depth, palette
-  size — resolved at scan time.
-- **3.2** Palette resolver encoding the four real rules plus expansion variants. Fixes F4.
-- **3.3** **Battle-context preview.** Composite the sprite into a real battle scene at its real
-  `y_offset`, live while painting. Catches floating, sinking, clipped feet and HP-bar overlap
-  without a rebuild.
-- **3.4** **Automatic sprite coordinates.** Compute `.size` / `.y_offset` from the artwork's
-  bounding box, flag them when stale, allow nudging in the preview, and write the corrected line
-  back to `front_pic_coordinates.h` (or the expansion's species file). This is the flagship —
-  it fixes the most common "my custom sprite looks wrong in game" problem, and no other tool
-  can do it.
+- **3.1 ✅ DONE (16 Aug 2026)** — asset model. `src/js/project-model.js`: one record per asset,
+  read out of the project's own C rather than guessed from the path. 16,241 symbols, 9,652
+  declared depths (85% of assets), 3,956 declared pairings on expansion 1.16.4, in 860ms.
+- **3.2 ✅ DONE (16 Aug 2026)** — palette resolver, declarations first and conventions second,
+  every candidate carrying the reason it was offered. **Closes F4**: the panel now asks the
+  resolver instead of matching sibling filenames, and the sibling-`palettes/` folder rule the
+  old code lacked is in. Every species battle sprite resolves; trainers 184/191; object events
+  357/449, the rest binding at run time rather than in a declaration.
+- **3.3 ✅ DONE (16 Aug 2026)** — battle-context preview. `src/js/battle-preview.js` draws the
+  240×160 screen with the sprite where `sBattlerCoords` + `y_offset` will actually put it, the
+  foot line it is supposed to reach, and the healthbox it must not run into. Follows the active
+  frame and repaints on every committed edit.
+  *Simplification:* the scene is bands and a ground line, not real backdrop tiles — compositing
+  a `battle_environment` backdrop means decoding its tileset and tilemap, and the ground line
+  already carries the judgement. Marked `ponytail:` in the file with the upgrade path.
+- **3.4 ✅ DONE (16 Aug 2026)** — automatic sprite coordinates. `src/js/sprite-coords.js` reads
+  both layouts (expansion `species_info/*.h`, vanilla `*_pic_coordinates.h`), measures the
+  artwork, and writes a corrected value back through one narrow Rust command that refuses if the
+  file moved since it was read.
+
+  Measured against 3,456 declared entries and their real artwork:
+  **`y_offset` === `63 - bottomRow` for 99.0%** — so it is treated as a fact and a mismatch is
+  reported as floating or sinking, with the measured value on a button. **`size` matches exactly
+  for only 72%, but is ≥ the artwork for 98.8%** — the decomp's own values are a generous upper
+  bound inherited from the ROM tables, so a loose size is reported as fine and only a size
+  *smaller* than the artwork is a fault. Claiming the other 949 were wrong would have been F4
+  again in a new place.
 - **3.5** Palette as a lens: normal, shiny and `_gba` variants visible at once while painting;
   shiny generator by hue-rotating the normal palette; palette edits propagate to every asset
   that shares them, with a written-files preview.
 - **3.6** Family view — evolution line pinned beside the canvas for style consistency.
 
 **Done when:** you can tell a sprite is wrong before you build the ROM.
+
+**Status:** met for battle sprites, which is where the question is usually asked. 3.5 and 3.6 are
+comfort, not correctness.
+
+**Plumbing that landed with it**, and that 4.x builds on:
+`read_project_sources` (one call, marker-filtered: 173 files of 996, 16MB of 39MB),
+repo-root detection from a hooked `graphics/` folder, and `patch_source_file` — the only path by
+which CDPaint writes C, taking a byte range and the text expected to be in it.
 
 ## Phase 4 — The browser becomes a workspace
 
@@ -360,11 +384,17 @@ Folder watching, recent/pinned assets, per-species notes, session restore.
    now more a decision than a build: layered/off-palette work already behaves as a sketch —
    1.1 deliberately does not snap the canvas while layers are active, and 1.2 does not repaint
    through them. What is missing is saying so in the interface and gating insertion on green.
-4. **3.3 + 3.4** — battle preview and automatic coordinates. The reason to switch.
+4. ~~**3.1 – 3.4**~~ — done. The asset model, the palette resolver, the battle preview and
+   automatic coordinates. **3.5** (palette as a lens) and **3.6** (family view) are what is left
+   of Phase 3, and both are comfort rather than correctness.
 5. **5.1** — import-and-fit, the on-ramp that gets outside art into the project at all. Now
-   largely a matter of pointing 2.2's fixes at an incoming PNG instead of an open one.
+   largely a matter of pointing 2.2's fixes at an incoming PNG instead of an open one, and 3.4's
+   measurement at its coordinates.
+6. **4.1 / 4.2** — the browser rework. 4.1 is nearly free now: `read_project_sources` already
+   walks up to the repo root, so hooking it is a matter of scanning from there too.
 
-Still open from the audit: **F4** (palette pairing — Phase 3.2), **F7** (`.pal` entry 0 forced
-transparent — now harmless for saving, since transparency comes from tRNS, but still wrong for
-tileset swatch display), **F9** (eager DOM tree — Phase 4.2), **F10** (read-only handle —
-Phase 5.6), **F11** (browser UX — Phase 4.3).
+Still open from the audit: **F7** (`.pal` entry 0 forced transparent — now harmless for saving,
+since transparency comes from tRNS, but still wrong for tileset swatch display), **F9** (eager
+DOM tree — Phase 4.2), **F10** (read-only handle — Phase 5.6, and the reason browser mode can
+read coordinates but not write them), **F11** (browser UX — Phase 4.3).
+**F4 is closed** by 3.2 landing in the panel.
