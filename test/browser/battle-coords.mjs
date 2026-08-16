@@ -202,6 +202,27 @@ await withPage(async (page) => {
         flow.headerTop < flow.sceneTop, `header ${flow.headerTop}, scene ${flow.sceneTop}`);
     check('the scene is never squashed off its integer scale',
         flow.cssW === flow.attrW, `${flow.cssW} shown for ${flow.attrW} drawn`);
+
+    /* The same rule caught the frame thumbnails, which collapsed to 6px specks
+       behind a scrollbar, and the fit-to-target before/after, which drew
+       nothing at all. Assert the property for every panel rather than the
+       symptom for each one. */
+    const panelCanvases = await page.eval(`(() => {
+        window.FrameStrip && window.FrameStrip.open && window.FrameStrip.open();
+        const out = [];
+        document.querySelectorAll(
+            '#battle-preview canvas, #sprite-preview canvas, #frame-strip canvas'
+        ).forEach(c => {
+            const r = c.getBoundingClientRect();
+            out.push({ where: c.closest('[id]').id, pos: getComputedStyle(c).position,
+                       w: Math.round(r.width), h: Math.round(r.height) });
+        });
+        return out;
+    })()`);
+    check('every panel canvas is in flow and has real size',
+        panelCanvases.length > 0 && panelCanvases.every(c =>
+            c.pos !== 'absolute' && c.pos !== 'fixed' && c.w > 8 && c.h > 8),
+        JSON.stringify(panelCanvases));
     check('a declared offset 6 too small is reported as floating',
         /6px too high/.test(ui.text), ui.text);
     check('and the measured value is offered as the fix',

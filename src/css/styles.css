@@ -5970,12 +5970,18 @@ body.project-panel-collapsed #project-expand{display:flex;}
 .bp-header .bp-side{margin-left:auto;}
 .bp-header .bp-side,.bp-header .bp-zoom{border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;font-size:10px;padding:1px 3px;}
 .bp-header .bp-close{border:0;background:transparent;cursor:pointer;font-size:14px;}
-/* `position` is not decoration here: the global `canvas` rule at the top of this
-   file is `position:absolute`, so a canvas that does not opt out lifts clean out
-   of its panel, paints over the header and lets everything else paint over it.
-   .sp-canvas does the same thing for the same reason. No max-width either — a
-   squashed integer scale is a non-integer one, and this is pixel art. */
-.bp-scene{position:relative;display:block;image-rendering:pixelated;background:#000;}
+/* Line 1477 makes every canvas in the document `position:absolute`, because the
+   editing stack is layers piled at 0,0. A canvas in a panel is not that — it is
+   an ordinary picture in ordinary flow — and one that does not say so lifts out
+   of its panel, paints from the top-left corner over the title bar, and
+   contributes no height, so the panel collapses around it. That is what shrank
+   the frame thumbnails to specks and spilled the battle scene over the toolbar.
+   One rule for every panel, present and future, instead of remembering each
+   time. */
+#battle-preview canvas,#sprite-preview canvas,#frame-strip canvas,#fit-overlay canvas{position:relative;}
+/* No max-width: squashing an integer scale gives a fractional one, and this is
+   pixel art. The panel fits itself to the window by choosing a smaller zoom. */
+.bp-scene{display:block;image-rendering:pixelated;background:#000;}
 .bp-legend{display:flex;flex-wrap:wrap;gap:4px 10px;padding:5px 9px;font-size:10px;opacity:.75;}
 .bp-legend-item{display:inline-flex;align-items:center;gap:4px;}
 .bp-swatch{width:9px;height:9px;border-radius:2px;flex:0 0 auto;border:1px solid rgba(0,0,0,.25);}
