@@ -46,7 +46,11 @@ const FS = `
         'graphics/map_preview/x/tiles.png': new Uint8Array(${JSON.stringify(tilesPng)}),
         'graphics/map_preview/x/map.bin': new Uint8Array(${JSON.stringify(mapBin)}),
         'graphics/map_preview/x/palette.pal': new TextEncoder().encode(${JSON.stringify(palText)}),
-        'graphics/pokemon/testmon/anim_front.png': new Uint8Array(${JSON.stringify(tilesPng)})
+        'graphics/pokemon/testmon/anim_front.png': new Uint8Array(${JSON.stringify(tilesPng)}),
+        // One sheet, two arrangements — the title screen's animation shape.
+        'graphics/title_screen/anim/tiles.png': new Uint8Array(${JSON.stringify(tilesPng)}),
+        'graphics/title_screen/anim/frame0.bin': new Uint8Array(${JSON.stringify(mapBin)}),
+        'graphics/title_screen/anim/frame1.bin': new Uint8Array(${JSON.stringify(mapBin)})
     };
     window.__files = files;
     function fileHandle(path) {
@@ -115,7 +119,8 @@ await withPage(async (page) => {
         const tagged = [...document.querySelectorAll('#project-tree .proj-row-file')]
             .map(r => ({
                 name: (r.querySelector('.proj-file-name') || {}).textContent || r.textContent,
-                screen: !!r.querySelector('.proj-screen-tag')
+                screen: !!r.querySelector('.proj-screen-tag'),
+                maps: [...r.querySelectorAll('.proj-map-badge')].map(b => b.textContent)
             }));
         return { ready, tagged, rows: tagged.length };
     })()`);
@@ -130,6 +135,18 @@ await withPage(async (page) => {
         JSON.stringify(hooked.tagged));
     check('and the tilemap itself draws no row',
         !hooked.tagged.some(r => /\.bin/.test(r.name)), JSON.stringify(hooked.tagged));
+
+    /* A sheet serving several tilemaps gets a button each. Without them the
+       other five frames of the title screen animation are unreachable — the row
+       opens the first and nothing else. */
+    const anim = hooked.tagged.filter(r => r.maps.length > 1);
+    check('a sheet with several arrangements offers one button per arrangement',
+        anim.length === 1 && anim[0].maps.length === 2, JSON.stringify(hooked.tagged.map(r => r.maps)));
+    check('and they are named for the tilemap, not for the sheet',
+        anim.length === 1 && anim[0].maps.join() === 'frame0,frame1', JSON.stringify(anim[0] && anim[0].maps));
+    check('a screen with one arrangement gets no buttons to choose between',
+        hooked.tagged.filter(r => r.screen && r.maps.length).every(r => r.maps.length > 1),
+        JSON.stringify(hooked.tagged.filter(r => r.screen).map(r => [r.name, r.maps.length])));
 
     /* Clicking the tagged row has to open the assembled picture, and Ctrl+S has
        to put both files back through the handle — read-only hook and all. */

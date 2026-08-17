@@ -226,6 +226,28 @@
             tag.title = 'Opens assembled from ' + screen.mapPath.replace(/^.*\//, '') +
                 '; saving writes the tiles and the tilemap back';
             row.appendChild(tag);
+
+            /* One sheet can serve several arrangements — the title screen's
+               regigigas is six frames of an animation over one tile sheet, and
+               a click would only ever have reached the first. Each gets a
+               button, because they are separate pictures, not one picture. */
+            if (screen.maps && screen.maps.length > 1) {
+                var mapWrap = document.createElement('span');
+                mapWrap.className = 'proj-pal-badges';
+                screen.maps.forEach(function (m) {
+                    var b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = 'proj-pal-badge proj-map-badge';
+                    b.textContent = labelForMap(m);
+                    b.title = 'Open this sheet arranged by ' + m.replace(/^.*\//, '');
+                    b.addEventListener('click', function (ev) {
+                        ev.stopPropagation();
+                        openScreen(pickMap(screen, m), pngNode, palNodes);
+                    });
+                    mapWrap.appendChild(b);
+                });
+                row.appendChild(mapWrap);
+            }
         }
 
         if (offers && offers.length) {
@@ -243,21 +265,37 @@
                 showToast('Image viewer is not ready', 'warning');
                 return;
             }
-            if (screen) {
-                window.TiledScreen.open(screen, pngNode).catch(function (e) {
-                    // A screen that will not assemble still has a tile sheet
-                    // worth opening, so fall back rather than leaving a dead row.
-                    showToast('Could not assemble that screen: ' +
-                        (e && e.message ? e.message : e), 'warning');
-                    if (pngNode.handle) app.openProjectImageFromHandle(pngNode, palNodes);
-                    else app.openProjectImage(pngNode.path, palNodes);
-                });
-                return;
-            }
+            if (screen) { openScreen(screen, pngNode, palNodes); return; }
             if (pngNode.handle) app.openProjectImageFromHandle(pngNode, palNodes);
             else app.openProjectImage(pngNode.path, palNodes);
         });
         return row;
+    }
+
+    // The same descriptor arranged by a different one of its tilemaps.
+    function pickMap(screen, mapPath) {
+        var out = {};
+        for (var k in screen) if (Object.prototype.hasOwnProperty.call(screen, k)) out[k] = screen[k];
+        out.mapPath = mapPath;
+        return out;
+    }
+
+    function labelForMap(mapPath) {
+        var n = mapPath.replace(/^.*\//, '').replace(/\.bin$/i, '').replace(/_?(tile)?map$/i, '');
+        if (!n) n = 'map';
+        return n.length > 8 ? n.slice(0, 7) + '…' : n;
+    }
+
+    function openScreen(screen, pngNode, palNodes) {
+        var app = getApp();
+        window.TiledScreen.open(screen, pngNode).catch(function (e) {
+            // A screen that will not assemble still has a tile sheet worth
+            // opening, so fall back rather than leaving a dead row.
+            showToast('Could not assemble that screen: ' +
+                (e && e.message ? e.message : e), 'warning');
+            if (pngNode.handle) app.openProjectImageFromHandle(pngNode, palNodes);
+            else app.openProjectImage(pngNode.path, palNodes);
+        });
     }
 
     /* Now that the resolver offers several palettes for one asset — sixteen for

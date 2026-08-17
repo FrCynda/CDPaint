@@ -13,9 +13,16 @@
 (function () {
     'use strict';
 
-    var current = null;   // the screen the canvas is currently showing
-
+    /* The screen a document was assembled from lives on that document's state,
+       not here. One tile sheet can serve several tilemaps — the title screen's
+       regigigas is six frames over one sheet — and those open as separate tabs
+       with the same `projectFile`. A single value here would have saved
+       whichever tab was in front into whichever frame was opened last. */
     function getApp() { return window.PaintApp; }
+    function record() {
+        var app = getApp();
+        return (app && app.state && app.state.screen) || null;
+    }
     function project() { return window.PokeProject; }
     function toast(msg, kind) {
         if (typeof window.showToast === 'function') window.showToast(msg, kind || 'info');
@@ -121,11 +128,16 @@
            every one of them is `tiles.png` and a tab strip of those is useless. */
         var parts = descriptor.tilesPath.split('/');
         var name = (parts[parts.length - 2] || 'screen') +
-            (descriptor.stem ? ' ' + descriptor.stem.replace(/_$/, '') : '') + '.png';
+            (descriptor.stem ? ' ' + descriptor.stem.replace(/_$/, '') : '') +
+            /* When one sheet serves several arrangements, the arrangement is
+               what tells them apart — six tabs called `regigigas` are no more
+               use than six called `tiles`. */
+            (descriptor.maps && descriptor.maps.length > 1
+                ? ' ' + descriptor.mapPath.replace(/^.*\//, '').replace(/\.bin$/i, '') : '') + '.png';
         var ok = await app.applyProjectImageBytes(png, name, '', [], descriptor.tilesPath);
         if (!ok) return false;
 
-        current = {
+        app.state.screen = {
             descriptor: descriptor,
             layout: layout,
             /* The whole file, not the part on screen. A battle background's map
@@ -153,12 +165,12 @@
     /* The canvas is only still this screen while the editor is showing it —
        opening anything else has to hand saving back to the ordinary path. */
     function isOpen() {
-        var app = getApp();
+        var app = getApp(), current = record();
         return !!(current && app && app.state && app.state.projectFile === current.identity);
     }
 
     async function save() {
-        var app = getApp();
+        var app = getApp(), current = record();
         if (!isOpen() || !window.Retile) return false;
 
         var w = app.config.width, h = app.config.height;
@@ -224,7 +236,7 @@
 
     window.TiledScreen = {
         match: match, open: open, isOpen: isOpen, save: save,
-        current: function () { return current; },
-        forget: function () { current = null; }
+        current: record,
+        forget: function () { var app = getApp(); if (app && app.state) app.state.screen = null; }
     };
 })();

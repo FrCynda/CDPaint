@@ -42,11 +42,30 @@ export function describe(relPath, siblings) {
        covers about 50 screens, both together about 340. */
     const t = /^(.*?)tiles$/i.exec(name);
     const stem = t ? t[1] : name + '_';
-    const map = [
+    let maps = [
         t && t[1] + 'map.bin', t && t[1] + 'tilemap.bin',
         name + '.bin', name + '_map.bin', name + '_tilemap.bin'
-    ].map(has).find(Boolean);
-    if (!map) return null;
+    ].map(has).filter(Boolean).slice(0, 1);
+
+    /* One sheet, several tilemaps. The title screen's regigigas is six frames
+       of an animation over one `tiles.png`; `valoon_reserve` is four map
+       previews sharing one. Neither names its tilemaps after the sheet, and
+       nothing in the folder says which belongs to what — but when the folder
+       holds exactly one PNG there is nothing to be wrong about. With more than
+       one, which sheet serves which map is only knowable from the C, so the
+       folder is left alone rather than guessed at. */
+    if (!maps.length && all.filter(f => /\.png$/i.test(f)).length === 1) {
+        const loose = all.filter(f => /\.bin$/i.test(f) &&
+            !/^(border|collision|metatiles|metatile_attributes)\.bin$/i.test(f)).sort();
+        /* Two or more, because a set is the evidence. One lone .bin beside one
+           lone PNG is the shape of a genuine pair and equally the shape of two
+           unrelated files that happen to share a folder, and there is nothing
+           in the names to tell those apart. Several tilemaps over one sheet is
+           only ever the first. */
+        if (loose.length > 1) maps = loose;
+    }
+    if (!maps.length) return null;
+    const map = maps[0];
 
     // `altaria_tiles.png` is served by `altaria.pal`, not `altaria_palette.pal`.
     const bare = stem.replace(/_$/, '');
@@ -70,6 +89,8 @@ export function describe(relPath, siblings) {
         stem: stem,
         tilesPath: relPath,
         mapPath: dir + map,
+        // Every tilemap this sheet serves, the opened one first. Usually just it.
+        maps: maps.map(f => dir + f),
         palettes: pals.map(f => dir + f),
         // How many of the leading entries are named for this screen. May be 0.
         named: named.length

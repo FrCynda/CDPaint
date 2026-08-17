@@ -261,6 +261,62 @@ await withPage(async (page) => {
     check('a table shorter than a bank is padded rather than rejected',
         ownPalette.n === 16, String(ownPalette.n));
 
+    /* One sheet, several tilemaps: the title screen's regigigas is six frames
+       over one `tiles.png`, and a click could only ever reach the first. Each
+       frame is a separate picture over shared tiles, so switching between them
+       has to move what a save writes to — and must never write the frame that
+       is no longer on the canvas. */
+    const frames = await page.eval(`(async () => {
+        const frame = (tile) => {
+            const out = [];
+            for (let i = 0; i < 640; i++) { const e = tile | (13 << 12); out.push(e & 0xff, e >> 8); }
+            return new Uint8Array(out);
+        };
+        const files = {
+            'g/tiles.png': new Uint8Array(${JSON.stringify(tilesPng)}),
+            'g/frame0.bin': frame(0),
+            'g/frame1.bin': frame(1)
+        };
+        window.__written = [];
+        window.PokeProject = Object.assign({}, window.PokeProject, {
+            model: () => ({ root: 'C:/proj', sourceText: new Map() }),
+            coordsFor: () => [],
+            readBytes: (p) => files[p] ? Promise.resolve(files[p]) : Promise.reject(new Error(p)),
+            writeBytes: (path, bytes) => {
+                window.__written.push({ path, bytes: Array.from(bytes) });
+                return Promise.resolve();
+            }
+        });
+        const names = ['tiles.png', 'frame0.bin', 'frame1.bin'];
+        const d0 = window.TiledAsset.describe('g/tiles.png', names);
+        const pick = (m) => Object.assign({}, d0, { mapPath: m });
+
+        await window.TiledScreen.open(pick('g/frame0.bin'), {});
+        window.__written = [];
+        await PaintApp.saveFile();
+        const first = window.__written.map(f => f.path);
+
+        await window.TiledScreen.open(pick('g/frame1.bin'), {});
+        window.__written = [];
+        await PaintApp.saveFile();
+        const second = window.__written.map(f => f.path);
+
+        // The record has to live on the document, per DOCUMENT_STATE_KEYS.
+        return { maps: d0.maps, first, second, onState: !!PaintApp.state.screen };
+    })()`);
+
+    check('one sheet with several tilemaps offers all of them',
+        frames.maps && frames.maps.length === 2, JSON.stringify(frames.maps));
+    check('the frame on the canvas is the frame a save writes',
+        frames.first.some(p => /frame0\.bin$/.test(p)) && !frames.first.some(p => /frame1\.bin$/.test(p)),
+        JSON.stringify(frames.first));
+    check('and switching frames moves that target rather than adding to it',
+        frames.second.some(p => /frame1\.bin$/.test(p)) && !frames.second.some(p => /frame0\.bin$/.test(p)),
+        JSON.stringify(frames.second));
+    check('the screen a document came from is document state, not a global',
+        frames.onState === true &&
+        (await page.eval(`PaintApp.DOCUMENT_STATE_KEYS.indexOf('screen') >= 0`)) === true);
+
     /* Opening anything else has to hand saving back to the ordinary path, or
        the next Ctrl+S writes a sprite into a map preview's tile sheet. */
     const after = await page.eval(`(async () => {

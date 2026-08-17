@@ -5918,6 +5918,9 @@ body.project-panel-collapsed #project-expand{display:flex;}
 .proj-pal-badges{display:flex;gap:3px;flex:none;}
 .proj-pal-badge{font-size:10px;font-weight:700;padding:1px 5px;border:1px solid var(--s7,#999);background:var(--a1,#0078d7);color:#fff;border-radius:4px;cursor:pointer;line-height:1.4;transition:filter .1s;}
 .proj-pal-badge:hover{filter:brightness(1.12);}
+/* A tilemap, not a palette — one sheet can be arranged several ways and the
+   two kinds of button sit side by side on the same row. */
+.proj-map-badge{background:transparent;color:var(--t1,#222);font-weight:600;}
 .proj-search{margin:6px 8px;border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:var(--t1,#222);border-radius:5px;padding:5px 7px;font-size:12px;width:calc(100% - 16px);box-sizing:border-box;transition:border-color .1s,box-shadow .1s;}
 .proj-search:focus{outline:none;border-color:var(--a1,#0078d7);box-shadow:0 0 0 2px rgba(0,120,215,0.15);}
 .proj-overlay{position:absolute;top:105px;left:0;right:0;bottom:27px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:color-mix(in srgb,var(--app-text-color,#111) 6%, transparent);z-index:5;animation:proj-pulse 1.2s ease-in-out infinite;pointer-events:none;}
