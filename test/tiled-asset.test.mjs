@@ -73,7 +73,28 @@ console.log('tiled assets');
         frame.palettes[0] === 'graphics/picture_frame/bg.pal', JSON.stringify(frame));
 
     check('a PNG whose folder holds only other screens’ tilemaps is not one',
-        describe('graphics/picture_frame/bg.png', ['bg.png', 'cool_map.bin', 'cute_map.bin']) === null);
+        describe('graphics/picture_frame/bg.png',
+            ['bg.png', 'cool.png', 'cool_map.bin', 'cute.png', 'cute_map.bin']) === null);
+
+    /* One sheet, several tilemaps: the title screen's regigigas is six frames
+       of an animation over one `tiles.png`, and `valoon_reserve` is four map
+       previews sharing one. Nothing in the names says which .bin goes with
+       which sheet — so this only fires when the folder holds a single PNG, and
+       then there is nothing to be wrong about. */
+    const frames = describe('graphics/title_screen/regigigas/tiles.png',
+        ['tiles.png', 'frame0.bin', 'frame1.bin', 'frame2.bin', '0.pal', '1.pal']);
+    check('a sheet serving several tilemaps offers all of them, in order',
+        frames && frames.maps.length === 3 && /frame0\.bin$/.test(frames.mapPath),
+        JSON.stringify(frames && frames.maps));
+
+    check('but not when the folder holds more than one sheet to choose between',
+        describe('graphics/pokedex/list.png',
+            ['list.png', 'other.png', 'cry_screen.bin', 'info_screen.bin']) === null);
+
+    /* A set is the evidence. One .bin beside one PNG is equally the shape of a
+       genuine pair and of two unrelated files sharing a folder. */
+    check('and not for a single unnamed tilemap, which proves nothing',
+        describe('graphics/x/sheet.png', ['sheet.png', 'something_else.bin']) === null);
 
     /* A neighbour's palette is not this screen's palette. Gaia's battle
        animation backgrounds all share one folder holding 61 .pal files, and

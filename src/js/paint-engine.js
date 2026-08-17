@@ -996,6 +996,12 @@
                 projectFile: null,
                 projectImage: false,
                 projectBitDepth: 4,
+                // Set by tiled-screen.js when this document was assembled out of
+                // a tile sheet + tilemap. Document-scoped: two frames of one
+                // animation are two tabs over the same sheet, and a single
+                // shared value would save one tab's pixels into the other's
+                // tilemap.
+                screen: null,
                 // The live index map of a project asset — one palette slot per
                 // pixel, kept in step with the canvas by every committed edit.
                 // Replaced wholesale, never written in place, so a history entry
@@ -1064,7 +1070,7 @@
             this.DOCUMENT_STATE_KEYS = Object.freeze([
                 'history', 'step',
                 'fileName', 'filePath', 'fileHandle',
-                'projectFile', 'projectHandle', 'projectImage', 'projectBitDepth',
+                'projectFile', 'projectHandle', 'projectImage', 'projectBitDepth', 'screen',
                 'projectIndices', 'projectTrns', 'projectTransparentIndex',
                 'activeFrame', 'frameCountOverride', 'frameHold', 'onionSkin',
                 'palettes', 'activePaletteId', 'previewPaletteId', 'previewSnapshot',
