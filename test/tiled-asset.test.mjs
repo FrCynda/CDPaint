@@ -75,6 +75,25 @@ console.log('tiled assets');
     check('a PNG whose folder holds only other screens’ tilemaps is not one',
         describe('graphics/picture_frame/bg.png', ['bg.png', 'cool_map.bin', 'cute_map.bin']) === null);
 
+    /* A neighbour's palette is not this screen's palette. Gaia's battle
+       animation backgrounds all share one folder holding 61 .pal files, and
+       about half those screens keep their colours in the PNG instead — the
+       build extracts them with INCGFX_U16(".../aurora.png", ".gbapal"). Taking
+       the alphabetically first opened `aurora` in `aeroblast`'s colours, which
+       looks like art rather than like a fault. */
+    const anim = describe('graphics/battle_anims/backgrounds/aurora.png',
+        ['aurora.png', 'aurora.bin', 'aeroblast.pal', 'aeroblast_tiles.png', 'aura_sphere.pal']);
+    check('a screen with no palette of its own says so rather than borrowing one',
+        anim && anim.named === 0, JSON.stringify(anim));
+    check('though the folder’s palettes are still listed, after the named ones',
+        anim.palettes.length === 2, JSON.stringify(anim.palettes));
+
+    const ownPal = describe('graphics/battle_anims/backgrounds/aeroblast_tiles.png',
+        ['aeroblast_tiles.png', 'aeroblast_map.bin', 'aeroblast.pal', 'aura_sphere.pal']);
+    check('and one that does have its own gets it, marked as evidence',
+        ownPal && ownPal.named === 1 && /aeroblast\.pal$/.test(ownPal.palettes[0]),
+        JSON.stringify(ownPal && ownPal.palettes));
+
     /* Case is not a reliable signal on the filesystems these repos live on, but
        the name that goes back out has to be the one really there. */
     const cased = describe('graphics/x/Menu.png', ['Menu.png', 'MENU.BIN']);
@@ -169,6 +188,37 @@ function sweep(label, dir, expectBase, mainOnly) {
 
 sweep('Gaia map preview', join(process.cwd(), '../pokegaia/graphics/map_preview'), 13, false);
 sweep('battle background', join(process.cwd(), '../pokeemerald-expansion/graphics/battle_environment'), 2, true);
+
+/* One flat folder, many screens, many palettes — the arrangement that broke
+   pairing by proximity. Every .pal named here belongs to *some* screen, so a
+   wrong answer is indistinguishable from a right one by eye. */
+{
+    const dir = join(process.cwd(), '../pokegaia/graphics/battle_anims/backgrounds');
+    if (!existsSync(dir)) {
+        console.log('  --   no Gaia battle animation backgrounds beside the repo; skipping');
+    } else {
+        const files = readdirSync(dir);
+        const screens = [], borrowed = [];
+        for (const f of files.filter(f => /\.png$/i.test(f))) {
+            const d = describe(`x/${f}`, files);
+            if (!d) continue;
+            screens.push(d);
+            /* The one thing that must never happen: a named palette that is not
+               this screen's. Its stem has to be a prefix of the screen's. */
+            for (let i = 0; i < d.named; i++) {
+                const pal = d.palettes[i].split('/').pop().replace(/\.pal$/i, '');
+                const stem = f.replace(/\.png$/i, '').replace(/_?tiles$/i, '');
+                if (pal !== stem && pal !== 'palette' && pal !== 'bg') borrowed.push(`${f} -> ${pal}.pal`);
+            }
+        }
+        console.log(`       Gaia battle anim backgrounds: ${screens.length} screens, ${files.filter(f => /\.pal$/i.test(f)).length} palettes in one folder`);
+        check('no screen in a crowded folder is given a neighbour’s palette',
+            screens.length >= 40 && borrowed.length === 0, JSON.stringify(borrowed.slice(0, 5)));
+        check('and the ones that keep their colours in the PNG say they have none',
+            screens.some(d => d.named === 0) && screens.some(d => d.named === 1),
+            JSON.stringify(screens.slice(0, 3).map(d => [d.tilesPath, d.named])));
+    }
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
