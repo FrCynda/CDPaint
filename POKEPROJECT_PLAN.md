@@ -372,7 +372,9 @@ asset, each offering only its own palettes.
   against the original.
 - **5.5** Hex Maniac Advance export + "copy palette as GBA hex", for binary hackers. No ROM
   writing.
-- **5.6** Fix F10 — request `readwrite` on the directory handle so browser mode can save in place.
+- ~~**5.6**~~ — done. F10 closed: `PokeProject.writeBytes` walks the directory handle the same way
+  `readBytes` does and asks to upgrade the hook to `readwrite` on the first write. Refresh still
+  needs the folder re-picked.
 
 ## Phase 6 — Living in the project
 
@@ -401,14 +403,20 @@ Folder watching, recent/pinned assets, per-species notes, session restore.
    automatic coordinates, the latter two now drawing the project's real backdrops and healthbox.
    **3.5** (palette as a lens), **3.6** (family view) and **3.7** (battle animations) are what is
    left of Phase 3, and all three are comfort rather than correctness.
-5. **5.1** — import-and-fit, the on-ramp that gets outside art into the project at all. Now
+5. **Tiled screens** — a `tiles.png`/`map.bin` pair, or a `menu.png`/`menu.bin` one, opens as the
+   assembled picture and saves back to both files. 257 of pokegaia's screens open and round-trip.
+   What is left is the palette tail: 16 screens span more banks than any single `.pal` beside them
+   fills, because the game stacks several 16-colour files into consecutive BG rows and which ones
+   is only knowable from the `LoadPalette(..., BG_PLTT_ID(n), ...)` calls in the C. `bag/menu.png`
+   is the example. Until that is read, those screens are refused rather than shown in the wrong
+   colours.
+6. **5.1** — import-and-fit, the on-ramp that gets outside art into the project at all. Now
    largely a matter of pointing 2.2's fixes at an incoming PNG instead of an open one, and 3.4's
    measurement at its coordinates.
-6. **4.1 / 4.2** — the browser rework. 4.1 is nearly free now: `read_project_sources` already
+7. **4.1 / 4.2** — the browser rework. 4.1 is nearly free now: `read_project_sources` already
    walks up to the repo root, so hooking it is a matter of scanning from there too.
 
 Still open from the audit: **F7** (`.pal` entry 0 forced transparent — now harmless for saving,
 since transparency comes from tRNS, but still wrong for tileset swatch display), **F9** (eager
-DOM tree — Phase 4.2), **F10** (read-only handle — Phase 5.6, and the reason browser mode can
-read coordinates but not write them), **F11** (browser UX — Phase 4.3).
-**F4 is closed** by 3.2 landing in the panel.
+DOM tree — Phase 4.2), **F11** (browser UX — Phase 4.3).
+**F4 is closed** by 3.2 landing in the panel; **F10** by 5.6.
