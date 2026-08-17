@@ -50,8 +50,18 @@ export function describe(relPath, siblings) {
 
     // `altaria_tiles.png` is served by `altaria.pal`, not `altaria_palette.pal`.
     const bare = stem.replace(/_$/, '');
-    const preferred = [stem + 'palette.pal', bare && bare + '.pal', 'palette.pal', 'bg.pal'];
-    const pals = preferred.map(has).filter(Boolean);
+    const named = [stem + 'palette.pal', bare && bare + '.pal', 'palette.pal', 'bg.pal']
+        .map(has).filter(Boolean);
+
+    /* Everything else in the folder still comes back, because a screen can
+       genuinely have several — the expansion's stadium has nine, one per Elite
+       Four member. But it comes back *after* the named ones and marked as such,
+       because "some .pal in the same folder" is not evidence. Gaia's battle
+       animation backgrounds share one folder holding 61 of them, and half those
+       screens keep their colours in the PNG rather than in any file: taking the
+       alphabetically first handed `aurora` the palette belonging to
+       `aeroblast`, which looks like art and is not. */
+    const pals = named.slice();
     for (const f of all) {
         if (/\.pal$/i.test(f) && pals.indexOf(f) < 0) pals.push(f);
     }
@@ -60,7 +70,9 @@ export function describe(relPath, siblings) {
         stem: stem,
         tilesPath: relPath,
         mapPath: dir + map,
-        palettes: pals.map(f => dir + f)
+        palettes: pals.map(f => dir + f),
+        // How many of the leading entries are named for this screen. May be 0.
+        named: named.length
     };
 }
 
