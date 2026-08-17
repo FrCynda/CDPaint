@@ -60,6 +60,15 @@ function tileKeys(px) {
  * `sheetWidthTiles` only decides the shape of the emitted sheet; the build
  * reads it in reading order, so it is cosmetic. 16 keeps a sheet that a person
  * can still scroll through.
+ *
+ * `seed` is the sheet that is already on disk. Passing it keeps every tile at
+ * the id it already has and appends only what is new, which matters more than
+ * it looks: a tile id is a *reference*, and things outside this picture hold
+ * them. A battle background's map is two screenblocks — the picture and the
+ * intro slide — and renumbering the picture's tiles leaves the slide pointing
+ * at whatever landed on those ids. It also keeps the git diff to the tiles that
+ * actually changed. The cost is that a seeded sheet never shrinks; tiles the
+ * picture stopped using stay in the file, unnamed and harmless.
  */
 export function retile(indices, width, height, opts) {
     const o = opts || {};
@@ -75,6 +84,22 @@ export function retile(indices, width, height, opts) {
     const seen = new Map();          // key → { id, hflip, vflip }
     const tiles = [];                // each 64 low-nibble values
     const px = new Uint8Array(TILE * TILE);
+
+    if (o.seed && o.seed.indices && o.seed.width) {
+        const s = o.seed;
+        const sc = (s.width / TILE) | 0, sr = (s.height / TILE) | 0;
+        for (let n = 0; n < sc * sr; n++) {
+            const ox = (n % sc) * TILE, oy = (((n / sc) | 0)) * TILE;
+            for (let y = 0; y < TILE; y++)
+                for (let x = 0; x < TILE; x++)
+                    px[y * TILE + x] = colourOf(s.indices[(oy + y) * s.width + ox + x]);
+            tiles.push(Uint8Array.from(px));
+            // First writer of a shape owns its id, exactly as below.
+            const k = tileKeys(px).plain;
+            if (!seen.has(k)) seen.set(k, { id: n });
+        }
+    }
+    const seeded = tiles.length;
 
     for (let cy = 0; cy < rows; cy++) {
         for (let cx = 0; cx < cols; cx++) {
@@ -129,7 +154,13 @@ export function retile(indices, width, height, opts) {
         }
     }
 
-    return { tiles: sheetOf(tiles, sheetW), map, conflicts, tileCount: tiles.length };
+    return {
+        tiles: sheetOf(tiles, sheetW), map, conflicts,
+        tileCount: tiles.length,
+        // What the edit cost. The build asserts a tile budget on some assets
+        // (`-num_tiles 53 -Wnum_tiles`), so growth is worth saying out loud.
+        added: tiles.length - seeded
+    };
 }
 
 /* The tiles laid out as an image, padded to a full last row with blank tiles

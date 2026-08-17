@@ -57,6 +57,29 @@ console.log('tiled assets');
         describe('graphics/pokemon/bulbasaur/anim_front.png', ['anim_front.png', 'normal.pal']) === null);
     check('and neither is a tiles.png with nothing to arrange it',
         describe('graphics/x/tiles.png', ['tiles.png', 'palette.pal']) === null);
+
+    /* The tiles.png convention covers about fifty screens. The rest of the game
+       names both halves after the screen instead, and supporting only the first
+       habit left the bag, the pokédex, the intro and the frontier unreachable. */
+    const bag = describe('graphics/bag/menu.png', ['menu.png', 'menu.bin', 'menu_male.pal', 'menu_female.pal']);
+    check('a PNG named for its screen pairs with the .bin of the same name',
+        bag && bag.mapPath === 'graphics/bag/menu.bin' && bag.palettes.length === 2,
+        JSON.stringify(bag));
+
+    const frame = describe('graphics/picture_frame/cool.png',
+        ['cool.png', 'cool_map.bin', 'cute.png', 'cute_map.bin', 'bg.pal']);
+    check('and the _map suffix pairs too, without swallowing the neighbour',
+        frame && frame.mapPath === 'graphics/picture_frame/cool_map.bin' &&
+        frame.palettes[0] === 'graphics/picture_frame/bg.pal', JSON.stringify(frame));
+
+    check('a PNG whose folder holds only other screens’ tilemaps is not one',
+        describe('graphics/picture_frame/bg.png', ['bg.png', 'cool_map.bin', 'cute_map.bin']) === null);
+
+    /* Case is not a reliable signal on the filesystems these repos live on, but
+       the name that goes back out has to be the one really there. */
+    const cased = describe('graphics/x/Menu.png', ['Menu.png', 'MENU.BIN']);
+    check('matching ignores case but the path answers with the real name',
+        cased && cased.mapPath === 'graphics/x/MENU.BIN', JSON.stringify(cased));
 }
 
 /* ── shape ───────────────────────────────────────────────────────────────── */
@@ -92,6 +115,23 @@ console.log('tiled assets');
         offscreenColumns({ width: 240 }) === null);
     check('a map too small to be a screen is refused rather than guessed at',
         layoutFrom(new Uint16Array(4)) === null);
+
+    /* Roughly a fifth of the .bin files under graphics/ are not screen maps at
+       all — a 10×10 window, a strip of animation frames. They pair by name just
+       as convincingly, so the shape is the only thing that tells them apart. */
+    check('and so is one that is not a whole number of rows',
+        layoutFrom(new Uint16Array(360)) === null);
+
+    /* What the sheet beside it has to supply. A pairing found by filename is a
+       guess until these two are checked against the real files. */
+    const demands = new Uint16Array(640);
+    demands[0] = 40 | (2 << 12);
+    demands[1] = 5 | (4 << 12);
+    const dl = layoutFrom(demands);
+    check('the map says how many tiles it needs and how many banks it spans',
+        dl.tiles === 41 && dl.banks === 3 && dl.paletteBase === 2, JSON.stringify(dl));
+    check('an entirely blank map demands nothing',
+        layoutFrom(new Uint16Array(640)).tiles === 0);
 }
 
 /* ── against real projects ───────────────────────────────────────────────── */
