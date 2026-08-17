@@ -13,6 +13,7 @@ import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { retile, tilemapBytes, toJascPal } from '../src/js/retile.js';
 import { assembleIndices, parseTilemap, parseJascPal } from '../src/js/battle-scene.js';
+import { describe as describeAsset, layoutFrom } from '../src/js/tiled-asset.js';
 import { readIndexedPng } from './png-read.mjs';
 
 let pass = 0, fail = 0;
@@ -165,6 +166,51 @@ if (!existsSync(join(GAIA, 'graphics/map_preview'))) {
         JSON.stringify(results.filter(r => r.tiles > r.was).slice(0, 3)));
 }
 
+/* ── seeding: a tile id is a reference, and other files hold them ────────── */
+{
+    /* Four cells, all different, so every one earns a tile. Retiled cold the
+       ids fall out in reading order; retiled against the sheet that is already
+       on disk they must keep the ids that sheet gave them, whatever order the
+       picture puts them in now. */
+    const W = 32, H = 8;
+    const cold = new Uint8Array(W * H);
+    for (let c = 0; c < 4; c++)
+        for (let y = 0; y < 8; y++)
+            for (let x = 0; x < 8; x++) cold[y * W + c * 8 + x] = 1 + c;
+
+    const first = retile(cold, W, H, { sheetWidthTiles: 4 });
+    check('cold, tiles are numbered in reading order',
+        [...first.map].map(e => e & 0x3ff).join() === '0,1,2,3',
+        [...first.map].map(e => e & 0x3ff).join());
+
+    // The same four cells, reversed. Cold this would renumber all of them.
+    const shuffled = new Uint8Array(W * H);
+    for (let c = 0; c < 4; c++)
+        for (let y = 0; y < 8; y++)
+            for (let x = 0; x < 8; x++) shuffled[y * W + c * 8 + x] = 4 - c;
+
+    const cold2 = retile(shuffled, W, H, { sheetWidthTiles: 4 });
+    check('and cold again, a reordered picture renumbers them',
+        [...cold2.map].map(e => e & 0x3ff).join() === '0,1,2,3');
+
+    const seeded = retile(shuffled, W, H, { sheetWidthTiles: 4, seed: first.tiles });
+    check('seeded, every tile keeps the id the sheet on disk gave it',
+        [...seeded.map].map(e => e & 0x3ff).join() === '3,2,1,0',
+        [...seeded.map].map(e => e & 0x3ff).join());
+    check('and nothing is appended for a picture that introduced nothing new',
+        seeded.added === 0 && seeded.tileCount === 4, `${seeded.added} / ${seeded.tileCount}`);
+
+    // One cell repainted: the other three keep their ids, the new shape appends.
+    const edited = Uint8Array.from(shuffled);
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) edited[y * W + x] = 9;
+    const after = retile(edited, W, H, { sheetWidthTiles: 4, seed: first.tiles });
+    check('an edit appends rather than renumbering what it did not touch',
+        [...after.map].map(e => e & 0x3ff).join() === '4,2,1,0' && after.added === 1,
+        `${[...after.map].map(e => e & 0x3ff).join()} +${after.added}`);
+    check('so a seeded sheet only ever grows',
+        after.tileCount === 5 && after.tiles.height >= first.tiles.height);
+}
+
 const EXP = join(process.cwd(), '../pokeemerald-expansion');
 if (!existsSync(join(EXP, 'graphics/battle_environment'))) {
     console.log('  --   no expansion beside the repo; skipping the battle background round trip');
@@ -183,6 +229,81 @@ if (!existsSync(join(EXP, 'graphics/battle_environment'))) {
     console.log(`       ${results.length} battle backgrounds round-tripped`);
     check('battle backgrounds round-trip too, at their own size and palette row',
         results.length >= 8 && bad.length === 0, JSON.stringify(bad.slice(0, 3)));
+}
+
+/* ── the whole project, paired the way the app pairs it ──────────────────── */
+if (!existsSync(join(GAIA, 'graphics'))) {
+    console.log('  --   no pokegaia beside the repo; skipping the whole-project sweep');
+} else {
+    /* The two folders above are the ones the feature was built against, so they
+       prove it works and not that it reaches. This walks every folder in the
+       project through `describe` — the same pairing the file browser uses — and
+       requires that whatever it claims is a screen survives being taken apart
+       and put back together. A pairing rule that is too eager fails here rather
+       than in someone's repo. */
+    const walk = (dir, out = []) => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+            const p = join(dir, e.name);
+            if (e.isDirectory()) walk(p, out); else out.push(p);
+        }
+        return out;
+    };
+    const byDir = new Map();
+    for (const p of walk(join(GAIA, 'graphics'))) {
+        const dir = p.slice(0, p.lastIndexOf('\\') >= 0 ? p.lastIndexOf('\\') : p.lastIndexOf('/'));
+        if (!byDir.has(dir)) byDir.set(dir, []);
+        byDir.get(dir).push(p.slice(dir.length + 1));
+    }
+
+    const results = [], refused = [];
+    for (const [dir, names] of byDir) {
+        for (const name of names.filter(n => /\.png$/i.test(n))) {
+            const d = describeAsset(dir.replace(/\\/g, '/') + '/' + name, names);
+            if (!d) continue;
+            let tiles, map;
+            try {
+                tiles = readIndexedPng(readFileSync(join(dir, name)));
+                map = parseTilemap(readFileSync(d.mapPath));
+            } catch { continue; }
+            // A truecolour PNG is not a tile sheet; the app refuses it too.
+            if (!tiles || !tiles.indices) { refused.push(`${name}: not indexed`); continue; }
+            const layout = layoutFrom(map);
+            if (!layout) { refused.push(`${name}: not screen-shaped`); continue; }
+
+            // The two checks the app makes before it believes a pairing.
+            const sheetTiles = ((tiles.width / 8) | 0) * ((tiles.height / 8) | 0);
+            if (layout.tiles > sheetTiles) { refused.push(`${name}: wants ${layout.tiles} of ${sheetTiles}`); continue; }
+
+            const opts = { width: layout.width, height: layout.height,
+                           paletteBase: layout.paletteBase, mapStride: 32 };
+            const before = assembleIndices({ indices: tiles.indices, width: tiles.width }, map, opts);
+            if (!before) { refused.push(`${name}: did not assemble`); continue; }
+            const r = retile(before.indices, opts.width, opts.height, {
+                paletteBase: layout.paletteBase,
+                sheetWidthTiles: Math.max(1, (tiles.width / 8) | 0),
+                seed: { indices: tiles.indices, width: tiles.width, height: tiles.height }
+            });
+            const after = assembleIndices(r.tiles, r.map, Object.assign({}, opts, { mapStride: 32 }));
+            const visible = (v) => (v & 0xf) === 0 ? 0 : v;
+            let diff = 0;
+            for (let i = 0; i < before.indices.length; i++) {
+                if (visible(before.indices[i]) !== visible(after.indices[i])) diff++;
+            }
+            results.push({ label: `${dir.slice(GAIA.length + 10)}/${name}`, diff,
+                           grew: r.added, conflicts: r.conflicts.length });
+        }
+    }
+
+    const broken = results.filter(r => r.diff !== 0);
+    const grew = results.filter(r => r.grew !== 0);
+    console.log(`       ${results.length} screens found across the whole project, ${refused.length} pairings refused`);
+    check('every screen the app recognises anywhere in the project round-trips',
+        results.length >= 250 && broken.length === 0,
+        `${results.length} found, ${broken.length} broken: ` + JSON.stringify(broken.slice(0, 4)));
+    /* Seeding means an untouched screen must produce the sheet it started from.
+       Any growth here is the retiler inventing a tile nobody asked for. */
+    check('and an untouched screen adds no tiles to the sheet it came from',
+        grew.length === 0, JSON.stringify(grew.slice(0, 4)));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

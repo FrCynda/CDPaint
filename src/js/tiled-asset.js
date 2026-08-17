@@ -25,19 +25,33 @@
  * PNG's own table, and come back with an empty list rather than as a failure.
  */
 export function describe(relPath, siblings) {
-    const m = /^(.*\/)?(.*?)tiles\.png$/i.exec(String(relPath || ''));
+    const m = /^(.*\/)?([^/]+)\.png$/i.exec(String(relPath || ''));
     if (!m) return null;
-    const dir = m[1] || '', stem = m[2] || '';
+    const dir = m[1] || '', name = m[2];
     const all = siblings || [];
-    const has = (f) => all.indexOf(f) >= 0;
+    /* Matched case-insensitively but answered with the name the folder really
+       uses, because the path goes back out to a filesystem that may not be as
+       forgiving as the one it was authored on. */
+    const has = (f) => f && all.find(s => s.toLowerCase() === f.toLowerCase());
 
-    const map = [stem + 'map.bin', stem + 'tilemap.bin'].find(has);
+    /* Two naming habits, both common enough that supporting one alone leaves
+       most of the game unreachable. `tiles.png` + `map.bin` is what the battle
+       backgrounds and map previews use; everything else — the bag, the pokédex,
+       the intro — names both halves after the screen: `menu.png` + `menu.bin`,
+       `cool.png` + `cool_map.bin`. Measured across pokegaia: the first habit
+       covers about 50 screens, both together about 340. */
+    const t = /^(.*?)tiles$/i.exec(name);
+    const stem = t ? t[1] : name + '_';
+    const map = [
+        t && t[1] + 'map.bin', t && t[1] + 'tilemap.bin',
+        name + '.bin', name + '_map.bin', name + '_tilemap.bin'
+    ].map(has).find(Boolean);
     if (!map) return null;
 
     // `altaria_tiles.png` is served by `altaria.pal`, not `altaria_palette.pal`.
     const bare = stem.replace(/_$/, '');
-    const preferred = [stem + 'palette.pal', bare && bare + '.pal', 'palette.pal'].filter(Boolean);
-    const pals = preferred.filter(has);
+    const preferred = [stem + 'palette.pal', bare && bare + '.pal', 'palette.pal', 'bg.pal'];
+    const pals = preferred.map(has).filter(Boolean);
     for (const f of all) {
         if (/\.pal$/i.test(f) && pals.indexOf(f) < 0) pals.push(f);
     }
@@ -71,22 +85,32 @@ export function describe(relPath, siblings) {
  * shipped previews and 11 battle backgrounds in test/tiled-asset.test.mjs. */
 export function layoutFrom(map) {
     const stride = 32;
-    if (!map || map.length < stride) return null;
-    const rows = Math.min(20, Math.floor(map.length / stride));
-    if (!rows) return null;
+    /* A whole number of rows or it is not a screen map at all. Roughly a fifth
+       of the `.bin` files under `graphics/` are something else — a 10×10 window,
+       a strip of animation frames — and they land here looking plausible. */
+    if (!map || map.length < stride || map.length % stride) return null;
+    const rows = Math.min(20, map.length / stride);
 
-    let base = 15, sawContent = false;
+    let base = 15, top = 0, tiles = 0, sawContent = false;
     for (let i = 0; i < rows * stride; i++) {
         if (map[i] === 0) continue;
         sawContent = true;
         const bank = (map[i] >> 12) & 0xf;
         if (bank < base) base = bank;
+        if (bank > top) top = bank;
+        if ((map[i] & 0x3ff) >= tiles) tiles = (map[i] & 0x3ff) + 1;
     }
+    if (!sawContent) base = top = 0;
     return {
         stride: stride,
         width: stride * 8,
         height: rows * 8,
-        paletteBase: sawContent ? base : 0
+        paletteBase: base,
+        /* What the sheet and the palette beside it have to supply for this map
+           to mean anything: the highest tile it names, and how many palette
+           banks it spans. A pairing that fails either is not a pairing. */
+        tiles: tiles,
+        banks: top - base + 1
     };
 }
 

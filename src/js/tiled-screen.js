@@ -48,7 +48,18 @@
         var sheet = await app.decodePngIndices(meta);
         var map = window.BattleScene.parseTilemap(await p.readBytes(descriptor.mapPath));
         var layout = window.TiledAsset.layoutFrom(map);
-        if (!layout) { toast('That tilemap is too small to be a screen', 'warning'); return false; }
+        if (!layout) { toast('That file is not shaped like a screen map', 'warning'); return false; }
+
+        /* The pairing is a guess made from two filenames, so prove it before
+           acting on it. A map that names tile 800 against a 64-tile sheet is
+           not that sheet's map — most often the PNG is a reference picture the
+           tilemap was traced from, which is a real thing in these projects. */
+        var sheetTiles = ((meta.width / 8) | 0) * ((meta.height / 8) | 0);
+        if (layout.tiles > sheetTiles) {
+            toast(descriptor.mapPath.replace(/^.*\//, '') + ' asks for ' + layout.tiles +
+                ' tiles and this sheet has ' + sheetTiles + ' — they are not a pair', 'warning');
+            return false;
+        }
 
         /* The palette file when there is one, the sheet's own table when there
            is not — the older previews keep their colours in the PNG. */
@@ -64,6 +75,16 @@
             }
         }
         if (!palette || !palette.length) { toast('No palette for that screen', 'warning'); return false; }
+
+        /* Each bank the map spans is 16 more colours the assembled picture will
+           index into. Opening without them puts the whole screen in whatever the
+           palette's tail happens to be, which looks like art rather than like a
+           fault — so refuse instead of showing a convincing lie. */
+        if (layout.banks * 16 > palette.length) {
+            toast('That screen spans ' + layout.banks + ' palette banks and the palette beside it holds ' +
+                palette.length + ' colours', 'warning');
+            return false;
+        }
 
         var picture = window.BattleScene.assembleIndices(
             { indices: sheet, width: meta.width }, map, layout);
@@ -86,6 +107,13 @@
         current = {
             descriptor: descriptor,
             layout: layout,
+            /* The whole file, not the part on screen. A battle background's map
+               is 2048 entries: the first screenblock is the picture, the second
+               is the intro slide. Saving only what was edited would have written
+               1280 bytes over a 4096-byte file and deleted the slide. */
+            mapAll: map,
+            // Kept so a save can hand every tile back the id it already had.
+            sheet: { indices: sheet, width: meta.width, height: meta.height },
             palette: palette,
             bitDepth: meta.bitDepth || 8,
             sheetWidthTiles: Math.max(1, (meta.width / 8) | 0),
@@ -125,7 +153,8 @@
 
         var r = window.Retile.retile(indices, w, h, {
             paletteBase: current.layout.paletteBase,
-            sheetWidthTiles: current.sheetWidthTiles
+            sheetWidthTiles: current.sheetWidthTiles,
+            seed: current.sheet
         });
         if (!r) { toast('Could not cut that picture into tiles', 'error'); return false; }
 
@@ -145,7 +174,10 @@
         var sheetPng = await app.generateIndexedPNG(
             r.tiles.width, r.tiles.height, r.tiles.indices,
             current.palette, current.bitDepth === 4 ? 4 : 8, trnsFor(current.palette.length));
-        var mapBytes = window.Retile.tilemapBytes(r.map);
+        // The edited rows back into the file they came from, tail untouched.
+        var whole = current.mapAll.slice();
+        whole.set(r.map, 0);
+        var mapBytes = window.Retile.tilemapBytes(whole);
 
         var p = project();
         if (!p || typeof p.writeBytes !== 'function') {
@@ -160,7 +192,12 @@
         await p.writeBytes(current.descriptor.tilesPath, sheetPng);
         await p.writeBytes(current.descriptor.mapPath, mapBytes);
         app.markSaved(current.descriptor.tilesPath.replace(/^.*\//, ''));
-        toast('Wrote ' + r.tileCount + ' tiles and a ' + r.map.length + '-cell tilemap', 'success');
+        /* Growth is the thing worth knowing. Some assets are built with an
+           asserted tile budget, so a save that adds tiles can break the build
+           long after the artist has moved on. */
+        toast('Wrote ' + r.tileCount + ' tiles' +
+            (r.added ? ' (' + r.added + ' new)' : ' (unchanged)') +
+            ' and a ' + whole.length + '-cell tilemap', 'success');
         return true;
     }
 
