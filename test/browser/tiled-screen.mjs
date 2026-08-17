@@ -148,6 +148,76 @@ await withPage(async (page) => {
         conflict.conflicts[0].x === 8 && conflict.conflicts[0].y === 8,
         JSON.stringify(conflict.conflicts));
 
+    /* A battle background's map is two screenblocks: the picture, then the
+       intro slide. Only the picture is on the canvas, so a save that wrote back
+       what it could see would delete the slide — and one that renumbered the
+       tiles would leave the slide pointing at the wrong art. */
+    const twoBlocks = [];
+    for (let i = 0; i < 2048; i++) {
+        const e = i < 640 ? (0 | (13 << 12)) : (1 | (14 << 12));   // tail names tile 1
+        twoBlocks.push(e & 0xff, (e >> 8) & 0xff);
+    }
+    const tail = await page.eval(`(async () => {
+        ${setup}
+        files['graphics/map_preview/x/map.bin'] = new Uint8Array(${JSON.stringify(twoBlocks)});
+        await window.TiledScreen.open(desc, { path: 'C:/proj/graphics/map_preview/x/tiles.png' });
+        window.__written = [];
+        PaintApp.spriteIndices[0] = 3;                 // an edit inside the picture
+        await PaintApp.saveFile();
+        const map = window.__written.find(f => /map\\.bin$/.test(f.path));
+        const at = (i) => map.bytes[i * 2] | (map.bytes[i * 2 + 1] << 8);
+
+        // Tile 1 of the sheet that was just written — the tile the untouched
+        // half of the map still points at.
+        const sheet = window.__written.find(f => /tiles\\.png$/.test(f.path));
+        const meta = PaintApp.parsePngPalette(new Uint8Array(sheet.bytes));
+        const px = await PaintApp.decodePngIndices(meta);
+        const tileAt = (n) => {
+            const across = meta.width / 8, ox = (n % across) * 8, oy = ((n / across) | 0) * 8;
+            const out = [];
+            for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) out.push(px[(oy + y) * meta.width + ox + x] & 0xf);
+            return out;
+        };
+        return {
+            len: map.bytes.length, tailEntry: at(1024), lastEntry: at(2047),
+            tile1: tileAt(1), tiles: (meta.width / 8) * (meta.height / 8)
+        };
+    })()`);
+
+    check('a two-screenblock map is written back at its full size',
+        tail.len === 4096, String(tail.len));
+    check('the half the canvas never showed is returned untouched',
+        tail.tailEntry === (1 | (14 << 12)) && tail.lastEntry === (1 | (14 << 12)),
+        `${tail.tailEntry.toString(16)} / ${tail.lastEntry.toString(16)}`);
+    /* The reference, not just the bytes. Renumbering the picture's tiles would
+       leave this half of the map addressing whatever landed on id 1. */
+    check('and tile 1 still holds what that half expects to find there',
+        tail.tile1.every(v => v === 2), JSON.stringify(tail.tile1.slice(0, 8)));
+    check('the edit appended a tile rather than overwriting one',
+        tail.tiles > 2, String(tail.tiles));
+
+    /* Pairing is a guess made from two filenames. Most of the project names
+       both halves after the screen, so a PNG that merely shares a name with a
+       .bin now gets offered — and in these repos that PNG is quite often a
+       reference picture the tilemap was traced from, not its sheet. */
+    const wrongPair = [];
+    for (let i = 0; i < 640; i++) { const e = 900 | (13 << 12); wrongPair.push(e & 0xff, e >> 8); }
+    const mismatch = await page.eval(`(async () => {
+        ${setup}
+        files['graphics/map_preview/x/map.bin'] = new Uint8Array(${JSON.stringify(wrongPair)});
+        const said = [];
+        const realToast = window.showToast;
+        window.showToast = (m, k) => { said.push(m); };
+        const ok = await window.TiledScreen.open(desc, {});
+        window.showToast = realToast;
+        return { ok, said };
+    })()`);
+    check('a map that asks for more tiles than the sheet holds is not opened',
+        mismatch.ok === false, JSON.stringify(mismatch.said));
+    check('and the reason names both numbers rather than just failing',
+        /901/.test(mismatch.said.join(' ')) && /\b2\b/.test(mismatch.said.join(' ')),
+        JSON.stringify(mismatch.said));
+
     /* Opening anything else has to hand saving back to the ordinary path, or
        the next Ctrl+S writes a sprite into a map preview's tile sheet. */
     const after = await page.eval(`(async () => {
