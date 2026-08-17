@@ -61,28 +61,49 @@
             return false;
         }
 
-        /* The palette file when there is one, the sheet's own table when there
-           is not — the older previews keep their colours in the PNG. */
-        var palette = null;
-        if (descriptor.palettes.length) {
-            var text = new TextDecoder().decode(await p.readBytes(descriptor.palettes[0]));
-            palette = window.BattleScene.parseJascPal(text);
-        }
-        if (!palette && meta.palette) {
-            palette = [];
-            for (var i = 0; i < meta.palette.length; i += 3) {
-                palette.push({ r: meta.palette[i], g: meta.palette[i + 1], b: meta.palette[i + 2] });
-            }
-        }
-        if (!palette || !palette.length) { toast('No palette for that screen', 'warning'); return false; }
+        /* Colours, in order of how much they are actually evidence.
+         *
+         *   1. a .pal named for this screen
+         *   2. the sheet's own table — for half these assets that IS the
+         *      palette, built straight off the PNG by the build itself
+         *      (`INCGFX_U16(".../aurora.png", ".gbapal")`)
+         * and nothing else. The unnamed .pal files in the folder are still
+         * listed on the descriptor, but they are not evidence and are never
+         * chosen: ranking a neighbour above the PNG's own table is how `aurora`
+         * opened wearing `aeroblast`'s colours, and picking a differently-named
+         * one that happens to be big enough would be the same mistake with an
+         * extra step. */
+        var candidates = [];
+        for (var n = 0; n < descriptor.named; n++) candidates.push(descriptor.palettes[n]);
 
-        /* Each bank the map spans is 16 more colours the assembled picture will
-           index into. Opening without them puts the whole screen in whatever the
-           palette's tail happens to be, which looks like art rather than like a
-           fault — so refuse instead of showing a convincing lie. */
-        if (layout.banks * 16 > palette.length) {
-            toast('That screen spans ' + layout.banks + ' palette banks and the palette beside it holds ' +
-                palette.length + ' colours', 'warning');
+        var palette = null, best = 0;
+        for (var c = 0; c <= candidates.length && !palette; c++) {
+            var got;
+            if (c < candidates.length) {
+                got = window.BattleScene.parseJascPal(
+                    new TextDecoder().decode(await p.readBytes(candidates[c])));
+            } else if (meta.palette) {
+                // Already {r,g,b,a} entries — copied because it gets padded below.
+                got = meta.palette.slice();
+            }
+            if (!got || !got.length) continue;
+            /* Round up to a whole bank, as the build does. A palette only has
+               to name the colours the art uses — `aurora.png` carries six — and
+               gbagfx pads the rest of the bank with black on its way to a
+               .gbapal. Without this the screen looks one colour short of a bank
+               and gets turned away for a shortfall that does not exist. */
+            while (got.length % 16) got.push({ r: 0, g: 0, b: 0 });
+            if (got.length > best) best = got.length;
+            // Each bank the map spans is 16 more colours the picture indexes
+            // into. A palette that cannot cover them all is the wrong one.
+            if (layout.banks * 16 <= got.length) palette = got;
+        }
+
+        if (!palette) {
+            toast(best
+                ? 'That screen spans ' + layout.banks + ' palette banks and nothing beside it holds more than ' +
+                  best + ' colours'
+                : 'No palette for that screen', 'warning');
             return false;
         }
 

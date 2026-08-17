@@ -218,6 +218,49 @@ await withPage(async (page) => {
         /901/.test(mismatch.said.join(' ')) && /\b2\b/.test(mismatch.said.join(' ')),
         JSON.stringify(mismatch.said));
 
+    /* Half these screens keep no palette file at all — the build extracts the
+       colours from the PNG itself, `INCGFX_U16(".../aurora.png", ".gbapal")`.
+       Two things went wrong here at once and both looked like art: the folder's
+       nearest .pal was preferred over the sheet's own table, so `aurora` opened
+       in `aeroblast`'s colours; and the table was read as flat bytes when it is
+       {r,g,b} entries, so the fallback that was supposed to save it produced
+       black. A six-colour table also has to be padded to a whole bank, as the
+       build pads it, or the screen is refused for a shortfall that is not real. */
+    const sixColours = [[0, 0, 0], [24, 131, 98], [41, 139, 106], [57, 156, 123], [82, 172, 139], [98, 180, 148]];
+    const ownPalPng = Array.from(makePng({
+        w: 16, h: 8, depth: 4, palette: sixColours,
+        indices: Uint8Array.from({ length: 128 }, (_, i) => ((i % 16) < 8 ? 1 : 4))
+    }));
+    const flatMap = [];
+    for (let i = 0; i < 640; i++) { const e = (i % 2) | (0 << 12); flatMap.push(e & 0xff, e >> 8); }
+
+    const ownPalette = await page.eval(`(async () => {
+        const files = {
+            'g/aurora.png': new Uint8Array(${JSON.stringify(ownPalPng)}),
+            'g/aurora.bin': new Uint8Array(${JSON.stringify(flatMap)}),
+            'g/aeroblast.pal': new TextEncoder().encode('JASC-PAL\\r\\n0100\\r\\n2\\r\\n255 0 0\\r\\n0 255 0\\r\\n')
+        };
+        window.__written = [];
+        window.PokeProject = Object.assign({}, window.PokeProject, {
+            model: () => ({ root: 'C:/proj', sourceText: new Map() }),
+            coordsFor: () => [],
+            readBytes: (p) => files[p] ? Promise.resolve(files[p]) : Promise.reject(new Error(p)),
+            writeBytes: () => Promise.resolve()
+        });
+        const desc = window.TiledAsset.describe('g/aurora.png', ['aurora.png', 'aurora.bin', 'aeroblast.pal']);
+        const ok = await window.TiledScreen.open(desc, {});
+        return { ok, named: desc.named, n: PaintApp.palette.length,
+                 c1: PaintApp.palette[1], c4: PaintApp.palette[4] };
+    })()`);
+
+    check('a screen with no palette of its own opens on the sheet’s own table',
+        ownPalette.ok === true && ownPalette.named === 0, JSON.stringify(ownPalette));
+    check('and those are its real colours, not the neighbour’s and not black',
+        ownPalette.c1 && ownPalette.c1.r === 24 && ownPalette.c1.g === 131 && ownPalette.c1.b === 98,
+        JSON.stringify(ownPalette.c1));
+    check('a table shorter than a bank is padded rather than rejected',
+        ownPalette.n === 16, String(ownPalette.n));
+
     /* Opening anything else has to hand saving back to the ordinary path, or
        the next Ctrl+S writes a sprite into a map preview's tile sheet. */
     const after = await page.eval(`(async () => {
