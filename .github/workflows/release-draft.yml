@@ -111,7 +111,7 @@ jobs:
         run: cargo install tauri-cli --locked --version "${{ env.TAURI_CLI_VERSION }}"
 
       - name: Build and upload draft release assets
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
