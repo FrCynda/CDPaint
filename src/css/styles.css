@@ -140,7 +140,7 @@
         /* Layout for the title bar, tab row, and ribbon. Heights are fixed so the canvas area can fill the remaining viewport precisely. */
 
         #title-bar { height: 21px; display: flex; align-items: center; padding: 0 10px 0 10px; background: var(--titlebar-bg); z-index: 101; }
-        #title-bar .title-left { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+        #title-bar .title-left { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; min-width: 0; }
         #title-bar .app-icon { width: 16px; height: 16px; image-rendering: pixelated; }
         #title-bar .title-action {
             width: 28px;
@@ -266,7 +266,79 @@
             text-overflow: ellipsis;
             max-width: 240px;
         }
-        #title-bar .title-controls { display: flex; align-items: stretch; height: 100%; margin-right: -10px; }
+        #title-bar .title-controls { display: flex; align-items: stretch; height: 100%; margin-left: auto; margin-right: -10px; }
+        /* Document tabs live between the title actions and the window controls. */
+        /* Minimalist tabs: plain labels, no chrome. The title bar is only 21px
+           tall, so weight + text contrast carry the active state — no borders,
+           no fills, no badges. Tabs close via middle-click or Ctrl+W. */
+        #title-bar .tab-strip {
+            /* Take only the width the labels need, so the rest of the title bar
+               stays draggable. */
+            flex: 0 1 auto;
+            min-width: 0;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 0;
+            margin-left: 2px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            scrollbar-width: none;
+        }
+        #title-bar .tab-strip::-webkit-scrollbar { height: 0; }
+        #title-bar .tab-strip.hidden { display: none; }
+        #title-bar .doc-tab {
+            flex: 0 1 auto;
+            display: flex;
+            align-items: center;
+            min-width: 0;
+            max-width: 180px;
+            height: 100%;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: var(--titlebar-filename);
+            font-size: 12px;
+            font-weight: 400;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            opacity: 0.42;
+            transition: opacity .1s ease;
+        }
+        /* Hover is a barely-there lift — no background, no movement. */
+        #title-bar .doc-tab:hover { opacity: 0.72; }
+        #title-bar .doc-tab.active,
+        #title-bar .doc-tab.active:hover { opacity: 1; font-weight: 600; }
+        #title-bar .doc-tab.dragging { opacity: 0.55; }
+        #title-bar .doc-tab-title {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+        #title-bar .title-filename.hidden { display: none; }
+        #title-bar .doc-tab-add {
+            flex: 0 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 100%;
+            margin-left: 12px;
+            border: 0;
+            background: transparent;
+            color: var(--titlebar-filename);
+            font-size: 14px;
+            font-weight: 400;
+            line-height: 1;
+            cursor: pointer;
+            opacity: 0.32;
+            transition: opacity .1s ease;
+        }
+        #title-bar .doc-tab-add:hover { opacity: 0.75; }
+        #tab-close-confirm-modal { display: none; }
         #title-bar .title-btn {
             width: 46px;
             border: 0;
@@ -1030,12 +1102,13 @@
         #btn-grid-modes .btn-small { width: 48px; height: 20px; line-height: 20px; padding: 0; display: flex; align-items: center; justify-content: center; }
 
         /* ══════════════════════════════════════════════════════════
-           FREEHAND BRUSH + PAINT BRUSH SIDEBARS — Fluent-style flyout
+           LEFT FLYOUT SIDEBARS — Fluent-style, shared chrome
+           Freehand brush · Paint brush · Gradient · Project browser
            ══════════════════════════════════════════════════════════ */
 
         /* Shared panel: acrylic-tinted background, flat square edge,
            Windows 10-style flyout — no rounding, no drop shadow. */
-        #freehand-sidebar, #paintbrush-sidebar, #gradient-sidebar {
+        #freehand-sidebar, #paintbrush-sidebar, #gradient-sidebar, #project-panel {
             position: fixed; top: 145px; bottom: 24px; left: -296px;
             width: 280px; z-index: 9988;
             background: #f5f6f7;
@@ -1045,10 +1118,10 @@
             transition: left .24s cubic-bezier(.16,1,.3,1);
             pointer-events: auto;
         }
-        #freehand-sidebar *, #paintbrush-sidebar *, #gradient-sidebar * { pointer-events: auto; }
-        #freehand-sidebar.open, #paintbrush-sidebar.open, #gradient-sidebar.open { left: 0; }
+        #freehand-sidebar *, #paintbrush-sidebar *, #gradient-sidebar *, #project-panel * { pointer-events: auto; }
+        #freehand-sidebar.open, #paintbrush-sidebar.open, #gradient-sidebar.open, #project-panel.open { left: 0; }
 
-        #freehand-sidebar-header, #paintbrush-sidebar-header, #gradient-sidebar-header {
+        #freehand-sidebar-header, #paintbrush-sidebar-header, #gradient-sidebar-header, #project-header {
             display: flex; align-items: center; justify-content: space-between;
             padding: 6px 6px 6px 10px;
             font-size: 12px; font-weight: 600;
@@ -1056,8 +1129,8 @@
             border-bottom: 1px solid color-mix(in srgb, var(--section-divider, #e0e0e0) 80%, transparent);
             flex-shrink: 0;
         }
-        #freehand-sidebar-header > span, #paintbrush-sidebar-header > span, #gradient-sidebar-header > span { flex: 1; }
-        #freehand-collapse-btn, #paintbrush-collapse-btn, #gradient-collapse-btn {
+        #freehand-sidebar-header > span, #paintbrush-sidebar-header > span, #gradient-sidebar-header > span, #project-header > span { flex: 1; }
+        #freehand-collapse-btn, #paintbrush-collapse-btn, #gradient-collapse-btn, #project-collapse {
             background: none; border: none; cursor: pointer; font-size: 11px;
             color: var(--section-title-color); padding: 0; line-height: 1;
             width: 24px; height: 24px; border-radius: 2px;
@@ -1065,13 +1138,14 @@
             margin-left: auto;
             transition: transform .15s cubic-bezier(.16,1,.3,1), background .12s ease;
         }
-        #freehand-collapse-btn:hover, #paintbrush-collapse-btn:hover, #gradient-collapse-btn:hover {
+        #freehand-collapse-btn:hover, #paintbrush-collapse-btn:hover, #gradient-collapse-btn:hover, #project-collapse:hover {
             background: color-mix(in srgb, var(--app-text-color, #111) 8%, transparent);
         }
-        #freehand-collapse-btn:active, #paintbrush-collapse-btn:active, #gradient-collapse-btn:active {
+        #freehand-collapse-btn:active, #paintbrush-collapse-btn:active, #gradient-collapse-btn:active, #project-collapse:active {
             background: color-mix(in srgb, var(--app-text-color, #111) 14%, transparent);
         }
         #freehand-collapse-btn.collapsed, #paintbrush-collapse-btn.collapsed, #gradient-collapse-btn.collapsed { transform: rotate(-90deg); }
+        #freehand-collapse-btn svg, #paintbrush-collapse-btn svg, #gradient-collapse-btn svg, #project-collapse svg { width: 11px; height: 11px; flex: none; }
 
         #freehand-sidebar-body, #paintbrush-sidebar-body, #gradient-sidebar-body {
             flex: 1; overflow-y: auto; padding: 10px 12px 6px;
@@ -1124,7 +1198,7 @@
         .fh-hidden { visibility: hidden; pointer-events: none; }
         #fh-capStart-row, #fh-easingStart-row, #fh-capEnd-row, #fh-easingEnd-row { min-height: 22px; }
 
-        #freehand-reopen-btn, #pb-reopen-btn, #gradient-reopen-btn {
+        #freehand-reopen-btn, #pb-reopen-btn, #gradient-reopen-btn, #project-expand {
             position: fixed; left: 0; top: 145px;
             z-index: 10000; width: 24px; height: 24px; padding: 0;
             background: #f5f6f7;
@@ -1134,8 +1208,16 @@
             font-size: 10px; color: var(--section-title-color);
             transition: color .12s ease;
         }
-        #freehand-reopen-btn:hover, #pb-reopen-btn:hover, #gradient-reopen-btn:hover { color: var(--win-blue); }
-        #freehand-reopen-btn.show, #pb-reopen-btn.show, #gradient-reopen-btn.show { display: flex; }
+        #freehand-reopen-btn:hover, #pb-reopen-btn:hover, #gradient-reopen-btn:hover, #project-expand:hover { color: var(--win-blue); }
+        #freehand-reopen-btn.show, #pb-reopen-btn.show, #gradient-reopen-btn.show, #project-expand.show { display: flex; }
+        /* An edge tab and an open flyout both want the left edge — one panel can
+           be open while a different one is collapsed. Tuck the tab against the
+           open panel's outer edge (280px + its 1px border) instead of letting it
+           sit on top of that panel's title. */
+        body.left-flyout-open #freehand-reopen-btn,
+        body.left-flyout-open #pb-reopen-btn,
+        body.left-flyout-open #gradient-reopen-btn,
+        body.left-flyout-open #project-expand { left: 281px; }
 
         .sb-close-x {
             width: 24px; height: 24px; border: none; background: transparent;
@@ -1395,6 +1477,9 @@
         canvas { display: block; position: absolute; top: 0; left: 0; image-rendering: pixelated; }
         #grad-bar { position: static; }
         #layer-main { z-index: 10; }
+        /* Between the artwork and the tool preview, and never a pointer target —
+           the ghost is something to look through, not something to draw on. */
+        #frame-onion { z-index: 15; pointer-events: none; }
         #layer-temp { z-index: 20; pointer-events: auto; }
         #layer-lasso { z-index: 30; pointer-events: none; }
 
@@ -4533,7 +4618,9 @@
 
 
         #canvas-resize-handles { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1002; }
-        #canvas-resize-handles.smooth .resizer { transition: left .24s cubic-bezier(.16,1,.3,1), top .24s cubic-bezier(.16,1,.3,1); }
+        /* Until JS has measured the canvas the handles have no offsets of their
+           own and would paint stacked in the viewport's top-left corner. */
+        #canvas-resize-handles:not(.positioned) { visibility: hidden; }
         .resizer { position: absolute; width: 6px; height: 6px; background: white; border: 1px solid black; z-index: 40; pointer-events: auto; }
         .r-right { cursor: ew-resize; }
         .r-left { cursor: ew-resize; }
@@ -4577,6 +4664,21 @@
             border: 1px solid var(--palette-mini-swatch-hover-border);
             box-shadow: inset 0 0 0 1px var(--palette-mini-swatch-hover-inner);
         }
+        /* The slot currently being painted with. Two swatches can be the same
+           colour, so the ring has to mark the slot, not the colour. */
+        .mini-swatch[data-active-slot] {
+            border: 1px solid var(--win-blue) !important;
+            box-shadow: 0 0 0 2px var(--win-blue), inset 0 0 0 1px rgba(255,255,255,0.55) !important;
+        }
+
+        /* Project asset conformance readout, in the status bar. */
+        #status-conformance {
+            font-variant-numeric: tabular-nums;
+            color: var(--section-title-color);
+            white-space: nowrap;
+        }
+        #status-conformance.conformance-ok { color: #1a7f4b; }
+        #status-conformance .conformance-bad { color: #e81123; font-weight: 600; }
         .mini-swatch.empty {
             background: transparent;
             pointer-events: none;
@@ -4906,6 +5008,29 @@
         .form-group { margin-bottom: 10px; }
         .form-group label { display: block; font-weight: bold; margin-bottom: 4px; }
         .form-group select, .form-group input { width: 100%; padding: 4px; }
+
+        /* New Image dialog (matches the .window/.title-bar modal style of other dialogs) */
+        #modal-new .modal-window { width: 420px; }
+        #modal-new .modal-header {
+            display: flex; align-items: center; justify-content: space-between;
+            background: var(--win-blue, #0078d7); color: #fff;
+            margin: -15px -15px 12px -15px; padding: 8px 10px;
+            border-top-left-radius: 2px; border-top-right-radius: 2px;
+        }
+        #modal-new .modal-title { font-weight: 600; font-size: 13px; }
+        #modal-new .modal-header .close-btn { position: static; color: #fff; border: none; background: transparent; }
+        #modal-new .modal-header .close-btn:hover { background: rgba(255,255,255,0.18); }
+        #modal-new .modal-body { display: flex; flex-direction: column; }
+        #modal-new .new-size-row { display: flex; align-items: flex-end; gap: 8px; }
+        #modal-new .new-size-row .form-group { flex: 1; }
+        #modal-new .new-swap { height: 28px; margin-bottom: 10px; }
+        #modal-new .modal-btns { border-top: 1px solid rgba(128,128,128,0.25); padding-top: 12px; margin-top: 4px; }
+        body.dark-refined-mode #modal-new .modal-header { background: var(--dr-a2); }
+        body.primeval-forest-mode #modal-new .modal-header { background: var(--pf-a2); }
+        body.abyssal-ocean-mode #modal-new .modal-header { background: var(--ao-a2); }
+        body.crimson-dusk-mode #modal-new .modal-header { background: var(--cd-a2); }
+        body.gilded-obsidian-mode #modal-new .modal-header { background: var(--go-a2); }
+        body.test-mode #modal-new .modal-header { background: var(--tm-a1); color: var(--tm-t1); }
         .ribbon-card {
             display: flex;
             flex-direction: column;
@@ -4963,6 +5088,19 @@
             margin-top: 3px;
         }
         .ribbon-card .mini-label { font-size: 10px; color: #666; }
+        /* What undo history is actually holding. Replaces the old "Adaptive"
+           checkbox, which reported a step count that no longer varied. */
+        .ribbon-card .history-usage {
+            font-size: 10px;
+            color: #666;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+            margin-left: 6px;
+            padding-left: 6px;
+            border-left: 1px solid rgba(0, 0, 0, .12);
+        }
+        .ribbon-card .history-usage.is-high { color: #9a6512; }
+        .ribbon-card .history-usage.is-full { color: #a93226; font-weight: 600; }
         .ribbon-card .compact-input {
             width: 36px;
             height: 18px;
@@ -5052,7 +5190,10 @@
         #freehand-collapse-btn svg path,
         #paintbrush-collapse-btn svg path,
         #pb-reopen-btn svg path,
+        #gradient-collapse-btn svg path,
+        #gradient-reopen-btn svg path,
         #project-collapse svg path,
+        #project-expand svg path,
         #pb-more-toggle .pb-arrow path { fill: #000000; }
 
         /* Export Studio Styles */
@@ -5737,23 +5878,12 @@ body.violet-haze-mode #swap-colors-btn:hover{background:var(--vh-s5) !important;
 .toast--warning{background:#fef9e7;color:#7d6608;border:1px solid #f9e79f;}
 @keyframes toast-in{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
 
-/* pokeemerald project asset browser */
-#project-panel{position:fixed;left:-336px;top:145px;bottom:24px;width:320px;z-index:9988;display:flex;flex-direction:column;background:#f5f6f7;color:var(--app-text-color);border-right:1px solid var(--border-ribbon,#dadbdc);border-radius:0;font-size:12px;overflow:hidden;transition:left .24s cubic-bezier(.16,1,.3,1);}
-#project-panel:not(.project-collapsed){left:0;}
-#project-panel.project-closed{display:none;}
-#project-expand{position:fixed;left:0;top:145px;z-index:60;display:none;width:24px;height:24px;border:1px solid var(--border-ribbon,#dadbdc);border-left:none;background:#f5f6f7;color:var(--section-title-color);cursor:pointer;border-radius:0 4px 4px 0;padding:0;transition:background .1s,color .1s;align-items:center;justify-content:center;}
-#project-expand:hover{background:var(--win-blue);color:#fff;}
-body.project-panel-collapsed #project-expand{display:flex;}
-#project-header{display:flex;align-items:center;justify-content:space-between;padding:6px 6px 6px 10px;font-weight:600;color:var(--app-text-color);border-bottom:1px solid color-mix(in srgb,var(--section-divider,#e0e0e0) 80%, transparent);flex-shrink:0;}
-#project-title{font-weight:600;letter-spacing:0.4px;font-size:12.5px;}
+/* pokeemerald project asset browser.
+   Panel shell, header, collapse button and edge tab all come from the shared
+   left-flyout rules up top (see "LEFT FLYOUT SIDEBARS") so this panel matches
+   the freehand/paintbrush/gradient sidebars. Only its own bits live here. */
+#project-panel{color:var(--app-text-color);font-size:12px;overflow:hidden;}
 #project-actions{display:flex;gap:2px;align-items:center;}
-#project-actions button{width:24px;height:24px;border:none;background:transparent;cursor:pointer;font-size:13px;line-height:1;border-radius:2px;display:flex;align-items:center;justify-content:center;margin-left:2px;transition:background .12s ease,color .12s ease;}
-#project-collapse svg{width:11px;height:11px;flex:none;}
-#project-collapse{width:24px;height:24px;margin-left:0;color:var(--section-title-color);}
-#project-collapse:hover{background:color-mix(in srgb,var(--app-text-color,#111) 8%, transparent);color:var(--app-text-color);}
-#project-close{color:#e81123;}
-#project-close:hover{background:#e81123;color:#fff;}
-#project-close:active{background:#c20b1c;color:#fff;}
 .proj-actionbar{display:flex;gap:4px;padding:4px 6px;border-bottom:1px solid color-mix(in srgb,var(--section-divider,#e0e0e0) 80%, transparent);flex-shrink:0;}
 .proj-actionbar button{font-size:10px;padding:2px 6px;border:1px solid var(--btn-small-border);background:var(--btn-small-bg);color:var(--app-text-color);border-radius:3px;cursor:pointer;line-height:1.4;transition:background .12s ease,border-color .12s ease;}
 .proj-actionbar button:hover:not(:disabled){background:var(--btn-hover-bg);border-color:var(--btn-hover-border);}
@@ -5779,9 +5909,15 @@ body.project-panel-collapsed #project-expand{display:flex;}
 .proj-thumb-missing{opacity:0.25;}
 .proj-pal-dot{width:12px;height:12px;border-radius:50%;background:var(--a1,#0078d7);flex:none;border:1px solid var(--s7,#999);}
 .proj-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Not a button — the whole row already opens it. This only warns that the
+   thumbnail is a tile sheet and the canvas will be the assembled picture. */
+.proj-screen-tag{font-size:10px;font-weight:700;padding:1px 5px;flex:none;border:1px solid var(--s7,#999);background:transparent;color:var(--t1,#222);border-radius:4px;line-height:1.4;opacity:.7;}
 .proj-pal-badges{display:flex;gap:3px;flex:none;}
 .proj-pal-badge{font-size:10px;font-weight:700;padding:1px 5px;border:1px solid var(--s7,#999);background:var(--a1,#0078d7);color:#fff;border-radius:4px;cursor:pointer;line-height:1.4;transition:filter .1s;}
 .proj-pal-badge:hover{filter:brightness(1.12);}
+/* A tilemap, not a palette — one sheet can be arranged several ways and the
+   two kinds of button sit side by side on the same row. */
+.proj-map-badge{background:transparent;color:var(--t1,#222);font-weight:600;}
 .proj-search{margin:6px 8px;border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:var(--t1,#222);border-radius:5px;padding:5px 7px;font-size:12px;width:calc(100% - 16px);box-sizing:border-box;transition:border-color .1s,box-shadow .1s;}
 .proj-search:focus{outline:none;border-color:var(--a1,#0078d7);box-shadow:0 0 0 2px rgba(0,120,215,0.15);}
 .proj-overlay{position:absolute;top:105px;left:0;right:0;bottom:27px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:color-mix(in srgb,var(--app-text-color,#111) 6%, transparent);z-index:5;animation:proj-pulse 1.2s ease-in-out infinite;pointer-events:none;}
@@ -5818,12 +5954,125 @@ body.project-panel-collapsed #project-expand{display:flex;}
 #sprite-preview.sp-collapsed{display:none;}
 .sp-header{display:flex;align-items:center;gap:8px;padding:5px 8px;cursor:move;background:var(--s5,#fff);border-bottom:1px solid var(--s6,#cfcfcf);}
 .sp-header .sp-title{font-weight:600;}
-.sp-header .sp-close{margin-left:auto;border:0;background:transparent;cursor:pointer;font-size:14px;}
+.sp-header .sp-zoom{margin-left:auto;border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;font-size:10px;padding:1px 3px;}
+.sp-header .sp-close{border:0;background:transparent;cursor:pointer;font-size:14px;}
 .sp-row{display:flex;gap:10px;padding:8px;overflow-x:auto;}
 .sp-item{display:flex;flex-direction:column;align-items:center;gap:4px;flex:0 0 auto;}
 .sp-name{font-size:10px;color:var(--t1,#444);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .sp-canvas{position:relative;image-rendering:pixelated;background:#000;border:1px solid var(--s6,#cfcfcf);border-radius:4px;display:block;}
+
+/* Battle-context preview — the sprite where the game will actually draw it. */
+/* Top-right, not bottom-right: #sprite-preview is a wide strip centred along
+   the bottom edge, and two floating panels sharing that edge overlap and read
+   as one clipped panel. Capped and scrollable so a short window shows the
+   readout rather than losing it off an edge. */
+#battle-preview{position:fixed;right:16px;top:64px;z-index:9990;display:flex;flex-direction:column;background:var(--s3,#f3f3f3);color:var(--t1,#222);border:1px solid var(--s6,#cfcfcf);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.22);font-size:12px;max-width:92vw;max-height:calc(100vh - 96px);overflow:auto;}
+#battle-preview.bp-collapsed{display:none;}
+.bp-header{display:flex;align-items:center;gap:8px;padding:5px 8px;cursor:move;background:var(--s5,#fff);border-bottom:1px solid var(--s6,#cfcfcf);}
+.bp-header .bp-title{font-weight:600;}
+.bp-header .bp-side{margin-left:auto;}
+.bp-header .bp-side,.bp-header .bp-zoom,.bp-header .bp-env{border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;font-size:10px;padding:1px 3px;}
+.bp-header .bp-env{max-width:88px;}
+.bp-header .bp-env[hidden]{display:none;}
+.bp-header .bp-close{border:0;background:transparent;cursor:pointer;font-size:14px;}
+/* Line 1477 makes every canvas in the document `position:absolute`, because the
+   editing stack is layers piled at 0,0. A canvas in a panel is not that — it is
+   an ordinary picture in ordinary flow — and one that does not say so lifts out
+   of its panel, paints from the top-left corner over the title bar, and
+   contributes no height, so the panel collapses around it. That is what shrank
+   the frame thumbnails to specks and spilled the battle scene over the toolbar.
+   One rule for every panel, present and future, instead of remembering each
+   time. */
+#battle-preview canvas,#sprite-preview canvas,#frame-strip canvas,#fit-overlay canvas{position:relative;}
+/* No max-width: squashing an integer scale gives a fractional one, and this is
+   pixel art. The panel fits itself to the window by choosing a smaller zoom. */
+.bp-scene{display:block;image-rendering:pixelated;background:#000;}
+.bp-legend{display:flex;flex-wrap:wrap;gap:4px 10px;padding:5px 9px;font-size:10px;opacity:.75;}
+.bp-legend-item{display:inline-flex;align-items:center;gap:4px;}
+.bp-swatch{width:9px;height:9px;border-radius:2px;flex:0 0 auto;border:1px solid rgba(0,0,0,.25);}
+/* The foot markers are lines in the scene, so they read as lines here too. */
+.bp-swatch-foot{background:rgb(20,90,20);height:3px;border-radius:0;border:0;}
+.bp-swatch-miss{background:rgb(190,30,30);height:3px;border-radius:0;border:0;}
+.bp-swatch-health{background:#fff;}
+.bp-readout{padding:7px 9px;display:flex;flex-direction:column;gap:5px;border-top:1px solid var(--s6,#cfcfcf);}
+.bp-measured{font-variant-numeric:tabular-nums;}
+.bp-note,.bp-where{font-size:10px;opacity:.7;}
+.bp-ok{color:#1c7c2e;}
+.bp-problem{display:flex;align-items:center;gap:8px;}
+.bp-problem-text{flex:1;}
+.bp-problem.bp-wrong .bp-problem-text{color:#b32020;}
+.bp-problem.bp-loose .bp-problem-text{opacity:.7;font-size:10px;}
+.bp-fix{flex:0 0 auto;border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;padding:2px 7px;cursor:pointer;font-size:11px;}
+.bp-fix:hover:not(:disabled){background:var(--s4,#e8e8e8);}
+.bp-fix:disabled{opacity:.5;cursor:default;}
 .pp-swatches .mini-swatch.empty{background:transparent;pointer-events:none;cursor:default;box-shadow:none;border:1px solid transparent;}
 .pp-swatches .mini-swatch.empty:hover{box-shadow:none;border:1px solid transparent;}
 .pp-swatches .mini-swatch.empty::after{content:'';display:block;width:55%;height:55%;margin:22.5% auto;box-sizing:border-box;border:2px dashed var(--palette-mini-swatch-border,#888);border-radius:50%;opacity:.4;}
 .pp-color-input{position:fixed;left:-9999px;top:-9999px;}
+
+/* Conformance banner — sits directly above the status bar, full width. */
+#conformance-banner{position:fixed;left:0;right:0;bottom:24px;z-index:9995;display:flex;align-items:center;gap:8px;padding:5px 10px;font-size:12px;background:#7a1f1f;color:#fff;border-top:1px solid #a33;}
+#conformance-banner #cb-icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#fff;color:#7a1f1f;font-weight:700;font-size:11px;flex:0 0 auto;}
+#conformance-banner #cb-text{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#conformance-banner button{border:1px solid rgba(255,255,255,.5);background:rgba(255,255,255,.12);color:#fff;border-radius:4px;cursor:pointer;font-size:11px;padding:3px 9px;}
+#conformance-banner button:hover{background:rgba(255,255,255,.24);}
+#conformance-banner #cb-dismiss{padding:3px 7px;border-color:transparent;background:transparent;font-size:14px;line-height:1;}
+
+/* Fit to target — before/after with a checklist. */
+#fit-overlay{position:fixed;inset:0;z-index:10050;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);}
+#fit-box{background:var(--s3,#f3f3f3);color:var(--t1,#222);border:1px solid var(--s6,#cfcfcf);border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.35);padding:16px;max-width:min(760px,92vw);max-height:88vh;overflow:auto;font-size:12px;}
+#fit-box h3{margin:0 0 4px;font-size:14px;}
+#fit-box .fit-sub{opacity:.75;margin-bottom:12px;}
+.fit-diff{display:flex;gap:18px;align-items:flex-end;justify-content:center;padding:12px;background:#000;border-radius:6px;margin-bottom:12px;}
+.fit-diff figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:6px;}
+.fit-diff figcaption{font-size:10px;color:#ddd;}
+.fit-diff canvas{image-rendering:pixelated;outline:1px solid #444;}
+.fit-steps{list-style:none;margin:0 0 12px;padding:0;display:flex;flex-direction:column;gap:7px;}
+.fit-steps li{display:flex;gap:8px;align-items:flex-start;}
+.fit-steps input{margin-top:2px;}
+.fit-steps .fit-label{font-weight:600;}
+.fit-steps .fit-detail{display:block;font-weight:400;opacity:.75;font-size:11px;}
+.fit-steps .fit-warn{color:#b1341f;}
+.fit-actions{display:flex;gap:8px;justify-content:flex-end;}
+.fit-actions button{border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;cursor:pointer;font-size:12px;padding:5px 12px;}
+.fit-actions button.fit-primary{background:var(--acc,#2a73d9);border-color:var(--acc,#2a73d9);color:#fff;}
+
+/* Project audit report. */
+#audit-overlay{position:fixed;inset:0;z-index:10050;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);}
+#audit-box{background:var(--s3,#f3f3f3);color:var(--t1,#222);border:1px solid var(--s6,#cfcfcf);border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.35);padding:16px;width:min(720px,92vw);max-height:86vh;display:flex;flex-direction:column;font-size:12px;}
+#audit-box h3{margin:0 0 2px;font-size:14px;}
+#audit-box h4{margin:14px 0 6px;font-size:12px;}
+#audit-box .audit-sub{opacity:.75;margin-bottom:8px;font-variant-numeric:tabular-nums;}
+.audit-body{overflow:auto;flex:1;border-top:1px solid var(--s6,#cfcfcf);padding-top:8px;}
+.audit-clean{padding:18px 0;text-align:center;opacity:.75;}
+.audit-row{padding:6px 0;border-bottom:1px solid var(--s6,#e2e2e2);}
+.audit-path{font-weight:600;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;word-break:break-all;}
+.audit-path:hover{color:var(--acc,#2a73d9);}
+.audit-meta{font-size:10px;opacity:.65;margin-left:6px;font-variant-numeric:tabular-nums;}
+.audit-problem{font-size:11px;margin-top:2px;padding-left:10px;border-left:2px solid transparent;}
+.audit-problem.audit-build{color:#b1341f;border-left-color:#b1341f;}
+.audit-problem.audit-game{color:#8a6100;border-left-color:#d4a017;}
+.audit-actions{display:flex;justify-content:flex-end;padding-top:12px;}
+.audit-actions button{border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;cursor:pointer;font-size:12px;padding:5px 12px;}
+
+/* Frame strip — same chrome as the palette and preview panels. */
+#frame-strip{position:fixed;left:50%;transform:translateX(-50%);bottom:210px;max-width:92vw;z-index:9990;display:flex;flex-direction:column;background:var(--s3,#f3f3f3);color:var(--t1,#222);border:1px solid var(--s6,#cfcfcf);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.22);font-size:12px;overflow:hidden;}
+#frame-strip.fs-collapsed{display:none;}
+.fs-header{display:flex;align-items:center;gap:8px;padding:5px 8px;cursor:move;background:var(--s5,#fff);border-bottom:1px solid var(--s6,#cfcfcf);}
+.fs-header .fs-title{font-weight:600;}
+.fs-header .fs-close{margin-left:auto;border:0;background:transparent;cursor:pointer;font-size:14px;}
+.fs-controls{display:flex;align-items:center;gap:6px;padding:6px 8px 2px;flex-wrap:wrap;}
+.fs-btn{border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;cursor:pointer;font-size:11px;line-height:1;padding:4px 7px;}
+.fs-btn:hover{background:var(--s4,#e8e8e8);}
+.fs-btn.fs-on{background:var(--acc,#2a73d9);border-color:var(--acc,#2a73d9);color:#fff;}
+.fs-field{display:inline-flex;align-items:center;gap:4px;margin-left:6px;}
+.fs-label{font-size:10px;opacity:.75;}
+.fs-count{min-width:14px;text-align:center;font-variant-numeric:tabular-nums;}
+.fs-hold{width:46px;border:1px solid var(--s6,#cfcfcf);background:var(--s5,#fff);color:inherit;border-radius:4px;font-size:11px;padding:3px 4px;}
+.fs-readout{padding:0 8px 4px;font-size:10px;opacity:.7;font-variant-numeric:tabular-nums;}
+.fs-thumbs{display:flex;gap:6px;padding:4px 8px 8px;overflow-x:auto;}
+.fs-thumb{position:relative;flex:0 0 auto;cursor:pointer;border:1px solid var(--s6,#cfcfcf);border-radius:4px;padding:2px;background:#000;line-height:0;}
+.fs-thumb canvas{display:block;image-rendering:pixelated;}
+.fs-thumb .fs-thumb-n{position:absolute;left:2px;bottom:1px;font-size:9px;line-height:1;color:#fff;text-shadow:0 0 2px #000;pointer-events:none;}
+.fs-thumb.fs-active{border-color:var(--acc,#2a73d9);box-shadow:0 0 0 1px var(--acc,#2a73d9);}
+.fs-thumb.fs-playing{border-color:#3fbf5f;box-shadow:0 0 0 1px #3fbf5f;}

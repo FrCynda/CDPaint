@@ -430,13 +430,18 @@
 
     var _cursorCache = { size: -1, url: null };
     function _updateBrushCursor() {
+        // Building the cursor image also warms _cursorCache for when the
+        // paintbrush becomes active, so only the stage assignment below is
+        // gated — applying it while another tool is active would stomp that
+        // tool's own cursor (e.g. the pencil's, right after boot).
+        var isActiveTool = app.config && app.config.tool === 'paintbrush';
         var sz = _params.size;
         if (sz <= 2) {
-            if (app.ui && app.ui.stage) app.ui.stage.style.cursor = 'crosshair';
+            if (isActiveTool && app.ui && app.ui.stage) app.ui.stage.style.cursor = 'crosshair';
             return;
         }
         if (_cursorCache.size === sz && _cursorCache.url) {
-            if (app.ui && app.ui.stage) {
+            if (isActiveTool && app.ui && app.ui.stage) {
                 var cx2 = Math.ceil(_max(sz * 1.3, 20)) / 2;
                 app.ui.stage.style.cursor = 'url("' + _cursorCache.url + '") ' + Math.round(cx2) + ' ' + Math.round(cx2) + ', crosshair';
             }
@@ -464,7 +469,7 @@
         ctx.stroke();
         var url = c.toDataURL();
         _cursorCache = { size: sz, url: url };
-        if (app.ui && app.ui.stage) {
+        if (isActiveTool && app.ui && app.ui.stage) {
             app.ui.stage.style.cursor = 'url("' + url + '") ' + Math.round(cx) + ' ' + Math.round(cy) + ', crosshair';
         }
     }
@@ -1417,6 +1422,13 @@
     };
 
     engine.endStroke = function () {
+        // endStroke() doubles as a cleanup call — the paint engine invokes it
+        // whenever it needs to guarantee no stroke is in flight (closing a
+        // modal, switching document, snapshotting a tab). Only a stroke that
+        // was genuinely in progress may record an undo step; otherwise every
+        // such cleanup call appends a phantom history entry AND truncates the
+        // redo stack, because saveState() drops everything after the cursor.
+        var wasDrawing = _state.isDrawing;
         _state.isDrawing = false;
         _hideRopeSvg();
         _stopAirbrush();
@@ -1450,7 +1462,7 @@
         _flushPending(true);
         _state.strokePoints = [];
         _state.lastProcessedIdx = 0;
-        if (app.saveState && typeof app.saveState === 'function') {
+        if (wasDrawing && app.saveState && typeof app.saveState === 'function') {
             app.saveState();
         }
     };
@@ -1782,8 +1794,22 @@
     };
 
     engine.initUI = function () {
-        // Build the brush grid (replaces legacy pb-preset dropdown).
-        try { engine.buildBrushGrid(); } catch (eBuild_) {}
+        /* Build the brush grid the first time the sidebar is actually on
+         * screen. Building it eagerly fetched and decoded ~570kB of custom
+         * tip PNGs and ran a full-resolution luminance-to-alpha pass over
+         * each one during boot, for a panel that sits at left:-296px until
+         * the Paint Brush tool is picked. Intersection is an exact proxy for
+         * "the user can see this", and catches every way the panel opens
+         * without the grid having to know about any of them. */
+        var grid = document.getElementById("pb-brush-grid");
+        if (grid) {
+            var gridObserver = new IntersectionObserver(function (entries) {
+                if (!entries[0].isIntersecting) return;
+                gridObserver.disconnect();
+                try { engine.buildBrushGrid(); } catch (eBuild_) {}
+            });
+            gridObserver.observe(grid);
+        }
 
         // Wire the Advanced-section toggle (state persists in localStorage).
         var moreWrap = document.getElementById('pb-more-settings');

@@ -16,6 +16,7 @@
     var expandBtn = document.getElementById('project-expand');
     var hookBtn = document.getElementById('project-hook');
     var refreshBtn = document.getElementById('project-refresh');
+    var auditBtn = document.getElementById('project-audit');
     var unhookBtn = document.getElementById('project-unhook');
     var collapseBtn = document.getElementById('project-collapse');
     var closeBtn = document.getElementById('project-close');
@@ -23,6 +24,15 @@
     var MAX_SCAN_DEPTH = 12;
     var DENYLIST = ['.git', 'node_modules', 'target', '.vscode', '.idea', 'dist'];
     var currentRoot = null;
+    var lastTree = null;
+    var auditing = false;
+
+    /* What the project says about itself — see src/js/project-model.js and
+       src/js/sprite-coords.js. Null until a hooked folder turns out to be a
+       decomp; every reader below falls back to convention when it is, which is
+       what keeps the panel useful on a bare folder of PNGs. */
+    var model = null;
+    var nodeByRel = null;   // repo-relative path → the scanned node
 
     function getApp() { return window.PaintApp; }
 
@@ -56,6 +66,7 @@
         } catch (e) { /* ignore */ }
         if (refreshBtn) refreshBtn.disabled = !v;
         if (unhookBtn) unhookBtn.disabled = !v;
+        if (auditBtn) auditBtn.disabled = !v;
     }
 
     function setStatus(msg) { if (statusEl) statusEl.textContent = msg || ''; }
@@ -145,12 +156,17 @@
         return img;
     }
 
-    function palBadge(palNode, label) {
+    function palBadge(palNode, label, why) {
         var b = document.createElement('button');
         b.type = 'button';
         b.className = 'proj-pal-badge';
         b.textContent = label || 'PAL';
-        b.title = 'Load palette: ' + palNode.name;
+        // The reason the resolver offered this one. "Which palette is this?" has
+        // to be checkable rather than taken on trust — a wrong pairing is how
+        // the shiny sprite silently changes when you save the normal one.
+        b.title = why
+            ? 'Load ' + palNode.name + ' — ' + why
+            : 'Load palette: ' + palNode.name;
         b.addEventListener('click', function (ev) {
             ev.stopPropagation();
             loadPal(palNode);
@@ -178,7 +194,16 @@
         });
     }
 
-    function fileRow(pngNode, palNodes) {
+    /* `offers` is [{node, why}] — the resolver's answers, best first. The engine
+       wants the bare nodes, the badges want the reasons. `siblingNames` is the
+       rest of the folder, which is what tells a tile sheet apart from a
+       picture: `tiles.png` with a `map.bin` beside it is a screen and opens
+       assembled, the same file alone is just a jumble of 8×8 squares. */
+    function fileRow(pngNode, offers, siblingNames) {
+        var palNodes = (offers || []).map(function (o) { return o.node; });
+        var screen = window.TiledScreen && pngNode.path
+            ? window.TiledScreen.match(rel(pngNode.path), siblingNames)
+            : null;
         var row = document.createElement('div');
         row.className = 'proj-row proj-row-file';
 
@@ -192,10 +217,45 @@
         label.textContent = pngNode.name;
         row.appendChild(label);
 
-        if (palNodes && palNodes.length) {
+        if (screen) {
+            // Say so before it is clicked, because the thumbnail beside it is
+            // the tile sheet and looks nothing like what will open.
+            var tag = document.createElement('span');
+            tag.className = 'proj-screen-tag';
+            tag.textContent = 'screen';
+            tag.title = 'Opens assembled from ' + screen.mapPath.replace(/^.*\//, '') +
+                '; saving writes the tiles and the tilemap back';
+            row.appendChild(tag);
+
+            /* One sheet can serve several arrangements — the title screen's
+               regigigas is six frames of an animation over one tile sheet, and
+               a click would only ever have reached the first. Each gets a
+               button, because they are separate pictures, not one picture. */
+            if (screen.maps && screen.maps.length > 1) {
+                var mapWrap = document.createElement('span');
+                mapWrap.className = 'proj-pal-badges';
+                screen.maps.forEach(function (m) {
+                    var b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = 'proj-pal-badge proj-map-badge';
+                    b.textContent = labelForMap(m);
+                    b.title = 'Open this sheet arranged by ' + m.replace(/^.*\//, '');
+                    b.addEventListener('click', function (ev) {
+                        ev.stopPropagation();
+                        openScreen(pickMap(screen, m), pngNode, palNodes);
+                    });
+                    mapWrap.appendChild(b);
+                });
+                row.appendChild(mapWrap);
+            }
+        }
+
+        if (offers && offers.length) {
             var badgeWrap = document.createElement('span');
             badgeWrap.className = 'proj-pal-badges';
-            palNodes.forEach(function (pn) { badgeWrap.appendChild(palBadge(pn, labelForPal(pn))); });
+            offers.forEach(function (o) {
+                badgeWrap.appendChild(palBadge(o.node, labelForPal(o.node), o.why));
+            });
             row.appendChild(badgeWrap);
         }
 
@@ -205,17 +265,47 @@
                 showToast('Image viewer is not ready', 'warning');
                 return;
             }
+            if (screen) { openScreen(screen, pngNode, palNodes); return; }
             if (pngNode.handle) app.openProjectImageFromHandle(pngNode, palNodes);
             else app.openProjectImage(pngNode.path, palNodes);
         });
         return row;
     }
 
+    // The same descriptor arranged by a different one of its tilemaps.
+    function pickMap(screen, mapPath) {
+        var out = {};
+        for (var k in screen) if (Object.prototype.hasOwnProperty.call(screen, k)) out[k] = screen[k];
+        out.mapPath = mapPath;
+        return out;
+    }
+
+    function labelForMap(mapPath) {
+        var n = mapPath.replace(/^.*\//, '').replace(/\.bin$/i, '').replace(/_?(tile)?map$/i, '');
+        if (!n) n = 'map';
+        return n.length > 8 ? n.slice(0, 7) + '…' : n;
+    }
+
+    function openScreen(screen, pngNode, palNodes) {
+        var app = getApp();
+        window.TiledScreen.open(screen, pngNode).catch(function (e) {
+            // A screen that will not assemble still has a tile sheet worth
+            // opening, so fall back rather than leaving a dead row.
+            showToast('Could not assemble that screen: ' +
+                (e && e.message ? e.message : e), 'warning');
+            if (pngNode.handle) app.openProjectImageFromHandle(pngNode, palNodes);
+            else app.openProjectImage(pngNode.path, palNodes);
+        });
+    }
+
+    /* Now that the resolver offers several palettes for one asset — sixteen for
+       a tileset, six for an icon — the badge has to say which is which. The
+       stem does that; 'PAL' on all of them would not. */
     function labelForPal(palNode) {
-        var n = palNode.name.toLowerCase();
-        if (n === 'normal.pal') return 'N';
-        if (n === 'shiny.pal') return 'S';
-        return 'PAL';
+        var n = palNode.name.toLowerCase().replace(/\.pal$/, '');
+        if (n === 'normal') return 'N';
+        if (n === 'shiny') return 'S';
+        return n.length > 8 ? n.slice(0, 7) + '…' : n;
     }
 
     function palOnlyRow(palNode) {
@@ -266,12 +356,42 @@
         return wrap;
     }
 
+    /* Which palettes this PNG is actually drawn with.
+       The project's own declarations when we have them — that is the whole
+       point of the asset model, and the four real rules it encodes are the ones
+       "same folder, same name" got wrong (F4). Sibling matching stays as the
+       fallback for a folder that is not a decomp. */
+    function palettesForNode(pngNode, siblingPals, sharedPals) {
+        var rel = relOf(pngNode);
+        if (model && rel && window.ProjectModel) {
+            var found = window.ProjectModel.palettesFor(rel, {
+                index: model.index,
+                exists: function (p) { return nodeByRel.has(p); }
+            }).map(function (c) {
+                var n = nodeByRel.get(c.path);
+                // Paired with the reason rather than stamped onto the node: one
+                // palette is offered to many pictures, for a different reason
+                // each time, and the node is shared between all of them.
+                return n ? { node: n, why: c.why } : null;
+            }).filter(Boolean);
+            if (found.length) return found;
+        }
+        var base = pngNode.name.slice(0, -4).toLowerCase();
+        return siblingPals.filter(function (pn) {
+            return pn.name.slice(0, -4).toLowerCase() === base;
+        }).concat(sharedPals).map(function (pn) { return { node: pn, why: null }; });
+    }
+
     function renderChildren(node, container) {
         var pngByBase = {};
         var pals = [];
         var shared = [];
+        // Every filename in the folder, tilemaps included. Nothing draws a row
+        // for a .bin, but a tiles.png is only a screen because one is there.
+        var siblingNames = [];
         (node.children || []).forEach(function (c) {
             if (c.kind !== 'file') return;
+            siblingNames.push(c.name);
             var lower = (c.name || '').toLowerCase();
             if (lower.endsWith('.png')) {
                 var base = c.name.slice(0, -4);
@@ -285,12 +405,7 @@
         // PNG rows with associated palette badges.
         Object.keys(pngByBase).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); }).forEach(function (base) {
             var png = pngByBase[base];
-            var assoc = [];
-            pals.forEach(function (pn) {
-                if (pn.name.slice(0, -4).toLowerCase() === base.toLowerCase()) assoc.push(pn);
-            });
-            shared.forEach(function (pn) { assoc.push(pn); });
-            container.appendChild(fileRow(png, assoc));
+            container.appendChild(fileRow(png, palettesForNode(png, pals, shared), siblingNames));
         });
 
         // Standalone pal files (no matching png, not normal/shiny).
@@ -373,7 +488,131 @@
         panel.insertBefore(search, treeEl);
     }
 
+    /* ── The project model ──────────────────────────────────────────────────
+       Reading `graphics/` tells you a file's name and its pixels. Everything
+       else worth knowing — the depth the slot is built at, which palette binds
+       to it, where the sprite sits in its frame — is declared in the project's
+       C, two directories up. This loads that once per hook. */
+
+    function normSlashes(p) { return String(p || '').replace(/\\/g, '/'); }
+
+    /* A scanned node's path as the declarations spell it: relative to the repo
+       root, forward slashes. Desktop nodes carry an absolute path; browser
+       nodes are already relative to whatever was hooked. */
+    function relOf(node) {
+        var p = normSlashes(node && node.path);
+        if (!p) return '';
+        if (model && model.root) {
+            var root = normSlashes(model.root).replace(/\/$/, '');
+            if (p.toLowerCase().indexOf(root.toLowerCase() + '/') === 0) return p.slice(root.length + 1);
+        }
+        return p;
+    }
+
+    /* What the declarations call the asset the engine currently has open. The
+       engine holds an absolute path on desktop and an already-relative one from
+       a directory handle; both arrive here and leave repo-relative. */
+    function rel(path) {
+        return relOf({ path: path });
+    }
+
+    function indexNodes(tree) {
+        var map = new Map();
+        (function walk(n) {
+            (n && n.children || []).forEach(function (c) {
+                if (c.kind === 'dir') walk(c);
+                else map.set(relOf(c), c);
+            });
+        })(tree);
+        return map;
+    }
+
+    function buildModel(root, files, skipped) {
+        var PM = window.ProjectModel, SC = window.SpriteCoords;
+        if (!PM || !files || !files.length) return null;
+        var index = PM.buildIndex(files);
+        var coords = SC ? SC.parseSpeciesCoords(files) : [];
+        return {
+            root: root,
+            index: index,
+            coords: coords,
+            coordsByPath: SC ? SC.coordsIndex(coords, index) : new Map(),
+            sourceText: files.reduce(function (m, f) { m.set(f.path, f.text); return m; }, new Map()),
+            skipped: skipped || 0
+        };
+    }
+
+    /* Browser mode can only see what was hooked, so the model exists there only
+       when the repo root itself was picked. That is a real limitation and not
+       worth papering over: with no index every resolver falls back to
+       convention, which is what the panel did before there was one. */
+    /* Keep in step with SOURCE_MARKERS in src-tauri/src/lib.rs. The last two are
+       the battle environment table, which declares no files of its own and so
+       matches none of the others. They match the entry *constant* rather than
+       the table's name because the table has been called three different things
+       and a fork may call it a fourth; the constant is what the game's own
+       headers define. */
+    var SOURCE_MARKERS = /INCBIN_U|INCGFX_U|SpriteFrameImage|ObjectEventGraphicsInfo|OBJ_EVENT_PAL_TAG_|PicYOffset|y_offset|#define P_|BATTLE_ENVIRONMENT_|BATTLE_TERRAIN_/;
+
+    async function readSourcesFsa(handle, rel, depth, out) {
+        if (depth > MAX_SCAN_DEPTH || typeof handle.entries !== 'function') return out;
+        for await (var pair of handle.entries()) {
+            var name = pair[0], h = pair[1];
+            var childRel = rel ? rel + '/' + name : name;
+            if (h.kind === 'file') {
+                if (!/\.(c|h|inc)$/i.test(name)) continue;
+                var text = await (await h.getFile()).text();
+                if (SOURCE_MARKERS.test(text)) out.push({ path: childRel, text: text });
+            } else if (DENYLIST.indexOf(name) < 0 && name !== 'build') {
+                await readSourcesFsa(h, childRel, depth + 1, out);
+            }
+        }
+        return out;
+    }
+
+    function loadModel(root) {
+        model = null;
+        setStatus('Reading the project…');
+        var got;
+        if (isTauriEnv()) {
+            got = tauriInvoke('read_project_sources', { path: root })
+                .then(function (r) { return buildModel(r.root, r.files, r.skipped); });
+        } else if (currentRoot && currentRoot.kind === 'fsa') {
+            got = (async function () {
+                var files = [];
+                for (var sub of ['src', 'include', 'data']) {
+                    var dir = null;
+                    try { dir = await currentRoot.handle.getDirectoryHandle(sub); } catch (e) { continue; }
+                    await readSourcesFsa(dir, sub, 0, files);
+                }
+                // Paths are already root-relative when the repo root was hooked.
+                return buildModel('', files, 0);
+            })();
+        } else {
+            return Promise.resolve(null);
+        }
+        return got.then(function (m) {
+            model = m;
+            return m;
+        }).catch(function () {
+            // Not a decomp, or unreadable. Conventions still work.
+            model = null;
+            return null;
+        });
+    }
+
+    function modelSummary() {
+        if (!model) return '';
+        var s = model.index.stats;
+        return '  ·  ' + s.depths + ' depths, ' + s.pairs + ' pairings, ' +
+            model.coords.length + ' coordinates';
+    }
+
     function renderTree(root) {
+        // Keep the scanned tree: the audit walks it rather than hitting the disk
+        // again, and the DOM is a filtered view of it, not the tree itself.
+        lastTree = root;
+        nodeByRel = indexNodes(root);
         treeEl.textContent = '';
         if (!root || !root.children || !root.children.length) {
             var empty = document.createElement('div');
@@ -390,11 +629,15 @@
         setStatus('Scanning...');
         setLoading(true);
         return tauriInvoke('scan_project', { path: root }).then(function (tree) {
-            renderTree(tree);
-            var count = countAssets(tree);
-            setStatus(root + '  (' + count + ' assets)');
-            setRoot(root);
-            setLoading(false);
+            // The model first: the palette a row offers comes out of it, so
+            // rendering before it lands would show the fallback and then flip.
+            return loadModel(root).then(function () {
+                renderTree(tree);
+                var count = countAssets(tree);
+                setStatus(root + '  (' + count + ' assets)' + modelSummary());
+                setRoot(root);
+                setLoading(false);
+            });
         }).catch(function (e) {
             setStatus('Scan failed: ' + (e && e.message ? e.message : e));
             showToast('Project scan failed: ' + (e && e.message ? e.message : e), 'error');
@@ -404,7 +647,10 @@
 
     function isAssetName(name) {
         var lower = (name || '').toLowerCase();
-        return lower.endsWith('.png') || lower.endsWith('.pal');
+        // `.bin` draws no row of its own. It is here because a tiles.png is only
+        // a screen if its tilemap is sitting beside it, and the scan is the only
+        // place that can see that. Keep in step with scan_dir in lib.rs.
+        return lower.endsWith('.png') || lower.endsWith('.pal') || lower.endsWith('.bin');
     }
 
     async function scanFsa(handle, relPath, depth) {
@@ -483,11 +729,13 @@
         return promise.then(function (tree) {
             tree.name = root.name;
             tree.path = root.name;
-            renderTree(tree);
-            var count = countAssets(tree);
-            setStatus(root.name + '  (' + count + ' assets)');
-            setRoot(root.name);
-            setLoading(false);
+            return loadModel(root.name).then(function () {
+                renderTree(tree);
+                var count = countAssets(tree);
+                setStatus(root.name + '  (' + count + ' assets)' + modelSummary());
+                setRoot(root.name);
+                setLoading(false);
+            });
         }).catch(function (e) {
             setStatus('Scan failed: ' + (e && e.message ? e.message : e));
             showToast('Project scan failed: ' + (e && e.message ? e.message : e), 'error');
@@ -545,23 +793,24 @@
         return n;
     }
 
+    /* Same .open / edge-tab pattern as the freehand, paintbrush and gradient
+     * sidebars (see "LEFT FLYOUT SIDEBARS" in styles.css) — collapse leaves
+     * the #project-expand edge tab up for a quick reopen, close (and the
+     * ribbon icon, see PokeProject.toggle below) drops it so there is no
+     * leftover affordance once you've dismissed the panel outright. */
     function openPanel() {
-        panel.classList.remove('project-collapsed', 'project-closed');
-        document.body.classList.add('project-panel-open');
-        document.body.classList.remove('project-panel-collapsed', 'project-panel-closed');
+        panel.classList.add('open');
+        if (expandBtn) expandBtn.classList.remove('show');
         notifyViewportShift();
     }
     function collapsePanel() {
-        panel.classList.add('project-collapsed');
-        panel.classList.remove('project-closed');
-        document.body.classList.remove('project-panel-open', 'project-panel-closed');
-        document.body.classList.add('project-panel-collapsed');
+        panel.classList.remove('open');
+        if (expandBtn) expandBtn.classList.add('show');
         notifyViewportShift();
     }
     function closePanel() {
-        panel.classList.add('project-collapsed', 'project-closed');
-        document.body.classList.remove('project-panel-open', 'project-panel-collapsed');
-        document.body.classList.add('project-panel-closed');
+        panel.classList.remove('open');
+        if (expandBtn) expandBtn.classList.remove('show');
         notifyViewportShift();
     }
     function notifyViewportShift() {
@@ -613,13 +862,149 @@
 
     function unhook() {
         setRoot('');
+        currentRoot = null;
+        lastTree = null;
+        nodeByRel = null;
+        model = null;
         treeEl.textContent = '';
         setStatus('');
         setLoading(false);
         closePanel();
     }
 
+    /* ── Audit ──────────────────────────────────────────────────────────────
+       Every PNG in the hooked folder, checked against what gbagfx would accept
+       and what the game expects, without running either. */
+
+    function collectPngs(node, out) {
+        (node && node.children || []).forEach(function (c) {
+            if (c.kind === 'dir') collectPngs(c, out);
+            else if ((c.name || '').toLowerCase().endsWith('.png')) out.push(c);
+        });
+        return out;
+    }
+
+    function readNodeBytes(node) {
+        if (node.handle) {
+            var file = node.handle instanceof File
+                ? Promise.resolve(node.handle)
+                : Promise.resolve(node.handle.getFile());
+            return file.then(function (f) { return f.arrayBuffer(); })
+                .then(function (b) { return new Uint8Array(b); });
+        }
+        return tauriInvoke('read_image_file', { path: node.path || '' })
+            .then(function (data) { return data instanceof Uint8Array ? data : new Uint8Array(data); });
+    }
+
+    function auditRow(result) {
+        var row = document.createElement('div');
+        row.className = 'audit-row';
+        var head = document.createElement('div');
+        head.className = 'audit-path';
+        head.textContent = result.path || result.name;
+        head.title = 'Open this asset';
+        head.onclick = function () { openAssetByPath(result); };
+        row.appendChild(head);
+        var info = result.info;
+        if (info) {
+            var meta = document.createElement('span');
+            meta.className = 'audit-meta';
+            meta.textContent = info.w + '×' + info.h + ' · ' + info.depth + 'bpp · ' + info.colors + ' colours';
+            row.appendChild(meta);
+        }
+        result.problems.forEach(function (p) {
+            var li = document.createElement('div');
+            li.className = 'audit-problem audit-' + p.kind;
+            li.textContent = (p.kind === 'build' ? 'won’t build — ' : 'wrong in game — ') + p.text;
+            row.appendChild(li);
+        });
+        return row;
+    }
+
+    function openAssetByPath(result) {
+        var app = window.PaintApp;
+        if (!app || !lastTree) return;
+        var found = collectPngs(lastTree, []).find(function (n) {
+            return (n.path || n.name) === result.path;
+        });
+        if (!found) return;
+        if (found.handle) app.openProjectImageFromHandle(found, []);
+        else app.openProjectImage(found.path, []);
+    }
+
+    function showAuditReport(report) {
+        var overlay = document.createElement('div');
+        overlay.id = 'audit-overlay';
+        var box = document.createElement('div');
+        box.id = 'audit-box';
+        overlay.appendChild(box);
+
+        var h = document.createElement('h3');
+        h.textContent = 'Project audit';
+        box.appendChild(h);
+        var sub = document.createElement('div');
+        sub.className = 'audit-sub';
+        sub.textContent = report.total + ' assets · ' + report.clean + ' clean · ' +
+            report.wontBuild.length + ' won’t build · ' + report.wrongInGame.length + ' wrong in game';
+        box.appendChild(sub);
+
+        var body = document.createElement('div');
+        body.className = 'audit-body';
+        if (!report.wontBuild.length && !report.wrongInGame.length) {
+            var ok = document.createElement('div');
+            ok.className = 'audit-clean';
+            ok.textContent = 'Nothing to fix — every asset would build and land correctly.';
+            body.appendChild(ok);
+        }
+        [['Won’t build', report.wontBuild], ['Wrong in game', report.wrongInGame]]
+            .forEach(function (pair) {
+                if (!pair[1].length) return;
+                var group = document.createElement('h4');
+                group.textContent = pair[0] + ' (' + pair[1].length + ')';
+                body.appendChild(group);
+                pair[1].forEach(function (r) { body.appendChild(auditRow(r)); });
+            });
+        box.appendChild(body);
+
+        var actions = document.createElement('div');
+        actions.className = 'audit-actions';
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = 'Close';
+        var dismiss = function () { overlay.remove(); document.removeEventListener('keydown', onKey); };
+        var onKey = function (e) { if (e.key === 'Escape') dismiss(); };
+        close.onclick = dismiss;
+        actions.appendChild(close);
+        box.appendChild(actions);
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+    }
+
+    function audit() {
+        var app = window.PaintApp;
+        if (auditing || !app || !app.auditProjectAssets) return;
+        var pngs = collectPngs(lastTree, []);
+        if (!pngs.length) { showToast('Nothing to audit — hook a folder first', 'warning'); return; }
+        auditing = true;
+        if (auditBtn) auditBtn.disabled = true;
+        setStatus('Auditing 0/' + pngs.length + '...');
+        app.auditProjectAssets(pngs, readNodeBytes, function (done, total) {
+            setStatus('Auditing ' + done + '/' + total + '...');
+        }).then(function (report) {
+            setStatus(getRoot() + '  (' + report.total + ' assets, ' +
+                (report.wontBuild.length + report.wrongInGame.length) + ' to fix)');
+            showAuditReport(report);
+        }).catch(function (e) {
+            showToast('Audit failed: ' + (e && e.message ? e.message : e), 'error');
+            setStatus('Audit failed');
+        }).then(function () {
+            auditing = false;
+            if (auditBtn) auditBtn.disabled = !getRoot();
+        });
+    }
+
     if (hookBtn) hookBtn.addEventListener('click', hook);
+    if (auditBtn) auditBtn.addEventListener('click', audit);
     if (refreshBtn) refreshBtn.addEventListener('click', refresh);
     if (unhookBtn) unhookBtn.addEventListener('click', unhook);
     if (collapseBtn) collapseBtn.addEventListener('click', collapsePanel);
@@ -627,11 +1012,116 @@
     if (expandBtn) expandBtn.addEventListener('click', openPanel);
     setupSearch();
 
+    /* ── Writing a coordinate back ──────────────────────────────────────────
+       The one place CDPaint edits C. It replaces a single value in place: the
+       byte range the parse recorded, the text expected to be there, and the
+       correction. The Rust side refuses if the file has moved on since it was
+       read, so a stale offset cannot eat somebody's species data. */
+    function writeCoord(record, field, value) {
+        var SC = window.SpriteCoords;
+        if (!model || !SC) return Promise.reject(new Error('No project model loaded'));
+        if (!isTauriEnv()) {
+            return Promise.reject(new Error(
+                'Browser mode has read-only access to the folder — open the project in the desktop app to write coordinates'));
+        }
+        var at = field === 'size' ? record.sizeAt : record.yAt;
+        var text = model.sourceText.get(record.file);
+        if (!at || typeof text !== 'string') return Promise.reject(new Error('Nothing to patch'));
+        var raw = text.slice(at.start, at.end);
+        // Keep the branch's own spacing: `A ? x : y` must not become `A ? x :y`.
+        var lead = /^\s*/.exec(raw)[0], tail = /\s*$/.exec(raw)[0];
+        var replacement = lead + value + tail;
+        var abs = model.root ? model.root.replace(/[\\/]$/, '') + '/' + record.file : record.file;
+        return tauriInvoke('patch_source_file', {
+            path: abs, offset: at.start, expect: raw, replacement: replacement
+        }).then(function () {
+            // Re-read our own copy so the offsets stay true for the next edit.
+            var next = text.slice(0, at.start) + replacement + text.slice(at.end);
+            model.sourceText.set(record.file, next);
+            model.coords = model.coords.filter(function (r) { return r.file !== record.file; })
+                .concat(SC.parseSpeciesCoords([{ path: record.file, text: next }]));
+            model.coordsByPath = SC.coordsIndex(model.coords, model.index);
+            return true;
+        });
+    }
+
+    /* Any file in the project by its repo-relative path, as bytes.
+       The tree only ever scanned .png and .pal, so a tilemap has no node and no
+       handle to read through — this walks to it instead. Desktop hands the path
+       to Rust; browser walks the directory handle a segment at a time. */
+    function readBytes(relPath) {
+        var parts = String(relPath || '').split('/').filter(Boolean);
+        if (!parts.length) return Promise.reject(new Error('no path'));
+        if (isTauriEnv()) {
+            if (!model || !model.root) return Promise.reject(new Error('no project root'));
+            return readNodeBytes({ path: model.root.replace(/[\\/]$/, '') + '/' + parts.join('/') });
+        }
+        if (!currentRoot || currentRoot.kind !== 'fsa') return Promise.reject(new Error('no project'));
+        return (async function () {
+            var dir = currentRoot.handle;
+            for (var i = 0; i < parts.length - 1; i++) dir = await dir.getDirectoryHandle(parts[i]);
+            var fh = await dir.getFileHandle(parts[parts.length - 1]);
+            return new Uint8Array(await (await fh.getFile()).arrayBuffer());
+        })();
+    }
+
+    /* The same walk, writing. The folder is hooked read-only because reading is
+       all the panel ever did; the first write asks to upgrade it, which is one
+       browser prompt the artist answers once per session. */
+    function writeBytes(relPath, bytes) {
+        var parts = String(relPath || '').split('/').filter(Boolean);
+        if (!parts.length) return Promise.reject(new Error('no path'));
+        if (isTauriEnv()) {
+            if (!model || !model.root) return Promise.reject(new Error('no project root'));
+            return window.PaintApp.tauriWriteAllowedFile(
+                model.root.replace(/[\\/]$/, '') + '/' + parts.join('/'), bytes);
+        }
+        if (!currentRoot || currentRoot.kind !== 'fsa') {
+            return Promise.reject(new Error('This project was opened from a file list, which cannot be written back to. Re-hook the folder.'));
+        }
+        return (async function () {
+            var root = currentRoot.handle;
+            if (root.requestPermission) {
+                var perm = await root.requestPermission({ mode: 'readwrite' });
+                if (perm !== 'granted') throw new Error('Permission to write to the project folder was declined');
+            }
+            var dir = root;
+            for (var i = 0; i < parts.length - 1; i++) dir = await dir.getDirectoryHandle(parts[i]);
+            var fh = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+            var w = await fh.createWritable();
+            await w.write(bytes);
+            await w.close();
+        })();
+    }
+
+    /* The battle environments the project declares, each resolved to its three
+       files. Empty until a decomp is hooked, which is the caller's cue to draw
+       its own approximation instead. */
+    function environments() {
+        if (!model || !window.BattleScene) return [];
+        var text = [];
+        model.sourceText.forEach(function (t) { text.push(t); });
+        return window.BattleScene.resolveEnvironments(
+            window.BattleScene.parseEnvironments(text.join('\n')), model.index);
+    }
+
     window.PokeProject = {
         open: openPanel,
         close: closePanel,
+        audit: audit,
+        assets: function () { return collectPngs(lastTree, []); },
+        model: function () { return model; },
+        rel: rel,
+        readBytes: readBytes,
+        writeBytes: writeBytes,
+        environments: environments,
+        coordsFor: function (path) {
+            if (!model) return [];
+            return model.coordsByPath.get(rel(path)) || [];
+        },
+        writeCoord: writeCoord,
         toggle: function () {
-            if (document.body.classList.contains('project-panel-open')) collapsePanel();
+            if (panel.classList.contains('open')) closePanel();
             else openPanel();
         }
     };

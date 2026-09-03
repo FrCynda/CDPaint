@@ -9,7 +9,10 @@
     "tauri:build": "cd src-tauri && cargo tauri build",
     "dev": "node scripts/dev.cjs",
     "build": "node scripts/build.cjs",
-    "test": "node scripts/smoke-test.mjs",
+    "test": "node test/run-all.mjs",
+    "test:engine": "node test/run-all.mjs engine",
+    "test:browser": "node test/run-all.mjs browser",
+    "test:syntax": "node scripts/smoke-test.mjs",
     "test:wand": "node test/wand-algorithms.test.mjs"
   },
   "private": true,
