@@ -2275,6 +2275,16 @@
                     }
                 }
             });
+            /* Take over from the boot-time paste catcher in index.html's <head>.
+               Detaching it here, in the same statement run that installs the
+               real handler, is what keeps a later paste from being both handled
+               now and replayed again at the end of init(). Whatever it caught
+               before this point is drained there — the engine is only part
+               built at this line and cannot paste yet. */
+            if (window.__earlyPaste) {
+                window.removeEventListener('paste', window.__earlyPaste);
+                window.__earlyPaste = null;
+            }
             window.addEventListener('keydown', e => {
                 this.updateKeyState(e, true);
                 if (e.key === 'F5') {
@@ -3091,7 +3101,19 @@
             requestAnimationFrame(() => requestAnimationFrame(() => {
                 this._startupSettled = true;
                 this.updateBounds();
+                this.drainPendingPaste();
             }));
+        }
+
+        /* Replay a paste that arrived while the engine was still starting up,
+           captured by the catcher in index.html's <head>. Called once startup
+           has settled, because handleFile() paints into a document that only
+           exists by the end of init(). */
+        drainPendingPaste() {
+            const file = window.__pendingPaste;
+            if (!file) return;
+            window.__pendingPaste = null;
+            this.handleFile(file, true);
         }
 
         deferHeavyInit() {
