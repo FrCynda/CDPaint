@@ -793,23 +793,24 @@
         return n;
     }
 
+    /* Same .open / edge-tab pattern as the freehand, paintbrush and gradient
+     * sidebars (see "LEFT FLYOUT SIDEBARS" in styles.css) — collapse leaves
+     * the #project-expand edge tab up for a quick reopen, close (and the
+     * ribbon icon, see PokeProject.toggle below) drops it so there is no
+     * leftover affordance once you've dismissed the panel outright. */
     function openPanel() {
-        panel.classList.remove('project-collapsed', 'project-closed');
-        document.body.classList.add('project-panel-open');
-        document.body.classList.remove('project-panel-collapsed', 'project-panel-closed');
+        panel.classList.add('open');
+        if (expandBtn) expandBtn.classList.remove('show');
         notifyViewportShift();
     }
     function collapsePanel() {
-        panel.classList.add('project-collapsed');
-        panel.classList.remove('project-closed');
-        document.body.classList.remove('project-panel-open', 'project-panel-closed');
-        document.body.classList.add('project-panel-collapsed');
+        panel.classList.remove('open');
+        if (expandBtn) expandBtn.classList.add('show');
         notifyViewportShift();
     }
     function closePanel() {
-        panel.classList.add('project-collapsed', 'project-closed');
-        document.body.classList.remove('project-panel-open', 'project-panel-collapsed');
-        document.body.classList.add('project-panel-closed');
+        panel.classList.remove('open');
+        if (expandBtn) expandBtn.classList.remove('show');
         notifyViewportShift();
     }
     function notifyViewportShift() {
@@ -1120,7 +1121,7 @@
         },
         writeCoord: writeCoord,
         toggle: function () {
-            if (document.body.classList.contains('project-panel-open')) collapsePanel();
+            if (panel.classList.contains('open')) closePanel();
             else openPanel();
         }
     };

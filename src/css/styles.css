@@ -1119,7 +1119,7 @@
             pointer-events: auto;
         }
         #freehand-sidebar *, #paintbrush-sidebar *, #gradient-sidebar *, #project-panel * { pointer-events: auto; }
-        #freehand-sidebar.open, #paintbrush-sidebar.open, #gradient-sidebar.open { left: 0; }
+        #freehand-sidebar.open, #paintbrush-sidebar.open, #gradient-sidebar.open, #project-panel.open { left: 0; }
 
         #freehand-sidebar-header, #paintbrush-sidebar-header, #gradient-sidebar-header, #project-header {
             display: flex; align-items: center; justify-content: space-between;
@@ -1209,7 +1209,7 @@
             transition: color .12s ease;
         }
         #freehand-reopen-btn:hover, #pb-reopen-btn:hover, #gradient-reopen-btn:hover, #project-expand:hover { color: var(--win-blue); }
-        #freehand-reopen-btn.show, #pb-reopen-btn.show, #gradient-reopen-btn.show { display: flex; }
+        #freehand-reopen-btn.show, #pb-reopen-btn.show, #gradient-reopen-btn.show, #project-expand.show { display: flex; }
         /* An edge tab and an open flyout both want the left edge — one panel can
            be open while a different one is collapsed. Tuck the tab against the
            open panel's outer edge (280px + its 1px border) instead of letting it
@@ -5883,9 +5883,6 @@ body.violet-haze-mode #swap-colors-btn:hover{background:var(--vh-s5) !important;
    left-flyout rules up top (see "LEFT FLYOUT SIDEBARS") so this panel matches
    the freehand/paintbrush/gradient sidebars. Only its own bits live here. */
 #project-panel{color:var(--app-text-color);font-size:12px;overflow:hidden;}
-#project-panel:not(.project-collapsed){left:0;}
-#project-panel.project-closed{display:none;}
-body.project-panel-collapsed #project-expand{display:flex;}
 #project-actions{display:flex;gap:2px;align-items:center;}
 .proj-actionbar{display:flex;gap:4px;padding:4px 6px;border-bottom:1px solid color-mix(in srgb,var(--section-divider,#e0e0e0) 80%, transparent);flex-shrink:0;}
 .proj-actionbar button{font-size:10px;padding:2px 6px;border:1px solid var(--btn-small-border);background:var(--btn-small-bg);color:var(--app-text-color);border-radius:3px;cursor:pointer;line-height:1.4;transition:background .12s ease,border-color .12s ease;}
