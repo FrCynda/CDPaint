@@ -9349,7 +9349,7 @@ self.onmessage = (e) => {
                 const item = this.getToolManifestItem(id);
                 if (!item) return;
                 if (id === 'pokeproject') {
-                    if (document.body.classList.contains('project-panel-open')) b.classList.add('active');
+                    if (document.getElementById('project-panel')?.classList.contains('open')) b.classList.add('active');
                     return;
                 }
                 if (item.toolId === t) {
@@ -17894,7 +17894,7 @@ void main() {
                 document.getElementById('freehand-sidebar')?.classList.contains('open') ||
                 document.getElementById('paintbrush-sidebar')?.classList.contains('open') ||
                 document.getElementById('gradient-sidebar')?.classList.contains('open') ||
-                (document.getElementById('project-panel') && !document.getElementById('project-panel').classList.contains('project-collapsed'));
+                document.getElementById('project-panel')?.classList.contains('open');
             const shift = this.config.anchorCanvas && anyOpen ? 290 : 0;
             // Lets the collapsed panels' edge tabs step aside for whichever
             // panel is open — see .left-flyout-open in the stylesheet.
