@@ -1,8 +1,13 @@
 /*
  * Sprite Preview panel for pokeemerald project images.
- * Renders the current sprite once per palette, side by side, at native 1:1
- * pixel size, with a draggable header and a close button. Auto-shows whenever
- * palettes exist and live-refreshes on canvas edits and palette changes.
+ *
+ * The sprite at a true pixel scale, once per palette, side by side — so the thing
+ * you are painting at 800% can be checked at the size it will actually be, and
+ * against every palette it will actually be seen under, without leaving the canvas.
+ *
+ * "True" means integer: one artwork pixel is N screen pixels and never a fraction
+ * of one. It follows the active frame of a multi-frame sheet, and the playing frame
+ * while the frame strip is playing, and it repaints on every committed edit.
  */
 (function () {
     'use strict';
@@ -11,6 +16,10 @@
 
     var panel = null;
     var rowEl = null;
+    var zoomEl = null;
+    var zoom = 1;
+    var raf = null;
+    var playingFrame = null;
 
     function el(tag, cls, text) {
         var n = document.createElement(tag);
@@ -49,6 +58,19 @@
         panel.className = 'sp-collapsed';
         var header = el('div', 'sp-header');
         header.appendChild(el('span', 'sp-title', 'Sprite Preview'));
+        // 1× is the size it will be in the game. The rest are for eyes, not for
+        // judgement — hence 1× being the default and the label saying so.
+        zoomEl = el('select', 'sp-zoom');
+        [1, 2, 3, 4].forEach(function (z) {
+            var opt = document.createElement('option');
+            opt.value = String(z);
+            opt.textContent = z + '×' + (z === 1 ? ' (game size)' : '');
+            zoomEl.appendChild(opt);
+        });
+        zoomEl.value = '1';
+        zoomEl.title = 'Pixel scale — 1× is the size it will be in game';
+        zoomEl.onchange = function () { zoom = parseInt(zoomEl.value, 10) || 1; render(); };
+        header.appendChild(zoomEl);
         var closeBtn = el('button', 'sp-close', '×');
         closeBtn.type = 'button';
         closeBtn.title = 'Hide sprite preview';
@@ -69,28 +91,64 @@
         var palettes = (app && app.state && app.state.palettes) || [];
         if (!palettes.length) {
             panel.classList.add('sp-collapsed');
+            rowEl.innerHTML = '';
+            rowEl._ids = null;
             return;
         }
         panel.classList.remove('sp-collapsed');
-        rowEl.innerHTML = '';
-        palettes.forEach(function (p) {
-            var item = el('div', 'sp-item');
-            item.appendChild(el('span', 'sp-name', p.name));
-            var canvas = el('canvas', 'sp-canvas');
-            item.appendChild(canvas);
-            if (app && app.renderPalettePreviewInto) {
-                try { app.renderPalettePreviewInto(canvas, p.id); } catch (err) { /* ignore */ }
-            }
-            rowEl.appendChild(item);
+
+        // A sheet previews the frame being worked on — or the one playing, so the
+        // pane animates alongside the strip. A single-frame asset previews itself.
+        var layout = app.projectFrameLayout ? app.projectFrameLayout() : null;
+        var frame = null;
+        if (layout) frame = playingFrame === null ? app.activeFrameIndex() : playingFrame;
+
+        // Rebuild only when the set of palettes changed; this runs on every stroke,
+        // and tearing down N canvases each time would be felt.
+        var ids = palettes.map(function (p) { return p.id + ':' + p.name; }).join('|');
+        if (rowEl._ids !== ids) {
+            rowEl.innerHTML = '';
+            rowEl._canvases = [];
+            rowEl._ids = ids;
+            palettes.forEach(function (p) {
+                var item = el('div', 'sp-item');
+                item.appendChild(el('span', 'sp-name', p.name));
+                var canvas = el('canvas', 'sp-canvas');
+                item.appendChild(canvas);
+                rowEl.appendChild(item);
+                rowEl._canvases.push(canvas);
+            });
+        }
+        palettes.forEach(function (p, i) {
+            var canvas = rowEl._canvases[i];
+            if (!canvas || !app.renderPalettePreviewInto) return;
+            try { app.renderPalettePreviewInto(canvas, p.id, { frame: frame, scale: zoom }); }
+            catch (err) { /* canvas not readable yet */ }
         });
+    }
+
+    function requestRender() {
+        if (raf) return;
+        raf = requestAnimationFrame(function () { raf = null; render(); });
     }
 
     function init() {
         build();
         var app = getApp();
         if (app) {
-            var prev = app.onPalettesChanged;
-            app.onPalettesChanged = function () { if (prev) prev(); render(); };
+            var prevPalettes = app.onPalettesChanged;
+            app.onPalettesChanged = function () { if (prevPalettes) prevPalettes(); requestRender(); };
+            // Fires on every committed edit for a project asset, which is what makes
+            // this a live preview rather than a snapshot from whenever the palette
+            // last changed.
+            var prevFrames = app.onFramesChanged;
+            app.onFramesChanged = function () { if (prevFrames) prevFrames(); requestRender(); };
+            var prevPlay = app.onFramePlayback;
+            app.onFramePlayback = function (i) {
+                if (prevPlay) prevPlay(i);
+                playingFrame = i;
+                requestRender();
+            };
         }
         render();
     }
