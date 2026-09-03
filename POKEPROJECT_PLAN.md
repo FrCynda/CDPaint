@@ -362,9 +362,25 @@ asset, each offering only its own palettes.
 
 ## Phase 5 — On-ramps and safety
 
-- **5.1** **Import-and-fit**: drop any PNG on a species slot → correctly sized, indexed,
-  slot-0-clear asset with a generated palette and computed coordinates. The most common real
-  task; currently half an hour across three programs.
+- **5.1 ✅ DONE (17 Aug 2026)** — **Import-and-fit**. Drop any PNG while a project asset is open
+  and it becomes that asset: indexed, background on slot 0, resized to the slot's box
+  bottom-anchored, cut to its colour budget — offered first in the same before/after dialog
+  2.2 built, so nothing lands unseen.
+  - The destination is `state.projectFile`, not the dropped file. That is the whole difference
+    between an import and an open, and it is what every decomp rule keys on.
+  - The palette is the picture's own colours, most-used first, not a re-quantisation of them.
+    Art drawn for a 16-colour slot arrives already fitting; only the overflow merges, and it is
+    `_fitReduceColors` — the same reducer — that merges it. Past 255 colours the extras land on
+    their nearest neighbour on the way in, memoised, so a photograph is slow rather than refused.
+  - *Found on the way:* `applyProjectDoc` painted through `paintProjectIndicesOnto`, whose
+    live-editing guard skips pixels whose canvas alpha is already 0 — handed a blank surface it
+    skipped every opaque pixel, so **applying any fit blanked the asset**. The old test could not
+    see it: size, budget, in-range and conformance are all satisfied by an empty canvas. It now
+    draws through `renderProjectDocInto`, the same function the dialog's "After" pane uses, so
+    what was agreed to is by construction what lands. Both suites assert pixels survive.
+  - *Remaining ceiling:* the gesture is drop-onto-canvas. There is no "replace this" on a
+    project-browser row, and coordinates are not recomputed after the import — 3.4 can measure
+    the result but nothing calls it yet.
 - **5.2** New-species scaffold at correct dimensions with stub palettes.
 - **5.3** Git awareness: modified/untracked badges, one-click revert an asset to HEAD, drafts
   stored outside the repo so experimenting never dirties it.
@@ -410,9 +426,10 @@ Folder watching, recent/pinned assets, per-species notes, session restore.
    is only knowable from the `LoadPalette(..., BG_PLTT_ID(n), ...)` calls in the C. `bag/menu.png`
    is the example. Until that is read, those screens are refused rather than shown in the wrong
    colours.
-6. **5.1** — import-and-fit, the on-ramp that gets outside art into the project at all. Now
-   largely a matter of pointing 2.2's fixes at an incoming PNG instead of an open one, and 3.4's
-   measurement at its coordinates.
+6. ~~**5.1**~~ — done. Outside art gets into the project by being dropped on the open slot. What
+   is left of it is the gesture and the follow-through: a "replace this" on a browser row, so an
+   import does not require opening the target first, and calling 3.4's measurement afterwards so
+   the sprite's coordinates match the art that just arrived.
 7. **4.1 / 4.2** — the browser rework. 4.1 is nearly free now: `read_project_sources` already
    walks up to the repo root, so hooking it is a matter of scanning from there too.
 
