@@ -430,13 +430,18 @@
 
     var _cursorCache = { size: -1, url: null };
     function _updateBrushCursor() {
+        // Building the cursor image also warms _cursorCache for when the
+        // paintbrush becomes active, so only the stage assignment below is
+        // gated — applying it while another tool is active would stomp that
+        // tool's own cursor (e.g. the pencil's, right after boot).
+        var isActiveTool = app.config && app.config.tool === 'paintbrush';
         var sz = _params.size;
         if (sz <= 2) {
-            if (app.ui && app.ui.stage) app.ui.stage.style.cursor = 'crosshair';
+            if (isActiveTool && app.ui && app.ui.stage) app.ui.stage.style.cursor = 'crosshair';
             return;
         }
         if (_cursorCache.size === sz && _cursorCache.url) {
-            if (app.ui && app.ui.stage) {
+            if (isActiveTool && app.ui && app.ui.stage) {
                 var cx2 = Math.ceil(_max(sz * 1.3, 20)) / 2;
                 app.ui.stage.style.cursor = 'url("' + _cursorCache.url + '") ' + Math.round(cx2) + ' ' + Math.round(cx2) + ', crosshair';
             }
@@ -464,7 +469,7 @@
         ctx.stroke();
         var url = c.toDataURL();
         _cursorCache = { size: sz, url: url };
-        if (app.ui && app.ui.stage) {
+        if (isActiveTool && app.ui && app.ui.stage) {
             app.ui.stage.style.cursor = 'url("' + url + '") ' + Math.round(cx) + ' ' + Math.round(cy) + ', crosshair';
         }
     }
