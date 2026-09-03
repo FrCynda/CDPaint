@@ -4,6 +4,34 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CDPaint</title>
+    <!-- Catch a paste before the engine exists.
+
+         PaintEngine installs its own paste handler part-way through init(),
+         which cannot run until paint-engine.js (712kB minified) has been
+         fetched, compiled and executed. A Ctrl+V before that lands on no
+         listener at all, and a clipboard event does not queue or replay — the
+         paste is simply gone, with nothing on screen to say so. Catching it
+         here, at the earliest point the parser can run script, makes the app
+         accept the paste immediately and draw it as soon as it is able.
+
+         clipboardData is only readable during dispatch, so getAsFile() must be
+         called synchronously; the File it returns stays valid afterwards. One
+         slot, last write wins — repeated Ctrl+V while waiting is the same
+         clipboard, and should paste once, not once per keypress. -->
+    <script>
+    window.__pendingPaste = null;
+    window.__earlyPaste = function (e) {
+        var items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf('image') !== -1) {
+                window.__pendingPaste = items[i].getAsFile();
+                return;
+            }
+        }
+    };
+    window.addEventListener('paste', window.__earlyPaste);
+    </script>
     <link rel="icon" type="image/png" href="app-icon.png">
     <link rel="stylesheet" href="css/styles.css">
 </head>
