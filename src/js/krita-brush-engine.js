@@ -1794,8 +1794,22 @@
     };
 
     engine.initUI = function () {
-        // Build the brush grid (replaces legacy pb-preset dropdown).
-        try { engine.buildBrushGrid(); } catch (eBuild_) {}
+        /* Build the brush grid the first time the sidebar is actually on
+         * screen. Building it eagerly fetched and decoded ~570kB of custom
+         * tip PNGs and ran a full-resolution luminance-to-alpha pass over
+         * each one during boot, for a panel that sits at left:-296px until
+         * the Paint Brush tool is picked. Intersection is an exact proxy for
+         * "the user can see this", and catches every way the panel opens
+         * without the grid having to know about any of them. */
+        var grid = document.getElementById("pb-brush-grid");
+        if (grid) {
+            var gridObserver = new IntersectionObserver(function (entries) {
+                if (!entries[0].isIntersecting) return;
+                gridObserver.disconnect();
+                try { engine.buildBrushGrid(); } catch (eBuild_) {}
+            });
+            gridObserver.observe(grid);
+        }
 
         // Wire the Advanced-section toggle (state persists in localStorage).
         var moreWrap = document.getElementById('pb-more-settings');
