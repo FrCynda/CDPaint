@@ -3002,6 +3002,12 @@
                 const file = pickDroppedImage(e.dataTransfer);
                 if (!file) return;
                 if (/\.ora$/i.test(file.name)) { this.loadORAFile(file); }
+                /* A project asset is open, so a dropped picture is art *for that
+                   slot*. Opening it as its own document instead would discard the
+                   destination, which is the one thing an import cannot re-derive. */
+                else if (this.state.projectImage && this.state.projectFile) {
+                    this.importIntoProjectSlot(file);
+                }
                 else { this.handleFile(file, false); }
             });
             window.addEventListener('dragover', (e) => {
@@ -22777,9 +22783,14 @@ void main() {
         }
 
         /* Everything the asset would have to change to be insertable, as a list of
-           named fixes. Nothing here touches the document. */
-        planFitToTarget(colorCount) {
-            const doc = this.projectDocValue();
+           named fixes. Nothing here touches the document.
+
+           `docIn` is for art that is not the open document yet — an imported PNG
+           being measured against the slot it is going into. The profile still
+           comes from `state.projectFile`, because the destination is what decides
+           what "insertable" means; the pixels are the only thing that differs. */
+        planFitToTarget(colorCount, docIn) {
+            const doc = docIn || this.projectDocValue();
             if (!doc || !this.state.projectFile) return null;
             const profile = this.inferProfile(this.state.projectFile);
             const steps = [];
@@ -22937,6 +22948,84 @@ void main() {
             return { ...doc, w: tw, h: th, map: out };
         }
 
+        /* ── Import ─────────────────────────────────────────────────────────
+           Outside art as a document value: indexed, with slot 0 held for
+           transparency because that is what the hardware reads it as.
+
+           The palette is the picture's own colours, most-used first, not a
+           generated approximation — art drawn for a 16-colour slot already has
+           its palette and quantising it again would only lose fidelity. Only
+           what does not fit gets merged, and that is `_fitReduceColors` doing
+           it, the same reducer the Fit dialog runs on an open asset.
+
+           255 rather than 256 because slot 0 is spoken for. A picture with more
+           colours than that is not refused: the extras land on their nearest
+           neighbour here, and the colour budget for the real slot — usually 16 —
+           is applied afterwards as a fix the artist can see before agreeing to. */
+        docFromImageData(data, w, h) {
+            const counts = new Map();
+            for (let p = 0; p < data.length; p += 4) {
+                if (data[p + 3] < 128) continue;
+                const key = (data[p] << 16) | (data[p + 1] << 8) | data[p + 2];
+                counts.set(key, (counts.get(key) || 0) + 1);
+            }
+            const colors = [{ r: 0, g: 0, b: 0, a: 0 }];
+            const slotOf = new Map();
+            Array.from(counts.entries())
+                .sort((a, b) => (b[1] - a[1]) || (a[0] - b[0]))
+                .slice(0, 255)
+                .forEach(([key]) => {
+                    slotOf.set(key, colors.length);
+                    colors.push({ r: (key >> 16) & 255, g: (key >> 8) & 255, b: key & 255, a: 255 });
+                });
+
+            const map = new Uint8Array(w * h);
+            for (let p = 0, q = 0; q < map.length; p += 4, q++) {
+                if (data[p + 3] < 128) continue;   // already 0
+                const key = (data[p] << 16) | (data[p + 1] << 8) | data[p + 2];
+                const hit = slotOf.get(key);
+                if (hit !== undefined) { map[q] = hit; continue; }
+                // Past the 255 that fit. Nearest surviving colour, memoised on the
+                // way out — a photograph repeats its colours millions of times.
+                let best = 1, bestDist = Infinity;
+                for (let i = 1; i < colors.length; i++) {
+                    const c = colors[i];
+                    const dr = data[p] - c.r, dg = data[p + 1] - c.g, db = data[p + 2] - c.b;
+                    const d = dr * dr + dg * dg + db * db;
+                    if (d < bestDist) { bestDist = d; best = i; }
+                }
+                slotOf.set(key, best);
+                map[q] = best;
+            }
+            return { w, h, map, colors, transparentIdx: 0 };
+        }
+
+        /* Drop outside art onto the slot that is open and it becomes that asset:
+           sized to the slot's box, cut to its colour budget, background on slot 0.
+           The destination is `state.projectFile` — the thing every decomp rule
+           keys on — which is exactly what opening the file normally would throw
+           away, and why a drop is not just another open while one is loaded. */
+        async importIntoProjectSlot(file) {
+            if (!this.state.projectImage || !this.state.projectFile) return false;
+            let bmp;
+            try {
+                bmp = await createImageBitmap(file);
+            } catch (e) {
+                showToast('Could not read that image', 'warning');
+                return false;
+            }
+            const surface = document.createElement('canvas');
+            surface.width = bmp.width;
+            surface.height = bmp.height;
+            const sctx = surface.getContext('2d', { willReadFrequently: true });
+            sctx.drawImage(bmp, 0, 0);
+            const data = sctx.getImageData(0, 0, bmp.width, bmp.height).data;
+            const doc = this.docFromImageData(data, bmp.width, bmp.height);
+            if (bmp.close) bmp.close();
+            this.openFitToTarget(doc, 'Import ' + (file.name || 'image'));
+            return true;
+        }
+
         /* Draw a document value. Used for both halves of the before/after, so the
            two are guaranteed to be rendered the same way. */
         renderProjectDocInto(canvas, doc, scale) {
@@ -22975,6 +23064,12 @@ void main() {
                 for (let i = 0; i < doc.colors.length; i++) entry.colors[i] = { ...doc.colors[i] };
                 this.palette = entry.colors;
                 this.basePalette = entry.colors;
+            } else {
+                // No palette record to write through — an import brings its own
+                // colours, and leaving the old ones would draw the new indices
+                // through the previous asset's table.
+                this.palette = doc.colors.map(c => ({ ...c }));
+                this.basePalette = this.palette;
             }
             this.paletteLab = null;
             this.state.projectTransparentIndex = doc.transparentIdx;
@@ -22991,11 +23086,21 @@ void main() {
                 this.setSize(doc.w, doc.h);
             }
             this.state.projectIndices = new Uint8Array(doc.map);
+            /* Drawn by the same function the dialog's "After" pane uses, so what
+               was agreed to is by construction what lands.
+
+               Not `paintProjectIndicesOnto`: that one is the live-editing painter
+               and skips any pixel whose canvas alpha is already 0, because while
+               painting a clear pixel means the artist erased it and there is
+               nothing honest to draw underneath. Handed a blank surface — which is
+               what installing a whole document is — that guard skips every opaque
+               pixel, leaving the canvas empty for the next commit to fold back
+               into the map as a blank asset. */
+            const surface = document.createElement('canvas');
+            this.renderProjectDocInto(surface, doc, 1);
             const ctx = this.ctx;
-            const img = ctx.createImageData(doc.w, doc.h);
             ctx.clearRect(0, 0, doc.w, doc.h);
-            ctx.putImageData(img, 0, 0);
-            this.paintProjectIndicesOnto(img, this.state.projectIndices, ctx, doc.w);
+            ctx.drawImage(surface, 0, 0);
             this.renderQuantPalette();
             this.saveState();
             this.deferColorCounts();
@@ -23008,10 +23113,16 @@ void main() {
            both drawn by the same function from the same kind of value, with each
            fix listed and switchable — because "one action closes the gap" is only
            safe if you can see the gap being closed before you agree to it. */
-        openFitToTarget() {
-            const plan = this.planFitToTarget();
+        openFitToTarget(docIn, title) {
+            const plan = this.planFitToTarget(undefined, docIn);
             if (!plan) { showToast('No project asset open', 'warning'); return; }
-            if (!plan.steps.length) { showToast('Already insertable — nothing to fit', 'info'); return; }
+            if (!plan.steps.length) {
+                // Incoming art that needs no fixing still has to be installed;
+                // there is just nothing to show the artist a choice about.
+                if (docIn) { this.applyFitToTarget([], undefined, docIn); return; }
+                showToast('Already insertable — nothing to fit', 'info');
+                return;
+            }
 
             const chosen = new Set(plan.steps.map(s => s.id));
             const overlay = document.createElement('div');
@@ -23021,7 +23132,7 @@ void main() {
             overlay.appendChild(box);
 
             const h3 = document.createElement('h3');
-            h3.textContent = 'Fit to ' + plan.profile.label.toLowerCase();
+            h3.textContent = title || ('Fit to ' + plan.profile.label.toLowerCase());
             box.appendChild(h3);
             const sub = document.createElement('div');
             sub.className = 'fit-sub';
@@ -23094,7 +23205,7 @@ void main() {
             apply.textContent = 'Apply';
             apply.onclick = () => {
                 close();
-                this.applyFitToTarget(Array.from(chosen));
+                this.applyFitToTarget(Array.from(chosen), undefined, docIn);
             };
             actions.appendChild(cancel);
             actions.appendChild(apply);
@@ -23106,13 +23217,15 @@ void main() {
         }
 
         /* Run the chosen fixes and install the result. One step, so one undo. */
-        applyFitToTarget(stepIds, colorCount) {
-            const plan = this.planFitToTarget(colorCount);
+        applyFitToTarget(stepIds, colorCount, docIn) {
+            const plan = this.planFitToTarget(colorCount, docIn);
             if (!plan) return null;
             const wanted = stepIds && stepIds.length
                 ? plan.steps.filter(s => stepIds.includes(s.id))
                 : plan.steps;
-            if (!wanted.length) return null;
+            // Nothing to fix is a reason to do nothing for the open document, but
+            // an import still has to land — the pixels are the point of it.
+            if (!wanted.length && !docIn) return null;
             // Order matters: clearing the background first drops a colour, which can
             // make the palette fit without merging anything; padding last, so the
             // pixels it adds are already on the final transparency slot.
@@ -23121,7 +23234,9 @@ void main() {
             let doc = plan.doc;
             for (const step of sorted) doc = this.fitStepApply(doc, step);
             this.applyProjectDoc(doc);
-            showToast('Fitted to ' + plan.profile.label.toLowerCase(), 'info');
+            showToast(sorted.length
+                ? 'Fitted to ' + plan.profile.label.toLowerCase()
+                : 'Imported', 'info');
             return { applied: sorted.map(s => s.id), doc };
         }
 

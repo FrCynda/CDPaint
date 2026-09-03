@@ -804,7 +804,12 @@ await withPage(async (page) => {
                 conf: PaintApp.projectConformance(PaintApp.palette.length).ok,
                 oneStep: PaintApp.state.history.length === stepsBefore + 1,
                 mapFits: PaintApp.state.projectIndices.length === 64 * 64,
-                inRange: Array.from(PaintApp.state.projectIndices).every(v => v < PaintApp.palette.length)
+                inRange: Array.from(PaintApp.state.projectIndices).every(v => v < PaintApp.palette.length),
+                // Every other question here — size, budget, in-range, conformance —
+                // is answered *yes* by a completely blank asset, which is what an
+                // install that paints nothing leaves behind.
+                drawn: Array.from(PaintApp.state.projectIndices)
+                    .filter(v => v !== PaintApp.state.projectTransparentIndex).length
             };
             PaintApp.undo();
             const undone = [PaintApp.config.width, PaintApp.config.height, PaintApp.palette.length];
@@ -840,6 +845,8 @@ await withPage(async (page) => {
             JSON.stringify(res.after));
         check('the map is resized with it and stays in range',
             res.after.mapFits && res.after.inRange, JSON.stringify(res.after));
+        check('and the artwork is still there afterwards',
+            res.after.drawn > 1000, `${res.after.drawn} px drawn`);
         check('the whole fit is one undo step', res.after.oneStep === true);
         check('and undo puts the asset back as it was',
             JSON.stringify(res.undone) === '[60,70,17]', JSON.stringify(res.undone));
