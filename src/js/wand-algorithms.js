@@ -17,9 +17,30 @@ export const _WAND_ALGORITHMS_READY = true;
  *
  * For each pixel computes the minimum possible maximum-diff along any
  * path from the seed — i.e. the tolerance at which that pixel would
- * first be reached by a contiguous flood fill. O(n log n) worst case.
+ * first be reached by a contiguous flood fill.
  *
  * Returns a Uint8Array of length w*h with values 0..255.
+ *
+ * Implemented as a bucket queue (Dial's algorithm) rather than a binary
+ * heap. Two properties of this particular problem make that exact, not an
+ * approximation:
+ *
+ *   - costs are pixel diffs, so they are integers in 0..255 — a fixed 256
+ *     buckets covers every key that can ever exist;
+ *   - relaxing an edge yields max(currentCost, neighbourDiff), which is
+ *     never less than the cost being processed, so keys come out in
+ *     non-decreasing order and one forward sweep over the buckets is
+ *     enough.
+ *
+ * That replaces O(n log n) of sift-up/sift-down per pixel with O(n) list
+ * pushes, which is the difference between a wand click stalling for over a
+ * second on a large canvas and returning promptly. Output is identical to
+ * the heap version — test/wand-algorithms.test.mjs checks the resulting
+ * masks against a plain flood fill at every tolerance 0..255.
+ *
+ * 255 doubles as "unreachable": a diff can never exceed it, and the
+ * strict `<` in relax() means a pixel only reachable at 255 keeps the 255
+ * it was initialised with.
  */
 export function buildPriorityFlood(diff, w, h, seedX, seedY) {
     const n = w * h;
@@ -27,36 +48,78 @@ export function buildPriorityFlood(diff, w, h, seedX, seedY) {
     entered.fill(255);
     const seedIdx = seedY * w + seedX;
     entered[seedIdx] = diff[seedIdx];
-    const heap = new Uint32Array(n + 1);
-    let heapSize = 0;
-    const push = (idx) => {
-        let i = ++heapSize, pi = i >> 1;
-        while (pi > 0 && entered[heap[pi]] > entered[idx]) { heap[i] = heap[pi]; i = pi; pi = i >> 1; }
-        heap[i] = idx;
-    };
-    const pop = () => {
-        const min = heap[1], last = heap[heapSize--];
-        let i = 1, ci = 2;
-        while (ci <= heapSize) {
-            if (ci + 1 <= heapSize && entered[heap[ci + 1]] < entered[heap[ci]]) ci++;
-            if (entered[last] <= entered[heap[ci]]) break;
-            heap[i] = heap[ci]; i = ci; ci = i << 1;
+
+    // One growable array per cost. Draining a bucket is then a linear walk
+    // over contiguous memory, which matters a lot at this size — the queue
+    // holds millions of entries and pointer-chasing a linked pool spends
+    // most of its time waiting on cache misses.
+    const bucketData = new Array(256).fill(null);
+    const bucketLen = new Int32Array(256);
+
+    function push(idx, val) {
+        let arr = bucketData[val];
+        const len = bucketLen[val];
+        if (arr === null) {
+            arr = new Uint32Array(256);
+            bucketData[val] = arr;
+        } else if (len === arr.length) {
+            const bigger = new Uint32Array(arr.length * 2);
+            bigger.set(arr);
+            arr = bigger;
+            bucketData[val] = arr;
         }
-        heap[i] = last;
-        return min;
-    };
-    const relax = (nIdx, val) => {
-        const nd = diff[nIdx];
-        const newVal = nd > val ? nd : val;
-        if (newVal < entered[nIdx]) { entered[nIdx] = newVal; push(nIdx); }
-    };
-    push(seedIdx);
-    while (heapSize > 0) {
-        const idx = pop(), val = entered[idx], y = (idx / w) | 0, x = idx - y * w;
-        if (x > 0)     relax(idx - 1, val);
-        if (x < w - 1) relax(idx + 1, val);
-        if (y > 0)     relax(idx - w, val);
-        if (y < h - 1) relax(idx + w, val);
+        arr[len] = idx;
+        bucketLen[val] = len + 1;
+    }
+
+    push(seedIdx, entered[seedIdx]);
+
+    for (let val = 0; val < 256; val++) {
+        let i = 0;
+        // A bucket can grow while it is being drained: relaxing an edge
+        // whose neighbour diff is <= val lands back in this same bucket.
+        // The outer loop picks those up — and re-reads the array, which
+        // push() may have replaced with a larger one. Everything inside
+        // the inner loop is then loop-invariant, which is what makes this
+        // faster than re-reading bucketData[val] per pixel.
+        while (i < bucketLen[val]) {
+            const arr = bucketData[val];
+            const stop = bucketLen[val];
+            for (; i < stop; i++) {
+                const idx = arr[i];
+                // Superseded by a cheaper path found after this was queued.
+                if (entered[idx] !== val) continue;
+
+                const y = (idx / w) | 0, x = idx - y * w;
+
+                if (x > 0) {
+                    const nIdx = idx - 1;
+                    const nd = diff[nIdx];
+                    const nv = nd > val ? nd : val;
+                    if (nv < entered[nIdx]) { entered[nIdx] = nv; push(nIdx, nv); }
+                }
+                if (x < w - 1) {
+                    const nIdx = idx + 1;
+                    const nd = diff[nIdx];
+                    const nv = nd > val ? nd : val;
+                    if (nv < entered[nIdx]) { entered[nIdx] = nv; push(nIdx, nv); }
+                }
+                if (y > 0) {
+                    const nIdx = idx - w;
+                    const nd = diff[nIdx];
+                    const nv = nd > val ? nd : val;
+                    if (nv < entered[nIdx]) { entered[nIdx] = nv; push(nIdx, nv); }
+                }
+                if (y < h - 1) {
+                    const nIdx = idx + w;
+                    const nd = diff[nIdx];
+                    const nv = nd > val ? nd : val;
+                    if (nv < entered[nIdx]) { entered[nIdx] = nv; push(nIdx, nv); }
+                }
+            }
+        }
+        // Nothing revisits a drained bucket — release it.
+        bucketData[val] = null;
     }
     return entered;
 }

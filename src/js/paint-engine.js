@@ -171,6 +171,25 @@
             }
             return this.deflateStored(input);
         }
+        /* Mirror of deflate() for reading PNG image data back out.
+           There is no stored-block fallback here: unlike writing, we don't get to
+           choose the encoding, so a caller with neither pako nor DecompressionStream
+           has to be told it can't read the pixels rather than handed wrong ones. */
+        static async inflate(bytes) {
+            const input = this.toBytes(bytes);
+            if (window.pako && typeof window.pako.inflate === 'function') {
+                return window.pako.inflate(input);
+            }
+            if (typeof DecompressionStream !== 'function') {
+                throw new Error('No inflate available (needs DecompressionStream or pako)');
+            }
+            const stream = new DecompressionStream('deflate');
+            const writer = stream.writable.getWriter();
+            writer.write(input);
+            writer.close();
+            const out = await new Response(stream.readable).arrayBuffer();
+            return new Uint8Array(out);
+        }
     }
 
     /**
@@ -891,6 +910,8 @@
                 width: 800, height: 600, zoom: 1.0,
                 tool: 'pencil',
                 c1: '#000000', c2: '#ffffff', activeSlot: 1,
+                // Which palette slot each colour holds, or -1 for a free colour.
+                paletteSlot: { 1: -1, 2: -1 },
                 lineWidth: 1.0, eraserWidth: 10.0, shapeWidth: 1.0,
                 transparentSelection: true,
                 dragRotate: false,
@@ -972,8 +993,28 @@
                 activePaletteId: null,
                 previewPaletteId: null,
                 previewSnapshot: null,
+                projectFile: null,
                 projectImage: false,
                 projectBitDepth: 4,
+                // Set by tiled-screen.js when this document was assembled out of
+                // a tile sheet + tilemap. Document-scoped: two frames of one
+                // animation are two tabs over the same sheet, and a single
+                // shared value would save one tab's pixels into the other's
+                // tilemap.
+                screen: null,
+                // The live index map of a project asset — one palette slot per
+                // pixel, kept in step with the canvas by every committed edit.
+                // Replaced wholesale, never written in place, so a history entry
+                // can hold the array itself instead of a copy.
+                projectIndices: null,
+                projectTrns: null,
+                projectTransparentIndex: -1,
+                // Which frame of a multi-frame sheet is being worked on, and how
+                // the sheet is read. See projectFrameLayout().
+                activeFrame: 0,
+                frameCountOverride: null,
+                frameHold: 0,
+                onionSkin: false,
                 lastMouse: null,
                 transPick: false,
                 outlinePhase: 0,
@@ -1018,6 +1059,23 @@
                 freehandActive: false, freehandPoints: [],
                 paintbrushActive: false
             };
+            // Fields of `state` that describe *the document* rather than the app
+            // session. These are the fields a document swap (tab switch) must
+            // carry across; everything else is either app-global or in-progress
+            // gesture state cleared by resetTransientEditState().
+            //
+            // Adding a field to `state` above means deciding which of the two it
+            // is. If it belongs to the document, add it here — otherwise a second
+            // document will silently inherit the first one's value.
+            this.DOCUMENT_STATE_KEYS = Object.freeze([
+                'history', 'step',
+                'fileName', 'filePath', 'fileHandle',
+                'projectFile', 'projectHandle', 'projectImage', 'projectBitDepth', 'screen',
+                'projectIndices', 'projectTrns', 'projectTransparentIndex',
+                'activeFrame', 'frameCountOverride', 'frameHold', 'onionSkin',
+                'palettes', 'activePaletteId', 'previewPaletteId', 'previewSnapshot',
+                'isDirty', 'canvasOffset'
+            ]);
             this.resizeState = { w:0, h:0, ratio: 1 };
             this.resizeRatioState = true;
             this.hotkeys = {};
@@ -1093,6 +1151,10 @@
             this._wandSelectedCutoff = -1;
             this._wandMaskBuf = null;
             this._wandEntered = null;
+            // Preview worker back-pressure: the jobId currently being computed
+            // (null when idle) and the newest request waiting for it to finish.
+            this._wandWorkerInFlight = null;
+            this._wandWorkerPending = null;
             this.saveReminderMinutes = 60;
             this.saveReminderEnabled = true;
             this.saveReminderTimer = null;
@@ -1105,6 +1167,7 @@
             this._saveCursorFeedbackTimer = null;
             this._saveCursorFeedbackUntil = 0;
             this._lastMouseMoveAt = 0;
+            this._lastPointerActivityAt = 0;
             this.gridlinesSize = 64;
             this.gridlinesEnabled = false;
             this.gridlinesColor = '#0044ff';
@@ -1130,6 +1193,7 @@
                 stage: document.getElementById('canvas-stage'),
                 cMain: /** @type {HTMLCanvasElement} */ (document.getElementById('layer-main')),
                 cTemp: /** @type {HTMLCanvasElement} */ (document.getElementById('layer-temp')),
+                frameOnion: /** @type {HTMLCanvasElement} */ (document.getElementById('frame-onion')),
                 coords: document.getElementById('status-coords'),
                 statusSelectionSize: document.getElementById('status-selection-size'),
                 statusRotation: document.getElementById('status-rotation'),
@@ -1198,8 +1262,10 @@
             this._lastCoordsText = this.ui.coords ? this.ui.coords.textContent : '';
             this._lastSelectionSizeText = this.ui.statusSelectionSize ? this.ui.statusSelectionSize.textContent : '-';
             this._lastRotationStatusText = this.ui.statusRotation ? this.ui.statusRotation.textContent : 'Rot: 0.00°';
-            this.ctx = this.ui.cMain.getContext('2d', {willReadFrequently:true});
-            this.ctxTemp = this.ui.cTemp.getContext('2d', { willReadFrequently: true });
+            this.ctx = this.trackCtx(this.ui.cMain.getContext('2d', {willReadFrequently:true}));
+            this.markAllDirty();
+            this.ctxTemp = this.trackCtx(this.ui.cTemp.getContext('2d', { willReadFrequently: true }), 'temp');
+            this.markCleanDirty('temp');
             this.disableSmoothing(this.ctx);
             this.disableSmoothing(this.ctxTemp);
             this.gl = null;
@@ -1235,14 +1301,23 @@
                 // Threshold set low enough that typical working sizes (> 512×512) benefit;
                 // anything smaller than a small sprite is stored as a flat snapshot instead.
                 thresholdPixels: 200 * 200,
-                anchorInterval: 10,        // store full anchor every N steps (dead config)
-                maxDeltaWalk: 30           // force anchor if delta chain exceeds this (dead config)
+                // A step stores only the tiles it changed, plus a link to the
+                // step before. Every Nth step instead stores the whole grid, so
+                // restoring never walks back further than N steps. Raising this
+                // makes steps cheaper and restores slower.
+                anchorInterval: 20
             };
             this.historyLimitEnabled = true;
-            this.historyLimit = 50;
+            // A count, not a memory guard — historyByteBudget() does that. Kept
+            // generous so memory is what you run out of, not an arbitrary number.
+            this.historyLimit = 500;
+            this.HISTORY_MIN_STEPS = 8;
             this._historyAdaptive = false;
             this._tileCopyBuf = null;
             this.bounds = { left: 0, top: 0 };
+            // Set once the startup layout has settled — until then nothing about
+            // the canvas position is allowed to animate.
+            this._startupSettled = false;
             this.zoomLevels = [6.25, 12.5, 25, 50];
             for(let i=100; i<=1000; i+=100) this.zoomLevels.push(i);
             for(let i=1200; i<=3000; i+=200) this.zoomLevels.push(i);
@@ -1495,14 +1570,38 @@
                     }
                     return set.size;
                 }
+                // Reading a 13000x13000 canvas back costs ~125 ms and a 676 MB
+                // allocation. Doing that here rather than on the main thread is
+                // the difference between a hitch and no hitch, so an image is
+                // preferred over a pixel buffer whenever one can be sent.
+                function dataFromBitmap(bmp) {
+                    const oc = new OffscreenCanvas(bmp.width, bmp.height);
+                    const c = oc.getContext('2d', { willReadFrequently: true });
+                    c.drawImage(bmp, 0, 0);
+                    const d = c.getImageData(0, 0, bmp.width, bmp.height).data;
+                    bmp.close();
+                    return d;
+                }
                 self.onmessage = function (e) {
                     const payload = e && e.data ? e.data : {};
                     const jobId = payload.jobId || 0;
-                    const mainData = payload.mainData ? new Uint8ClampedArray(payload.mainData) : new Uint8ClampedArray(0);
-                    const selData = payload.selData ? new Uint8ClampedArray(payload.selData) : null;
-                    const total = countColors(mainData);
-                    const sel = selData ? countColors(selData) : null;
-                    self.postMessage({ jobId, total, sel });
+                    try {
+                        let mainData;
+                        if (payload.bitmap) {
+                            mainData = dataFromBitmap(payload.bitmap);
+                        } else {
+                            mainData = payload.mainData ? new Uint8ClampedArray(payload.mainData) : new Uint8ClampedArray(0);
+                        }
+                        const selData = payload.selData ? new Uint8ClampedArray(payload.selData) : null;
+                        const total = countColors(mainData);
+                        const sel = selData ? countColors(selData) : null;
+                        self.postMessage({ jobId, total, sel });
+                    } catch (err) {
+                        if (payload.bitmap && payload.bitmap.close) {
+                            try { payload.bitmap.close(); } catch (e2) {}
+                        }
+                        self.postMessage({ jobId, failed: true });
+                    }
                 };
             `;
             try {
@@ -1520,6 +1619,12 @@
                     const payload = event && event.data ? event.data : null;
                     if (!payload) return;
                     if (payload.jobId !== this._colorCountJobId) return;
+                    if (payload.failed) {
+                        // The worker could not read the image; go back to
+                        // reading it here, slow but correct.
+                        this._colorCountNoBitmap = true;
+                        return;
+                    }
                     this.setColorCountStatus(payload.total, payload.sel, !!this.state.selection);
                 };
                 worker.onerror = () => {
@@ -1586,11 +1691,30 @@
                     return stride;
                 }
 
-                function maskToSvgPath(mask, w, h, bufs) {
+                function maskToSvgPath(mask, w, h, bufs, clip) {
                     const edges = [];
-                    for (let y = 0; y < h; y++) {
+                    // Only trace what the viewport can actually show. The ants
+                    // overlay is clipped to this same rectangle, so every edge
+                    // outside it is built, strung into the path, handed to the
+                    // DOM and then thrown away by the clip — on a canvas much
+                    // larger than the window that is the bulk of the work.
+                    let y0 = 0, y1 = h, x0 = 0, x1 = w;
+                    if (clip) {
+                        if (!clip.visible) return '';
+                        x0 = clip.x < 0 ? 0 : (clip.x > w ? w : clip.x | 0);
+                        y0 = clip.y < 0 ? 0 : (clip.y > h ? h : clip.y | 0);
+                        const cx1 = clip.x + clip.w, cy1 = clip.y + clip.h;
+                        x1 = cx1 < 0 ? 0 : (cx1 > w ? w : Math.ceil(cx1));
+                        y1 = cy1 < 0 ? 0 : (cy1 > h ? h : Math.ceil(cy1));
+                        if (x1 <= x0 || y1 <= y0) return '';
+                    }
+                    // Neighbour lookups below still read the full mask, so an
+                    // edge on the crop border is emitted exactly as it would be
+                    // without cropping; contours simply end there instead of
+                    // closing, which the tracer already handles.
+                    for (let y = y0; y < y1; y++) {
                         const row = y * w, rowP = (y - 1) * w, rowN = (y + 1) * w;
-                        for (let x = 0; x < w; x++) {
+                        for (let x = x0; x < x1; x++) {
                             if (!mask[row + x]) continue;
                             const x1 = x + 1, y1 = y + 1;
                             if (y === 0 || !mask[rowP + x]) { edges.push(x, y, x1, y); }
@@ -1705,6 +1829,29 @@
                     return parts.join('');
                 }
 
+                /* Only the newest tolerance is ever drawn, so only the newest
+                 * one is worth computing. Messages that pile up while a job is
+                 * running are collapsed: each one just overwrites the pending
+                 * request, and the actual work is deferred to a timer task,
+                 * which runs after every message already sitting in the queue.
+                 * Without this the worker works through the whole backlog of a
+                 * drag one tolerance at a time and finishes long after the user
+                 * has let go — which is what made it look frozen, and left the
+                 * next wand click queued behind the last one's leftovers. */
+                let gPending = null, gScheduled = false;
+
+                function runPending() {
+                    gScheduled = false;
+                    const msg = gPending;
+                    gPending = null;
+                    if (!msg || !gKeyArr) return;
+                    const mask = gMaskBuf;
+                    const result = applyToleranceIncremental(gKeyArr, gSortedIdx, gPrevCutoff, msg.tolerance, mask, gW);
+                    gPrevCutoff = result.cutoff;
+                    const pathStr = maskToSvgPath(mask, gW, gH, gBufs, msg.clip);
+                    self.postMessage({ jobId: msg.jobId, pathStr: pathStr });
+                }
+
                 self.onmessage = function (e) {
                     const msg = e.data || {};
                     if (msg.type === 'init') {
@@ -1713,15 +1860,13 @@
                         gW = msg.w; gH = msg.h;
                         gMaskBuf = new Uint8Array(gW * gH);
                         gPrevCutoff = 0;
+                        gPending = null;
                         return;
                     }
                     if (msg.type === 'update') {
                         if (!gKeyArr) return;
-                        const mask = gMaskBuf;
-                        const result = applyToleranceIncremental(gKeyArr, gSortedIdx, gPrevCutoff, msg.tolerance, mask, gW);
-                        gPrevCutoff = result.cutoff;
-                        const pathStr = maskToSvgPath(mask, gW, gH, gBufs);
-                        self.postMessage({ jobId: msg.jobId, pathStr: pathStr });
+                        gPending = msg;
+                        if (!gScheduled) { gScheduled = true; setTimeout(runPending, 0); }
                     }
                 };
             `;
@@ -1739,9 +1884,25 @@
                 worker.onmessage = (event) => {
                     const payload = event && event.data ? event.data : null;
                     if (!payload) return;
-                    // Stale job (superseded by a newer tolerance/drag) — drop it.
-                    if (this.state.wandJobId !== payload.jobId) return;
+                    // Anything that isn't the job we are waiting for belongs to
+                    // an abandoned drag — the slot was cleared when that session
+                    // ended, so its result is not ours to draw.
+                    if (this._wandWorkerInFlight !== payload.jobId) return;
+                    this._wandWorkerInFlight = null;
+                    // Restart the worker on the newest tolerance first, so it
+                    // computes while the main thread does the DOM write.
+                    const pending = this._wandWorkerPending;
+                    this._wandWorkerPending = null;
+                    if (pending) this._postWandWorkerUpdate(pending.tolerance, pending.jobId);
                     if (!this.state.wandActive) return;
+                    // Deliberately no "is this still the newest jobId" test. Only
+                    // one job runs at a time and it always carries the newest
+                    // tolerance known when it started, so its result is the best
+                    // outline available — drawing it and letting the next one
+                    // replace it is what keeps the ants moving. Testing against
+                    // the newest scheduled id instead threw away every result
+                    // that took longer than a frame to compute, which on a large
+                    // canvas is all of them.
                     const w = this.config.width, h = this.config.height;
                     this.ctxTemp.clearRect(0, 0, w, h);
                     this._applyWandSvgPreview(payload.pathStr);
@@ -1769,6 +1930,11 @@
          */
         _initWandPreviewWorker(diff, keyArr, sortedIdx, w, h) {
             this._wandWorkerReady = false;
+            // A new session: anything still outstanding belongs to the previous
+            // one. Its reply carries an old jobId, so it will neither be drawn
+            // nor mistaken for this session's in-flight job.
+            this._wandWorkerInFlight = null;
+            this._wandWorkerPending = null;
             const worker = this.ensureWandPreviewWorker();
             if (!worker || !diff) return;
             try {
@@ -1801,7 +1967,17 @@
             if (!this._wandWorkerReady) return false;
             const worker = this._wandPreviewWorker;
             if (!worker) return false;
-            worker.postMessage({ type: 'update', jobId, tolerance });
+            // At most one job in flight. A drag generates a new tolerance every
+            // frame, but only the newest one is ever drawn — queueing the rest
+            // just builds a backlog that outlives the drag.
+            if (this._wandWorkerInFlight !== null && this._wandWorkerInFlight !== undefined) {
+                this._wandWorkerPending = { tolerance, jobId };
+                return true;
+            }
+            this._wandWorkerInFlight = jobId;
+            // Cull to what the viewport shows; the overlay is clipped to this
+            // same rectangle, so nothing visible is lost.
+            worker.postMessage({ type: 'update', jobId, tolerance, clip: this._antsClipRectInCanvasPx() });
             return true;
         }
 
@@ -1831,6 +2007,114 @@
             } else {
                 this.ui.statusSelColors.style.display = 'none';
             }
+            this.updateProjectConformance(total);
+        }
+        /* What still stands between this canvas and the ROM, as one line.
+           It is always on screen for a project asset and never in the way, so the
+           limits are something you glance at rather than something you discover
+           when the build fails. */
+        projectConformance(colorCount) {
+            if (!this.state.projectImage || !this.state.projectFile) return null;
+            const profile = this.inferProfile(this.state.projectFile);
+            const w = this.config.width, h = this.config.height;
+            const parts = [];
+            let ok = true;
+
+            const sizes = profile.allowedResolutions;
+            const sizeOk = !sizes || sizes.some(r => r[0] === w && r[1] === h);
+            if (!sizeOk) ok = false;
+            parts.push({ text: `${w}×${h}`, ok: sizeOk });
+
+            const max = this.maxColorsForProfile(profile);
+            const used = Number.isFinite(colorCount) ? colorCount : this._lastKnownColorCount;
+            if (Number.isFinite(used)) {
+                const colorsOk = used <= max;
+                if (!colorsOk) ok = false;
+                parts.push({ text: `${used}/${max} colours`, ok: colorsOk });
+            }
+
+            if (profile.tileAligned || w % 8 === 0) {
+                const tileOk = w % 8 === 0 && h % 8 === 0;
+                if (profile.tileAligned && !tileOk) ok = false;
+                parts.push({ text: tileOk ? 'tiles ✓' : 'not 8×8', ok: tileOk });
+            }
+
+            /* Nothing standing on the transparent slot means the background is
+               opaque — the "why has my sprite got a black box round it" bug (F1),
+               invisible in the editor because the editor has no battle scene behind
+               the canvas. Worth a red light of its own.
+
+               The slot is 0, not whatever the PNG's tRNS names. Transparency here
+               is a hardware rule — the GBA draws palette entry 0 of a sprite as
+               see-through — and tRNS is only how a PNG viewer is told about it. The
+               two disagree in the wild: togedemaru's front sprite carries a tRNS
+               naming slot 15, which nothing stands on, while slot 0 holds the
+               background exactly as it should. Reading tRNS called that broken.
+               `projectTransparentIndex` still drives *saving*, where matching the
+               file's own chunk is the right thing to do. */
+            if (profile.wantsTransparency) {
+                const map = this.state.projectIndices;
+                let clear = 0;
+                if (map) for (let q = 0; q < map.length; q++) if (map[q] === 0) clear++;
+                const clearOk = clear > 0;
+                if (!clearOk) ok = false;
+                parts.push({
+                    text: clearOk ? 'slot 0 clear' : 'slot 0 unused — opaque background',
+                    ok: clearOk
+                });
+            }
+
+            const slot = this.paletteSlotFor(this.config.activeSlot);
+            if (slot >= 0) parts.push({ text: `slot ${slot}`, ok: true });
+
+            return { label: profile.label, parts, ok };
+        }
+        updateProjectConformance(colorCount) {
+            const el = this.ui.statusConformance || document.getElementById('status-conformance');
+            if (!el) return;
+            this.ui.statusConformance = el;
+            const info = this.projectConformance(colorCount);
+            if (!info) { el.style.display = 'none'; el.textContent = ''; return; }
+            el.style.display = 'block';
+            el.textContent = '';
+            el.title = info.label;
+            info.parts.forEach((p, i) => {
+                if (i) el.appendChild(document.createTextNode(' · '));
+                const span = document.createElement('span');
+                span.textContent = p.text;
+                if (!p.ok) span.className = 'conformance-bad';
+                el.appendChild(span);
+            });
+            el.classList.toggle('conformance-ok', info.ok);
+            this.updateConformanceBanner(info);
+        }
+
+        /* The status line is a glance; when the asset would not build, that is not
+           enough. Raise a bar that cannot be missed and put the fix on it.
+           Dismissing is remembered against the exact set of problems, so hiding it
+           does not also hide the next, different one. */
+        updateConformanceBanner(info) {
+            const bar = this.ui.conformanceBanner
+                || (this.ui.conformanceBanner = document.getElementById('conformance-banner'));
+            if (!bar) return;
+            const bad = info && !info.ok ? info.parts.filter(p => !p.ok) : [];
+            if (!bad.length) {
+                bar.style.display = 'none';
+                this._conformanceDismissed = null;
+                return;
+            }
+            const key = bad.map(p => p.text).join(' · ');
+            if (this._conformanceDismissed === key) { bar.style.display = 'none'; return; }
+            const text = bar.querySelector('#cb-text');
+            if (text) text.textContent = `${info.label} won’t build: ${key}`;
+            bar.style.display = 'flex';
+        }
+        dismissConformanceBanner() {
+            const info = this.projectConformance();
+            const bad = info && !info.ok ? info.parts.filter(p => !p.ok) : [];
+            this._conformanceDismissed = bad.map(p => p.text).join(' · ');
+            const bar = this.ui.conformanceBanner || document.getElementById('conformance-banner');
+            if (bar) bar.style.display = 'none';
         }
 
         initializeBlankDocument() {
@@ -1991,6 +2275,16 @@
                     }
                 }
             });
+            /* Take over from the boot-time paste catcher in index.html's <head>.
+               Detaching it here, in the same statement run that installs the
+               real handler, is what keeps a later paste from being both handled
+               now and replayed again at the end of init(). Whatever it caught
+               before this point is drained there — the engine is only part
+               built at this line and cannot paste yet. */
+            if (window.__earlyPaste) {
+                window.removeEventListener('paste', window.__earlyPaste);
+                window.__earlyPaste = null;
+            }
             window.addEventListener('keydown', e => {
                 this.updateKeyState(e, true);
                 if (e.key === 'F5') {
@@ -2708,6 +3002,12 @@
                 const file = pickDroppedImage(e.dataTransfer);
                 if (!file) return;
                 if (/\.ora$/i.test(file.name)) { this.loadORAFile(file); }
+                /* A project asset is open, so a dropped picture is art *for that
+                   slot*. Opening it as its own document instead would discard the
+                   destination, which is the one thing an import cannot re-derive. */
+                else if (this.state.projectImage && this.state.projectFile) {
+                    this.importIntoProjectSlot(file);
+                }
                 else { this.handleFile(file, false); }
             });
             window.addEventListener('dragover', (e) => {
@@ -2801,6 +3101,25 @@
             this.revealStartupWindow();
             Promise.resolve(this.initTauriFileOpenListener());
             this.setActiveTab('home');
+            /* One frame for the initial layout pass, one for the centring that
+               rides on it — after that the canvas has stopped moving on its own,
+               so the handles can be pinned to it and allowed to animate again. */
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                this._startupSettled = true;
+                this.updateBounds();
+                this.drainPendingPaste();
+            }));
+        }
+
+        /* Replay a paste that arrived while the engine was still starting up,
+           captured by the catcher in index.html's <head>. Called once startup
+           has settled, because handleFile() paints into a document that only
+           exists by the end of init(). */
+        drainPendingPaste() {
+            const file = window.__pendingPaste;
+            if (!file) return;
+            window.__pendingPaste = null;
+            this.handleFile(file, true);
         }
 
         deferHeavyInit() {
@@ -2836,6 +3155,10 @@
             if (!handles) return;
             const vpRect = this.ui.viewport.getBoundingClientRect();
             const rect = this.bounds;
+            // Before the first real measurement `bounds` is a stub with no size.
+            // Writing NaN offsets from it leaves every handle at its static spot
+            // — the top-left of the viewport — so bail and stay hidden instead.
+            if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return;
             const size = 6;
             const half = size / 2;
             const baseX = rect.left - vpRect.left + this.ui.viewport.scrollLeft;
@@ -2859,6 +3182,7 @@
             set(this.ui.resizerTL, leftX, topY);
             set(this.ui.resizerTR, edgeX, topY);
             set(this.ui.resizerBL, leftX, edgeY);
+            handles.classList.add('positioned');
         }
         refreshSelectionUiFromState() {
             if (!this.ui || !this.ui.selControls) return;
@@ -3185,7 +3509,7 @@
                 'edit.cut': { simple: '', complex: 'Ctrl+X' },
                 'edit.paste': { simple: '', complex: 'Ctrl+V' },
                 'image.props': { simple: '', complex: 'Ctrl+E' },
-                'image.resize': { simple: '', complex: 'Ctrl+W' },
+                'image.resize': { simple: '', complex: 'Ctrl+R' },
                 'brush.sizeUp': { simple: '', complex: 'Ctrl+Plus' },
                 'brush.sizeDown': { simple: '', complex: 'Ctrl+Minus' },
                 'view.toggleToolbar': { simple: 'Tab', complex: '' },
@@ -3760,32 +4084,57 @@
         initHistoryLimitControls() {
             const savedEnabled = this.lsGet('paint.history.limit.enabled');
             const savedLimit = parseInt(this.lsGet('paint.history.limit.value') || '', 10);
-            const savedAdaptive = this.lsGet('paint.history.limit.adaptive');
             if (savedEnabled !== null) this.historyLimitEnabled = savedEnabled === 'true';
             if (Number.isFinite(savedLimit) && savedLimit >= 1) this.historyLimit = savedLimit;
-            this._historyAdaptive = savedAdaptive === null ? false : savedAdaptive === 'true';
+            // The old "Adaptive" checkbox guessed a step count from canvas size.
+            // Memory is measured directly now, so it reported a number that no
+            // longer moved. Retired, and anyone who had it on gets their own
+            // limit back rather than a value it had overwritten.
+            this._historyAdaptive = false;
 
             const toggle = document.getElementById('history-limit-toggle');
             const input = document.getElementById('history-limit-input');
-            const adaptiveCb = document.getElementById('history-limit-adaptive');
 
             if (toggle) {
                 toggle.checked = this.historyLimitEnabled;
                 toggle.addEventListener('change', () => this.setHistoryLimitEnabled(toggle.checked));
             }
-            if (adaptiveCb) {
-                adaptiveCb.checked = this._historyAdaptive;
-                adaptiveCb.addEventListener('change', () => this.setHistoryAdaptive(adaptiveCb.checked));
-            }
             if (input) {
                 input.value = this.historyLimit;
-                input.addEventListener('change', () => {
-                    if (!this._historyAdaptive) this.setHistoryLimit(input.value, true, true);
-                });
+                input.addEventListener('change', () => this.setHistoryLimit(input.value, true, true));
             }
 
             this.setHistoryLimitEnabled(this.historyLimitEnabled, false);
-            if (this._historyAdaptive) this._applyMemoryBudget();
+            this.updateHistoryUsage();
+        }
+
+        // Show what history is actually holding. This is the quantity that
+        // governs — the step count is only a ceiling — and nothing in the UI
+        // reported it before.
+        updateHistoryUsage() {
+            const el = document.getElementById('history-usage');
+            if (!el) return;
+            const steps  = Array.isArray(this.state.history) ? this.state.history.length : 0;
+            const bytes  = this.historyBytes();
+            const budget = this.historyByteBudget();
+            const fmt = (b) => b >= 1024 * 1024 * 1024
+                ? (b / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
+                : (b >= 1024 * 1024 ? Math.round(b / (1024 * 1024)) + ' MB'
+                                    : Math.max(1, Math.round(b / 1024)) + ' KB');
+            el.textContent = `${steps.toLocaleString()} held · ${fmt(bytes)} of ${fmt(budget)}`;
+            const ratio = budget > 0 ? bytes / budget : 0;
+            el.classList.toggle('is-high', ratio >= 0.6 && ratio < 0.9);
+            el.classList.toggle('is-full', ratio >= 0.9);
+        }
+
+        // Called from the paths that change history; coalesced so a fast stroke
+        // sequence does not walk the whole history list per step.
+        scheduleHistoryUsage() {
+            if (this._historyUsageRaf) return;
+            this._historyUsageRaf = requestAnimationFrame(() => {
+                this._historyUsageRaf = null;
+                try { this.updateHistoryUsage(); } catch (_) {}
+            });
         }
         setHistoryLimitEnabled(enabled, trimNow = true) {
             this.historyLimitEnabled = !!enabled;
@@ -3806,60 +4155,146 @@
         }
         _syncHistoryLimitInput() {
             const input = document.getElementById('history-limit-input');
-            const adaptiveCb = document.getElementById('history-limit-adaptive');
-            if (adaptiveCb) adaptiveCb.disabled = !this.historyLimitEnabled;
             if (input) {
-                const adaptiveOn = this._historyAdaptive && this.historyLimitEnabled;
-                input.disabled = !this.historyLimitEnabled || adaptiveOn;
-                if (adaptiveOn) input.value = this.historyLimit;
+                input.disabled = !this.historyLimitEnabled;
+                input.value = this.historyLimit;
             }
         }
+        // Retained so anything still calling it is harmless. The setting is gone:
+        // history is bounded by measured bytes, not by a count guessed from
+        // canvas size. See updateHistoryUsage().
         setHistoryAdaptive(on) {
-            this._historyAdaptive = !!on;
-            this.lsSet('paint.history.limit.adaptive', this._historyAdaptive ? 'true' : 'false');
-            if (this._historyAdaptive) {
-                this._applyMemoryBudget();
-            } else {
-                this.lsSet('paint.history.limit.value', String(this.historyLimit));
-                this._syncHistoryLimitInput();
-            }
+            this._historyAdaptive = false;
         }
-        enforceHistoryLimit() {
-            // Hard safety cap: even with the user limit disabled, never retain unbounded
-            // history. Scale the ceiling by canvas size so a "limit disabled" footgun on an
-            // 8000² doc can't hold 500 × ~256 MB (~128 GB). Modeled per-entry cost is the
-            // worst-case full-canvas snapshot (W*H*4); tiled entries are typically far smaller,
-            // so this estimate is conservative (smaller cap) in the safe direction.
-            const px = (this.config.width || 0) * (this.config.height || 0);
-            let HARD_CAP = 500;
-            if (px > 0) {
-                const estEntry = px * 4;
-                HARD_CAP = Math.max(8, Math.min(500, Math.floor((2 * 1024 * 1024 * 1024) / estEntry)));
-            }
-            if (!this.historyLimitEnabled) {
-                if (this.state.history.length <= HARD_CAP) return;
-                const overflow = this.state.history.length - HARD_CAP;
-                const evicted = this.state.history.splice(0, overflow);
-                for (const e of evicted) this._closeBitmapEntry(e);
-                this.state.step = Math.max(-1, this.state.step - overflow);
-                if (typeof this.state.selectionCutStep === 'number') {
-                    this.state.selectionCutStep -= overflow;
-                    if (this.state.selectionCutStep < 0) this.state.selectionCutStep = null;
+        // Count ceiling only, and a loose one: memory is governed by the byte
+        // budget below, which measures what history is actually holding. This
+        // used to model every entry as a full-canvas snapshot (W*H*4) and so
+        // allowed 8 steps on an 8000² document, where a real step costs
+        // kilobytes. A ceiling still exists so the array cannot grow without
+        // bound in a long session, but it should not be what you hit first.
+        historyHardCap(width, height) {
+            return 10000;
+        }
+
+        // Entries to keep for a document of the given size, honouring the user's
+        // limit setting and the count ceiling.
+        historyBudgetFor(width, height) {
+            return this.historyLimitEnabled
+                ? Math.max(1, this.historyLimit || 1)
+                : this.historyHardCap(width, height);
+        }
+
+        // How much memory history may hold. deviceMemory is coarse and most
+        // browsers cap it at 8, so treat it as a hint rather than a measurement.
+        historyByteBudget() {
+            const gb = navigator.deviceMemory || 8;
+            const quarter = gb * 0.25 * 1024 * 1024 * 1024;
+            return Math.max(256 * 1024 * 1024, Math.min(2 * 1024 * 1024 * 1024, quarter));
+        }
+
+        // Bytes an entry newly owns. Anything shared with an earlier entry —
+        // an unchanged tile, a layer snapshot reached through a ref — belongs to
+        // whoever owns it, and counting it twice would evict far too eagerly.
+        _entryBytes(entry) {
+            if (!entry) return 0;
+            if (typeof entry._bytes === 'number') return entry._bytes;
+            let bytes = 0;
+            if (entry.tiles) {
+                // Every step holds one array slot per tile whether or not that
+                // tile changed, and a big canvas has thousands of them. Counting
+                // only the pixel data made a 13000px document look almost free
+                // when each step really costs ~80 KB of bookkeeping.
+                // Only the tiles this entry actually holds — a delta holds just
+                // what changed. This is the fallback for an entry captured
+                // without a recorded cost; it treats every tile it holds as
+                // owned, so it over-counts a shared one and errs towards
+                // trimming early rather than late.
+                bytes += entry.tiles.length * 8 + 64;
+                for (const t of entry.tiles) bytes += 48 + (t.rle ? t.rle.length : 0);
+            } else if (entry.snaps) {
+                for (const sv of entry.snaps) {
+                    if (sv.ref) continue;
+                    const c = sv.snap || sv.bitmap;
+                    if (c) bytes += (c.width || 0) * (c.height || 0) * 4;
+                    if (sv.mask && sv.mask.canvas) {
+                        bytes += sv.mask.canvas.width * sv.mask.canvas.height * 4;
+                    }
                 }
-                this.updateTitleBarActions();
-                return;
+            } else {
+                bytes = (entry.width || 0) * (entry.height || 0) * 4;
             }
-            const maxEntries = Math.max(1, this.historyLimit || 1);
-            const overflow = this.state.history.length - maxEntries;
-            if (overflow <= 0) return;
-            const evicted = this.state.history.splice(0, overflow);
-            for (const e of evicted) this._closeBitmapEntry(e);
-            this.state.step = Math.max(-1, this.state.step - overflow);
+            // A project asset's step also carries its index map. Shared arrays
+            // belong to the step that first held them; see attachProjectStep.
+            if (entry.projectIndices && !entry._sharesIndices) bytes += entry.projectIndices.length;
+            entry._bytes = bytes;
+            return bytes;
+        }
+
+        historyBytes(target) {
+            const h = (target || this.state).history;
+            if (!Array.isArray(h)) return 0;
+            let total = 0;
+            for (const e of h) total += this._entryBytes(e);
+            return total;
+        }
+
+        // Drop the oldest entries of `target` ({history, step}) until it is
+        // within both the count limit and the byte budget. Works on the live
+        // state or on a background tab's stored document. Returns how many
+        // entries were evicted.
+        _trimHistoryTarget(target, maxEntries, byteBudget) {
+            if (!target || !Array.isArray(target.history)) return 0;
+            // Always keep some undo, however large the document: a byte
+            // budget that leaves you with one step is not an undo system.
+            const minSteps = this.HISTORY_MIN_STEPS || 8;
+            let overflow = Math.max(0, target.history.length - maxEntries);
+
+            if (byteBudget > 0) {
+                let bytes = 0;
+                for (let i = overflow; i < target.history.length; i++) {
+                    bytes += this._entryBytes(target.history[i]);
+                }
+                while (bytes > byteBudget &&
+                       target.history.length - overflow > minSteps) {
+                    bytes -= this._entryBytes(target.history[overflow]);
+                    overflow++;
+                }
+            }
+            if (overflow <= 0) return 0;
+
+            const evicted = target.history.splice(0, overflow);
+            // The oldest survivor may be a delta on an entry we just dropped.
+            // Flatten it while the dropped entries are still reachable, or its
+            // tiles resolve to nothing and undo restores a blank canvas.
+            if (target.history.length) this._anchorEntry(target.history[0]);
+            // Survivors first: eviction must not close pixels they still ref.
+            this._releaseHistoryEntries(evicted, target.history);
+            target.step = Math.max(-1, (target.step || 0) - overflow);
+            return overflow;
+        }
+
+        enforceHistoryLimit() {
+            const overflow = this._trimHistoryTarget(
+                this.state,
+                this.historyBudgetFor(this.config.width, this.config.height),
+                this.historyByteBudget()
+            );
+            if (!overflow) return;
             if (typeof this.state.selectionCutStep === 'number') {
                 this.state.selectionCutStep -= overflow;
                 if (this.state.selectionCutStep < 0) this.state.selectionCutStep = null;
             }
             this.updateTitleBarActions();
+        }
+
+        // Trim a document that isn't currently on screen (a background tab).
+        // Same ceiling as the live document, sized to *that* document's canvas.
+        trimBackgroundHistory(docState, width, height) {
+            return this._trimHistoryTarget(
+                docState,
+                this.historyBudgetFor(width, height),
+                this.historyByteBudget()
+            );
         }
         initTauriFileOpenListener() {
             const tauri = window.__TAURI__;
@@ -3899,7 +4334,11 @@
             this.initializeBlankDocument();
             return Promise.resolve();
         }
-        async openFileFromPath(path, _skipUnsavedCheck = false) {
+        /* Forget that the document was a project asset. Every path that replaces
+           the document has to call this: the index map and the palettes it names
+           belong to one file, and a document that inherits them would be snapped
+           onto the previous asset's slots on its first committed edit. */
+        clearProjectAssetState() {
             this.state.projectFile = null;
             this.state.projectHandle = null;
             this.state.palettes = [];
@@ -3908,7 +4347,20 @@
             this.state.previewSnapshot = null;
             this.state.projectImage = false;
             this.state.projectBitDepth = 4;
+            this.state.projectIndices = null;
+            this.state.projectTrns = null;
+            this.state.projectTransparentIndex = -1;
+            this.stopFramePlayback();
+            this.state.activeFrame = 0;
+            this.state.frameCountOverride = null;
+            this.state.frameHold = 0;
+            this.state.onionSkin = false;
+            this.updateFrameOverlays();
             if (this.onPalettesChanged) this.onPalettesChanged();
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+        async openFileFromPath(path, _skipUnsavedCheck = false) {
+            this.clearProjectAssetState();
             if (!_skipUnsavedCheck && this.hasUnsavedChanges()) {
                 return new Promise((resolve) => {
                     this.showOpenConfirm(async () => {
@@ -4472,7 +4924,14 @@
             }
 
             this.updateTileOffsets();
-            if (this.tileModeEnabled) this.applyTileMode();
+            if (this.tileModeEnabled) {
+                // Boot-time restore of a persisted setting, not a user edit.
+                // applyTileMode() resizes and repaints the canvas and records an
+                // undo step for it, which would leave a freshly-opened app with
+                // one phantom action to undo.
+                this.applyTileMode();
+                this.resetHistoryBaseline();
+            }
             this.updateTileOverlay();
         }
         setTileModeEnabled(enabled) {
@@ -4990,6 +5449,9 @@
             return !!this.state.curveUndo || this.state.step < this.state.history.length - 1;
         }
         updateTitleBarActions() {
+            // Every path that changes history already calls this, so it is the
+            // one place the usage readout needs hooking to.
+            this.scheduleHistoryUsage();
             const undoBtn = document.getElementById('title-undo');
             const redoBtn = document.getElementById('title-redo');
             const canUndo = this.canUndo();
@@ -8915,7 +9377,7 @@ self.onmessage = (e) => {
                 const item = this.getToolManifestItem(id);
                 if (!item) return;
                 if (id === 'pokeproject') {
-                    if (document.body.classList.contains('project-panel-open')) b.classList.add('active');
+                    if (document.getElementById('project-panel')?.classList.contains('open')) b.classList.add('active');
                     return;
                 }
                 if (item.toolId === t) {
@@ -9612,6 +10074,37 @@ self.onmessage = (e) => {
             const w = Math.max(0, clipRight  - clipLeft);
             const h = Math.max(0, clipBottom - clipTop);
             return { x: clipLeft, y: clipTop, w, h, visible: w > 0 && h > 0 };
+        }
+
+        /**
+         * The same viewport rectangle as _computeAntsClipRect(), but expressed
+         * in canvas pixels instead of screen pixels.
+         *
+         * _computeAntsClipRect() returns the rectangle in the ants overlay's own
+         * coordinate space, which is what the SVG clipPath on #svg-ants-wrap
+         * needs — that space is screen pixels, because the zoom is applied by
+         * the `matrix(z 0 0 z 0 0)` transform on the paths inside the wrapper,
+         * not by the wrapper itself.
+         *
+         * Cropping a MASK is a different job: masks are indexed in canvas
+         * pixels. The two spaces coincide at 100% zoom and nowhere else, so
+         * using the screen-space rectangle directly cropped the preview to a
+         * corner when zoomed out and to the wrong place when zoomed in.
+         */
+        _antsClipRectInCanvasPx() {
+            const clip = this._computeAntsClipRect();
+            if (!clip || !clip.visible) return clip;
+            const z = this.config.zoom || 1;
+            // A pixel of slack absorbs the rounding on both conversions; the
+            // SVG clip trims the overshoot anyway.
+            const margin = 1;
+            return {
+                x: (clip.x / z) - margin,
+                y: (clip.y / z) - margin,
+                w: (clip.w / z) + (margin * 2),
+                h: (clip.h / z) + (margin * 2),
+                visible: true
+            };
         }
 
         updateGlobalOverlays(creatingOverride = null) {
@@ -11475,6 +11968,9 @@ void main() {
         }
 
         onMouseDown(e) {
+            this._lastPointerActivityAt = performance.now();
+            this._lastDrawMoveAt = this._lastPointerActivityAt;
+            this.flushDeferredSave();
             if (this.state.isPanning) return;
             if (e.button === 1) return;
             if (this.state.quantizeBusy) return;
@@ -11526,7 +12022,14 @@ void main() {
                 this._wandMaskBuf = new Uint8Array(w * h);
                 this._wandSelectedCutoff = -1;
                 this._initWandPreviewWorker(diff, keyArr, this._wandSortedIdx, w, h);
-                this.magicWandSelectAsync(p.x, p.y, this.state.wandTol, this.getSelectionOp(e), this.state.wandBase);
+                // Preview only — the pointer is still down. Building the real
+                // selection here would lift the matched pixels and leave a
+                // C2-filled hole behind, and the first preview frame clears
+                // cTemp (where the lifted pixels are drawn), so the hole shows
+                // through as a C2-coloured blob until pointer-up rebuilds
+                // everything from wandBase. The commit happens in onMouseUp.
+                this.state.wandOp = this.getSelectionOp(e);
+                this._scheduleWandFrame();
                 return;
             }
             if(this.state.shapeEditMode && this.state.activeShape) {
@@ -11883,6 +12386,7 @@ void main() {
 
         onMouseMove(e) {
             this._lastMouseMoveAt = performance.now();
+            this._lastPointerActivityAt = this._lastMouseMoveAt;
             const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
             const lastEvent = (coalesced && coalesced.length) ? coalesced[coalesced.length - 1] : e;
             this.state.lastMouse = { clientX: lastEvent.clientX, clientY: lastEvent.clientY };
@@ -12290,6 +12794,47 @@ void main() {
             if(['pencil','eraser'].includes(this.config.tool)) {
                 const isRight = e.buttons===2;
                 const color = this.getActiveDrawColor(isRight || this.config.tool==='eraser');
+
+                // When a frame is lost — a big brush takes real time to paint —
+                // the browser delivers one move holding the latest position with
+                // the skipped ones folded inside it. Using only the latest turns
+                // that whole gap into one straight segment.
+                //
+                // Only when a frame was actually lost, though. Pointers sample
+                // far faster than the display refreshes, and positions are whole
+                // pixels here, so drawing through every raw sample turns one
+                // clean line into a chain of short rounded ones — visibly bumpy
+                // on a 1px pencil. Keeping up means keeping the old behaviour.
+                // Constrained (ctrl) strokes are straight by definition.
+                const now = performance.now();
+                const gap = now - (this._lastDrawMoveAt || now);
+                this._lastDrawMoveAt = now;
+                const fellBehind = gap > 24;      // more than about a frame and a half
+                const coalesced = (fellBehind && !e.ctrlKey && e.getCoalescedEvents)
+                    ? e.getCoalescedEvents() : null;
+                if (coalesced && coalesced.length > 1) {
+                    for (const ce of coalesced) {
+                        const cp = this.getMouse(ce);
+                        if (this.config.tool === 'eraser' && isRight) {
+                            this.replaceColorLine(this.state.startPos.x, this.state.startPos.y, cp.x, cp.y);
+                        } else {
+                            this.enqueueStroke({
+                                x0: this.state.startPos.x,
+                                y0: this.state.startPos.y,
+                                x1: cp.x,
+                                y1: cp.y,
+                                color,
+                                width: this.config.tool === 'eraser'
+                                    ? this.config.eraserWidth : this.config.lineWidth,
+                                isEraser: this.config.tool === 'eraser'
+                            });
+                        }
+                        this.state.startPos = { x: cp.x, y: cp.y };
+                    }
+                    this.updateHoverPreview(this.state.startPos.x, this.state.startPos.y);
+                    return;
+                }
+
                 let endP = p;
                 if (this.config.tool === 'pencil' && e.ctrlKey) {
                     if (!this.state.pencilCtrlAxis) {
@@ -12580,6 +13125,7 @@ void main() {
         }
 
         onMouseUp(e) {
+            this._lastPointerActivityAt = performance.now();
             if(this.state.isPanning) { this.state.isPanning = false; return; }
             if(this.state.isCanvasDragging) { this.state.isCanvasDragging = false; return; }
             if(this.state.isCanvasResizing) { this.endCanvasResize(); return; }
@@ -12663,6 +13209,10 @@ void main() {
                 this.state.wandDiff        = null;
                 this.state.wandStartScreen = null;
                 if (this._wandSelectRaf) { cancelAnimationFrame(this._wandSelectRaf); this._wandSelectRaf = null; }
+                // The drag is over: a preview queued behind the running job
+                // would be computed for a threshold nobody will ever see, and
+                // would compete with the commit below for the worker.
+                this._wandWorkerPending = null;
                 if (wandBase && wandStart) {
                     this._clearWandSvgPreview();
                     this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
@@ -12841,14 +13391,14 @@ void main() {
                 if (['pencil','eraser'].includes(this.config.tool)) {
                     this.flushPendingStrokes();
                 }
-                this.ctx.drawImage(this.ui.cTemp, 0, 0);
-                this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
-                this.saveState();
+                this.stampTempCanvas();
+                this.clearTempCanvas();
+                this.saveStateDeferred();
             }
         }
 
         renderActiveShape() {
-            this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
+            this.clearTempCanvas();
             const s = this.state.activeShape;
             if (!s) return;
             this.drawActiveShape(s, true);
@@ -13155,9 +13705,16 @@ void main() {
             let selCtx = null;
             let selW = 0;
             let selH = 0;
-            try {
-                mainData = this.ctx.getImageData(0, 0, width, height).data;
-            } catch (e) {}
+            // Skip this read entirely when the worker can take the image
+            // instead — it is the single most expensive thing in the app.
+            const canSendBitmap = !this._colorCountNoBitmap &&
+                typeof createImageBitmap === 'function' &&
+                !!this.ensureColorCountWorker();
+            if (!canSendBitmap) {
+                try {
+                    mainData = this.ctx.getImageData(0, 0, width, height).data;
+                } catch (e) {}
+            }
             if (hasSelection) {
                 const s = this.state.selection;
                 selCtx = s.canvas.getContext('2d', { willReadFrequently: true });
@@ -13170,6 +13727,24 @@ void main() {
 
             const jobId = ++this._colorCountJobId;
             const worker = this.ensureColorCountWorker();
+
+            // Preferred path: hand the worker the image and let IT do the
+            // expensive read. Nothing large is allocated on this thread, so a
+            // recount can no longer land on the start of a stroke.
+            if (worker && !this._colorCountNoBitmap &&
+                typeof createImageBitmap === 'function' && !mainData) {
+                createImageBitmap(this.ui.cMain).then((bmp) => {
+                    if (jobId !== this._colorCountJobId) { bmp.close(); return; }
+                    const transfer = [bmp];
+                    const payload = { jobId, bitmap: bmp, selData: null };
+                    if (selData) { payload.selData = selData.buffer; transfer.push(selData.buffer); }
+                    worker.postMessage(payload, transfer);
+                }).catch(() => {
+                    this._colorCountNoBitmap = true;
+                });
+                return;
+            }
+
             if (worker && mainData) {
                 try {
                     const transfer = [mainData.buffer];
@@ -14092,12 +14667,46 @@ void main() {
             this.state.outlineAnimId = null;
             this.state.outlineLastTime = 0;
         }
+        /* Counting the colours in use means reading the whole canvas back — at
+         * 13000x13000 that is a 676 MB allocation and about 140 ms, and the
+         * allocation churn costs more again. It is a status-bar number, so it
+         * does not need to keep up with the brush. How long to leave it alone
+         * scales with how expensive it is. */
+        colorCountIntervalMs() {
+            const px = (this.config.width || 0) * (this.config.height || 0);
+            const mp = px / (1024 * 1024);
+            if (mp <= 1) return this._colorCountMinIntervalMs;   // 1 MP or less: as before
+            if (mp <= 4) return 400;
+            if (mp <= 16) return 900;
+            // Past that the read dominates and scales with area, so the wait
+            // does too — roughly 30 ms of quiet per megapixel, up to 4 s.
+            return Math.min(4000, Math.round(mp * 30));
+        }
+        /* How still the pointer has to be before a recount is allowed. Between
+         * two strokes there is often a pause of a few hundred milliseconds
+         * while the hand repositions; starting a ~124 ms read in that gap lands
+         * squarely on the beginning of the next stroke, which then loses its
+         * first moves and comes out straight. */
+        colorCountQuietMs() {
+            return Math.min(1500, this.colorCountIntervalMs());
+        }
         deferColorCounts() {
             if (this._colorCountPending) return;
-            const elapsed = performance.now() - this._colorCountLastAt;
-            if (elapsed < this._colorCountMinIntervalMs) {
+            const now = performance.now();
+            const interval = this.colorCountIntervalMs();
+            const elapsed = now - this._colorCountLastAt;
+            const quiet = now - (this._lastPointerActivityAt || 0);
+            const quietNeeded = this.colorCountQuietMs();
+            // Never mid-stroke, never before the interval, and never until the
+            // pointer has actually been still.
+            if (this.state.isDrawing || elapsed < interval || quiet < quietNeeded) {
                 if (this._colorCountTimer) return;
-                const wait = Math.max(0, Math.round(this._colorCountMinIntervalMs - elapsed));
+                const wait = Math.max(
+                    this.state.isDrawing ? interval : 0,
+                    Math.round(interval - elapsed),
+                    Math.round(quietNeeded - quiet),
+                    16
+                );
                 this._colorCountTimer = setTimeout(() => {
                     this._colorCountTimer = null;
                     this.deferColorCounts();
@@ -14111,7 +14720,9 @@ void main() {
                 this.updateColorCounts();
             };
             if (window.requestIdleCallback) {
-                requestIdleCallback(run, { timeout: 200 });
+                // A big canvas waits for genuine idle rather than forcing itself
+                // in after 200 ms, which lands right on the end of a stroke.
+                requestIdleCallback(run, { timeout: Math.max(200, interval) });
             } else {
                 setTimeout(run, 0);
             }
@@ -14481,6 +15092,166 @@ void main() {
             } else {
                 this.state.selectionCutStep = null;
             }
+        }
+
+        // Discard the floating selection without stamping it onto the canvas.
+        // The counterpart to commitSelection(): never touches history, because
+        // selection creation is deliberately non-destructive (see createSelection).
+        cancelSelection() {
+            const s = this.state.selection;
+            if (!s) return;
+            this._clearSelAnchorMode();
+            // A deferred cut may have erased the source pixels from the layer canvas
+            // as a drag preview. Nothing is being committed, so put them back.
+            if (s._cutSavedData && s._cutSavedRect) {
+                const activeLayer = this.layerMgr && this.layerMgr.active && this.layerMgr.layers[this.layerMgr.activeIdx];
+                if (activeLayer && activeLayer.alpha !== false) {
+                    activeLayer.ctx.putImageData(s._cutSavedData, s._cutSavedRect.x, s._cutSavedRect.y);
+                }
+            }
+            this._freeSelectionGlTex(s);
+            this.state.selection = null;
+            this.state.selectionOriginalPos = null;
+            this.state.selectionRotateSession = null;
+            this.state.selectionJustCreated = false;
+            this.state.selectionCutStep = null;
+            this.state.isMovingSel = false;
+            this.state.isRotatingSel = false;
+            this.state.wandBase = null;
+            this.state.wandDiff = null;
+            this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+            this.resetSelectionTempDirty();
+            this.ui.selControls.style.display = 'none';
+            this.clearStatusSelectionSize();
+            this.stopOutlineAnimation();
+            this.requestGlobalOverlayUpdate();
+        }
+
+        // Drop an uncommitted shape draft without rasterizing it. Mirrors the
+        // shape branch of undo(); commitActiveShape() is the stamping variant.
+        discardActiveShape() {
+            if (!this.state.activeShape) return;
+            this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+            this.state.activeShape = null;
+            this.state.shapeEditMode = false;
+            this._activeShapeBoundsCache = null;
+            this._activeShapeBoundsCacheShape = null;
+            this.ui.selControls.style.display = 'none';
+            if (this.ui.pathHandles) this.ui.pathHandles.replaceChildren();
+            this.state.activeShapePathHandle = null;
+            this.state.isRotatingShape = false;
+            this.state.shapeRotateSession = null;
+            this.state.shapeResizeAnchor = null;
+            this.state.shapeResizeBase = null;
+            this.clearStatusSelectionSize();
+            this.requestGlobalOverlayUpdate();
+        }
+
+        // Every field below describes an edit that is *in progress*, not the
+        // document itself. It is scoped to one editing gesture and must never
+        // survive a document swap (tab switch, open, new) — carrying any of it
+        // across makes undo() take a branch that belongs to the other document.
+        // Keep this list next to the state initializer it mirrors.
+        resetTransientEditState() {
+            const s = this.state;
+            s.isDrawing = false;
+            s.startPos = { x: 0, y: 0 };
+            s.isCanvasResizing = false; s.rDir = '';
+            // Selection gesture
+            s.selection = null;
+            s.isMovingSel = false; s.isRotatingSel = false;
+            s.selStart = { x: 0, y: 0 }; s.dragHandle = null;
+            s.selectionOriginalPos = null;
+            s.selectionRotateSession = null;
+            s.selectionCutStep = null;
+            s.selectionJustCreated = false;
+            s.selectionIgnoreClickUntil = 0;
+            s.selectionIgnoreNextClick = false;
+            s.tempSelectionDrawRect = null;
+            // Shape gesture
+            s.activeShape = null; s.shapeEditMode = false;
+            s.activeShapePathHandle = null;
+            s.shapeDragStart = null; s.shapeDragBase = null;
+            s.isRotatingShape = false; s.shapeRotateSession = null;
+            s.shapeResizeAnchor = null; s.shapeResizeBase = null;
+            // Curve gesture — curveUndo is the redo draft and is the single
+            // worst offender: it makes redo() replay another document's curve.
+            s.curvePhase = 0; s.curvePts = [];
+            s.curveUndo = null;
+            // Freehand / brush gestures
+            s.freehandPathActive = false; s.freehandPathPoints = [];
+            s.freehandActive = false; s.freehandPoints = [];
+            s.paintbrushActive = false;
+            s.smartPencilActive = false;
+            s.pencilCtrlAxis = null;
+            // Polyline / lasso / wand gestures
+            s.polyActive = false; s.polyPoints = [];
+            s.lassoActive = false; s.lassoMode = null;
+            s.lassoPoints = []; s.lassoIsDown = false; s.lassoStart = null;
+            s.wandActive = false; s.wandStart = null; s.wandStartScreen = null;
+            s.wandBase = null; s.wandDiff = null; s.wandVisited = null;
+            s.wandMaskCanvas = null; s.wandMaskImageData = null;
+            // Viewport / canvas drag gestures
+            s.isPanning = false; s.isCanvasDragging = false;
+            s.canvasOriginalSize = null;
+            s.resizeAnchor = null;
+            s.resizePreviewActive = false;
+            s.resizePreviewRect = null; s.resizePreviewGhost = null;
+            // Adjustment-dialog live preview
+            s.hueSatActive = false; s.hueSatApplied = false; s.hueSatDragging = false;
+            // NOTE: wandJobId is deliberately not reset — it is a monotonic
+            // counter used to invalidate in-flight async wand jobs.
+        }
+
+        // Land every in-progress edit so the document is in a quiescent, fully
+        // described state. Call before snapshotting or replacing the document.
+        // commit:false discards drafts instead of stamping them.
+        endInteractiveEdit(opts) {
+            const commit = !opts || opts.commit !== false;
+            // Queued stroke frames first — they still have pixels to land.
+            if (commit && this.state.isDrawing) {
+                try { this.flushStrokes(); } catch (e) { /* transient stroke state */ }
+            }
+            this.cancelPendingStrokes();
+            if (this.brush && typeof this.brush.endStroke === 'function') {
+                try { this.brush.endStroke(); } catch (e) { /* ignore */ }
+            }
+            // A freehand path still active here means the gesture never reached
+            // pointer-up, so there is no committable result either way.
+            try {
+                if (typeof FreehandPathEngine !== 'undefined' &&
+                    FreehandPathEngine.isActive && FreehandPathEngine.isActive()) {
+                    FreehandPathEngine.cancel();
+                }
+            } catch (e) { /* ignore */ }
+            // A palette preview repaints the canvas without recording history, so
+            // while one is live the canvas does not match history[step]. It is
+            // transient hover UI, never part of the document — always drop it.
+            try { if (this.state.previewPaletteId) this.exitPreview(); } catch (e) { /* ignore */ }
+            // Point-collection drafts have no pixels until finalized.
+            try { if (this.state.polyActive) this.cancelPolyline(); } catch (e) { /* ignore */ }
+            try { if (this.state.lassoActive) this.resetLassoState(); } catch (e) { /* ignore */ }
+            // Gradient must be resolved before the selection is: gradientApply()
+            // clips to the live selection mask.
+            try {
+                if (this.config.gradient && this.config.gradient.active) {
+                    if (commit) this.gradientApply(); else this.gradientDiscard();
+                }
+            } catch (e) { console.warn('[Doc] gradient finalize failed', e); }
+            // Shapes and selections carry real pixels — these are the only two
+            // that respect the commit flag.
+            try {
+                if (this.state.activeShape) {
+                    if (commit) this.commitActiveShape(); else this.discardActiveShape();
+                }
+            } catch (e) { console.warn('[Doc] shape finalize failed', e); }
+            try {
+                if (this.state.selection) {
+                    if (commit) this.commitSelection(); else this.cancelSelection();
+                }
+            } catch (e) { console.warn('[Doc] selection finalize failed', e); }
+            // Whatever is left is pure draft bookkeeping.
+            this.resetTransientEditState();
         }
 
         // Bakes any negative w/h flip into s.canvas so that s.w and s.h are
@@ -17151,47 +17922,43 @@ void main() {
                 document.getElementById('freehand-sidebar')?.classList.contains('open') ||
                 document.getElementById('paintbrush-sidebar')?.classList.contains('open') ||
                 document.getElementById('gradient-sidebar')?.classList.contains('open') ||
-                (document.getElementById('project-panel') && !document.getElementById('project-panel').classList.contains('project-collapsed'));
+                document.getElementById('project-panel')?.classList.contains('open');
             const shift = this.config.anchorCanvas && anyOpen ? 290 : 0;
+            // Lets the collapsed panels' edge tabs step aside for whichever
+            // panel is open — see .left-flyout-open in the stylesheet.
+            document.body.classList.toggle('left-flyout-open', !!anyOpen);
             if (!this.ui.viewport) return;
-            if (smoothHandles) {
-                const hc = document.getElementById('canvas-resize-handles');
-                if (hc) hc.classList.add('smooth');
-                clearTimeout(this._handleSmoothTimer);
-                this._handleSmoothTimer = setTimeout(() => {
-                    const el = document.getElementById('canvas-resize-handles');
-                    if (el) el.classList.remove('smooth');
-                }, 300);
-            }
-            let predictedBounds = null;
-            if (smoothHandles && this.bounds) {
-                const wasOpen = this.ui.viewport.classList.contains('sidebar-open');
-                const willBeOpen = shift !== 0;
-                if (wasOpen !== willBeOpen) {
-                    const delta = willBeOpen ? 280 : -280;
-                    predictedBounds = {
-                        left: this.bounds.left + delta,
-                        top: this.bounds.top,
-                        right: this.bounds.right + delta,
-                        bottom: this.bounds.bottom,
-                        width: this.bounds.width,
-                        height: this.bounds.height
-                    };
-                }
-            }
             this.ui.viewport.classList.toggle('sidebar-open', shift !== 0);
-            if (predictedBounds) {
-                const saved = this.bounds;
-                this.bounds = predictedBounds;
-                this.updateCanvasResizeHandles();
-                this.bounds = saved;
-                if (this.config.anchorCanvas) {
-                    this.requestGlobalOverlayUpdate();
-                }
-            } else if (this.config.anchorCanvas) {
+            // The panel slides the canvas over a CSS transition, so the canvas is
+            // in a new place every frame until it lands. Follow it frame by frame
+            // rather than jumping the handles to where the canvas is predicted to
+            // end up — a prediction is wrong the instant a second toggle
+            // interrupts the first, which is what spamming a tool button does.
+            if (smoothHandles && this._startupSettled) {
+                this._followCanvasWhileShifting();
+            } else {
                 this.updateBounds();
                 this.requestGlobalOverlayUpdate();
             }
+        }
+        /* Pin the handles to the canvas for as long as a panel is sliding it.
+           Each new toggle pushes the deadline out, so an interrupted slide is
+           followed just as closely as one that runs to completion. */
+        _followCanvasWhileShifting() {
+            // The transition is 240ms; the margin covers the frame it starts on
+            // and leaves the handles settled on the final position.
+            this._canvasFollowUntil = performance.now() + 400;
+            if (this._canvasFollowRaf) return;
+            const step = () => {
+                this.updateBounds();
+                this.updateGlobalOverlays();
+                if (performance.now() >= this._canvasFollowUntil) {
+                    this._canvasFollowRaf = null;
+                    return;
+                }
+                this._canvasFollowRaf = requestAnimationFrame(step);
+            };
+            this._canvasFollowRaf = requestAnimationFrame(step);
         }
         clampCanvasOffset(off) {
             if (!this.config.anchorCanvas || !this.ui.viewport) return off;
@@ -18191,19 +18958,44 @@ void main() {
             if (!this.ui.cqPalette) return;
             this.ui.cqPalette.innerHTML = '';
             const pal = this.palette || [];
-            pal.forEach(c => {
+            pal.forEach((c, index) => {
                 const d = document.createElement('div');
                 d.className = 'mini-swatch';
                 const hex = this.rgbToHex(c.r, c.g, c.b);
                 d.style.backgroundColor = hex;
                 d.dataset.fixedPaletteColor = hex;
+                d.dataset.slot = String(index);
+                d.title = 'Slot ' + index + ' — ' + hex;
+                if (this.paletteSlotFor(this.config.activeSlot) === index) d.dataset.activeSlot = 'true';
                 d.onclick = () => {
-                    this.setColor(this.rgbToHex(c.r, c.g, c.b), this.config.activeSlot);
+                    // Remember which slot this was, not just what colour it is. Two
+                    // slots can hold the same colour and mean different things —
+                    // that is the whole reason a shiny palette works.
+                    this.pickPaletteSlot(index, this.config.activeSlot);
                     this.closeModals();
                 };
                 this.ui.cqPalette.appendChild(d);
             });
             this.enforceFixedPaletteSwatchStyles();
+        }
+        paletteSlotFor(colorSlot) {
+            const map = this.config.paletteSlot;
+            if (!map) return -1;
+            const idx = map[colorSlot === 2 ? 2 : 1];
+            return Number.isInteger(idx) ? idx : -1;
+        }
+        /* Choose a palette slot as the drawing colour. The colour follows from the
+           slot, never the other way around. */
+        pickPaletteSlot(index, colorSlot) {
+            const pal = this.palette || [];
+            const c = pal[index];
+            if (!c) return;
+            this.setColor(this.rgbToHex(c.r, c.g, c.b), colorSlot);
+            if (!this.config.paletteSlot) this.config.paletteSlot = { 1: -1, 2: -1 };
+            this.config.paletteSlot[colorSlot === 2 ? 2 : 1] = index;
+            this.renderQuantPalette();
+            this.updateProjectConformance();
+            if (window.PalettePanel && window.PalettePanel.render) window.PalettePanel.render();
         }
         applyQuantColor() {
             const cfg = this.getDepthConfig();
@@ -18223,6 +19015,10 @@ void main() {
             this.closeModals();
         }
         setColor(c, s) {
+            // A colour arriving from anywhere but the palette strip (picker,
+            // eyedropper, swap) is just a colour — it no longer names a slot.
+            // pickPaletteSlot() re-establishes the link straight after this call.
+            if (this.config.paletteSlot) this.config.paletteSlot[s === 2 ? 2 : 1] = -1;
             if(s===1) {
                 this.config.c1=c;
                 const c1 = document.getElementById('c1-disp');
@@ -18877,6 +19673,8 @@ void main() {
             this.saveState();
         }
         setSize(w,h) {
+            // Resizing clears the canvas; no prior knowledge survives it.
+            this.markAllDirty();
             this.config.width=w;
             this.config.height=h;
             this.tileHistory.enabled = this.shouldUseTiledHistory(w, h);
@@ -18885,6 +19683,7 @@ void main() {
             this.ui.cMain.height=h;
             this.ui.cTemp.width=w;
             this.ui.cTemp.height=h;
+            if (this.ui.frameOnion) { this.ui.frameOnion.width=w; this.ui.frameOnion.height=h; }
             // Resizing a canvas resets its context state — clear the smoothing guard
             // so disableSmoothing() re-applies the properties on the next call.
             this.ctx._smoothingDisabled = false;
@@ -18913,28 +19712,22 @@ void main() {
         shouldUseTiledHistory(w, h) {
             return (w * h) >= this.tileHistory.thresholdPixels;
         }
+        // The tile is the smallest thing history can store or share, so tile
+        // size IS undo granularity. This used to grow with the canvas — 1024 px
+        // above 16 MP — which meant touching one pixel on a big document
+        // recorded a megapixel of tile, exactly where fine granularity matters
+        // most. A fixed small tile costs a longer tile list and buys a ~64x
+        // cheaper brush dab; Krita runs 64 px tiles on far larger images.
         _chooseTileSize(w, h) {
-            const totalPixels = w * h;
-            if (totalPixels <= 1024 * 1024) return 128;
-            if (totalPixels <= 4 * 1024 * 1024) return 256;
-            if (totalPixels <= 16 * 1024 * 1024) return 512;
-            return 1024;
+            return 128;
         }
+        // History depth used to be guessed from canvas size on the assumption
+        // that a step cost a whole canvas. It does not: historyByteBudget()
+        // measures what history is really holding and trimming works from that.
+        // All this does now is keep the readout honest after a resize.
         _applyMemoryBudget() {
-            const gb = navigator.deviceMemory || 8;
-            // Adaptive undo depth by canvas size. Each tiled/flat history entry can be
-            // up to a full-canvas snapshot for detailed art, so a fixed limit of 50 is
-            // catastrophic on huge docs. Only auto-tune when adaptive mode is enabled.
-            if (this._historyAdaptive) {
-                const px = (this.config.width || 0) * (this.config.height || 0);
-                let limit = 50;
-                if (px >= 64 * 1024 * 1024) limit = 12;
-                else if (px >= 16 * 1024 * 1024) limit = 20;
-                else if (px >= 2 * 1024 * 1024) limit = 30;
-                if (gb <= 4 && limit > 20) limit = 20;
-                this.historyLimit = limit;
-                this._syncHistoryLimitInput();
-            }
+            this._syncHistoryLimitInput();
+            this.updateHistoryUsage();
         }
         getSolidTileColor(data) {
             if (data.length < 4) return null;
@@ -18983,58 +19776,424 @@ void main() {
             }
             return true;
         }
-        captureTiledSnapshot(canvas, prevTiles) {
+        /* Capture the canvas as tiles. With `prevMap` supplied, only tiles that
+         * differ from it are returned — the entry becomes a delta on the step
+         * before it. With `anchor` set, every tile is returned, so the entry
+         * stands alone and bounds how far a restore has to walk back. */
+        captureTiledSnapshot(canvas, prevMap, anchor, dirty) {
             const tileSize = this.tileHistory.tileSize;
             const width = canvas.width;
             const height = canvas.height;
             const ctx = canvas.getContext('2d');
             const tiles = [];
+            let ownedBytes = 0;
             const maxTileBytes = tileSize * tileSize * 4;
             if (!this._tileCopyBuf || this._tileCopyBuf.length < maxTileBytes) {
                 this._tileCopyBuf = new Uint8ClampedArray(maxTileBytes);
             }
-            let prevMap = null;
-            if (prevTiles) {
-                prevMap = new Map();
-                for (const t of prevTiles) {
-                    prevMap.set(t.x + ',' + t.y, t);
-                }
-            }
             for (let y = 0; y < height; y += tileSize) {
                 const stripH = Math.min(tileSize, height - y);
-                const strip = ctx.getImageData(0, y, width, stripH);
+                // Rows nothing touched are not read at all — this is where the
+                // saving is. An anchor has to hold everything, so it ignores it.
+                if (dirty && !anchor && (y + stripH - 1 < dirty.y0 || y > dirty.y1)) continue;
+                // Read only the columns in play, not the full width of the
+                // document. A tall narrow edit on a 13000px canvas was pulling
+                // back the entire row band — three times the pixels needed.
+                let stripX = 0, stripW = width;
+                if (dirty && !anchor) {
+                    stripX = Math.max(0, Math.floor(dirty.x0 / tileSize) * tileSize);
+                    const endX = Math.min(width, Math.ceil((dirty.x1 + 1) / tileSize) * tileSize);
+                    stripW = Math.max(tileSize, endX - stripX);
+                }
+                const strip = ctx.getImageData(stripX, y, stripW, stripH);
                 const stripData = strip.data;
                 for (let x = 0; x < width; x += tileSize) {
                     const w = Math.min(tileSize, width - x);
                     const h = Math.min(tileSize, height - y);
+                    if (dirty && !anchor && (x + w - 1 < dirty.x0 || x > dirty.x1)) continue;
                     const tileData = this._tileCopyBuf.subarray(0, w * h * 4);
                     for (let row = 0; row < h; row++) {
-                        const srcOffset = (row * width + x) * 4;
+                        // Offsets are relative to the strip, which may start
+                        // part-way across the document.
+                        const srcOffset = (row * stripW + (x - stripX)) * 4;
                         tileData.set(stripData.subarray(srcOffset, srcOffset + w * 4), row * w * 4);
                     }
                     const solid = this.getSolidTileColor(tileData);
                     if (solid) {
-                        tiles.push({ x, y, w, h, solid });
+                        // Flat tiles were the one case that never shared, so a
+                        // dab on a mostly-empty canvas still minted a descriptor
+                        // for every other tile in the document.
+                        const prevSolid = prevMap && prevMap.get(x + ',' + y);
+                        if (prevSolid && prevSolid.solid &&
+                            prevSolid.solid[0] === solid[0] && prevSolid.solid[1] === solid[1] &&
+                            prevSolid.solid[2] === solid[2] && prevSolid.solid[3] === solid[3]) {
+                            // Unchanged: an anchor still has to carry it, a
+                            // delta leaves it to the step it came from.
+                            if (anchor) tiles.push(prevSolid);
+                        } else {
+                            tiles.push({ x, y, w, h, solid });
+                            ownedBytes += 48;            // a fresh descriptor object
+                        }
                     } else {
                         const rle = this._rleEncode(tileData);
                         if (prevMap) {
                             const prev = prevMap.get(x + ',' + y);
                             if (prev && prev.rle && this._rleEqual(prev.rle, rle)) {
-                                tiles.push({ x, y, w, h, rle: prev.rle });
+                                // Unchanged. Tiles are never mutated after
+                                // capture, so an anchor can reuse the whole
+                                // descriptor; a delta omits it entirely.
+                                if (anchor) tiles.push(prev);
                             } else {
                                 tiles.push({ x, y, w, h, rle });
+                                ownedBytes += 48 + rle.length;
                             }
                         } else {
                             tiles.push({ x, y, w, h, rle });
+                            ownedBytes += 48 + rle.length;
                         }
                     }
                 }
             }
-            return { width, height, tileSize, tiles };
+            // One array slot per tile the entry actually holds. A delta holds
+            // only what changed, which is the whole point.
+            ownedBytes += tiles.length * 8 + 64;
+            return { width, height, tileSize, tiles, ownedBytes };
         }
+        /* ── Dirty-region tracking ────────────────────────────────────────
+         * Capturing a history step used to read and re-encode the whole canvas
+         * however little had changed: 618 ms on a 13000px document for a
+         * six-pixel dab. Knowing which part was touched turns that into a few
+         * milliseconds.
+         *
+         * Trusting each tool to declare what it touched would be a quiet
+         * disaster — a tool that understates its area produces an undo that
+         * restores the wrong pixels, and you would not find out for a long
+         * time. So nothing is trusted. Drawing contexts are wrapped, the
+         * wrapper works out the affected rectangle itself, and ANY operation it
+         * does not fully understand falls back to "assume everything changed".
+         * The failure mode is a slow capture, never a wrong one.
+         */
+        /* Recording an undo step has to read the canvas back, and that read
+         * waits for whatever was just painted to finish on the GPU. After a
+         * fat brush stroke that wait is most of half a second, during which
+         * nothing else can happen — the tail of the stroke cannot appear and a
+         * second stroke cannot start.
+         *
+         * Letting the browser get on with it first and recording a moment later
+         * costs the same total work but takes it off the path between one
+         * stroke and the next. Anything that would touch the canvas flushes the
+         * pending record first, so history can never merge two edits into one
+         * step or record them out of order. */
+        saveStateDeferred() {
+            if (this._deferredSave) return;
+            this._deferredSave = true;
+            const run = () => {
+                if (!this._deferredSave) return;      // already flushed
+                this._deferredSave = false;
+                this._deferredSaveTimer = null;
+                this.saveState();
+            };
+            // One frame lets the paint land, then idle time does the recording.
+            requestAnimationFrame(() => {
+                if (!this._deferredSave) return;
+                if (window.requestIdleCallback) {
+                    this._deferredSaveTimer = requestIdleCallback(run, { timeout: 120 });
+                } else {
+                    this._deferredSaveTimer = setTimeout(run, 0);
+                }
+            });
+        }
+        flushDeferredSave() {
+            if (!this._deferredSave) return;
+            this._deferredSave = false;
+            if (this._deferredSaveTimer != null) {
+                if (window.cancelIdleCallback) { try { cancelIdleCallback(this._deferredSaveTimer); } catch (e) {} }
+                clearTimeout(this._deferredSaveTimer);
+                this._deferredSaveTimer = null;
+            }
+            this.saveState();
+        }
+
+        /* Copy the preview onto the artwork, but only the part a stroke
+         * actually reached. Copying the whole preview told history that the
+         * entire canvas had changed — on a 13000x13000 document that meant
+         * reading back every pixel, which is what made the app freeze after
+         * letting go of the mouse. Pencil and eraser draw straight to the
+         * artwork, so for them the preview is empty and there is nothing to
+         * copy at all. Falls back to the whole surface if the region is
+         * unknown. */
+        stampTempCanvas() {
+            const r = this.currentDirtyRect('temp');
+            if (r === null) {
+                this.ctx.drawImage(this.ui.cTemp, 0, 0);
+                return;
+            }
+            if (r.x1 < r.x0 || r.y1 < r.y0) return;   // nothing was drawn on it
+            const w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1;
+            this.ctx.drawImage(this.ui.cTemp, r.x0, r.y0, w, h, r.x0, r.y0, w, h);
+        }
+
+        /* Wipe the preview canvas. Only the part holding something is cleared:
+         * on a 13000x13000 document clearing all of it costs about 100 ms, and
+         * a stroke covers a tiny fraction of that. Falls back to the whole
+         * surface whenever the tracked region is unknown. */
+        clearTempCanvas() {
+            const r = this.currentDirtyRect('temp');
+            if (r === null) {
+                this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+            } else if (r.x1 >= r.x0 && r.y1 >= r.y0) {
+                this.ctxTemp.clearRect(r.x0, r.y0, r.x1 - r.x0 + 1, r.y1 - r.y0 + 1);
+            }
+            this.markCleanDirty('temp');
+        }
+
+        /* Two surfaces are tracked separately: 'main' is the artwork, which is
+         * what history captures, and 'temp' is the preview a stroke is drawn on
+         * before being stamped down. Knowing the preview's extent is what keeps
+         * that stamp from claiming the whole canvas. */
+        _region(key) {
+            if (!this._dirtyRegions) this._dirtyRegions = {};
+            let r = this._dirtyRegions[key || 'main'];
+            if (!r) r = this._dirtyRegions[key || 'main'] = { rect: null, known: false };
+            return r;
+        }
+        markAllDirty(key) {
+            const r = this._region(key);
+            r.rect = null;               // null means "unknown — read it all"
+            r.known = false;
+            if (!key || key === 'main') { this._dirtyRect = null; this._dirtyKnown = false; }
+        }
+        markCleanDirty(key) {
+            const r = this._region(key);
+            r.rect = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+            r.known = true;
+            if (!key || key === 'main') { this._dirtyRect = r.rect; this._dirtyKnown = true; }
+        }
+        markDirtyRect(x0, y0, x1, y1, key) {
+            const reg = this._region(key);
+            if (!reg.known) return;                    // already unknown; stays that way
+            if (!(isFinite(x0) && isFinite(y0) && isFinite(x1) && isFinite(y1))) {
+                this.markAllDirty(key);
+                return;
+            }
+            const r = reg.rect;
+            if (x0 < r.x0) r.x0 = x0;
+            if (y0 < r.y0) r.y0 = y0;
+            if (x1 > r.x1) r.x1 = x1;
+            if (y1 > r.y1) r.y1 = y1;
+        }
+        /* The rectangle to capture, clamped to the canvas, or null for all of
+         * it. An empty region means nothing was drawn since the last step. */
+        currentDirtyRect(key) {
+            const reg = this._region(key);
+            if (!reg.known || !reg.rect) return null;
+            const r = reg.rect;
+            if (r.x1 < r.x0 || r.y1 < r.y0) return { x0: 0, y0: 0, x1: -1, y1: -1 };
+            return {
+                x0: Math.max(0, Math.floor(r.x0)),
+                y0: Math.max(0, Math.floor(r.y0)),
+                x1: Math.min(this.config.width  - 1, Math.ceil(r.x1)),
+                y1: Math.min(this.config.height - 1, Math.ceil(r.y1))
+            };
+        }
+
+        /* Wrap a 2D context so every drawing call reports the area it affects.
+         * The wrapper follows the transform itself, so a rotated or scaled
+         * brush stamp still reports where it actually landed. */
+        trackCtx(ctx, key) {
+            if (!ctx || ctx.__tracked) return ctx;
+            const app = this;
+            const K = key || 'main';
+            // Current transform, plus a stack for save()/restore().
+            let m = [1, 0, 0, 1, 0, 0];
+            const stack = [];
+            const mul = (n) => [
+                n[0] * m[0] + n[1] * m[2],       n[0] * m[1] + n[1] * m[3],
+                n[2] * m[0] + n[3] * m[2],       n[2] * m[1] + n[3] * m[3],
+                n[4] * m[0] + n[5] * m[2] + m[4], n[4] * m[1] + n[5] * m[3] + m[5]
+            ];
+            // Map a user-space rect through the transform and report its bounds.
+            const emit = (x, y, w, h, pad) => {
+                if (!(isFinite(x) && isFinite(y) && isFinite(w) && isFinite(h))) {
+                    app.markAllDirty(K); return;
+                }
+                const px = [x, x + w, x, x + w], py = [y, y, y + h, y + h];
+                let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+                for (let i = 0; i < 4; i++) {
+                    const tx = px[i] * m[0] + py[i] * m[2] + m[4];
+                    const ty = px[i] * m[1] + py[i] * m[3] + m[5];
+                    if (tx < x0) x0 = tx; if (tx > x1) x1 = tx;
+                    if (ty < y0) y0 = ty; if (ty > y1) y1 = ty;
+                }
+                // Antialiasing, line width and rounding all bleed outwards.
+                const g = (pad || 0) + 2;
+                app.markDirtyRect(x0 - g, y0 - g, x1 + g, y1 + g, K);
+            };
+            // A blur or a filter paints outside the geometry it was given.
+            const spreads = () => (ctx.shadowBlur > 0) ||
+                (typeof ctx.filter === 'string' && ctx.filter !== 'none');
+            const lw = () => (ctx.lineWidth || 1) / 2 + 1;
+
+            // Everything that draws and whose extent we can work out.
+            const geo = {
+                fillRect:   (a) => emit(a[0], a[1], a[2], a[3], 0),
+                clearRect:  (a) => {
+                    // Wiping the whole preview leaves it empty, so its region
+                    // resets rather than growing to cover the canvas. A partial
+                    // clear still expands it, which over-reports and is safe.
+                    if (K === 'temp' && a[0] <= 0 && a[1] <= 0 &&
+                        a[2] >= app.config.width && a[3] >= app.config.height) {
+                        app.markCleanDirty('temp');
+                        return;
+                    }
+                    emit(a[0], a[1], a[2], a[3], 0);
+                },
+                strokeRect: (a) => emit(a[0], a[1], a[2], a[3], lw()),
+                fillText:     () => app.markAllDirty(K),
+                strokeText:   () => app.markAllDirty(K),
+                putImageData: (a) => {
+                    // putImageData ignores the transform entirely.
+                    const img = a[0];
+                    if (!img) { app.markAllDirty(K); return; }
+                    app.markDirtyRect(a[1], a[2], a[1] + img.width, a[2] + img.height, K);
+                },
+                drawImage: (a) => {
+                    const src = a[0];
+                    const sw = (src && (src.width  || src.videoWidth))  || 0;
+                    const sh = (src && (src.height || src.videoHeight)) || 0;
+                    if (a.length >= 9)      emit(a[5], a[6], a[7], a[8], 0);
+                    else if (a.length >= 5) emit(a[1], a[2], a[3], a[4], 0);
+                    else                    emit(a[1], a[2], sw, sh, 0);
+                }
+            };
+            // Path building: remember the extent of the points as they arrive.
+            let pb = null;
+            const pt = (x, y) => {
+                if (!pb) pb = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+                if (!(isFinite(x) && isFinite(y))) { pb = false; return; }
+                if (pb === false) return;
+                if (x < pb.x0) pb.x0 = x; if (x > pb.x1) pb.x1 = x;
+                if (y < pb.y0) pb.y0 = y; if (y > pb.y1) pb.y1 = y;
+            };
+            const paintPath = (pad) => {
+                if (!pb || pb === false) { app.markAllDirty(K); return; }
+                emit(pb.x0, pb.y0, pb.x1 - pb.x0, pb.y1 - pb.y0, pad);
+            };
+            const path = {
+                beginPath: () => { pb = null; },
+                moveTo: (a) => pt(a[0], a[1]),
+                lineTo: (a) => pt(a[0], a[1]),
+                rect:   (a) => { pt(a[0], a[1]); pt(a[0] + a[2], a[1] + a[3]); },
+                arc:    (a) => { pt(a[0] - a[2], a[1] - a[2]); pt(a[0] + a[2], a[1] + a[2]); },
+                arcTo:  (a) => { pt(a[0], a[1]); pt(a[2], a[3]); },
+                ellipse:(a) => { pt(a[0] - a[2], a[1] - a[3]); pt(a[0] + a[2], a[1] + a[3]); },
+                quadraticCurveTo: (a) => { pt(a[0], a[1]); pt(a[2], a[3]); },
+                bezierCurveTo:    (a) => { pt(a[0], a[1]); pt(a[2], a[3]); pt(a[4], a[5]); },
+                closePath: () => {},
+                fill:   () => paintPath(0),
+                stroke: () => paintPath(lw()),
+                clip:   () => {}
+            };
+            // Transform bookkeeping, and state that does not paint.
+            const xform = {
+                save:    () => { stack.push(m.slice()); },
+                restore: () => { if (stack.length) m = stack.pop(); },
+                translate: (a) => { m = mul([1, 0, 0, 1, a[0], a[1]]); },
+                scale:     (a) => { m = mul([a[0], 0, 0, a[1], 0, 0]); },
+                rotate:    (a) => { const c = Math.cos(a[0]), s = Math.sin(a[0]);
+                                    m = mul([c, s, -s, c, 0, 0]); },
+                transform: (a) => { m = mul(a); },
+                setTransform: (a) => {
+                    m = (a.length >= 6) ? a.slice(0, 6)
+                      : (a[0] && typeof a[0].a === 'number'
+                            ? [a[0].a, a[0].b, a[0].c, a[0].d, a[0].e, a[0].f]
+                            : [1, 0, 0, 1, 0, 0]);
+                },
+                resetTransform: () => { m = [1, 0, 0, 1, 0, 0]; }
+            };
+            // Reads and pure state: no effect on the canvas.
+            const inert = new Set([
+                'getImageData', 'createImageData', 'measureText', 'getLineDash',
+                'setLineDash', 'createLinearGradient', 'createRadialGradient',
+                'createConicGradient', 'createPattern', 'isPointInPath',
+                'isPointInStroke', 'getTransform', 'getContextAttributes'
+            ]);
+
+            const cache = new Map();
+            return new Proxy(ctx, {
+                get(target, prop) {
+                    const v = target[prop];
+                    if (prop === '__tracked') return true;
+                    if (prop === '__raw') return target;
+                    if (typeof v !== 'function') return v;
+                    if (cache.has(prop)) return cache.get(prop);
+                    const handler = geo[prop] || path[prop] || xform[prop];
+                    const fn = (...args) => {
+                        if (handler) {
+                            // A shadow or filter paints beyond the geometry, so
+                            // the computed rectangle would be too small.
+                            if ((geo[prop] || path[prop]) && spreads()) app.markAllDirty(K);
+                            else handler(args);
+                        } else if (!inert.has(prop)) {
+                            // Something that draws in a way this wrapper does
+                            // not model. Assume the worst; correctness first.
+                            app.markAllDirty(K);
+                        }
+                        return v.apply(target, args);
+                    };
+                    cache.set(prop, fn);
+                    return fn;
+                },
+                set(target, prop, value) { target[prop] = value; return true; }
+            });
+        }
+
+        /* A tiled entry stores only the tiles that step CHANGED, plus a link to
+         * the step before it. Resolving walks back to the nearest anchor — an
+         * entry holding a full grid — and replays forward so newer tiles win.
+         *
+         * Before this, every entry carried a slot for every tile in the
+         * document whether or not anything had happened to it: ~10,000 slots,
+         * about 81 KB, on a 13000px canvas, paid per step even for a single dab.
+         */
+        _resolveTiles(entry) {
+            const chain = [];
+            let e = entry, guard = 0;
+            while (e) {
+                chain.push(e);
+                if (!e.base) break;
+                e = e.base;
+                // The anchor interval bounds this; the guard is for a chain
+                // that somehow lost its anchor, so restore degrades rather
+                // than hanging.
+                if (++guard > 100000) { console.warn('[History] runaway tile chain'); break; }
+            }
+            const map = new Map();
+            for (let i = chain.length - 1; i >= 0; i--) {
+                for (const t of chain[i].tiles) map.set(t.x + ',' + t.y, t);
+            }
+            return map;
+        }
+
+        /* Flatten an entry so it no longer depends on anything earlier. Needed
+         * before the entry it links through is dropped — by eviction from the
+         * front, or by removing one from the middle. */
+        _anchorEntry(entry) {
+            if (!entry || !entry.tiles || !entry.base) return;
+            entry.tiles = Array.from(this._resolveTiles(entry).values());
+            entry.base = null;
+            entry._chain = 0;
+            // It now owns everything it holds, so the cached cost is stale.
+            entry._bytes = undefined;
+            this._entryBytes(entry);
+        }
+
         applyTiledSnapshot(snapshot) {
             const ctx = this.ctx;
-            const { width, height, tiles } = snapshot;
+            const { width, height } = snapshot;
+            const tiles = snapshot.base
+                ? Array.from(this._resolveTiles(snapshot).values())
+                : snapshot.tiles;
             for (const tile of tiles) {
                 if (tile.solid) continue;
                 const data = tile.rle ? this._rleDecode(tile.rle, tile.w, tile.h) : tile.data;
@@ -19059,6 +20218,10 @@ void main() {
             }
         }
         restoreHistoryEntry(entry, stepIdx) {
+            this.flushDeferredSave();
+            // The canvas is about to be replaced from history, so nothing known
+            // about what changed since the last step still applies.
+            this.markAllDirty();
             this.setSize(entry.width, entry.height);
             this.disableSmoothing(this.ctx);
             if (entry.tiles) {
@@ -19070,9 +20233,81 @@ void main() {
             } else if (entry.canvas) {
                 this.ctx.drawImage(entry.canvas, 0, 0);
             }
+            this.restoreProjectStep(entry);
         }
+        // Layered history entries reference unchanged layers from an *earlier*
+        // entry instead of re-cloning them (the saveState installed by
+        // installLayerSystem, at the foot of this file, builds { ref: prevSnap }
+        // snaps). Walk every surviving entry's ref chains and
+        // collect the owned snaps they terminate at, so eviction can tell
+        // "nothing points here any more" from "an older entry owns the pixels a
+        // newer entry still displays".
+        _collectOwnedSnapsInUse(entries) {
+            const inUse = new Set();
+            if (!entries) return inUse;
+            for (const e of entries) {
+                if (!e || !e.snaps) continue;
+                for (const sv of e.snaps) {
+                    let s = sv;
+                    while (s.ref) s = s.ref;
+                    // s === sv means this entry owns its own snap; only a chain
+                    // that walked somewhere else pins a foreign entry's pixels.
+                    if (s !== sv) inUse.add(s);
+                }
+            }
+            return inUse;
+        }
+
+        // Release entries being dropped from the history, without closing image
+        // data that any surviving entry still resolves to. Closing a shared
+        // ImageBitmap leaves later undo steps drawing from a detached bitmap,
+        // which throws and strands the document mid-undo.
+        _releaseHistoryEntries(evicted, survivors) {
+            if (!evicted || !evicted.length) return;
+            const inUse = this._collectOwnedSnapsInUse(survivors);
+            // Masks are shared directly rather than through a ref chain, so a
+            // survivor can point at an evicted entry's mask object. Collect
+            // those separately or freeing one blanks a mask still in use.
+            const masksInUse = new Set();
+            for (const e of (survivors || [])) {
+                if (!e || !e.snaps) continue;
+                for (const sv of e.snaps) if (sv.mask) masksInUse.add(sv.mask);
+            }
+            const drop = (canvas) => {
+                // Zeroing frees the pixel buffer immediately; dropping the
+                // reference alone leaves it to the collector.
+                if (canvas) { try { canvas.width = 0; canvas.height = 0; } catch (_) {} }
+            };
+            for (const entry of evicted) {
+                if (!entry) continue;
+                if (entry.bitmap) {
+                    try { entry.bitmap.close(); } catch (_) {}
+                    entry.bitmap = null;
+                }
+                drop(entry.canvas);
+                entry.canvas = null;
+                if (!entry.snaps) continue;
+                for (const sv of entry.snaps) {
+                    if (sv.mask && !masksInUse.has(sv.mask)) {
+                        drop(sv.mask.canvas);
+                        sv.mask = null;
+                    }
+                    if (sv.ref) continue;        // this entry is not the owner
+                    if (inUse.has(sv)) continue; // a survivor still resolves here
+                    if (sv.bitmap) {
+                        try { sv.bitmap.close(); } catch (_) {}
+                        sv.bitmap = null;
+                    }
+                    drop(sv.snap);
+                    sv.snap = null;
+                }
+            }
+        }
+
         // Release GPU-side ImageBitmap objects stored in a history entry.
         // Ref snaps don't own their bitmap — skip them.
+        // Only safe when the whole history is going away; use
+        // _releaseHistoryEntries() when other entries survive.
         _closeBitmapEntry(entry) {
             if (!entry) return;
             if (entry.bitmap) { try { entry.bitmap.close(); } catch (_) {} }
@@ -19146,16 +20381,54 @@ void main() {
         }
 
         saveState() {
-            // Truncate forward history and close any bitmaps being discarded.
+            // An outstanding record describes the canvas as it was BEFORE
+            // whatever is being recorded now, so it has to go in first. Safe
+            // against recursion: flushDeferredSave clears its flag before it
+            // calls back in here.
+            this.flushDeferredSave();
+            // Fold the canvas into the index map BEFORE the snapshot is taken:
+            // snapping can move pixels, and the entry has to record the pixels
+            // that the map describes, or undo would restore the two out of step.
+            this.commitProjectIndices();
+            // Truncate forward history and release the discarded entries. Refs
+            // always point backwards, so nothing kept can reference a dropped
+            // entry — but go through the ref-aware path anyway so this stays
+            // correct if that ever changes.
             if (this.state.step < this.state.history.length - 1) {
                 const dropped = this.state.history.splice(this.state.step + 1);
-                for (const e of dropped) this._closeBitmapEntry(e);
+                this._releaseHistoryEntries(dropped, this.state.history);
             }
             if (this.tileHistory.enabled) {
                 const prevEntry = this.state.history[this.state.step];
-                const prevTiles = prevEntry && prevEntry.tiles && prevEntry.width === this.ui.cMain.width && prevEntry.height === this.ui.cMain.height ? prevEntry.tiles : null;
-                const tiles = this.captureTiledSnapshot(this.ui.cMain, prevTiles);
-                this.state.history.push({ tiles: tiles.tiles, width: tiles.width, height: tiles.height });
+                // Only build on the previous step when it describes the same
+                // grid; a resize or a different tile size has to start fresh.
+                const canChain = !!(prevEntry && prevEntry.tiles &&
+                    prevEntry.width === this.ui.cMain.width &&
+                    prevEntry.height === this.ui.cMain.height &&
+                    prevEntry.tileSize === this.tileHistory.tileSize);
+                const chainLen = canChain ? (prevEntry._chain || 0) + 1 : 0;
+                // Anchor periodically so a restore never walks back further
+                // than this many steps. The anchor is built by flattening the
+                // chain in memory afterwards, NOT by re-reading the canvas —
+                // otherwise every 20th stroke would pay the old full price.
+                const needAnchor = !canChain || chainLen >= this.tileHistory.anchorInterval;
+                const prevMap = canChain ? this._resolveTiles(prevEntry) : null;
+                // Only meaningful when building on a previous step: with nothing
+                // to fall back on, everything has to be read.
+                const dirty = canChain ? this.currentDirtyRect() : null;
+                const tiles = this.captureTiledSnapshot(
+                    this.ui.cMain, prevMap, !canChain, dirty);
+                const entry = {
+                    tiles: tiles.tiles, width: tiles.width, height: tiles.height,
+                    tileSize: tiles.tileSize,
+                    base: canChain ? prevEntry : null,
+                    _chain: canChain ? chainLen : 0,
+                    _bytes: tiles.ownedBytes
+                };
+                if (needAnchor && canChain) this._anchorEntry(entry);
+                this.state.history.push(entry);
+                // The canvas and this step now agree; start accumulating afresh.
+                this.markCleanDirty();
                 this.state.step++;
                 this.enforceHistoryLimit();
                 this.state.isDirty = true;
@@ -19199,6 +20472,9 @@ void main() {
                 this.deferColorCounts();
                 this.updateTitleBarActions();
             }
+            // The slots this step describes travel with it, so undo puts the index
+            // map back as well as the pixels.
+            this.attachProjectStep(this.state.history[this.state.step]);
             // Attach a wand-selection snapshot to the current history entry so that
             // step-by-step undo/redo can restore the exact selection state after each
             // individual Magic Wand click rather than clearing the whole selection at once.
@@ -19221,17 +20497,40 @@ void main() {
                 this.brush.releaseOffscreenBuffers();
             }
         }
+        // Collapse history down to a single entry describing the current canvas,
+        // so the document has nothing to undo. For setup work that legitimately
+        // paints the canvas before the user has touched it (restoring tile mode
+        // at boot, adopting a document that reused another's history array).
+        resetHistoryBaseline() {
+            // Detach without releasing: this array may already be owned by a tab
+            // record (the tab system calls this precisely when a document path
+            // reused the previous history array). Closing its bitmaps would
+            // strand that tab. The tab system frees entries when a tab closes.
+            this.state.history = [];
+            this.state.step = -1;
+            this.saveState();
+            this.markClean();
+            this.updateTitleBarActions();
+        }
         collapseSelectionCutStep() {
             const cutStep = this.state.selectionCutStep;
             if (cutStep === null) return;
             if (cutStep >= 0 && cutStep < this.state.history.length) {
+                // The step after this one may be a delta built on it. Flatten
+                // that one first, while this entry's tiles can still be reached.
+                const next = this.state.history[cutStep + 1];
+                if (next && next.base) this._anchorEntry(next);
                 const [evicted] = this.state.history.splice(cutStep, 1);
-                this._closeBitmapEntry(evicted);
+                // This removes an entry from the MIDDLE of the history, so
+                // entries after it survive and may reference its layer pixels.
+                // Must not close anything they still resolve to.
+                this._releaseHistoryEntries([evicted], this.state.history);
                 if (this.state.step >= cutStep) this.state.step--;
             }
             this.state.selectionCutStep = null;
         }
         undo() {
+            this.flushDeferredSave();
             if (this.state.isDrawing && this.config.tool === 'paintbrush') return;
             // For an active Magic Wand selection, cancel it silently (do NOT commit
             // pixels to the canvas) so the canvas snapshot in history remains the
@@ -19298,6 +20597,7 @@ void main() {
             this.updateTitleBarActions();
         }
         redo() {
+            this.flushDeferredSave();
             if (this.state.isDrawing && this.config.tool === 'paintbrush') return;
             this.cancelPendingStrokes();
             if (this.state.curveUndo) {
@@ -19533,6 +20833,7 @@ void main() {
                 // Kick the check after layout so the modal feels responsive.
                 setTimeout(() => this.checkForUpdates(), 0);
             }
+            if (id === 'new') this.resetNewModal();
             document.getElementById('modal-'+id).style.display='flex';
             if (id === 'resize') { this.positionResizeModal(); this.updateResizePreview(); }
             if (id === 'depth') { this.centerModal('modal-'+id); setTimeout(()=>{const b=document.getElementById('depth-apply-btn');if(b)b.focus();},0); }
@@ -20747,8 +22048,9 @@ void main() {
                 if (bytes[i] !== sig[i]) throw new Error('File is not a PNG');
             }
             let pos = 8;
-            let width = 0, height = 0, bitDepth = 8, colorType = 0;
+            let width = 0, height = 0, bitDepth = 8, colorType = 0, interlace = 0;
             let palette = null, trns = null;
+            const idat = [];
             while (pos + 8 <= bytes.length) {
                 const len = (bytes[pos] << 24) | (bytes[pos + 1] << 16) | (bytes[pos + 2] << 8) | bytes[pos + 3];
                 const type = String.fromCharCode(bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]);
@@ -20759,6 +22061,9 @@ void main() {
                     height = (bytes[dataStart + 4] << 24) | (bytes[dataStart + 5] << 16) | (bytes[dataStart + 6] << 8) | bytes[dataStart + 7];
                     bitDepth = bytes[dataStart + 8];
                     colorType = bytes[dataStart + 9];
+                    interlace = bytes[dataStart + 12];
+                } else if (type === 'IDAT') {
+                    idat.push(bytes.subarray(dataStart, dataEnd));
                 } else if (type === 'PLTE') {
                     const count = Math.floor(len / 3);
                     palette = [];
@@ -20776,7 +22081,93 @@ void main() {
             if (palette && trns) {
                 for (let i = 0; i < trns.length && i < palette.length; i++) palette[i].a = trns[i];
             }
-            return { width, height, bitDepth, colorType, palette, trns };
+            return { width, height, bitDepth, colorType, palette, trns, idat, interlace };
+        }
+        /* The per-pixel palette indices, straight from the file.
+           These are the real content of an indexed PNG: two palette slots can hold
+           the same RGB (26% of pokeemerald species palettes do), and only the index
+           says which one a pixel meant — which matters because the shiny palette
+           may give those two slots different colours. Reconstructing indices from
+           RGB cannot tell them apart, so we decode them instead of guessing.
+           Returns null for anything we can't read exactly; callers fall back. */
+        async decodePngIndices(meta) {
+            if (!meta || meta.colorType !== 3 || meta.interlace !== 0) return null;
+            if (!meta.idat || !meta.idat.length) return null;
+            const { width: w, height: h, bitDepth: depth } = meta;
+            if (![1, 2, 4, 8].includes(depth) || w <= 0 || h <= 0) return null;
+
+            let joined;
+            if (meta.idat.length === 1) {
+                joined = meta.idat[0];
+            } else {
+                let total = 0;
+                for (const c of meta.idat) total += c.length;
+                joined = new Uint8Array(total);
+                let at = 0;
+                for (const c of meta.idat) { joined.set(c, at); at += c.length; }
+            }
+
+            let raw;
+            try {
+                raw = CompressionCompat.toBytes(await CompressionCompat.inflate(joined));
+            } catch (err) {
+                console.warn('Could not inflate PNG image data', err);
+                return null;
+            }
+
+            const rowBytes = Math.ceil((w * depth) / 8);
+            if (raw.length < h * (rowBytes + 1)) return null;
+
+            // Undo PNG row filters. Sub-byte depths filter on whole bytes, so the
+            // "previous pixel" distance is 1 for every indexed image.
+            const flat = new Uint8Array(h * rowBytes);
+            for (let y = 0; y < h; y++) {
+                const filter = raw[y * (rowBytes + 1)];
+                const src = y * (rowBytes + 1) + 1;
+                const cur = y * rowBytes;
+                const prev = cur - rowBytes;
+                for (let x = 0; x < rowBytes; x++) {
+                    const a = x >= 1 ? flat[cur + x - 1] : 0;
+                    const b = y > 0 ? flat[prev + x] : 0;
+                    const c = (x >= 1 && y > 0) ? flat[prev + x - 1] : 0;
+                    let v = raw[src + x];
+                    if (filter === 1) v += a;
+                    else if (filter === 2) v += b;
+                    else if (filter === 3) v += (a + b) >> 1;
+                    else if (filter === 4) {
+                        const p = a + b - c;
+                        const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+                        v += (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c);
+                    } else if (filter !== 0) {
+                        return null; // unknown filter: better no answer than a wrong one
+                    }
+                    flat[cur + x] = v & 0xff;
+                }
+            }
+
+            const indices = new Uint8Array(w * h);
+            if (depth === 8) {
+                for (let y = 0; y < h; y++) indices.set(flat.subarray(y * rowBytes, y * rowBytes + w), y * w);
+            } else {
+                const perByte = 8 / depth;
+                const mask = (1 << depth) - 1;
+                for (let y = 0; y < h; y++) {
+                    const row = y * rowBytes, out = y * w;
+                    for (let x = 0; x < w; x++) {
+                        const shift = 8 - depth - (x % perByte) * depth;
+                        indices[out + x] = (flat[row + ((x / perByte) | 0)] >> shift) & mask;
+                    }
+                }
+            }
+            return indices;
+        }
+        /* Which palette slot means "not drawn". Taken from the file's own tRNS
+           chunk rather than from palette alpha, because a loaded .pal marks its
+           first entry transparent whether or not that is true for this asset. */
+        transparentIndexFromTrns(trns) {
+            if (!trns) return -1;
+            for (let i = 0; i < trns.length; i++) if (trns[i] === 0) return i;
+            return -1;
         }
         _nearestPaletteIndex(r, g, b) {
             this.ensurePaletteLab();
@@ -20816,7 +22207,15 @@ void main() {
                 return false;
             }
         }
-        async applyProjectImageBytes(bytes, fallbackName, sourcePath, palNodes) {
+        /* `sourcePath` is where the bytes came from on disk; `identity` is what the
+           asset *is* within the project. They are the same thing when a real path
+           was opened, but a directory handle has no path — only a project-relative
+           one — and that relative path is what every decomp rule keys on. Which
+           frames the sheet holds, what size it should be, which species declares
+           its coordinates: all of it is `inferProfile(state.projectFile)`, and all
+           of it silently degrades to the `default` profile when that is a bare
+           filename. Hence two arguments rather than one. */
+        async applyProjectImageBytes(bytes, fallbackName, sourcePath, palNodes, identity) {
             const meta = this.parsePngPalette(bytes);
             if (meta.colorType !== 3 || !meta.palette || !meta.palette.length) {
                 if (sourcePath) {
@@ -20829,7 +22228,7 @@ void main() {
             const blob = new Blob([bytes], { type: 'image/png' });
             const bmp = await createImageBitmap(blob);
             const w = meta.width, h = meta.height;
-            this.state.projectFile = sourcePath || fallbackName;
+            this.state.projectFile = identity || sourcePath || fallbackName;
             this.state.history = [];
             this.state.step = -1;
             if (this.state.selection) this.cancelSelection();
@@ -20845,18 +22244,45 @@ void main() {
             this.state.palettes = palettes;
             this.state.activePaletteId = active ? active.id : null;
             this.state.projectImage = true;
+            // Drop the outgoing document's map before a pixel of this one lands:
+            // anything that commits in between must resolve from scratch rather
+            // than snap this artwork onto the last asset's slots.
+            this.state.projectIndices = null;
+            // Likewise its frame reading — a count the artist fixed by hand for one
+            // sheet says nothing about the next.
+            this.stopFramePlayback();
+            this.state.activeFrame = 0;
+            this.state.frameCountOverride = null;
+            this.state.frameHold = 0;
+            this.state.projectTrns = meta.trns ? new Uint8Array(meta.trns) : null;
+            this.state.projectTransparentIndex = this.transparentIndexFromTrns(meta.trns);
             this.setSize(w, h);
             this.ctx.drawImage(bmp, 0, 0);
             await this.applyCurrentModeToCanvasAsync(this.ctx, w, h, false);
+            // The file's own indices seed the live map. From here the map is the
+            // document: every committed edit folds the canvas back into it, so
+            // nothing has to remember what the file looked like on disk.
+            const trueIndices = await this.decodePngIndices(meta);
             try {
-                const _snap = this.ctx.getImageData(0, 0, w, h);
-                this.spriteIndices = this.quantizeToIndices(_snap.data, w, h, this.basePalette || this.palette);
-            } catch (e) { this.spriteIndices = null; }
+                this.state.projectIndices = (trueIndices && trueIndices.length === w * h)
+                    ? trueIndices
+                    : this.quantizeToIndices(this.ctx.getImageData(0, 0, w, h).data, w, h,
+                        this.basePalette || this.palette);
+            } catch (e) {
+                this.state.projectIndices = null;
+            }
+            if (!trueIndices) {
+                console.warn('Could not decode PNG indices; falling back to nearest-colour reconstruction');
+            }
             this.state.hasDocument = true;
             this.state.filePath = sourcePath || '';
             this.state.fileName = fallbackName || this.getFilenameFromPath(sourcePath || '');
+            this.config.paletteSlot = { 1: -1, 2: -1 };
             this.renderQuantPalette();
+            this.updateProjectConformance();
+            this.updateFrameOverlays();
             if (this.onPalettesChanged) this.onPalettesChanged();
+            if (this.onFramesChanged) this.onFramesChanged();
             this.saveState();
             this.markSaved(this.state.fileName);
             this.addRecentFile({ name: this.state.fileName, path: sourcePath || '' });
@@ -20882,7 +22308,9 @@ void main() {
                 else if (typeof node.handle.getFile === 'function') file = await node.handle.getFile();
                 else { showToast('Unsupported file handle', 'warning'); return false; }
                 const bytes = new Uint8Array(await file.arrayBuffer());
-                const ok = await this.applyProjectImageBytes(bytes, node.name, '', palNodes);
+                // No disk path to record, but `node.path` is the project-relative
+                // one the tree walked to get here — that is the asset's identity.
+                const ok = await this.applyProjectImageBytes(bytes, node.name, '', palNodes, node.path || '');
                 if (ok) {
                     this.state.projectHandle = node.handle || null;
                 }
@@ -20894,23 +22322,948 @@ void main() {
                 return false;
             }
         }
-        async saveProjectFile(path) {
-            const w = this.config.width, h = this.config.height;
-            const imgData = this.ctx.getImageData(0, 0, w, h);
-            const d = imgData.data;
-            const palette = this.palette;
+        /* The live index map. It lives on `state` so a tab switch carries it with
+           the rest of the document; `spriteIndices` is the name the drawing code
+           has always used for it. */
+        get spriteIndices() { return this.state ? this.state.projectIndices : null; }
+        set spriteIndices(v) { if (this.state) this.state.projectIndices = v; }
+
+        /* Where a project asset's pixels actually are.
+           Single-layer editing draws straight onto cMain, so `ctx` is the surface
+           and can be written back to. With layers active `ctx` is the *active
+           layer* while the file gets the composite, so read cMain instead — and
+           don't snap it, because the layers underneath still hold the unsnapped
+           pixels and would paint them straight back on the next composite. */
+        projectIndexSurface() {
+            const mgr = this.layerMgr;
+            if (!mgr || !mgr.active || mgr.layers.length <= 1) return { ctx: this.ctx, canSnap: true };
+            let ctx = null;
+            try { ctx = this.ui.cMain.getContext('2d', { willReadFrequently: true }); } catch (e) {}
+            return { ctx, canSnap: false };
+        }
+
+        /* Indices for the pixels in `d`.
+           The index map is the document, so it is also the baseline: a pixel still
+           showing the colour of the slot it holds was not painted and keeps that
+           slot — which is how two slots sharing an RGB both survive a round trip.
+           Anything else was just painted, and resolves to the slot in hand, then to
+           a slot holding exactly that colour, then to the nearest one. A transparent
+           pixel means the transparency slot, never "whatever is nearest to black".
+
+           Pure: it reads the map and returns a new one. commitProjectIndices() is
+           what installs the result.
+
+           Known limit: painting slot 14 over a pixel that already holds slot 11 of
+           the *same* colour is indistinguishable from not painting at all, and the
+           conservative reading wins — renumbering on a guess is how the shiny
+           palette gets silently rewritten (finding F3). Telling the two apart needs
+           per-pixel stroke coverage, not a colour comparison. */
+        buildProjectIndices(d, w, h) {
+            const palette = this.palette || [];
+            const n = w * h;
+            const map = this.state.projectIndices;
+            const known = (map && map.length === n) ? map : null;
+            const transparentIdx = this.state.projectTransparentIndex;
+
             const exact = new Map();
             for (let i = 0; i < palette.length; i++) {
-                exact.set((palette[i].r << 16) | (palette[i].g << 8) | palette[i].b, i);
+                const key = (palette[i].r << 16) | (palette[i].g << 8) | palette[i].b;
+                if (!exact.has(key)) exact.set(key, i); // first slot wins unless a picked slot says otherwise
             }
-            const indices = new Uint8Array(w * h);
-            for (let p = 0, q = 0; p < d.length; p += 4, q++) {
-                const key = (d[p] << 16) | (d[p + 1] << 8) | d[p + 2];
-                let idx = exact.get(key);
-                if (idx === undefined) idx = this._nearestPaletteIndex(d[p], d[p + 1], d[p + 2]);
-                indices[q] = idx;
+            /* Where the artist picked a slot off the palette strip, painted pixels
+               resolve to that slot rather than to the first one sharing its colour.
+               Without this, painting with Magikarp's slot 14 would land on slot 11
+               and only show up as wrong in the shiny palette. */
+            for (const colorSlot of [1, 2]) {
+                const picked = this.paletteSlotFor(colorSlot);
+                const c = picked >= 0 ? palette[picked] : null;
+                if (c) exact.set((c.r << 16) | (c.g << 8) | c.b, picked);
             }
-            const bytes = await this.generateIndexedPNG(w, h, indices, palette, this.state.projectBitDepth || this.bitDepth);
+
+            const indices = new Uint8Array(n);
+            for (let p = 0, q = 0; q < n; p += 4, q++) {
+                const a = d[p + 3];
+                if (known) {
+                    const slot = known[q];
+                    if (slot === transparentIdx) {
+                        if (a < 128) { indices[q] = slot; continue; }
+                    } else {
+                        const c = palette[slot];
+                        if (c && a >= 128 && d[p] === c.r && d[p + 1] === c.g && d[p + 2] === c.b) {
+                            indices[q] = slot;
+                            continue;
+                        }
+                    }
+                }
+                if (a < 128 && transparentIdx >= 0) {
+                    indices[q] = transparentIdx;
+                    continue;
+                }
+                const idx = exact.get((d[p] << 16) | (d[p + 1] << 8) | d[p + 2]);
+                indices[q] = idx === undefined
+                    ? this._nearestPaletteIndex(d[p], d[p + 1], d[p + 2])
+                    : idx;
+            }
+            return indices;
+        }
+
+        /* Repaint the surface from the map, so what is on screen is exactly what
+           the file will contain. This is what makes the colour ceiling structural:
+           a blended or antialiased pixel does not survive the step it was made in,
+           it lands on the slot it resolved to. */
+        paintProjectIndicesOnto(img, indices, ctx, w) {
+            const d = img.data;
+            const palette = this.palette || [];
+            const transparentIdx = this.state.projectTransparentIndex;
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            const touch = (q) => {
+                const x = q % w, y = (q / w) | 0;
+                if (x < x0) x0 = x; if (x > x1) x1 = x;
+                if (y < y0) y0 = y; if (y > y1) y1 = y;
+            };
+            for (let p = 0, q = 0; q < indices.length; p += 4, q++) {
+                const slot = indices[q];
+                if (slot === transparentIdx) {
+                    if (d[p + 3] === 0) continue;
+                    d[p] = 0; d[p + 1] = 0; d[p + 2] = 0; d[p + 3] = 0;
+                    touch(q);
+                    continue;
+                }
+                // Erased, on an asset with no transparency slot to erase to. There
+                // is nothing honest to draw, so leave the pixel alone rather than
+                // inventing an opaque colour underneath the artist's eraser.
+                if (d[p + 3] < 128) continue;
+                const c = palette[slot];
+                if (!c) continue;
+                if (d[p] === c.r && d[p + 1] === c.g && d[p + 2] === c.b && d[p + 3] === 255) continue;
+                d[p] = c.r; d[p + 1] = c.g; d[p + 2] = c.b; d[p + 3] = 255;
+                touch(q);
+            }
+            if (x1 < x0) return false;
+            // Write back only the box that moved. A full-canvas putImageData would
+            // report the whole surface as dirty and cost tiled history its deltas
+            // on every step, on exactly the assets big enough to use them.
+            const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+            const sub = ctx.createImageData(bw, bh);
+            for (let y = 0; y < bh; y++) {
+                const from = ((y0 + y) * w + x0) * 4;
+                sub.data.set(d.subarray(from, from + bw * 4), y * bw * 4);
+            }
+            ctx.putImageData(sub, x0, y0);
+            return true;
+        }
+
+        /* Fold the canvas back into the index map and pull the canvas onto the
+           palette. Runs at the top of every committed step, which is what keeps
+           the map live while painting — the save then writes the map rather than
+           reconstructing one from RGB. */
+        commitProjectIndices() {
+            if (!this.state.projectImage) return null;
+            if (this.state.previewPaletteId) return this.state.projectIndices; // showing someone else's colours
+            const palette = this.palette;
+            if (!palette || !palette.length) return null;
+            const w = this.config.width, h = this.config.height;
+            if (!w || !h) return null;
+            const { ctx, canSnap } = this.projectIndexSurface();
+            if (!ctx) return null;
+            let img;
+            try { img = ctx.getImageData(0, 0, w, h); }
+            catch (e) { return this.state.projectIndices; }
+            const indices = this.buildProjectIndices(img.data, w, h);
+            if (canSnap) this.paintProjectIndicesOnto(img, indices, ctx, w);
+            // Steps that left every slot alone keep the array they had, so history
+            // shares one copy instead of one per step.
+            const cur = this.state.projectIndices;
+            if (cur && cur.length === indices.length) {
+                let same = true;
+                for (let q = 0; q < indices.length; q++) {
+                    if (cur[q] !== indices[q]) { same = false; break; }
+                }
+                if (same) return cur;
+            }
+            this.state.projectIndices = indices;
+            return indices;
+        }
+
+        /* Repaint a project asset from its index map under whatever the palette
+           says now. Change slot 9 and every pixel holding slot 9 follows — nothing
+           re-quantises, no index moves, and the pixels that were already right are
+           left alone (paintProjectIndicesOnto only writes the box that moved).
+           Records a step, so the edit is undoable along with the palette itself. */
+        repaintProjectFromPalette() {
+            if (!this.state.projectImage) return false;
+            if (this.state.previewPaletteId) return false; // a preview is not an edit
+            const w = this.config.width, h = this.config.height;
+            const map = this.state.projectIndices;
+            if (!map || map.length !== w * h) return false;
+            const { ctx, canSnap } = this.projectIndexSurface();
+            // With layers active the artwork is spread across canvases the map does
+            // not describe; repainting the composite would be undone by the next
+            // render. The palette still changes — the canvas just will not follow.
+            if (!ctx || !canSnap) return false;
+            let img;
+            try { img = ctx.getImageData(0, 0, w, h); }
+            catch (e) { return false; }
+            const changed = this.paintProjectIndicesOnto(img, map, ctx, w);
+            this.saveState();
+            return changed;
+        }
+
+        /* Renumber the map through `table`, which maps an old slot to a new one.
+           Reordering a palette moves colours between slots; the artwork has to
+           follow, or "move slot 3 to slot 7" silently recolours the sprite instead
+           of renaming a slot. The pixels do not change, so there is nothing to
+           repaint — only the numbers underneath them. */
+        renumberProjectIndices(table) {
+            if (!this.state.projectImage) return false;
+            const map = this.state.projectIndices;
+            if (!map || !table) return false;
+            const next = new Uint8Array(map.length);
+            let moved = false;
+            for (let q = 0; q < map.length; q++) {
+                const to = table[map[q]];
+                next[q] = to === undefined ? map[q] : to;
+                if (next[q] !== map[q]) moved = true;
+            }
+            if (!moved) return false;
+            this.state.projectIndices = next;
+            return true;
+        }
+
+        /* The colours the map is being read through, flattened. A project asset's
+           document is the pair — indices alone mean nothing without them, which is
+           why both have to travel with history. */
+        projectPaletteSnapshot() {
+            const colors = this.palette;
+            if (!colors || !colors.length) return null;
+            const out = new Uint8Array(colors.length * 4);
+            for (let i = 0; i < colors.length; i++) {
+                const c = colors[i];
+                out[i * 4] = c.r; out[i * 4 + 1] = c.g; out[i * 4 + 2] = c.b;
+                out[i * 4 + 3] = c.a === undefined ? 255 : c.a;
+            }
+            return out;
+        }
+
+        /* Pin the index map and the palette to the history entry just pushed, so
+           undo restores what the pixels MEAN as well as the pixels. Neither is
+           written in place, so the entry can hold them directly.
+
+           Without the palette half, undoing a slot edit — or the normal/shiny swap,
+           which has always been a history step — would leave the canvas showing one
+           palette while the map was read through another, and the next committed
+           edit would renumber the whole asset against colours it never used. */
+        attachProjectStep(entry) {
+            if (!entry || !this.state.projectImage) return;
+            const prev = this.state.history[this.state.step - 1];
+            const idx = this.state.projectIndices;
+            if (idx) {
+                entry.projectIndices = idx;
+                entry._sharesIndices = !!(prev && prev.projectIndices === idx);
+                if (!entry._sharesIndices && typeof entry._bytes === 'number') entry._bytes += idx.length;
+            }
+            const pal = this.projectPaletteSnapshot();
+            if (!pal) return;
+            // Most steps do not touch the palette; those share the previous one.
+            const before = prev && prev.projectPalette;
+            const same = !!(before && before.length === pal.length
+                && before.every((v, i) => v === pal[i]));
+            entry.projectPalette = same ? before : pal;
+            entry.projectPaletteId = this.state.activePaletteId;
+            // Both saveState paths converge here for a project asset, which makes
+            // it the one place the frame views can be sure the pixels have settled.
+            this.refreshFrameViews();
+        }
+
+        restoreProjectStep(entry) {
+            if (!this.state.projectImage || !entry) return;
+            if (entry.projectIndices) this.state.projectIndices = entry.projectIndices;
+            this.refreshFrameViews();
+            const pal = entry.projectPalette;
+            const target = pal ? this.getPaletteById(entry.projectPaletteId) : null;
+            if (!target) return;
+            // Write the values back into the live array rather than replacing it:
+            // palette, basePalette and the palette record all point at that one
+            // array, and swapping it would leave two of the three stale.
+            const colors = target.colors;
+            colors.length = pal.length / 4;
+            for (let i = 0; i < colors.length; i++) {
+                colors[i] = { r: pal[i * 4], g: pal[i * 4 + 1], b: pal[i * 4 + 2], a: pal[i * 4 + 3] };
+            }
+            this.palette = colors;
+            this.basePalette = colors;
+            this.state.activePaletteId = entry.projectPaletteId;
+            this.paletteLab = null;
+            this.renderQuantPalette();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+
+        /* ── Validation without a build ─────────────────────────────────────
+           Two different questions get asked about a Gen 3 asset and they are
+           routinely confused, so this keeps them apart:
+
+             build — gbagfx would refuse it, and `make` stops.
+             game  — it builds perfectly and then looks wrong. Nothing in the
+                     toolchain will ever say a word about these.
+
+           Both matter; only one of them stops the build, and an artist deserves to
+           know which they are looking at. Runs off the file's bytes, so it needs
+           neither the document nor a compiler.
+
+           Every build rule below was read out of gbagfx's own source, not
+           remembered, because the folklore is wrong in both directions:
+
+             convert_png.c:90   colour type must be GRAY or PALETTE. A greyscale
+                                PNG is perfectly acceptable — 64 stock expansion
+                                assets are greyscale and build fine.
+             convert_png.c:129  bit depth must be 1, 2, 4 or 8.
+             gfx.c:416,419      width and height must each be a multiple of 8.
+
+           And nothing anywhere compares the PLTE length to the target depth. A
+           4bpp asset whose PNG carries 256 palette entries builds without
+           complaint (gfx.c:371 handles that case explicitly), which is how 196
+           stock expansion assets were being called broken.
+
+           The reverse error matters more. ConvertBitDepth (convert_png.c) reduces
+           an over-deep index with
+
+               pixel = value % (1 << destBitDepth)
+
+           so an 8bpp PNG using index 20 does *not* fail a 4bpp build — it becomes
+           index 4 and the sprite renders in the wrong colours. That is the worst
+           shape a problem can have: clean build, wrong picture, no diagnostic. It
+           belongs in `game`, and it has to be checked always rather than only when
+           some other check happened to pass. */
+        async validateProjectAsset(bytes, path) {
+            const profile = this.inferProfile(path);
+            const out = { path, label: profile.label, problems: [], info: null };
+            const fail = (kind, id, text) => out.problems.push({ kind, id, text });
+
+            let meta = null;
+            try { meta = this.parsePngPalette(bytes); } catch (e) { /* not a PNG */ }
+            if (!meta || !meta.width || !meta.height) {
+                fail('build', 'unreadable', 'not a readable PNG');
+                out.ok = false; out.buildOk = false;
+                return out;
+            }
+            const w = meta.width, h = meta.height, depth = meta.bitDepth || 8;
+            const colors = (meta.palette && meta.palette.length) || 0;
+            out.info = { w, h, depth, colors, indexed: meta.colorType === 3, trns: !!meta.trns };
+
+            // Greyscale (0) and palette (3) are what gbagfx accepts; anything with
+            // real colour channels it refuses outright.
+            if (meta.colorType !== 3 && meta.colorType !== 0) {
+                fail('build', 'notIndexed',
+                    `colour type ${meta.colorType} — gbagfx takes indexed or greyscale only`);
+            }
+            if (![1, 2, 4, 8].includes(depth)) {
+                fail('build', 'depth', `${depth}-bit; gbagfx takes 1, 2, 4 or 8`);
+            }
+            /* Everything the GBA *draws* is built out of 8×8 tiles; a partial tile
+               has nowhere to go. A palette stored as a picture is never drawn, so
+               the rule does not apply to it — 16×1 is exactly right for one. */
+            if (!profile.notArtwork && (w % 8 || h % 8)) {
+                fail('build', 'tiles', `${w}×${h} is not a whole number of 8×8 tiles`);
+            }
+            if (profile.requiredWidth && w !== profile.requiredWidth) {
+                fail('build', 'width', `tilesets must be ${profile.requiredWidth}px wide, not ${w}`);
+            }
+
+            /* The target depth is the slot's, not the file's. A PLTE longer than
+               the target holds is not a problem by itself — only an *index* the
+               target cannot express, and that one is silent.
+
+               Where the path does not say what the slot is (`depthGuessed`), the
+               file's own depth is the only evidence there is, and asserting 4bpp
+               anyway accused 100 stock 8bpp assets of drawing the wrong colours.
+               Silence beats a confident wrong answer; the project's own INCBIN line
+               is the real authority and reading it is 3.1's job. */
+            const target = (!profile.depthGuessed && profile.bitDepth) || depth || 4;
+            const budget = Number.isFinite(profile.maxColors) ? profile.maxColors : (1 << target);
+            let idx = null;
+            const indices = async () => (idx !== null ? idx : (idx = await this.decodePngIndices(meta)));
+
+            if (meta.colorType === 3 && (depth > target || colors > budget)) {
+                const px = await indices();
+                if (px) {
+                    let worst = -1;
+                    for (let q = 0; q < px.length; q++) if (px[q] > worst) worst = px[q];
+                    if (worst >= budget) {
+                        fail('game', 'index',
+                            `uses index ${worst}, which a ${target}bpp slot cannot hold — ` +
+                            `it builds, then draws it as index ${worst % budget}`);
+                    }
+                }
+            }
+
+            const sizes = profile.allowedResolutions;
+            if (sizes && !sizes.some(r => r[0] === w && r[1] === h)) {
+                fail('game', 'size',
+                    `${w}×${h}; this slot expects ${sizes.map(r => r[0] + '×' + r[1]).join(' or ')}`);
+            }
+
+            /* Transparency is a hardware rule, not a file one: the GBA draws
+               palette entry 0 of a sprite as see-through, whatever the PNG's tRNS
+               happens to say. Trusting tRNS instead flagged togedemaru's front
+               sprite — its tRNS names slot 15, which nothing stands on, while slot
+               0 holds the background exactly as it should. Ask the question the
+               hardware asks. */
+            if (profile.wantsTransparency) {
+                const px = await indices();
+                if (px) {
+                    let clear = 0;
+                    for (let q = 0; q < px.length; q++) if (px[q] === 0) clear++;
+                    if (!clear) {
+                        fail('game', 'slot0',
+                            'nothing on slot 0; the background will be solid in game');
+                    }
+                }
+            }
+
+            out.buildOk = !out.problems.some(p => p.kind === 'build');
+            out.ok = out.problems.length === 0;
+            return out;
+        }
+
+        /* Every asset that would fail, listed. `read` turns an entry into bytes;
+           the caller owns that because desktop and browser mode get at files in
+           completely different ways. Reads are sequential on purpose — a decomp has
+           thousands of PNGs and firing them all at once buries the main thread. */
+        async auditProjectAssets(entries, read, onProgress) {
+            const results = [];
+            let done = 0;
+            for (const entry of (entries || [])) {
+                let result;
+                try {
+                    result = await this.validateProjectAsset(await read(entry), entry.path || entry.name);
+                } catch (e) {
+                    result = {
+                        path: entry.path || entry.name, label: 'Project asset', info: null,
+                        ok: false, buildOk: false,
+                        problems: [{ kind: 'build', id: 'unreadable', text: this.getErrorText(e) }]
+                    };
+                }
+                result.name = entry.name;
+                results.push(result);
+                done++;
+                if (onProgress && (done % 25 === 0 || done === entries.length)) {
+                    onProgress(done, entries.length);
+                    // Let the panel paint; a scan of a whole decomp is not instant.
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+            return {
+                total: results.length,
+                clean: results.filter(r => r.ok).length,
+                wontBuild: results.filter(r => !r.buildOk),
+                wrongInGame: results.filter(r => r.buildOk && !r.ok),
+                results
+            };
+        }
+
+        /* ── Fit to target ──────────────────────────────────────────────────
+           Everything here works on a plain value — size, index map, palette,
+           transparency slot — rather than on the live canvas. That is what lets
+           the dialog show a real "after" instead of a description of one: the
+           fixes are run on a copy, drawn, and only installed if the artist says
+           yes. It also means each fix is a small pure function that can be tested
+           on its own, which matters, because these are the operations that can
+           destroy someone's work. */
+        projectDocValue() {
+            if (!this.state.projectImage) return null;
+            const map = this.state.projectIndices;
+            const w = this.config.width, h = this.config.height;
+            if (!map || map.length !== w * h) return null;
+            return {
+                w, h,
+                map: new Uint8Array(map),
+                colors: (this.palette || []).map(c => ({ r: c.r, g: c.g, b: c.b, a: c.a === undefined ? 255 : c.a })),
+                transparentIdx: this.state.projectTransparentIndex
+            };
+        }
+
+        /* Everything the asset would have to change to be insertable, as a list of
+           named fixes. Nothing here touches the document.
+
+           `docIn` is for art that is not the open document yet — an imported PNG
+           being measured against the slot it is going into. The profile still
+           comes from `state.projectFile`, because the destination is what decides
+           what "insertable" means; the pixels are the only thing that differs. */
+        planFitToTarget(colorCount, docIn) {
+            const doc = docIn || this.projectDocValue();
+            if (!doc || !this.state.projectFile) return null;
+            const profile = this.inferProfile(this.state.projectFile);
+            const steps = [];
+
+            const sizes = profile.allowedResolutions;
+            if (sizes && !sizes.some(r => r[0] === doc.w && r[1] === doc.h)) {
+                // The nearest allowed box by area, so a 64×72 goes to 64×64 rather
+                // than to whatever happens to be first in the list.
+                const target = sizes.slice().sort((a, b) =>
+                    Math.abs(a[0] * a[1] - doc.w * doc.h) - Math.abs(b[0] * b[1] - doc.w * doc.h))[0];
+                const loses = target[0] < doc.w || target[1] < doc.h;
+                steps.push({
+                    id: 'size', target,
+                    label: `Resize to ${target[0]}×${target[1]}`,
+                    detail: loses
+                        ? `crops ${doc.w}×${doc.h} — artwork outside the box is lost`
+                        : `pads ${doc.w}×${doc.h} with transparency, bottom-anchored`,
+                    destructive: loses
+                });
+            } else if (profile.tileAligned && (doc.w % 8 || doc.h % 8)) {
+                const target = [Math.ceil(doc.w / 8) * 8, Math.ceil(doc.h / 8) * 8];
+                steps.push({
+                    id: 'size', target,
+                    label: `Pad to ${target[0]}×${target[1]}`,
+                    detail: 'tilesets are cut into 8×8 tiles; a partial tile will not build',
+                    destructive: false
+                });
+            }
+
+            const max = this.maxColorsForProfile(profile);
+            const used = Number.isFinite(colorCount) ? colorCount : doc.colors.length;
+            if (doc.colors.length > max) {
+                steps.push({
+                    id: 'colors', target: max,
+                    label: `Reduce to ${max} colours`,
+                    detail: `${doc.colors.length} in the palette; the least-used merge into their nearest neighbour`,
+                    destructive: true
+                });
+            }
+
+            if (doc.transparentIdx >= 0) {
+                let clear = 0;
+                for (let q = 0; q < doc.map.length; q++) if (doc.map[q] === doc.transparentIdx) clear++;
+                if (!clear) {
+                    steps.push({
+                        id: 'slot0', target: doc.transparentIdx,
+                        label: `Clear slot ${doc.transparentIdx}`,
+                        detail: 'the background is opaque; the border colour becomes transparency',
+                        destructive: false
+                    });
+                }
+            }
+            return { profile, doc, steps, used, max };
+        }
+
+        /* Apply one fix to a document value and hand back a new one. */
+        fitStepApply(doc, step) {
+            if (step.id === 'slot0') return this._fitClearSlot0(doc);
+            if (step.id === 'colors') return this._fitReduceColors(doc, step.target);
+            if (step.id === 'size') return this._fitResize(doc, step.target[0], step.target[1]);
+            return doc;
+        }
+
+        /* Send the background to the transparency slot. Flood-fills inwards from
+           the edges through whichever slot the border is mostly made of, so a
+           colour that also appears INSIDE the sprite is not hollowed out with it. */
+        _fitClearSlot0(doc) {
+            const t = doc.transparentIdx;
+            if (t < 0) return doc;
+            const { w, h, map } = doc;
+            const tally = new Map();
+            const note = (q) => tally.set(map[q], (tally.get(map[q]) || 0) + 1);
+            for (let x = 0; x < w; x++) { note(x); if (h > 1) note((h - 1) * w + x); }
+            for (let y = 1; y < h - 1; y++) { note(y * w); if (w > 1) note(y * w + w - 1); }
+            let bg = -1, best = 0;
+            for (const [slot, n] of tally) if (n > best) { best = n; bg = slot; }
+            if (bg < 0 || bg === t) return doc;
+
+            const out = new Uint8Array(map);
+            const seen = new Uint8Array(w * h);
+            const stack = [];
+            for (let x = 0; x < w; x++) { stack.push(x); stack.push((h - 1) * w + x); }
+            for (let y = 0; y < h; y++) { stack.push(y * w); stack.push(y * w + w - 1); }
+            while (stack.length) {
+                const q = stack.pop();
+                if (q < 0 || q >= w * h || seen[q] || map[q] !== bg) continue;
+                seen[q] = 1;
+                out[q] = t;
+                const x = q % w;
+                if (x > 0) stack.push(q - 1);
+                if (x < w - 1) stack.push(q + 1);
+                if (q >= w) stack.push(q - w);
+                if (q < w * (h - 1)) stack.push(q + w);
+            }
+            return { ...doc, map: out };
+        }
+
+        /* Merge the least-used slots into their nearest surviving neighbour until
+           the palette fits. Least-used first because that is the smallest number of
+           pixels that have to change colour; the transparency slot never merges. */
+        _fitReduceColors(doc, budget) {
+            if (doc.colors.length <= budget) return doc;
+            const counts = new Array(doc.colors.length).fill(0);
+            for (let q = 0; q < doc.map.length; q++) counts[doc.map[q]]++;
+
+            const keep = doc.colors.map((_, i) => i)
+                .sort((a, b) => (counts[b] - counts[a]) || (a - b))
+                .slice(0, budget);
+            if (doc.transparentIdx >= 0 && !keep.includes(doc.transparentIdx)) {
+                keep[keep.length - 1] = doc.transparentIdx;
+            }
+            keep.sort((a, b) => a - b);
+
+            const table = new Array(doc.colors.length);
+            keep.forEach((from, to) => { table[from] = to; });
+            for (let i = 0; i < doc.colors.length; i++) {
+                if (table[i] !== undefined) continue;
+                const c = doc.colors[i];
+                let bestTo = 0, bestDist = Infinity;
+                keep.forEach((k, to) => {
+                    const o = doc.colors[k];
+                    const d = (c.r - o.r) ** 2 + (c.g - o.g) ** 2 + (c.b - o.b) ** 2;
+                    if (d < bestDist) { bestDist = d; bestTo = to; }
+                });
+                table[i] = bestTo;
+            }
+            const out = new Uint8Array(doc.map.length);
+            for (let q = 0; q < doc.map.length; q++) out[q] = table[doc.map[q]];
+            return {
+                ...doc,
+                map: out,
+                colors: keep.map(i => doc.colors[i]),
+                transparentIdx: doc.transparentIdx >= 0 ? table[doc.transparentIdx] : -1
+            };
+        }
+
+        /* Pad or crop to an exact box. Horizontally centred and bottom-anchored,
+           because a Gen 3 sprite's y_offset is measured up from the bottom edge —
+           top-anchoring would move the sprite in game even though the file is the
+           right size. Padding is the transparency slot where there is one. */
+        _fitResize(doc, tw, th) {
+            const fill = doc.transparentIdx >= 0 ? doc.transparentIdx : 0;
+            const out = new Uint8Array(tw * th).fill(fill);
+            const dx = Math.round((tw - doc.w) / 2);
+            const dy = th - doc.h;
+            for (let y = 0; y < doc.h; y++) {
+                const ty = y + dy;
+                if (ty < 0 || ty >= th) continue;
+                for (let x = 0; x < doc.w; x++) {
+                    const tx = x + dx;
+                    if (tx < 0 || tx >= tw) continue;
+                    out[ty * tw + tx] = doc.map[y * doc.w + x];
+                }
+            }
+            return { ...doc, w: tw, h: th, map: out };
+        }
+
+        /* ── Import ─────────────────────────────────────────────────────────
+           Outside art as a document value: indexed, with slot 0 held for
+           transparency because that is what the hardware reads it as.
+
+           The palette is the picture's own colours, most-used first, not a
+           generated approximation — art drawn for a 16-colour slot already has
+           its palette and quantising it again would only lose fidelity. Only
+           what does not fit gets merged, and that is `_fitReduceColors` doing
+           it, the same reducer the Fit dialog runs on an open asset.
+
+           255 rather than 256 because slot 0 is spoken for. A picture with more
+           colours than that is not refused: the extras land on their nearest
+           neighbour here, and the colour budget for the real slot — usually 16 —
+           is applied afterwards as a fix the artist can see before agreeing to. */
+        docFromImageData(data, w, h) {
+            const counts = new Map();
+            for (let p = 0; p < data.length; p += 4) {
+                if (data[p + 3] < 128) continue;
+                const key = (data[p] << 16) | (data[p + 1] << 8) | data[p + 2];
+                counts.set(key, (counts.get(key) || 0) + 1);
+            }
+            const colors = [{ r: 0, g: 0, b: 0, a: 0 }];
+            const slotOf = new Map();
+            Array.from(counts.entries())
+                .sort((a, b) => (b[1] - a[1]) || (a[0] - b[0]))
+                .slice(0, 255)
+                .forEach(([key]) => {
+                    slotOf.set(key, colors.length);
+                    colors.push({ r: (key >> 16) & 255, g: (key >> 8) & 255, b: key & 255, a: 255 });
+                });
+
+            const map = new Uint8Array(w * h);
+            for (let p = 0, q = 0; q < map.length; p += 4, q++) {
+                if (data[p + 3] < 128) continue;   // already 0
+                const key = (data[p] << 16) | (data[p + 1] << 8) | data[p + 2];
+                const hit = slotOf.get(key);
+                if (hit !== undefined) { map[q] = hit; continue; }
+                // Past the 255 that fit. Nearest surviving colour, memoised on the
+                // way out — a photograph repeats its colours millions of times.
+                let best = 1, bestDist = Infinity;
+                for (let i = 1; i < colors.length; i++) {
+                    const c = colors[i];
+                    const dr = data[p] - c.r, dg = data[p + 1] - c.g, db = data[p + 2] - c.b;
+                    const d = dr * dr + dg * dg + db * db;
+                    if (d < bestDist) { bestDist = d; best = i; }
+                }
+                slotOf.set(key, best);
+                map[q] = best;
+            }
+            return { w, h, map, colors, transparentIdx: 0 };
+        }
+
+        /* Drop outside art onto the slot that is open and it becomes that asset:
+           sized to the slot's box, cut to its colour budget, background on slot 0.
+           The destination is `state.projectFile` — the thing every decomp rule
+           keys on — which is exactly what opening the file normally would throw
+           away, and why a drop is not just another open while one is loaded. */
+        async importIntoProjectSlot(file) {
+            if (!this.state.projectImage || !this.state.projectFile) return false;
+            let bmp;
+            try {
+                bmp = await createImageBitmap(file);
+            } catch (e) {
+                showToast('Could not read that image', 'warning');
+                return false;
+            }
+            const surface = document.createElement('canvas');
+            surface.width = bmp.width;
+            surface.height = bmp.height;
+            const sctx = surface.getContext('2d', { willReadFrequently: true });
+            sctx.drawImage(bmp, 0, 0);
+            const data = sctx.getImageData(0, 0, bmp.width, bmp.height).data;
+            const doc = this.docFromImageData(data, bmp.width, bmp.height);
+            if (bmp.close) bmp.close();
+            this.openFitToTarget(doc, 'Import ' + (file.name || 'image'));
+            return true;
+        }
+
+        /* Draw a document value. Used for both halves of the before/after, so the
+           two are guaranteed to be rendered the same way. */
+        renderProjectDocInto(canvas, doc, scale) {
+            if (!canvas || !doc) return false;
+            const z = Math.max(1, Math.round(scale || 1));
+            canvas.width = doc.w * z;
+            canvas.height = doc.h * z;
+            canvas.style.width = canvas.width + 'px';
+            canvas.style.height = canvas.height + 'px';
+            const native = document.createElement('canvas');
+            native.width = doc.w; native.height = doc.h;
+            const nctx = native.getContext('2d');
+            const img = nctx.createImageData(doc.w, doc.h);
+            for (let q = 0; q < doc.map.length; q++) {
+                const slot = doc.map[q];
+                const b4 = q * 4;
+                if (slot === doc.transparentIdx) { img.data[b4 + 3] = 0; continue; }
+                const c = doc.colors[slot] || doc.colors[0] || { r: 0, g: 0, b: 0 };
+                img.data[b4] = c.r; img.data[b4 + 1] = c.g; img.data[b4 + 2] = c.b; img.data[b4 + 3] = 255;
+            }
+            nctx.putImageData(img, 0, 0);
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = false;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(native, 0, 0, canvas.width, canvas.height);
+            return true;
+        }
+
+        /* Install a document value as the live document, in one history step. */
+        applyProjectDoc(doc) {
+            if (!doc) return false;
+            const entry = this.getPaletteById(this.state.activePaletteId);
+            if (entry) {
+                // In place: palette, basePalette and the record share this array.
+                entry.colors.length = doc.colors.length;
+                for (let i = 0; i < doc.colors.length; i++) entry.colors[i] = { ...doc.colors[i] };
+                this.palette = entry.colors;
+                this.basePalette = entry.colors;
+            } else {
+                // No palette record to write through — an import brings its own
+                // colours, and leaving the old ones would draw the new indices
+                // through the previous asset's table.
+                this.palette = doc.colors.map(c => ({ ...c }));
+                this.basePalette = this.palette;
+            }
+            this.paletteLab = null;
+            this.state.projectTransparentIndex = doc.transparentIdx;
+            if (doc.transparentIdx >= 0) {
+                const trns = new Uint8Array(doc.transparentIdx + 1).fill(255);
+                trns[doc.transparentIdx] = 0;
+                this.state.projectTrns = trns;
+            }
+            if (doc.w !== this.config.width || doc.h !== this.config.height) {
+                if (this.layerMgr && typeof this.layerMgr.collapseToBase === 'function'
+                    && this.layerMgr.active && this.layerMgr.layers.length > 1) {
+                    this.layerMgr.collapseToBase();
+                }
+                this.setSize(doc.w, doc.h);
+            }
+            this.state.projectIndices = new Uint8Array(doc.map);
+            /* Drawn by the same function the dialog's "After" pane uses, so what
+               was agreed to is by construction what lands.
+
+               Not `paintProjectIndicesOnto`: that one is the live-editing painter
+               and skips any pixel whose canvas alpha is already 0, because while
+               painting a clear pixel means the artist erased it and there is
+               nothing honest to draw underneath. Handed a blank surface — which is
+               what installing a whole document is — that guard skips every opaque
+               pixel, leaving the canvas empty for the next commit to fold back
+               into the map as a blank asset. */
+            const surface = document.createElement('canvas');
+            this.renderProjectDocInto(surface, doc, 1);
+            const ctx = this.ctx;
+            ctx.clearRect(0, 0, doc.w, doc.h);
+            ctx.drawImage(surface, 0, 0);
+            this.renderQuantPalette();
+            this.saveState();
+            this.deferColorCounts();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+            this.refreshFrameViews();
+            return true;
+        }
+
+        /* The dialog. Shows what the asset is now beside what it would become,
+           both drawn by the same function from the same kind of value, with each
+           fix listed and switchable — because "one action closes the gap" is only
+           safe if you can see the gap being closed before you agree to it. */
+        openFitToTarget(docIn, title) {
+            const plan = this.planFitToTarget(undefined, docIn);
+            if (!plan) { showToast('No project asset open', 'warning'); return; }
+            if (!plan.steps.length) {
+                // Incoming art that needs no fixing still has to be installed;
+                // there is just nothing to show the artist a choice about.
+                if (docIn) { this.applyFitToTarget([], undefined, docIn); return; }
+                showToast('Already insertable — nothing to fit', 'info');
+                return;
+            }
+
+            const chosen = new Set(plan.steps.map(s => s.id));
+            const overlay = document.createElement('div');
+            overlay.id = 'fit-overlay';
+            const box = document.createElement('div');
+            box.id = 'fit-box';
+            overlay.appendChild(box);
+
+            const h3 = document.createElement('h3');
+            h3.textContent = title || ('Fit to ' + plan.profile.label.toLowerCase());
+            box.appendChild(h3);
+            const sub = document.createElement('div');
+            sub.className = 'fit-sub';
+            sub.textContent = this.getFilenameFromPath(this.state.projectFile || '') || 'this asset';
+            box.appendChild(sub);
+
+            const diff = document.createElement('div');
+            diff.className = 'fit-diff';
+            const beforeC = document.createElement('canvas');
+            const afterC = document.createElement('canvas');
+            [['Now', beforeC], ['After', afterC]].forEach(([caption, canvas]) => {
+                const fig = document.createElement('figure');
+                fig.appendChild(canvas);
+                const cap = document.createElement('figcaption');
+                cap.textContent = caption;
+                fig.appendChild(cap);
+                diff.appendChild(fig);
+            });
+            box.appendChild(diff);
+
+            const list = document.createElement('ul');
+            list.className = 'fit-steps';
+            box.appendChild(list);
+
+            const scale = Math.max(1, Math.min(3, Math.floor(220 / Math.max(plan.doc.w, plan.doc.h)) || 1));
+            const redraw = () => {
+                this.renderProjectDocInto(beforeC, plan.doc, scale);
+                let doc = plan.doc;
+                const order = { slot0: 0, colors: 1, size: 2 };
+                plan.steps.slice()
+                    .filter(s => chosen.has(s.id))
+                    .sort((a, b) => order[a.id] - order[b.id])
+                    .forEach(s => { doc = this.fitStepApply(doc, s); });
+                this.renderProjectDocInto(afterC, doc, scale);
+            };
+
+            plan.steps.forEach((step) => {
+                const li = document.createElement('li');
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = true;
+                cb.onchange = () => {
+                    if (cb.checked) chosen.add(step.id); else chosen.delete(step.id);
+                    redraw();
+                };
+                li.appendChild(cb);
+                const label = document.createElement('label');
+                label.className = 'fit-label';
+                label.textContent = step.label;
+                const detail = document.createElement('span');
+                detail.className = 'fit-detail' + (step.destructive ? ' fit-warn' : '');
+                detail.textContent = step.detail;
+                label.appendChild(detail);
+                label.onclick = () => { cb.checked = !cb.checked; cb.onchange(); };
+                li.appendChild(label);
+                list.appendChild(li);
+            });
+
+            const actions = document.createElement('div');
+            actions.className = 'fit-actions';
+            const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+            const onKey = (e) => { if (e.key === 'Escape') close(); };
+            const cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.textContent = 'Cancel';
+            cancel.onclick = close;
+            const apply = document.createElement('button');
+            apply.type = 'button';
+            apply.className = 'fit-primary';
+            apply.textContent = 'Apply';
+            apply.onclick = () => {
+                close();
+                this.applyFitToTarget(Array.from(chosen), undefined, docIn);
+            };
+            actions.appendChild(cancel);
+            actions.appendChild(apply);
+            box.appendChild(actions);
+
+            document.addEventListener('keydown', onKey);
+            document.body.appendChild(overlay);
+            redraw();
+        }
+
+        /* Run the chosen fixes and install the result. One step, so one undo. */
+        applyFitToTarget(stepIds, colorCount, docIn) {
+            const plan = this.planFitToTarget(colorCount, docIn);
+            if (!plan) return null;
+            const wanted = stepIds && stepIds.length
+                ? plan.steps.filter(s => stepIds.includes(s.id))
+                : plan.steps;
+            // Nothing to fix is a reason to do nothing for the open document, but
+            // an import still has to land — the pixels are the point of it.
+            if (!wanted.length && !docIn) return null;
+            // Order matters: clearing the background first drops a colour, which can
+            // make the palette fit without merging anything; padding last, so the
+            // pixels it adds are already on the final transparency slot.
+            const order = { slot0: 0, colors: 1, size: 2 };
+            const sorted = wanted.slice().sort((a, b) => order[a.id] - order[b.id]);
+            let doc = plan.doc;
+            for (const step of sorted) doc = this.fitStepApply(doc, step);
+            this.applyProjectDoc(doc);
+            showToast(sorted.length
+                ? 'Fitted to ' + plan.profile.label.toLowerCase()
+                : 'Imported', 'info');
+            return { applied: sorted.map(s => s.id), doc };
+        }
+
+        /* Redraw whatever is showing the frames — the ghost over the canvas and the
+           strip's thumbnails. Cheap and idempotent: both bail immediately when the
+           open asset has no frames, which is most of them. */
+        refreshFrameViews() {
+            this.updateFrameOverlays();
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+
+        async saveProjectFile(path) {
+            const w = this.config.width, h = this.config.height;
+            const { ctx } = this.projectIndexSurface();
+            const imgData = (ctx || this.ctx).getImageData(0, 0, w, h);
+            // The map is live, so this only has to catch a canvas that moved since
+            // the last committed step; it never reconciles against a stored bitmap.
+            const indices = this.buildProjectIndices(imgData.data, w, h);
+            const palette = this.palette;
+            // Reproduce the file's own transparency chunk — including its absence.
+            // An empty array means "write none", where null would mean "derive one
+            // from palette alpha" and would add a tRNS that tilesets never had.
+            const bytes = await this.generateIndexedPNG(
+                w, h, indices, palette,
+                this.state.projectBitDepth || this.bitDepth,
+                this.state.projectTrns || new Uint8Array(0)
+            );
             if (this.getTauriInvokeFn()) {
                 const normalizedPath = this.normalizeIncomingPath(path);
                 await this.tauriWriteAllowedFile(normalizedPath, bytes);
@@ -21661,6 +24014,7 @@ void main() {
                 this.finalizePastedSelection(c);
             } else {
                 // Replace current document: clear history so undo doesn't revert to previous canvas.
+                this.clearProjectAssetState();
                 this.state.history = [];
                 this.state.step = -1;
                 if (this.state.selection) {
@@ -22065,13 +24419,33 @@ self.onmessage = function(e) {
                     }
                 }
             }
-            for (let i = 0; i < w * h; i++) {
-                if (combined[i]) {
-                    const di = i * 4;
-                    canvasData[di] = bg.r;
-                    canvasData[di+1] = bg.g;
-                    canvasData[di+2] = bg.b;
-                    canvasData[di+3] = 255;
+            // Lifting the selected pixels leaves a hole. On an opaque layer that
+            // hole is the background colour, as in MS Paint. A layer that carries
+            // real alpha has to stay transparent instead — otherwise every lasso
+            // or wand selection floods the empty parts of the layer with C2, and
+            // it shows straight through the gaps in the floating selection.
+            // Same rule the deferred rectangular cut already follows.
+            const cutLayer = this.layerMgr && this.layerMgr.active && this.layerMgr.layers[this.layerMgr.activeIdx];
+            const cutTransparent = !!(cutLayer && cutLayer.alpha !== false);
+            if (cutTransparent) {
+                for (let i = 0; i < w * h; i++) {
+                    if (combined[i]) {
+                        const di = i * 4;
+                        canvasData[di] = 0;
+                        canvasData[di+1] = 0;
+                        canvasData[di+2] = 0;
+                        canvasData[di+3] = 0;
+                    }
+                }
+            } else {
+                for (let i = 0; i < w * h; i++) {
+                    if (combined[i]) {
+                        const di = i * 4;
+                        canvasData[di] = bg.r;
+                        canvasData[di+1] = bg.g;
+                        canvasData[di+2] = bg.b;
+                        canvasData[di+3] = 255;
+                    }
                 }
             }
             const outImg = this.ctx.createImageData(w, h);
@@ -22198,7 +24572,22 @@ self.onmessage = function(e) {
             } else {
                 visited.fill(0);
             }
-            const stack = [{ x: Math.floor(startX), y: Math.floor(startY) }];
+            // Flood-fill frontier, as interleaved x,y. A plain array of {x,y}
+            // allocates four objects per visited pixel — tens of millions of
+            // them on a large canvas, which is most of the multi-second stall
+            // on mouse-up.
+            //
+            // Depth is bounded by 4 entries per accepted pixel, but a real
+            // region never comes close, so the buffer starts modest and doubles
+            // if a genuinely awkward shape needs it rather than reserving the
+            // worst case (which at 16 MP would be half a gigabyte).
+            if (!this._wandCommitStack || this._wandCommitStack.length < 8192) {
+                this._wandCommitStack = new Int32Array(Math.max(8192, (width * height) >> 2));
+            }
+            let stack = this._wandCommitStack;
+            let sp = 0;
+            stack[sp++] = Math.floor(startX);
+            stack[sp++] = Math.floor(startY);
 
             const diff = this.state.wandDiff;
             const useDiff = diff && diff.length === width * height;
@@ -22240,8 +24629,8 @@ self.onmessage = function(e) {
                     }
                 }
             } else {
-                while (stack.length) {
-                    const { x, y } = stack.pop();
+                while (sp > 0) {
+                    const y = stack[--sp], x = stack[--sp];
                     if (x < 0 || y < 0 || x >= width || y >= height) continue;
                     const vi = y * width + x;
                     if (visited[vi]) continue;
@@ -22249,10 +24638,16 @@ self.onmessage = function(e) {
                     if (!match(idx, vi)) continue;
                     visited[vi] = 1;
                     md[idx] = 0; md[idx + 1] = 0; md[idx + 2] = 0; md[idx + 3] = 255;
-                    stack.push({ x: x + 1, y });
-                    stack.push({ x: x - 1, y });
-                    stack.push({ x, y: y + 1 });
-                    stack.push({ x, y: y - 1 });
+                    if (sp + 8 > stack.length) {
+                        const bigger = new Int32Array(stack.length * 2);
+                        bigger.set(stack);
+                        stack = bigger;
+                        this._wandCommitStack = stack;
+                    }
+                    stack[sp++] = x + 1; stack[sp++] = y;
+                    stack[sp++] = x - 1; stack[sp++] = y;
+                    stack[sp++] = x;     stack[sp++] = y + 1;
+                    stack[sp++] = x;     stack[sp++] = y - 1;
                 }
             }
             mctx.putImageData(mimg, 0, 0);
@@ -22346,7 +24741,7 @@ self.onmessage = function(e) {
                 }
                 // Stale job — leave current ants visible; next job will overwrite.
                 if (this.state.wandJobId !== jobId) return;
-                const pathStr = this._maskToSvgPath(mask, w, h);
+                const pathStr = this._maskToSvgPath(mask, w, h, this._antsClipRectInCanvasPx());
                 if (this.state.wandJobId !== jobId) return;
                 this.ctxTemp.clearRect(0, 0, w, h);
                 this._applyWandSvgPreview(pathStr);
@@ -22378,7 +24773,7 @@ self.onmessage = function(e) {
             }
             // Stale job — leave current ants visible; next job will overwrite.
             if (this.state.wandJobId !== jobId) return;
-            const pathStr = this._maskToSvgPath(mask, w, h);
+            const pathStr = this._maskToSvgPath(mask, w, h, this._antsClipRectInCanvasPx());
             if (this.state.wandJobId !== jobId) return;
             this.ctxTemp.clearRect(0, 0, w, h);
             this._applyWandSvgPreview(pathStr);
@@ -22439,18 +24834,32 @@ self.onmessage = function(e) {
             }
             return buf;
         }
-        _maskToSvgPath(mask, w, h) {
+        _maskToSvgPath(mask, w, h, clip) {
             if (!mask) return '';
+            // Same viewport crop the worker applies — see maskToSvgPath in
+            // ensureWandPreviewWorker(). Neighbour lookups still read the full
+            // mask, so the edges that survive are exactly the ones the overlay
+            // clip would have kept anyway.
+            let cy0 = 0, cy1 = h, cx0 = 0, cx1 = w;
+            if (clip) {
+                if (!clip.visible) return '';
+                cx0 = clip.x < 0 ? 0 : (clip.x > w ? w : clip.x | 0);
+                cy0 = clip.y < 0 ? 0 : (clip.y > h ? h : clip.y | 0);
+                const rx = clip.x + clip.w, ry = clip.y + clip.h;
+                cx1 = rx < 0 ? 0 : (rx > w ? w : Math.ceil(rx));
+                cy1 = ry < 0 ? 0 : (ry > h ? h : Math.ceil(ry));
+                if (cx1 <= cx0 || cy1 <= cy0) return '';
+            }
 
             // ÔöÇÔöÇ 1. Collect directed boundary edges ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
             // Winding: CCW around each selected pixel, matching buildMaskOutlineData.
             // Stored as flat array [ax,ay,bx,by, ax,ay,bx,by, ...].
             const edges = [];
-            for (let y = 0; y < h; y++) {
+            for (let y = cy0; y < cy1; y++) {
                 const row  = y * w;
                 const rowP = (y - 1) * w;
                 const rowN = (y + 1) * w;
-                for (let x = 0; x < w; x++) {
+                for (let x = cx0; x < cx1; x++) {
                     if (!mask[row + x]) continue;
                     const x1 = x + 1, y1 = y + 1;
                     if (y === 0   || !mask[rowP + x])   { edges.push(x,  y,  x1, y);  }
@@ -22989,16 +25398,45 @@ self.onmessage = function(e) {
                 showToast('Please enter valid width and height values between 1 and 65535.', 'warning');
                 return;
             }
+            // The layer stack is global. A new document starts with one layer —
+            // without this the new tab opens holding the previous document's
+            // layers, and because there is only one stack, adding a layer in one
+            // tab appears in every other tab too.
+            if (this.layerMgr && typeof this.layerMgr.collapseToBase === 'function') {
+                this.layerMgr.collapseToBase({ fresh: true });
+            }
+            this.clearProjectAssetState();
             this.setSize(w, h);
             this.bitDepth = depth;
-            this.ctx.fillStyle = 'white';
-            this.ctx.fillRect(0, 0, w, h);
+            const bg = document.getElementById('new-bg').value;
+            if (bg === 'transparent' && depth > 8) {
+                this.ctx.clearRect(0, 0, w, h);
+            } else {
+                if (bg === 'transparent') {
+                    showToast('Transparent background is only available at 24bpp; using white.', 'info');
+                }
+                this.ctx.fillStyle = (bg === 'custom') ? document.getElementById('new-bg-color').value : '#ffffff';
+                this.ctx.fillRect(0, 0, w, h);
+            }
             this.palette = [];
             this.paletteLab = null;
             this.paletteLocked = false;
             this.state.fileHandle = null;
             this.state.filePath = null;
             this.state.fileName = 'untitled.png';
+            // A brand-new document starts a brand-new history. Every other
+            // document-replacing path (initializeBlankDocument, handleLoadedImage,
+            // applyProjectImageBytes) does this; without it the new canvas
+            // inherits the previous document's whole undo stack — and because
+            // tabs capture state.history by reference, the old tab and the new
+            // tab end up sharing a single undo stack.
+            //
+            // Detach only — do NOT release the old entries. By the time we get
+            // here a tab record may already own this exact array, and closing
+            // its bitmaps would leave that tab unable to draw itself.
+            // Ownership is released by the tab system when a tab is closed.
+            this.state.history = [];
+            this.state.step = -1;
             this.saveState();
             this.state.hasDocument = true;
             this.state.resizePreviewActive = false;
@@ -23011,19 +25449,41 @@ self.onmessage = function(e) {
 
         applyNewPreset() {
             const p = document.getElementById('new-preset').value;
-            if(p === 'gba-sprite') {
-                document.getElementById('new-w').value = 64;
-                document.getElementById('new-h').value = 64;
-                document.getElementById('new-depth').value = 4;
-            } else if(p === 'gba-tile') {
-                document.getElementById('new-w').value = 8;
-                document.getElementById('new-h').value = 8;
-                document.getElementById('new-depth').value = 4;
-            } else if(p === 'gb') {
-                document.getElementById('new-w').value = 160;
-                document.getElementById('new-h').value = 144;
-                document.getElementById('new-depth').value = 2;
-            }
+            const set = (w, h, d) => {
+                document.getElementById('new-w').value = w;
+                document.getElementById('new-h').value = h;
+                document.getElementById('new-depth').value = d;
+            };
+            if (p === 'hd-1080p') set(1920, 1080, 24);
+            else if (p === 'hd-720p') set(1280, 720, 24);
+            else if (p === 'square') set(1080, 1080, 24);
+            else if (p === 'portrait') set(1080, 1350, 24);
+            else if (p === 'icon-512') set(512, 512, 24);
+            else if (p === 'icon-256') set(256, 256, 24);
+            else if (p === 'gba-sprite') set(64, 64, 4);
+            else if (p === 'gba-tile') set(8, 8, 4);
+            else if (p === 'gb') set(160, 144, 2);
+        }
+
+        swapNewDimensions() {
+            const w = document.getElementById('new-w');
+            const h = document.getElementById('new-h');
+            const t = w.value; w.value = h.value; h.value = t;
+            document.getElementById('new-preset').value = 'custom';
+        }
+
+        onNewBgChange() {
+            const bg = document.getElementById('new-bg').value;
+            document.getElementById('new-bg-custom-group').style.display = (bg === 'custom') ? '' : 'none';
+        }
+
+        resetNewModal() {
+            document.getElementById('new-preset').value = 'custom';
+            document.getElementById('new-w').value = this.config ? this.config.width : 800;
+            document.getElementById('new-h').value = this.config ? this.config.height : 600;
+            document.getElementById('new-depth').value = '24';
+            document.getElementById('new-bg').value = 'white';
+            document.getElementById('new-bg-custom-group').style.display = 'none';
         }
 
         promptImportPalette() {
@@ -23063,29 +25523,20 @@ self.onmessage = function(e) {
             if (!Number.isFinite(count) || count < 0) {
                 throw new Error('Invalid JASC-PAL file');
             }
-            let maxVal = 0;
-            for (let i = 3; i < 3 + count; i++) {
-                if (!lines[i]) continue;
-                const parts = lines[i].trim().split(/\s+/);
-                if (parts.length < 3) continue;
-                for (let k = 0; k < 3; k++) {
-                    const v = Number(parts[k]);
-                    if (Number.isFinite(v)) maxVal = Math.max(maxVal, v);
-                }
-            }
-            const isGba = maxVal > 0 && maxVal <= 31;
-            const scale = isGba ? (255 / 31) : 1;
+            /* Decomp palettes are always 0-255. Guessing the scale from the largest
+               channel used to inflate any legitimately dark palette by 8x — a shadow
+               ramp of 0-31 values is a real palette, not a differently-scaled one. */
             const pal = [];
             for (let i = 3; i < 3 + count; i++) {
                 if (!lines[i]) continue;
                 const parts = lines[i].trim().split(/\s+/);
                 if (parts.length < 3) continue;
                 const r = Number(parts[0]), g = Number(parts[1]), b = Number(parts[2]);
-                if (![r, g, b].every(v => Number.isFinite(v) && v >= 0 && v <= (isGba ? 31 : 255))) continue;
-                pal.push({ r: Math.round(r * scale), g: Math.round(g * scale), b: Math.round(b * scale), a: i === 3 ? 0 : 255 });
+                if (![r, g, b].every(v => Number.isFinite(v) && v >= 0 && v <= 255)) continue;
+                pal.push({ r, g, b, a: i === 3 ? 0 : 255 });
             }
             if (!pal.length) throw new Error('Palette file had no valid colors');
-            return { colors: pal, isGba };
+            return { colors: pal, isGba: false };
         }
         applyGbaPaletteText(text) {
             let parsed;
@@ -23178,29 +25629,310 @@ self.onmessage = function(e) {
             }
             return palettes;
         }
+        /* Sizes and depths here were counted across a whole pokeemerald-expansion
+           working copy, not remembered. A profile that rejects a stock asset is
+           worse than no profile at all: it teaches people to click through the
+           warning that was meant to save them.
+
+           The counts behind each `allowedResolutions` (expansion 1.16.4, 11,234
+           PNGs) are in the comments, because the temptation when something new
+           trips a profile is to widen it, and the count says whether widening is
+           honest or is just silencing the one asset in front of you.
+
+           `strictResolution: false` is a real answer, not a cop-out. Object-event
+           sheets came back in eleven different shapes; there is no box to hold
+           them to, and pretending otherwise is how F5 happened. */
         getTargetProfiles() {
             return {
-                'pokemon-front': { label: 'Pokémon front sprite', bitDepth: 4, maxColors: 16, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64], [80, 80], [96, 96]] },
-                'pokemon-back': { label: 'Pokémon back sprite', bitDepth: 4, maxColors: 16, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[80, 80], [96, 96], [128, 128]] },
-                'pokemon-icon': { label: 'Pokémon icon', bitDepth: 4, maxColors: 16, palettes: ['Normal'], strictResolution: true, allowedResolutions: [[32, 32], [64, 64]] },
-                'interface': { label: 'Interface graphic', bitDepth: 4, maxColors: 16, palettes: ['Normal'], strictResolution: false },
-                'default': { label: 'Project asset', bitDepth: 4, maxColors: 16, palettes: ['Normal'], strictResolution: false }
+                // 202 stock files, every one 64×64.
+                'pokemon-front': { label: 'Pokémon front sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64]], wantsTransparency: true },
+                // 1,211 stock files, every one 64×128 (two stacked 64×64 frames).
+                'pokemon-anim-front': { label: 'Pokémon animated front sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 128], [64, 64]], frames: { size: [64, 64] }, wantsTransparency: true },
+                // 1,409 at 64×64 and one at 64×128 (deoxys, whose forms share a sheet).
+                'pokemon-back': { label: 'Pokémon back sprite', bitDepth: 4, palettes: ['Normal', 'Shiny'], strictResolution: true, allowedResolutions: [[64, 64], [64, 128]], wantsTransparency: true },
+                // 1,414 stock files, every one 32×64. Expansion writes these 8bpp
+                // with a 16-entry palette; the depth is the target's, not the file's.
+                'pokemon-icon': { label: 'Pokémon icon', bitDepth: 4, palettes: ['Icon palette'], strictResolution: true, allowedResolutions: [[32, 64], [32, 32]], frames: { size: [32, 32] }, wantsTransparency: true },
+                // Form icons (deoxys' 128×64 speed icon) are not the standard slot.
+                'pokemon-icon-variant': { label: 'Pokémon form icon', bitDepth: 4, palettes: ['Icon palette'], strictResolution: false, wantsTransparency: true },
+                'pokemon-footprint': { label: 'Pokémon footprint', bitDepth: 1, maxColors: 2, palettes: [], strictResolution: true, allowedResolutions: [[16, 16]] },
+                // 192×32 (1,039), 256×32 (57) and 384×64 (27) all occur. Frame width
+                // is the sheet's height in the square cases, so no fixed box.
+                'pokemon-overworld': { label: 'Pokémon overworld sprite', bitDepth: 4, palettes: ['Overworld normal', 'Overworld shiny'], strictResolution: false, frames: { axis: 'x', counts: [9, 6, 4, 3, 2] }, wantsTransparency: true },
+                /* A palette stored as a picture: one row of pixels, one per slot.
+                   pawmi/normal.png is 16×1, which is neither tile-aligned nor
+                   artwork, and reading it as a sprite produced a build error for a
+                   file that is not a sprite at all. */
+                'palette-image': { label: 'Palette image', bitDepth: 4, palettes: [], strictResolution: false, tileAligned: false, notArtwork: true },
+                'object-event': { label: 'Overworld object sprite', bitDepth: 4, palettes: [], strictResolution: false, frames: { axis: 'x', counts: [9, 6, 4, 3, 2] }, wantsTransparency: true },
+                // 180 stock front pics, every one 64×64.
+                'trainer-front': { label: 'Trainer front sprite', bitDepth: 4, palettes: [], strictResolution: true, allowedResolutions: [[64, 64]], wantsTransparency: true },
+                // Back pics are animation sheets: 64×256 (8) and 64×320 (2).
+                'trainer-back': { label: 'Trainer back sprite', bitDepth: 4, palettes: [], strictResolution: false, frames: { axis: 'y', size: [64, 64] }, wantsTransparency: true },
+                // 619 stock icons, every one 24×24.
+                'item-icon': { label: 'Item icon', bitDepth: 4, palettes: [], strictResolution: true, allowedResolutions: [[24, 24]], wantsTransparency: true },
+                // 138 stock tile sheets, every one 128px wide.
+                'tileset': { label: 'Tileset', bitDepth: 4, palettes: [], strictResolution: false, requiredWidth: 128, tileAligned: true },
+                /* Tileset *animation* frames live under the tileset but are not the
+                   sheet: 176 of them, in shapes from 16×16 to 64×48. Holding them to
+                   the 128px sheet rule was 216 of the false alarms on a stock repo. */
+                'tileset-anim': { label: 'Tileset animation frame', bitDepth: 4, palettes: [], strictResolution: false, tileAligned: true },
+                /* `depthGuessed` means exactly that: nothing about the path says
+                   what depth the slot is, and 4 is only the common case. 32 stock
+                   assets are 8bpp and would be judged against 16 colours here. */
+                'interface': { label: 'Interface graphic', bitDepth: 4, palettes: [], strictResolution: false, depthGuessed: true },
+                'default': { label: 'Project asset', bitDepth: 4, palettes: [], strictResolution: false, depthGuessed: true }
             };
         }
+        /* Path → profile. Deliberately anchored rather than substring-matched:
+           `base === 'tiles'` used to claim the map_preview folder's own tiles.png
+           for the tileset profile and then fail it for not being 128px wide. */
         inferProfile(sourcePath) {
             const profiles = this.getTargetProfiles();
-            const raw = (sourcePath || '').replace(/\\/g, '/');
-            const low = raw.toLowerCase();
-            if (low.includes('graphics/pokemon/')) {
-                const file = low.split('/').pop() || '';
-                if (file.includes('icon')) return profiles['pokemon-icon'];
-                if (file.startsWith('back') || file.includes('back')) return profiles['pokemon-back'];
-                if (file.startsWith('front') || file.includes('front') || file.includes('anim')) return profiles['pokemon-front'];
-                if (file.includes('overworld') || file.includes('footprint')) return profiles['interface'];
-                return profiles['pokemon-front'];
+            const low = (sourcePath || '').replace(/\\/g, '/').toLowerCase();
+            const file = low.split('/').pop() || '';
+            const base = file.replace(/\.[^.]+$/, '').replace(/_gba$/, '');
+
+            /* Inside a tileset folder only `tiles.png` is the sheet. The animation
+               frames sit beside it — sometimes under `anim/`, sometimes just as
+               0.png, 1.png, 2.png — and they are 16×256 or 8×24 or whatever the
+               animation needs. Keying on the folder alone held six of those to the
+               sheet's 128px width. */
+            if (low.includes('data/tilesets/') || low.includes('/tilesets/')) {
+                return base === 'tiles' ? profiles['tileset'] : profiles['tileset-anim'];
             }
+            /* Species folders nest: graphics/pokemon/<species>/ and, for alternate
+               forms, graphics/pokemon/<species>/<form>/. Both end in the same set of
+               file names, so matching on the name still works. */
+            if (low.includes('graphics/pokemon/')) {
+                if (base === 'footprint') return profiles['pokemon-footprint'];
+                if (base === 'normal' || base === 'shiny') return profiles['palette-image'];
+                if (base === 'icon') return profiles['pokemon-icon'];
+                if (base.startsWith('icon')) return profiles['pokemon-icon-variant'];
+                if (base.includes('overworld')) return profiles['pokemon-overworld'];
+                if (base.startsWith('anim_front')) return profiles['pokemon-anim-front'];
+                if (base.includes('back')) return profiles['pokemon-back'];
+                if (base.includes('front')) return profiles['pokemon-front'];
+                return profiles['default'];
+            }
+            if (low.includes('graphics/object_events/')) return profiles['object-event'];
+            if (low.includes('graphics/trainers/')) {
+                return low.includes('/back_pics/') ? profiles['trainer-back'] : profiles['trainer-front'];
+            }
+            if (low.includes('graphics/items/icons')) return profiles['item-icon'];
             if (low.includes('graphics/interface')) return profiles['interface'];
             return profiles['default'];
+        }
+        /* ── Frames ─────────────────────────────────────────────────────────
+           Gen 3 animation is not a file format. A two-frame front sprite is one
+           64×128 PNG holding two 64×64 pictures; a walking overworld sprite is
+           one 144×32 PNG holding nine 16×32 ones. So a frame here is a rectangle
+           of the canvas, not a separate document — which is also why every frame
+           shares a palette by construction. There is one image and one index map
+           underneath the lot, and 1.1's work applies to all of it unchanged. */
+
+        // The GBA's real refresh, so "8 game frames" means what it means in game.
+        static get GBA_HZ() { return 59.7275; }
+        // Hold per frame, in game frames. The exact per-animation timing lives in
+        // the decomp's anim tables (sMonIconAnims and friends), which nothing here
+        // reads yet — this is the common walking/icon cadence, and it is adjustable.
+        static get DEFAULT_FRAME_HOLD() { return 8; }
+
+        projectFrameLayout() {
+            if (!this.state.projectImage || !this.state.projectFile) return null;
+            const spec = this.inferProfile(this.state.projectFile).frames;
+            if (!spec) return null;
+            const w = this.config.width, h = this.config.height;
+            if (!w || !h) return null;
+            const axis = spec.axis === 'x' ? 'x' : 'y';
+            const along = axis === 'x' ? w : h;
+
+            let count = null;
+            const forced = this.state.frameCountOverride;
+            if (Number.isInteger(forced) && forced > 1) {
+                // The artist said so. Only refuse when the sheet cannot be cut that way.
+                if (along % forced) return null;
+                count = forced;
+            } else if (spec.size) {
+                const fw = spec.size[0], fh = spec.size[1];
+                if (w % fw || h % fh) return null;
+                count = (w / fw) * (h / fh);
+            } else {
+                /* Frame width for an overworld sheet really comes from
+                   ObjectEventGraphicsInfo in the C, which nothing here reads yet.
+                   Until it does: take the first division that lands on a whole 8×8
+                   tile boundary, largest count first, since that is what a walking
+                   sheet looks like. Wrong guesses are why the count is adjustable. */
+                for (const c of (spec.counts || [])) {
+                    if (along % c) continue;
+                    if ((along / c) % 8) continue;
+                    count = c;
+                    break;
+                }
+            }
+            if (!count || count < 2) return null;
+
+            const fw = axis === 'x' ? w / count : w;
+            const fh = axis === 'x' ? h : h / count;
+            if (!Number.isInteger(fw) || !Number.isInteger(fh)) return null;
+            const cols = w / fw, rows = h / fh;
+            const hold = this.state.frameHold > 0
+                ? this.state.frameHold
+                : (spec.hold || this.constructor.DEFAULT_FRAME_HOLD);
+            return {
+                count: cols * rows, cols, rows, w: fw, h: fh, axis, hold,
+                ms: hold * 1000 / this.constructor.GBA_HZ
+            };
+        }
+
+        projectFrameRect(index) {
+            const layout = this.projectFrameLayout();
+            if (!layout || index < 0 || index >= layout.count) return null;
+            const col = index % layout.cols, row = (index / layout.cols) | 0;
+            return { x: col * layout.w, y: row * layout.h, w: layout.w, h: layout.h };
+        }
+
+        activeFrameIndex() {
+            const layout = this.projectFrameLayout();
+            if (!layout) return 0;
+            const i = this.state.activeFrame | 0;
+            return i >= 0 && i < layout.count ? i : 0;
+        }
+
+        setActiveFrame(index) {
+            const layout = this.projectFrameLayout();
+            if (!layout) return;
+            const next = ((index % layout.count) + layout.count) % layout.count;
+            if (next === this.state.activeFrame) return;
+            this.state.activeFrame = next;
+            // Which frame you are looking at is navigation, not an edit — it does
+            // not touch a pixel, so it does not belong in the undo stack.
+            this.updateFrameOverlays();
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+        stepFrame(delta) { this.setActiveFrame(this.activeFrameIndex() + (delta || 1)); }
+
+        setFrameCountOverride(count) {
+            this.state.frameCountOverride = (Number.isInteger(count) && count > 1) ? count : null;
+            this.state.activeFrame = 0;
+            this.updateFrameOverlays();
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+        setFrameHold(gameFrames) {
+            const v = Math.max(1, Math.min(120, Math.round(gameFrames) || 0));
+            this.state.frameHold = v;
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+        toggleOnionSkin(on) {
+            this.state.onionSkin = on === undefined ? !this.state.onionSkin : !!on;
+            this.updateFrameOverlays();
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+
+        /* Draw one frame into a target canvas at an integer scale, straight off the
+           display surface — so it shows exactly what is on the canvas, palette edits
+           and all, with no second rendering path to drift out of step. */
+        renderProjectFrameInto(canvas, index, scale) {
+            const rect = this.projectFrameRect(index);
+            if (!canvas || !rect) return false;
+            const z = Math.max(1, Math.round(scale || 1));
+            canvas.width = rect.w * z;
+            canvas.height = rect.h * z;
+            const ctx = canvas.getContext('2d');
+            this.disableSmoothing(ctx);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            try {
+                ctx.drawImage(this.ui.cMain, rect.x, rect.y, rect.w, rect.h,
+                    0, 0, canvas.width, canvas.height);
+            } catch (e) { return false; }
+            return true;
+        }
+
+        /* Ghost the neighbouring frames over the one being worked on, so a walk
+           cycle can be lined up without flipping back and forth. The ghost lands on
+           its own canvas above the artwork and below the tool preview: it is
+           something to look through, never something that can be painted or saved. */
+        updateFrameOverlays() {
+            const c = this.ui.frameOnion;
+            if (!c) return;
+            const layout = this.projectFrameLayout();
+            const w = this.config.width, h = this.config.height;
+            if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+            const ctx = c.getContext('2d');
+            this.disableSmoothing(ctx);
+            ctx.clearRect(0, 0, w, h);
+            if (!layout || !this.state.onionSkin || layout.count < 2) {
+                c.style.display = 'none';
+                return;
+            }
+            c.style.display = 'block';
+            const at = this.activeFrameIndex();
+            const here = this.projectFrameRect(at);
+            const seen = new Set([at]);
+            // Previous reads stronger than next: it is the frame you just drew.
+            for (const [delta, alpha] of [[-1, 0.4], [1, 0.22]]) {
+                const i = ((at + delta) % layout.count + layout.count) % layout.count;
+                if (seen.has(i)) continue;
+                seen.add(i);
+                const from = this.projectFrameRect(i);
+                ctx.globalAlpha = alpha;
+                try {
+                    ctx.drawImage(this.ui.cMain, from.x, from.y, from.w, from.h,
+                        here.x, here.y, here.w, here.h);
+                } catch (e) { /* canvas not readable yet */ }
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        isFramePlaying() { return !!this._framePlayTimer; }
+        startFramePlayback() {
+            const layout = this.projectFrameLayout();
+            if (!layout || this._framePlayTimer) return false;
+            // Playback walks the preview, not the canvas: the artist keeps the frame
+            // they were editing, and nothing they do is interrupted by the animation.
+            this._framePlayFrame = this.activeFrameIndex();
+            const tick = () => {
+                const l = this.projectFrameLayout();
+                if (!l) { this.stopFramePlayback(); return; }
+                this._framePlayFrame = (this._framePlayFrame + 1) % l.count;
+                if (this.onFramePlayback) this.onFramePlayback(this._framePlayFrame);
+                this._framePlayTimer = setTimeout(tick, l.ms);
+            };
+            this._framePlayTimer = setTimeout(tick, layout.ms);
+            if (this.onFramesChanged) this.onFramesChanged();
+            return true;
+        }
+        stopFramePlayback() {
+            if (this._framePlayTimer) clearTimeout(this._framePlayTimer);
+            this._framePlayTimer = null;
+            this._framePlayFrame = null;
+            if (this.onFramePlayback) this.onFramePlayback(null);
+            if (this.onFramesChanged) this.onFramesChanged();
+        }
+        toggleFramePlayback() {
+            if (this._framePlayTimer) this.stopFramePlayback();
+            else this.startFramePlayback();
+        }
+
+        /* How many colours this asset can actually hold: the bit depth the file was
+           opened at decides it, not an assumption that everything is 4bpp. */
+        /* The colour budget belongs to the *slot*, not to the file sitting in it.
+           An expansion icon.png is an 8bpp PNG that becomes a 4bpp asset, so taking
+           the budget from the file hands the artist 256 colours for a slot that
+           holds 16 — it builds, and the icon comes out wrong.
+
+           Where the slot's depth is genuinely unknown (a loose interface graphic
+           that could be either), the file's own depth is the better guess of the
+           two. Neither is authority: the project declares the real answer, in the
+           `.4bpp` / `.8bpp` extension on the INCBIN/INCGFX line that names the
+           file. Reading that is the asset model's job (3.1); until it exists this
+           prefers the slot wherever the slot is actually known. */
+        maxColorsForProfile(profile) {
+            if (profile && Number.isFinite(profile.maxColors)) return profile.maxColors;
+            const depth = (profile && !profile.depthGuessed && profile.bitDepth)
+                || this.state.projectBitDepth
+                || (profile && profile.bitDepth) || 4;
+            return 1 << depth;
         }
         findOffendingColors(paletteColors, d, tol) {
             const exact = new Map();
@@ -23246,6 +25978,12 @@ self.onmessage = function(e) {
                     }
                 }
             }
+            if (profile.requiredWidth && w !== profile.requiredWidth) {
+                errors.push({ field: 'resolution', message: `${profile.label} must be ${profile.requiredWidth}px wide; this is ${w}px.`, hint: `Tile sheets are laid out ${profile.requiredWidth}px across.`, warn: false });
+            }
+            if (profile.tileAligned && (w % 8 !== 0 || h % 8 !== 0)) {
+                errors.push({ field: 'resolution', message: `${w}x${h} is not a whole number of 8x8 tiles.`, hint: 'Both dimensions need to be multiples of 8.', warn: false });
+            }
             const imgData = this.ctx.getImageData(0, 0, w, h);
             const d = imgData.data;
             const distinct = new Map();
@@ -23254,8 +25992,9 @@ self.onmessage = function(e) {
                 distinct.set((d[p] << 16) | (d[p + 1] << 8) | d[p + 2], true);
             }
             const distinctCount = distinct.size;
-            if (distinctCount > profile.maxColors) {
-                errors.push({ field: 'colors', message: `Artwork uses ${distinctCount} distinct colors; ROM allows ${profile.maxColors}.`, hint: `Reduce to ${profile.maxColors} or fewer colors before exporting.`, warn: false });
+            const maxColors = this.maxColorsForProfile(profile);
+            if (distinctCount > maxColors) {
+                errors.push({ field: 'colors', message: `Artwork uses ${distinctCount} distinct colors; this asset holds ${maxColors}.`, hint: `Reduce to ${maxColors} or fewer colors before exporting.`, warn: false });
             }
             const tol = 24;
             const palEntries = (this.state.palettes || []).filter(pe => pe.source === 'pal');
@@ -23269,14 +26008,22 @@ self.onmessage = function(e) {
             const blocking = errors.filter(e => !e.warn);
             return { ok: blocking.length === 0, errors };
         }
+        /* Decomp .pal files are JASC-PAL with 0-255 channels — the 8-bit spelling of
+           the GBA's 15-bit colour. Writing the raw 0-31 values instead makes gbagfx
+           compile a near-black palette into the ROM.
+           The conversion mirrors gbagfx exactly: 8-bit down to 5-bit by >> 3, and
+           back up by (v * 255) / 31 truncated. Bulbasaur's 205 205 172 survives that
+           round trip unchanged, which is the point — reading and re-writing a
+           palette you didn't edit must not move a single channel. */
+        toGbaChannel(v) {
+            const five = Math.max(0, Math.min(255, Math.round(v))) >> 3;
+            return Math.floor((five * 255) / 31);
+        }
         serializeJascPal(colors) {
-            let out = 'JASC-PAL\n0100\n' + colors.length + '\n';
+            let out = 'JASC-PAL\r\n0100\r\n' + colors.length + '\r\n';
             for (let i = 0; i < colors.length; i++) {
                 const c = colors[i];
-                const r = Math.round((c.r * 31) / 255);
-                const g = Math.round((c.g * 31) / 255);
-                const b = Math.round((c.b * 31) / 255);
-                out += r + ' ' + g + ' ' + b + '\n';
+                out += this.toGbaChannel(c.r) + ' ' + this.toGbaChannel(c.g) + ' ' + this.toGbaChannel(c.b) + '\r\n';
             }
             return out;
         }
@@ -23457,11 +26204,29 @@ self.onmessage = function(e) {
         setActivePalette(id) {
             const e = this.getPaletteById(id);
             if (!e) return;
+            /* For a project asset, which palette is active is not a view setting —
+               it is what the index map is read through. Switching has to repaint,
+               or the canvas would keep the old colours while every later edit was
+               resolved against the new ones. That is the normal/shiny toggle. */
+            if (this.state.projectImage && id !== this.state.activePaletteId
+                && this.state.projectIndices
+                && this.state.projectIndices.length === this.config.width * this.config.height) {
+                this.remapCanvasToPalette(id);
+                return;
+            }
             this.palette = e.colors;
             this.paletteLab = null;
             this.state.activePaletteId = id;
             this.renderQuantPalette();
             if (this.onPalettesChanged) this.onPalettesChanged();
+        }
+        /* Is this the palette the canvas is currently being read through? Only that
+           one is part of the document; editing the shiny palette while painting the
+           normal one changes a file on disk, not the artwork on screen. */
+        drivesProjectCanvas(paletteId) {
+            return !!(this.state.projectImage && paletteId
+                && paletteId === this.state.activePaletteId
+                && !this.state.previewPaletteId);
         }
         reorderPaletteColor(paletteId, from, to) {
             const e = this.getPaletteById(paletteId);
@@ -23471,6 +26236,22 @@ self.onmessage = function(e) {
             const moved = arr.splice(from, 1)[0];
             arr.splice(to, 0, moved);
             this.paletteLab = null;
+            /* The indices point INTO this array, so a colour that moved takes every
+               pixel naming it along. Do it by table rather than by colour: two slots
+               can hold the same RGB, and matching on colour would merge them. */
+            if (this.drivesProjectCanvas(paletteId)) {
+                const table = new Array(arr.length);
+                for (let i = 0; i < arr.length; i++) {
+                    if (i === from) table[i] = to;
+                    else if (from < to) table[i] = (i > from && i <= to) ? i - 1 : i;
+                    else table[i] = (i >= to && i < from) ? i + 1 : i;
+                }
+                this.renumberProjectIndices(table);
+                this.renderQuantPalette();
+                this.repaintProjectFromPalette();
+                if (this.onPalettesChanged) this.onPalettesChanged();
+                return;
+            }
             if (paletteId === this.state.activePaletteId) this.renderQuantPalette();
             if (this.state.previewPaletteId) this._recolorPreview();
             else if (this.onPalettesChanged) this.onPalettesChanged();
@@ -23478,9 +26259,15 @@ self.onmessage = function(e) {
         updatePaletteColor(paletteId, index, rgb) {
             const e = this.getPaletteById(paletteId);
             if (!e || index < 0 || index >= e.colors.length) return;
-            e.colors[index] = { r: rgb.r, g: rgb.g, b: rgb.b, a: e.colors[index].a };
+            const was = e.colors[index];
+            if (was.r === rgb.r && was.g === rgb.g && was.b === rgb.b) return;
+            e.colors[index] = { r: rgb.r, g: rgb.g, b: rgb.b, a: was.a };
             this.paletteLab = null;
             if (paletteId === this.state.activePaletteId) this.renderQuantPalette();
+            // The canvas is this palette rendered through the index map, so a slot
+            // edit repaints the pixels holding that slot and nothing else. No
+            // re-quantise, no index moves — the artwork is not being reinterpreted.
+            if (this.drivesProjectCanvas(paletteId)) this.repaintProjectFromPalette();
             if (this.state.previewPaletteId) this._recolorPreview();
             if (this.onPalettesChanged) this.onPalettesChanged();
         }
@@ -23490,6 +26277,12 @@ self.onmessage = function(e) {
             e.colors.push({ r: color.r, g: color.g, b: color.b, a: 255 });
             this.paletteLab = null;
             if (paletteId === this.state.activePaletteId) this.renderQuantPalette();
+            /* Appending moves no index and repaints nothing, but the palette is half
+               of a project asset's document — and a 17th colour on a 4bpp sprite is
+               exactly the kind of change conformance is watching for. Record it, or
+               undo would silently drop back to a palette the canvas no longer
+               matches. */
+            if (this.drivesProjectCanvas(paletteId)) this.saveState();
             if (this.state.previewPaletteId) this._recolorPreview();
             if (this.onPalettesChanged) this.onPalettesChanged();
         }
@@ -23497,27 +26290,76 @@ self.onmessage = function(e) {
             const src = this.getPaletteById(srcId);
             const dst = this.getPaletteById(dstId);
             if (!src || !dst || srcIdx < 0 || srcIdx >= src.colors.length) return;
+            /* Taking a colour OUT of the palette driving the canvas deletes a slot
+               the artwork may be standing on, and there is no honest place to send
+               those pixels. Refuse while the slot is in use; an unused slot is just
+               housekeeping and goes through. */
+            const leavingProject = this.drivesProjectCanvas(srcId) && srcId !== dstId;
+            if (leavingProject) {
+                const map = this.state.projectIndices;
+                let used = 0;
+                if (map) for (let q = 0; q < map.length; q++) if (map[q] === srcIdx) used++;
+                if (used) {
+                    showToast(`Slot ${srcIdx} is used by ${used} pixel(s) — recolour them first`, 'warning');
+                    return;
+                }
+            }
+            const enteringProject = this.drivesProjectCanvas(dstId) && srcId !== dstId;
             const moved = src.colors.splice(srcIdx, 1)[0];
             if (dstIdx < 0 || dstIdx > dst.colors.length) dstIdx = dst.colors.length;
             dst.colors.splice(dstIdx, 0, moved);
             this.paletteLab = null;
+            // A slot left or arrived, so the ones after it all shifted by one and
+            // the artwork has to be renumbered to keep pointing at its own colours.
+            if (leavingProject || enteringProject) {
+                const len = (leavingProject ? src.colors.length + 1 : dst.colors.length);
+                const at = leavingProject ? srcIdx : dstIdx;
+                const table = new Array(len);
+                for (let i = 0; i < len; i++) {
+                    table[i] = leavingProject ? (i > at ? i - 1 : i) : (i >= at ? i + 1 : i);
+                }
+                this.renumberProjectIndices(table);
+                this.renderQuantPalette();
+                this.repaintProjectFromPalette();
+                if (this.onPalettesChanged) this.onPalettesChanged();
+                return;
+            }
             if (srcId === this.state.activePaletteId || dstId === this.state.activePaletteId) this.renderQuantPalette();
             if (this.state.previewPaletteId) this._recolorPreview();
             if (this.onPalettesChanged) this.onPalettesChanged();
         }
-        renderPalettePreviewInto(canvas, paletteId) {
-            if (!canvas) return;
+        /* Show the artwork under a given palette at a true pixel scale.
+           `opts.scale` is an integer multiplier of real pixels — 1 means 1:1, the
+           size the thing will be in the game, which is the whole point of having
+           this pane open while working at 800%. `opts.frame` picks one frame of a
+           sheet; without it the whole file is shown.
+
+           Deliberately NOT cropped to the artwork's bounding box. This refreshes on
+           every edit now, and a crop would make the pane resize under the cursor
+           every time a pixel near an edge changed. Showing the full frame also shows
+           where the sprite sits inside it, which is what 3.4 is about. */
+        renderPalettePreviewInto(canvas, paletteId, opts) {
+            if (!canvas) return false;
             const target = this.getPaletteById(paletteId);
-            if (!target) return;
+            if (!target) return false;
             const w = this.config.width, h = this.config.height;
-            if (!w || !h) { canvas.width = 0; canvas.height = 0; return; }
+            if (!w || !h) { canvas.width = 0; canvas.height = 0; return false; }
+            const o = opts || {};
+            const scale = Math.max(1, Math.round(o.scale || 1));
+            const rect = (o.frame === undefined || o.frame === null)
+                ? { x: 0, y: 0, w, h }
+                : (this.projectFrameRect(o.frame) || { x: 0, y: 0, w, h });
+
             let srcData;
             try { srcData = this.ctx.getImageData(0, 0, w, h); }
-            catch (e) { canvas.width = 0; canvas.height = 0; return; }
+            catch (e) { canvas.width = 0; canvas.height = 0; return false; }
+
             const native = document.createElement('canvas');
             native.width = w; native.height = h;
             const nctx = native.getContext('2d');
             if (this.palette && this.palette.length) {
+                // Repaint through the index map, so this shows what the file would
+                // contain under that palette rather than a nearest-colour guess.
                 const idx = (this.spriteIndices && this.spriteIndices.length === w * h)
                     ? this.spriteIndices
                     : this.quantizeToIndices(srcData.data, w, h, this.basePalette || this.palette);
@@ -23534,32 +26376,19 @@ self.onmessage = function(e) {
             } else {
                 nctx.putImageData(srcData, 0, 0);
             }
-            const sa = srcData.data;
-            let minX = w, minY = h, maxX = -1, maxY = -1;
-            for (let y = 0; y < h; y++) {
-                for (let x = 0; x < w; x++) {
-                    if (sa[(y * w + x) * 4 + 3] > 0) {
-                        if (x < minX) minX = x;
-                        if (x > maxX) maxX = x;
-                        if (y < minY) minY = y;
-                        if (y > maxY) maxY = y;
-                    }
-                }
-            }
-            if (maxX < 0) { canvas.width = 0; canvas.height = 0; return; }
-            const cw = maxX - minX + 1, ch = maxY - minY + 1;
-            canvas.width = cw;
-            canvas.height = ch;
+
+            canvas.width = rect.w * scale;
+            canvas.height = rect.h * scale;
             const cctx = canvas.getContext('2d');
             cctx.imageSmoothingEnabled = false;
-            cctx.clearRect(0, 0, cw, ch);
-            cctx.drawImage(native, minX, minY, cw, ch, 0, 0, cw, ch);
-            const maxSide = Math.max(cw, ch) || 1;
-            let scale = Math.floor(128 / maxSide);
-            if (scale < 1) scale = 1;
-            scale = Math.min(scale, 128 / maxSide);
-            canvas.style.width = Math.round(cw * scale) + 'px';
-            canvas.style.height = Math.round(ch * scale) + 'px';
+            cctx.clearRect(0, 0, canvas.width, canvas.height);
+            cctx.drawImage(native, rect.x, rect.y, rect.w, rect.h, 0, 0, canvas.width, canvas.height);
+            // CSS size tracks the backing store exactly: one artwork pixel is
+            // `scale` screen pixels and no fraction of one, or this stops being a
+            // preview of pixel art and starts being an impression of it.
+            canvas.style.width = canvas.width + 'px';
+            canvas.style.height = canvas.height + 'px';
+            return true;
         }
         addPalette(name) {
             const src = this.palette || [];
@@ -23574,11 +26403,18 @@ self.onmessage = function(e) {
         removePalette(id) {
             const e = this.getPaletteById(id);
             if (!e || e.source === 'embedded') return;
+            const wasDriving = this.drivesProjectCanvas(id);
             this.state.palettes = (this.state.palettes || []).filter(p => p.id !== id);
             if (this.state.activePaletteId === id) {
                 const a = this.state.palettes[0];
                 this.state.activePaletteId = a ? a.id : null;
                 this.palette = a ? a.colors : [];
+                this.basePalette = this.palette;
+                this.paletteLab = null;
+                // The canvas was showing the palette that just went away. Repaint it
+                // under whichever one took over, rather than leaving the pixels and
+                // the map disagreeing about what the artwork is made of.
+                if (wasDriving && a) { this.renderQuantPalette(); this.repaintProjectFromPalette(); }
             }
             if (this.state.previewPaletteId === id) this.exitPreview();
             if (this.onPalettesChanged) this.onPalettesChanged();
@@ -23666,6 +26502,31 @@ self.onmessage = function(e) {
             if (this.onPalettesChanged) this.onPalettesChanged();
             showToast('Shiny palette generated', 'info');
         }
+        /* Repaint a project asset under a different palette, index by index.
+           The index map is untouched — the pixels are new but they still mean the
+           same slots, which is the whole point of swapping to shiny. */
+        remapProjectCanvasToPalette(imgData, entry, paletteId, w, h) {
+            const d = imgData.data;
+            const colors = entry.colors;
+            const transparentIdx = this.state.projectTransparentIndex;
+            for (let p = 0, q = 0; p < d.length; p += 4, q++) {
+                const slot = this.spriteIndices[q];
+                if (slot === transparentIdx) {
+                    d[p] = 0; d[p + 1] = 0; d[p + 2] = 0; d[p + 3] = 0;
+                    continue;
+                }
+                const c = colors[slot] || colors[0];
+                d[p] = c.r; d[p + 1] = c.g; d[p + 2] = c.b; d[p + 3] = 255;
+            }
+            this.ctx.putImageData(imgData, 0, 0);
+            this.basePalette = colors;
+            this.palette = colors;
+            this.paletteLab = null;
+            this.state.activePaletteId = paletteId;
+            this.renderQuantPalette();
+            this.saveState();
+            if (this.onPalettesChanged) this.onPalettesChanged();
+        }
         remapCanvasToPalette(paletteId) {
             const e = this.getPaletteById(paletteId);
             if (!e || !e.colors || !e.colors.length) { showToast('No palette to remap to', 'warning'); return; }
@@ -23674,6 +26535,14 @@ self.onmessage = function(e) {
             let imgData;
             try { imgData = this.ctx.getImageData(0, 0, w, h); }
             catch (err) { showToast('Cannot read canvas', 'error'); return; }
+            /* For a project asset the indices ARE the artwork — swapping to the shiny
+               palette recolours it without moving a pixel. Repaint straight from the
+               index map instead of re-deriving indices from RGB, which would collapse
+               slots that happen to share a colour in whichever palette we came from. */
+            if (this.state.projectImage && this.spriteIndices && this.spriteIndices.length === w * h) {
+                this.remapProjectCanvasToPalette(imgData, e, paletteId, w, h);
+                return;
+            }
             const d = imgData.data;
             const exact = new Set();
             for (let i = 0; i < e.colors.length; i++) {
@@ -23695,6 +26564,7 @@ self.onmessage = function(e) {
             this.basePalette = e.colors;
             this.palette = e.colors;
             this.state.activePaletteId = paletteId;
+            this.paletteLab = null;
             this.renderQuantPalette();
             this.saveState();
             if (this.onPalettesChanged) this.onPalettesChanged();
@@ -23752,6 +26622,19 @@ self.onmessage = function(e) {
             /* If layers are active, always save as ORA */
             if (this.layerMgr && this.layerMgr.active && this.layerMgr.layers.length > 1) {
                 return this.saveAsORA();
+            }
+            /* A tiled screen was assembled out of three files and has to go back
+               into three files. Writing the canvas as one PNG would replace a
+               tile sheet with a picture and leave the tilemap pointing at
+               nothing, so this comes before the ordinary project save. */
+            if (window.TiledScreen && window.TiledScreen.isOpen()) {
+                try {
+                    return await window.TiledScreen.save();
+                } catch (e) {
+                    console.error('Screen save failed', e);
+                    showToast('Screen save failed: ' + this.getErrorText(e), 'error');
+                    return;
+                }
             }
             /* Project (pokeemerald) images are written back as indexed PNG with the
                exact original palette/indices and no injected CDPaint metadata. */
@@ -24429,10 +27312,31 @@ self.onmessage = function(e) {
         try {
             Object.defineProperty(app, 'ctx', {
                 get() {
+                    // Every drawing path reaches the canvas through here, so it
+                    // is the one place that can guarantee an outstanding undo
+                    // record is written BEFORE anything changes the pixels it
+                    // was meant to describe.
+                    if (app._deferredSave) app.flushDeferredSave();
                     if (!mgr.active || !mgr.layers.length) return _holder.ctx;
                     const l = mgr.layers[mgr.activeIdx];
                     // Return a no-op proxy context for locked layers to prevent drawing
                     if (l && l.locked) return _lockedCtxProxy(l.ctx);
+                    // Every drawing path in the app reaches the canvas through
+                    // this accessor, so it is the one reliable place to notice
+                    // "something is about to change" and schedule a repaint.
+                    // Layers are off-screen now — without this, strokes would
+                    // land correctly but never appear.
+                    _invalidate();
+                    // Editing a mask redirects every tool onto the mask canvas,
+                    // so painting reveals and erasing hides, without ever
+                    // touching the artwork underneath.
+                    if (_isMaskEditing(l)) {
+                        // Note it separately from the layer's own pixels, so a
+                        // stroke on the artwork does not force history to clone
+                        // a mask that has not changed.
+                        l._maskDirty = true;
+                        return l.mask.ctx;
+                    }
                     return (l && l.ctx) || _holder.ctx;
                 },
                 set(v) { _holder.ctx = v; },
@@ -24477,6 +27381,10 @@ self.onmessage = function(e) {
 /* ── LAYER SYSTEM ──────────────────────────────────────── */
 #canvas-stage.layers-active {
     background: repeating-conic-gradient(#b0b0b0 0% 25%, #e8e8e8 0% 50%) 0 0 / 16px 16px;
+    /* Layer canvases use mix-blend-mode, which blends with whatever is painted
+       behind them. Isolate the stage so a Multiply layer blends with the layers
+       below it and not with the app's UI. */
+    isolation: isolate;
 }
 #lsys-panel{
     position:fixed;top:145px;bottom:24px;right:-336px;width:320px;
@@ -24610,6 +27518,22 @@ self.onmessage = function(e) {
 .lsi-group-arrow{font-size:9px;transition:transform .15s;flex-shrink:0;opacity:.6;}
 .lsi-group-arrow.open{transform:rotate(90deg);}
 
+/* Clipping / mask indicators */
+.lsi-clip-badge{
+    font-size:10px;margin-left:4px;color:var(--win-blue,#0078d7);
+    opacity:.85;font-weight:700;
+}
+.lsi-mask-badge{
+    font-size:10px;margin-left:4px;color:var(--win-blue,#0078d7);opacity:.8;
+}
+.lsi-mask-badge.editing{
+    background:var(--win-blue,#0078d7);color:#fff;opacity:1;
+    padding:0 3px;border-radius:2px;
+}
+.lsi-mask-badge.off{opacity:.35;text-decoration:line-through;}
+/* Toolbar buttons that represent an ON state */
+.lstb.lstb-on{background:var(--btn-active-bg,#cce8ff);}
+
 /* Opacity row */
 #lsys-oprow{
     padding:5px 9px 6px;border-top:1px solid var(--border-ribbon,#dadbdc);
@@ -24725,6 +27649,24 @@ self.onmessage = function(e) {
             '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="1" y="4" width="14" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5" fill="none"/><rect x="3" y="2" width="5" height="3" rx="1" fill="currentColor" opacity=".6"/></svg>' +
             '</button>' +
             '<div class="lstb-sep"></div>' +
+            /* Clip to layer below */
+            '<button class="lstb" id="lsys-clip" title="Clip to layer below — confine this layer to the shape underneath" disabled>' +
+            '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2" y="8" width="9" height="6" rx="1" fill="currentColor" opacity=".35"/><rect x="5" y="2" width="9" height="6" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M4 12l3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>' +
+            '</button>' +
+            /* Add / edit layer mask */
+            '<button class="lstb" id="lsys-mask" title="Add a layer mask — hide parts without erasing them" disabled>' +
+            '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M8 3v10" stroke="currentColor" stroke-width="1.5"/><rect x="8" y="3" width="6" height="10" fill="currentColor" opacity=".35"/></svg>' +
+            '</button>' +
+            '<div class="lstb-sep"></div>' +
+            /* Flatten */
+            '<button class="lstb" id="lsys-flatten" title="Flatten image — merge every layer into one" disabled>' +
+            '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="3" rx="1" fill="currentColor" opacity=".3"/><rect x="2" y="7" width="12" height="3" rx="1" fill="currentColor" opacity=".5"/><rect x="2" y="11" width="12" height="3" rx="1" fill="currentColor"/></svg>' +
+            '</button>' +
+            /* Export flattened PNG */
+            '<button class="lstb" id="lsys-export" title="Export a flattened PNG (keeps your layered file)" disabled>' +
+            '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M5 7l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 12v2h10v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>' +
+            '</button>' +
+            '<div class="lstb-sep"></div>' +
             /* Delete */
             '<button class="lstb" id="lsys-del" title="Delete active layer" disabled>' +
             '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 5h10M6 5V3h4v2M7 8v4M9 8v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4 5l.7 8h6.6L12 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>' +
@@ -24751,6 +27693,15 @@ self.onmessage = function(e) {
             '<div class="lsctx-sep"></div>' +
             '<div class="lsctx-item" id="lsctx-lock">Lock layer</div>' +
             '<div class="lsctx-sep"></div>' +
+            '<div class="lsctx-item" id="lsctx-clip">Clip to layer below</div>' +
+            '<div class="lsctx-item" id="lsctx-passthrough">Pass through</div>' +
+            '<div class="lsctx-sep"></div>' +
+            '<div class="lsctx-item" id="lsctx-mask-add">Add layer mask</div>' +
+            '<div class="lsctx-item" id="lsctx-mask-edit">Edit mask</div>' +
+            '<div class="lsctx-item" id="lsctx-mask-toggle">Enable mask</div>' +
+            '<div class="lsctx-item" id="lsctx-mask-apply">Apply mask</div>' +
+            '<div class="lsctx-item" id="lsctx-mask-del">Delete mask</div>' +
+            '<div class="lsctx-sep"></div>' +
             '<div class="lsctx-item" id="lsctx-dup">Duplicate</div>' +
             '<div class="lsctx-item" id="lsctx-del">Delete</div>';
         document.body.appendChild(_ctxMenu);
@@ -24774,8 +27725,40 @@ self.onmessage = function(e) {
             alphaItem.className     = 'lsctx-item' + (l.alpha !== false ? ' checked' : '');
             alphaLockItem.className = 'lsctx-item' + (l.alphaLock ? ' checked' : '');
             lockItem.className      = 'lsctx-item' + (l.locked ? ' checked' : '');
+
+            // Clipping: only meaningful when there is a layer underneath to
+            // clip to, and never for the bottom layer.
+            const clipItem = document.getElementById('lsctx-clip');
+            clipItem.className = 'lsctx-item' + (l.clipped ? ' checked' : '');
+            clipItem.style.display = _canClip(idx) ? '' : 'none';
+
+            // Pass-through belongs to folders only.
+            const ptItem = document.getElementById('lsctx-passthrough');
+            if (ptItem) {
+                ptItem.className = 'lsctx-item' + (l.blendMode === 'pass-through' ? ' checked' : '');
+                ptItem.style.display = l.isGroup ? '' : 'none';
+            }
+
+            // Mask items: show "Add" when there is none, the rest when there is.
+            const hasMask = !!l.mask;
+            const show = (id, on) => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = on ? '' : 'none';
+            };
+            show('lsctx-mask-add', !hasMask && !l.isGroup);
+            show('lsctx-mask-edit', hasMask);
+            show('lsctx-mask-toggle', hasMask);
+            show('lsctx-mask-apply', hasMask);
+            show('lsctx-mask-del', hasMask);
+            if (hasMask) {
+                document.getElementById('lsctx-mask-edit').className =
+                    'lsctx-item' + (_isMaskEditing(l) ? ' checked' : '');
+                document.getElementById('lsctx-mask-toggle').className =
+                    'lsctx-item' + (l.mask.enabled !== false ? ' checked' : '');
+            }
+
             _ctxMenu.style.left = Math.min(e.clientX, window.innerWidth - 190) + 'px';
-            _ctxMenu.style.top  = Math.min(e.clientY, window.innerHeight - 160) + 'px';
+            _ctxMenu.style.top  = Math.min(e.clientY, window.innerHeight - 230) + 'px';
             _ctxMenu.classList.add('open');
         }
         function _closeCtx() { _ctxMenu.classList.remove('open'); }
@@ -24786,6 +27769,62 @@ self.onmessage = function(e) {
             if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
             _closeCtx();
         });
+        /* ── Clipping + mask menu actions ─────────────────────────────────── */
+
+        document.getElementById('lsctx-clip').addEventListener('click', () => {
+            if (!_canClip(_ctxTargetIdx)) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            l.clipped = !l.clipped;
+            _closeCtx(); _refreshList(); _invalidate();
+            app.saveState();
+        });
+        document.getElementById('lsctx-passthrough').addEventListener('click', () => {
+            const l = mgr.layers[_ctxTargetIdx];
+            if (!l || !l.isGroup) return;
+            l.blendMode = (l.blendMode === 'pass-through') ? 'source-over' : 'pass-through';
+            _closeCtx(); _refreshList(); _invalidate();
+            app.saveState();
+        });
+        document.getElementById('lsctx-mask-add').addEventListener('click', () => {
+            if (_ctxTargetIdx < 0) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            _addMask(l);
+            _setMaskEditing(l, true);       // painting goes to the mask right away
+            _closeCtx(); _refreshList(); _invalidate();
+            app.saveState();
+        });
+        document.getElementById('lsctx-mask-edit').addEventListener('click', () => {
+            if (_ctxTargetIdx < 0) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            _setMaskEditing(l, !_isMaskEditing(l));
+            _closeCtx(); _refreshList();
+        });
+        document.getElementById('lsctx-mask-toggle').addEventListener('click', () => {
+            if (_ctxTargetIdx < 0) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            if (!l.mask) return;
+            l.mask.enabled = l.mask.enabled === false;
+            l._dirty = true;
+            _closeCtx(); _refreshList(); _invalidate();
+            app.saveState();
+        });
+        document.getElementById('lsctx-mask-apply').addEventListener('click', () => {
+            if (_ctxTargetIdx < 0) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            _setMaskEditing(l, false);
+            _removeMask(l, true);           // bake what it hid into the pixels
+            _closeCtx(); _refreshList(); _invalidate();
+            app.saveState();
+        });
+        document.getElementById('lsctx-mask-del').addEventListener('click', () => {
+            if (_ctxTargetIdx < 0) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            _setMaskEditing(l, false);
+            _removeMask(l, false);          // discard it, layer pixels untouched
+            _closeCtx(); _refreshList(); _invalidate();
+            app.saveState();
+        });
+
         document.getElementById('lsctx-alphalock').addEventListener('click', () => {
             if (_ctxTargetIdx < 0) return;
             const l = mgr.layers[_ctxTargetIdx];
@@ -24859,19 +27898,280 @@ self.onmessage = function(e) {
                 : null;
         }
 
+        /* Layer pixels live OFF-SCREEN. Nothing is stacked in the page any
+         * more — cMain is the display canvas and shows the composited result.
+         * That is what makes real groups, clipping masks and layer masks
+         * possible, and it guarantees the screen matches the saved file. */
         function _newCanvas(w, h) {
             const c = document.createElement('canvas');
             c.width = w; c.height = h;
-            c.style.cssText =
-                'position:absolute;left:0;top:0;pointer-events:none;';
             return c;
         }
 
-        function _insertBeforeTemp(c) {
-            const stage = app.ui && app.ui.stage;
-            const ctemp = app.ui && app.ui.cTemp;
-            if (stage && ctemp && ctemp.parentNode === stage) stage.insertBefore(c, ctemp);
-            else if (stage) stage.appendChild(c);
+        /* Layer canvases used to be inserted into the stage. They are off-screen
+         * now; kept as a no-op so older call sites stay harmless. */
+        function _insertBeforeTemp() { /* layers are no longer in the DOM */ }
+
+        /* ── Compositor ───────────────────────────────────────────────────── */
+
+        const _scratchPool = [];
+        function _getScratch(w, h) {
+            const c = _scratchPool.pop() || document.createElement('canvas');
+            if (c.width !== w) c.width = w;
+            if (c.height !== h) c.height = h;
+            const ctx = c.getContext('2d');
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.clearRect(0, 0, w, h);
+            app.disableSmoothing(ctx);
+            return c;
+        }
+        function _releaseScratch(c) { if (_scratchPool.length < 12) _scratchPool.push(c); }
+
+        function _blendOf(l) {
+            const b = l.blendMode;
+            // 'pass-through' is a folder flag, not a canvas operation. A folder
+            // that lets the layers underneath show through is drawn by putting
+            // its children straight onto the parent, so by the time anything
+            // reaches this function it is plain Normal.
+            if (!b || b === 'source-over' || b === 'pass-through') return 'source-over';
+            return b;
+        }
+
+        /* A pass-through folder is not composited as a single object: its
+         * children blend with everything already on the canvas, which is how
+         * Photoshop groups behave by default. Isolation comes back the moment
+         * the folder has to be treated as one object — its own mask, or a
+         * partial opacity, both need the finished group before they apply. */
+        function _isPassThrough(l) {
+            return !!(l.isGroup && l.blendMode === 'pass-through' &&
+                      (l.opacity == null || l.opacity >= 1) &&
+                      !(l.mask && l.mask.enabled !== false && l.mask.canvas));
+        }
+
+        /* Flat array + parentId -> sibling lists, bottom-to-top. */
+        function _buildTree() {
+            const known = new Set(mgr.layers.map(l => l.id));
+            const roots = [];
+            const kids = new Map();
+            for (const l of mgr.layers) {
+                if (l.parentId && known.has(l.parentId)) {
+                    if (!kids.has(l.parentId)) kids.set(l.parentId, []);
+                    kids.get(l.parentId).push(l);
+                } else {
+                    roots.push(l);
+                }
+            }
+            return { roots, kids };
+        }
+
+        /* The pixels a node contributes, with its own mask applied. Groups are
+         * rendered into an isolated scratch so their opacity and blend mode
+         * apply to the folder as a whole. Returns {canvas, temp} or null. */
+        function _nodeContent(l, kids, w, h) {
+            let base = null, temp = false;
+            if (l.isGroup) {
+                const children = kids.get(l.id) || [];
+                if (!children.length) return null;
+                const s = _getScratch(w, h);
+                _renderList(children, kids, s.getContext('2d'), w, h);
+                base = s; temp = true;
+            } else {
+                if (!l.canvas) return null;
+                base = l.canvas;
+            }
+            const mask = l.mask;
+            if (mask && mask.enabled !== false && mask.canvas) {
+                const s = _getScratch(w, h);
+                const sctx = s.getContext('2d');
+                sctx.drawImage(base, 0, 0);
+                // Mask alpha decides what survives: painted = visible.
+                sctx.globalCompositeOperation = 'destination-in';
+                sctx.drawImage(mask.canvas, 0, 0);
+                sctx.globalCompositeOperation = 'source-over';
+                if (temp) _releaseScratch(base);
+                return { canvas: s, temp: true };
+            }
+            return { canvas: base, temp: temp };
+        }
+
+        /* Draw one list of siblings (bottom-to-top) into ctx. A run of clipped
+         * layers is confined to the shape of the first unclipped layer beneath
+         * it, exactly like a Photoshop/Krita clipping group. */
+        function _renderList(list, kids, ctx, w, h) {
+            for (let i = 0; i < list.length; i++) {
+                const l = list[i];
+                // A clipped layer is drawn as part of the run above its base.
+                // At the very bottom of a list there is nothing to clip to, so
+                // draw it as an ordinary layer rather than dropping it — it used
+                // to vanish with no explanation when it was first inside a group.
+                if (l.clipped && i > 0) continue;
+                if (!l.visible) {
+                    // An invisible clip base still swallows its clipped run.
+                    continue;
+                }
+
+                // A clipped run above needs this node's shape as one canvas, so
+                // a folder that would otherwise pass through has to isolate.
+                const hasRun = (i + 1 < list.length) && list[i + 1].clipped;
+                if (!hasRun && _isPassThrough(l)) {
+                    _renderList(kids.get(l.id) || [], kids, ctx, w, h);
+                    continue;
+                }
+
+                const content = _nodeContent(l, kids, w, h);
+                if (!content) continue;
+
+                // Collect the clipped run sitting directly on top of this layer.
+                const run = [];
+                for (let j = i + 1; j < list.length; j++) {
+                    if (!list[j].clipped) break;
+                    if (list[j].visible) run.push(list[j]);
+                }
+
+                let src = content.canvas, srcTemp = content.temp;
+                if (run.length) {
+                    const s = _getScratch(w, h);
+                    const sctx = s.getContext('2d');
+                    sctx.drawImage(content.canvas, 0, 0);
+                    for (const c of run) {
+                        const cc = _nodeContent(c, kids, w, h);
+                        if (!cc) continue;
+                        sctx.save();
+                        sctx.globalAlpha = c.opacity == null ? 1 : c.opacity;
+                        sctx.globalCompositeOperation = _blendOf(c);
+                        sctx.drawImage(cc.canvas, 0, 0);
+                        sctx.restore();
+                        if (cc.temp) _releaseScratch(cc.canvas);
+                    }
+                    // Confine the result to the base layer's own shape.
+                    sctx.save();
+                    sctx.globalCompositeOperation = 'destination-in';
+                    sctx.drawImage(content.canvas, 0, 0);
+                    sctx.restore();
+                    if (content.temp) _releaseScratch(content.canvas);
+                    src = s; srcTemp = true;
+                }
+
+                ctx.save();
+                ctx.globalAlpha = l.opacity == null ? 1 : l.opacity;
+                ctx.globalCompositeOperation = _blendOf(l);
+                ctx.drawImage(src, 0, 0);
+                ctx.restore();
+                if (srcTemp) _releaseScratch(src);
+            }
+        }
+
+        /* Composite the whole tree into the display canvas (cMain). */
+        let _renderRaf = null, _renderDirty = false;
+        function _render() {
+            _renderDirty = false;
+            if (!mgr.active || !mgr.layers.length) return;
+            const w = app.config.width, h = app.config.height;
+            const ctx = _holder.ctx;
+            if (!ctx) return;
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.clearRect(0, 0, w, h);
+            app.disableSmoothing(ctx);
+            const { roots, kids } = _buildTree();
+            _renderList(roots, kids, ctx, w, h);
+            ctx.restore();
+        }
+        mgr.render = _render;
+
+        /* Coalesce repaints to one per animation frame. */
+        function _invalidate() {
+            if (!mgr.active) return;
+            _renderDirty = true;
+            if (_renderRaf == null) {
+                _renderRaf = requestAnimationFrame(() => {
+                    _renderRaf = null;
+                    if (_renderDirty) _render();
+                });
+            }
+        }
+        mgr.invalidate = _invalidate;
+
+        /* The live view is a stack of DOM canvases, so visibility / opacity /
+         * blend mode are CSS on each canvas — nothing composites them in JS
+         * while you draw. This is the single place that pushes a layer's
+         * appearance onto its canvas; call it whenever any of those change.
+         *
+         * Canvas and CSS spell the default blend differently ('source-over' vs
+         * 'normal'); every other mode shares the same name. */
+        /* Appearance used to be CSS on stacked canvases. The compositor owns it
+         * now, so "apply style" just means "repaint". Kept as a named call so
+         * every place that changes how a layer looks stays obvious. */
+        function _applyLayerStyle() { _invalidate(); }
+        function _applyAllLayerStyles() { _invalidate(); }
+
+        /* ── Layer masks ──────────────────────────────────────────────────────
+         * A mask is a same-size canvas whose ALPHA decides what shows: painted
+         * = visible, erased = hidden. Nothing is destroyed, so hiding can be
+         * painted back at any time. */
+        function _makeMask(w, h, opaque) {
+            const c = _newCanvas(w, h);
+            const ctx = c.getContext('2d', { willReadFrequently: true });
+            app.disableSmoothing(ctx);
+            if (opaque) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); }
+            return { canvas: c, ctx, enabled: true };
+        }
+        function _addMask(l, opts) {
+            if (!l || l.mask) return;
+            // Start fully revealed — the mask should change nothing until painted.
+            l.mask = _makeMask(app.config.width, app.config.height, !(opts && opts.hidden));
+            l._dirty = true;
+            l._maskDirty = true;
+        }
+        function _removeMask(l, apply) {
+            if (!l || !l.mask) return;
+            if (apply && l.canvas && l.ctx) {
+                // Bake it in: what the mask hid becomes actually erased.
+                l.ctx.save();
+                l.ctx.globalCompositeOperation = 'destination-in';
+                l.ctx.drawImage(l.mask.canvas, 0, 0);
+                l.ctx.restore();
+            }
+            l.mask = null;
+            l._dirty = true;
+            l._maskDirty = true;
+        }
+        /* While a mask is being edited, drawing tools paint the MASK rather than
+         * the layer's pixels — paint to reveal, erase to hide. Only one mask can
+         * be in edit mode at a time, so the target of a brush stroke is never
+         * ambiguous. */
+        function _isMaskEditing(l) { return !!(l && l.mask && l._maskEdit); }
+        /* Where a drawing operation on this layer should actually land. */
+        function _targetCtx(l) { return _isMaskEditing(l) ? l.mask.ctx : (l && l.ctx); }
+        function _setMaskEditing(l, on) {
+            for (const other of mgr.layers) if (other !== l) other._maskEdit = false;
+            if (!l) return;
+            l._maskEdit = !!(on && l.mask);
+        }
+        mgr.isMaskEditing = () => {
+            const l = mgr.layers[mgr.activeIdx];
+            return _isMaskEditing(l);
+        };
+
+        function _snapshotMask(l) {
+            if (!l.mask || !l.mask.canvas) return null;
+            const c = _newCanvas(l.mask.canvas.width, l.mask.canvas.height);
+            c.getContext('2d').drawImage(l.mask.canvas, 0, 0);
+            return { canvas: c, enabled: l.mask.enabled !== false };
+        }
+        function _restoreMask(l, sv, w, h) {
+            if (!sv.mask || !sv.mask.canvas) { l.mask = null; return; }
+            if (!l.mask) l.mask = _makeMask(w, h, false);
+            if (l.mask.canvas.width !== w || l.mask.canvas.height !== h) {
+                l.mask.canvas.width = w; l.mask.canvas.height = h;
+            }
+            l.mask.ctx.clearRect(0, 0, w, h);
+            l.mask.ctx.drawImage(sv.mask.canvas, 0, 0);
+            l.mask.enabled = sv.mask.enabled !== false;
         }
 
         /* Flatten all visible layers into a single canvas.  Used for save/preview. */
@@ -24888,15 +28188,14 @@ self.onmessage = function(e) {
                 app.disableSmoothing(mgr._compositeCtx);
             }
             const ctx = mgr._compositeCtx;
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
             ctx.clearRect(0, 0, w, h);
-            for (const l of mgr.layers) {
-                if (!l.visible || l.isGroup) continue;
-                ctx.save();
-                ctx.globalAlpha = l.opacity;
-                ctx.globalCompositeOperation = l.blendMode || 'source-over';
-                ctx.drawImage(l.canvas, 0, 0);
-                ctx.restore();
-            }
+            // Same path the screen uses, so an exported/flattened image and the
+            // canvas you were looking at can never disagree.
+            const { roots, kids } = _buildTree();
+            _renderList(roots, kids, ctx, w, h);
             return mgr._compositeCanvas;
         }
         mgr.getCompositeCanvas = function() { return _composite(); };
@@ -24929,22 +28228,41 @@ self.onmessage = function(e) {
          * Called lazily the first time the user adds a layer. */
         function _activate() {
             if (mgr.active) return;
+            app.markAllDirty();
             mgr.active = true;
-            mgr.layers.push({
-                id:      1,
-                name:    'Background',
-                canvas:  app.ui.cMain,
-                ctx:     _holder.ctx,
-                visible: true,
-                opacity: 1.0,
-                isBase:  true,
-                locked:  false,
-                alpha:   false,
-                parentId: null,
-            });
-            // cTemp must remain visually on top of any layer canvases we insert.
-            if (app.ui.cTemp) app.ui.cTemp.style.zIndex = '200';
+            mgr.activeIdx = 0;
+            if (!mgr.layers.length) {
+                // Move the picture that was being drawn straight onto cMain into
+                // an off-screen Background layer. From here on cMain is the
+                // display surface and shows the composite, not the artwork.
+                const w = app.config.width, h = app.config.height;
+                const c = _newCanvas(w, h);
+                const cctx = c.getContext('2d', { willReadFrequently: true });
+                app.disableSmoothing(cctx);
+                cctx.drawImage(app.ui.cMain, 0, 0);
+                mgr.layers.push({
+                    id:       1,
+                    name:     'Background',
+                    canvas:   c,
+                    ctx:      cctx,
+                    visible:  true,
+                    opacity:  1.0,
+                    isBase:   true,
+                    locked:   false,
+                    alpha:    false,
+                    alphaLock: false,
+                    blendMode: 'source-over',
+                    clipped:  false,
+                    mask:     null,
+                    parentId: null,
+                    _dirty:   false,
+                });
+                if (mgr.nextId < 2) mgr.nextId = 2;
+            }
+            _invalidate();
             // Switch stage to checkered pattern so transparent areas are visible.
+            // (cTemp no longer needs a z-index bump — there are no layer
+            // canvases in the DOM to sit above.)
             if (app.ui.stage) app.ui.stage.classList.add('layers-active');
             _refreshList();
             _syncBtns();
@@ -24955,11 +28273,9 @@ self.onmessage = function(e) {
             const w = app.config.width, h = app.config.height;
             const id = mgr.nextId++;
             const c = _newCanvas(w, h);
-            c.style.zIndex = String(10 + mgr.layers.length);
             const ctx = c.getContext('2d', { willReadFrequently: true });
             app.disableSmoothing(ctx);
             // Canvas is transparent by default — no fill needed (rgba 0,0,0,0)
-            _insertBeforeTemp(c);
             mgr.layers.push({
                 id, name: 'Layer ' + id, canvas: c, ctx,
                 visible: true, opacity: 1.0, isBase: false,
@@ -24969,28 +28285,77 @@ self.onmessage = function(e) {
             });
             _setActive(mgr.layers.length - 1);
             _refreshList();
+            _invalidate();
+        }
+
+        /* Copy one layer's own pixels and settings. Children are NOT handled
+         * here — the caller walks the subtree and re-points parentId. */
+        function _cloneLayer(src, rename) {
+            const w = app.config.width, h = app.config.height;
+            const isGroup = !!src.isGroup;
+            let c, ctx = null;
+            if (isGroup) {
+                c = document.createElement('canvas');   // placeholder, never drawn
+            } else {
+                c = _newCanvas(w, h);
+                ctx = c.getContext('2d', { willReadFrequently: true });
+                app.disableSmoothing(ctx);
+                if (src.canvas) ctx.drawImage(src.canvas, 0, 0);
+            }
+            const copy = {
+                id: mgr.nextId++, name: rename ? src.name + ' copy' : src.name,
+                canvas: c, ctx,
+                visible: src.visible !== false, opacity: src.opacity,
+                isBase: false, locked: false, alpha: src.alpha !== false,
+                blendMode: src.blendMode, alphaLock: src.alphaLock,
+                isGroup, _open: src._open !== false,
+                // A copy that quietly dropped the mask or the clipping was not
+                // a copy — both used to be left behind here.
+                clipped: !!src.clipped, mask: null,
+                _dirty: true, parentId: src.parentId,
+            };
+            if (src.mask && src.mask.canvas) {
+                copy.mask = _makeMask(w, h, false);
+                copy.mask.ctx.drawImage(src.mask.canvas, 0, 0);
+                copy.mask.enabled = src.mask.enabled !== false;
+            }
+            return copy;
         }
 
         function _dupLayer() {
             if (!mgr.active || !mgr.layers.length) return;
             const src = mgr.layers[mgr.activeIdx];
-            const w = app.config.width, h = app.config.height;
-            const id = mgr.nextId++;
-            const c = _newCanvas(w, h);
-            c.style.zIndex = String(10 + mgr.layers.length);
-            const ctx = c.getContext('2d', { willReadFrequently: true });
-            app.disableSmoothing(ctx);
-            ctx.drawImage(src.canvas, 0, 0);
-            _insertBeforeTemp(c);
-            const layer = {
-                id, name: src.name + ' copy', canvas: c, ctx,
-                visible: true, opacity: src.opacity, isBase: false,
-                locked: false, alpha: src.alpha !== false,
-                blendMode: src.blendMode, alphaLock: src.alphaLock,
-                _dirty: false,
-                parentId: src.parentId,
-            };
-            mgr.layers.splice(mgr.activeIdx + 1, 0, layer);
+
+            if (src.isGroup) {
+                // Duplicating a folder used to hand back an empty folder: only
+                // the placeholder canvas was copied, never the contents.
+                const ids   = _subtreeIds(src.id);
+                const block = mgr.layers.filter(l => ids.has(l.id));
+                const idMap = new Map();
+                const copies = block.map(l => {
+                    const cp = _cloneLayer(l, l === src);
+                    idMap.set(l.id, cp.id);
+                    return cp;
+                });
+                // Re-point each copied child at its copied parent, so the new
+                // folder holds the new layers and the original keeps its own.
+                for (const cp of copies) {
+                    if (cp.parentId != null && idMap.has(cp.parentId)) {
+                        cp.parentId = idMap.get(cp.parentId);
+                    }
+                }
+                const groupCopy = copies[block.indexOf(src)];
+                const insertAt  = mgr.layers.indexOf(block[block.length - 1]) + 1;
+                mgr.layers.splice(insertAt, 0, ...copies);
+                _applyLayerStyle(groupCopy);
+                _setActive(insertAt + copies.indexOf(groupCopy));
+                _refreshList();
+                return;
+            }
+
+            const copy = _cloneLayer(src, true);
+            mgr.layers.splice(mgr.activeIdx + 1, 0, copy);
+            _applyLayerStyle(copy);   // carry the copied opacity/blend to screen
             _setActive(mgr.activeIdx + 1);
             _refreshList();
         }
@@ -24999,18 +28364,22 @@ self.onmessage = function(e) {
             if (!mgr.active || mgr.layers.length <= 1) return;
             const l = mgr.layers[mgr.activeIdx];
             if (l.isGroup) {
-                for (const child of mgr.layers) {
-                    if (child.parentId === l.id) child.parentId = null;
+                // A folder owns what is inside it. Deleting one used to leave
+                // its contents behind, scattered out to the top level.
+                const ids = _subtreeIds(l.id);
+                if (ids.size >= mgr.layers.length) return;   // would empty the document
+                for (let i = mgr.layers.length - 1; i >= 0; i--) {
+                    if (ids.has(mgr.layers[i].id)) mgr.layers.splice(i, 1);
                 }
+            } else {
+                // Every layer is an off-screen canvas now, so the bottom one is
+                // not special: dropping the reference is the whole job.
+                mgr.layers.splice(mgr.activeIdx, 1);
             }
-            if (l.isBase) {
-                l.ctx.clearRect(0, 0, app.config.width, app.config.height);
-            } else if (l.canvas.parentNode) {
-                l.canvas.parentNode.removeChild(l.canvas);
-            }
-            mgr.layers.splice(mgr.activeIdx, 1);
+            if (mgr.layers.length && !mgr.layers.some(x => x.isBase)) mgr.layers[0].isBase = true;
             _setActive(Math.min(mgr.activeIdx, mgr.layers.length - 1));
             _refreshList();
+            _invalidate();
             app.saveState();
         }
 
@@ -25018,15 +28387,20 @@ self.onmessage = function(e) {
             if (!mgr.active || mgr.activeIdx <= 0) return;
             const above = mgr.layers[mgr.activeIdx];
             const below = mgr.layers[mgr.activeIdx - 1];
+            // Groups are placeholders with no drawing context.
+            if (above.isGroup || below.isGroup || !below.ctx) return;
             below.ctx.save();
             below.ctx.globalAlpha = above.opacity;
+            // Merging must reproduce what the layer looked like — flattening a
+            // Multiply layer as Normal changed the picture.
+            below.ctx.globalCompositeOperation = above.blendMode || 'source-over';
             below.ctx.drawImage(above.canvas, 0, 0);
             below.ctx.restore();
-            if (!above.isBase && above.canvas.parentNode)
-                above.canvas.parentNode.removeChild(above.canvas);
+            below._dirty = true;
             mgr.layers.splice(mgr.activeIdx, 1);
             _setActive(mgr.activeIdx - 1);
             _refreshList();
+            _invalidate();
             app.saveState();
         }
 
@@ -25045,6 +28419,38 @@ self.onmessage = function(e) {
                 });
             }
         }
+
+        /* Collapse the whole stack into a single Background layer holding the
+         * composited picture. Unlike merging pairwise, this is exactly what you
+         * see, including groups, clipping and masks. */
+        function _flattenImage() {
+            if (!mgr.active || mgr.layers.length < 1) return;
+            const w = app.config.width, h = app.config.height;
+            const flat = _composite();
+            const c = _newCanvas(w, h);
+            const cctx = c.getContext('2d', { willReadFrequently: true });
+            app.disableSmoothing(cctx);
+            if (flat) cctx.drawImage(flat, 0, 0);
+            mgr.layers.length = 0;
+            mgr.layers.push({
+                id: 1, name: 'Background', canvas: c, ctx: cctx,
+                visible: true, opacity: 1.0, isBase: true, locked: false,
+                alpha: false, alphaLock: false, blendMode: 'source-over',
+                clipped: false, mask: null, parentId: null, _dirty: true,
+            });
+            mgr.nextId = 2;
+            mgr.activeIdx = 0;
+            _refreshList(); _syncBtns(); _syncOpacity(); _invalidate();
+            app.saveState();
+        }
+        mgr.flatten = _flattenImage;
+
+        /* The composited picture as a plain canvas — what a PNG export should
+         * contain when the document has layers. */
+        mgr.getFlattenedCanvas = function () {
+            if (!mgr.active || !mgr.layers.length) return app.ui.cMain;
+            return _composite() || app.ui.cMain;
+        };
 
         function _moveLayerUp() {
             // "Up" in the visual list = higher index in the array (drawn later = on top)
@@ -25078,12 +28484,20 @@ self.onmessage = function(e) {
                 locked: false, alpha: false,
                 canvas: document.createElement('canvas'), // placeholder
                 ctx: null,
-                blendMode: 'source-over', alphaLock: false, _dirty: false,
+                // Pass-through is what a folder does in Photoshop by default:
+                // the layers inside still blend with everything below it.
+                blendMode: 'pass-through', alphaLock: false, _dirty: false,
+                clipped: false, mask: null,
                 parentId: null,
             };
             mgr.layers.splice(idx, 0, grpLayer);
+            // Put the layer you had selected inside the new folder. Handing back
+            // an empty folder to drag things into is not what "group" means.
+            const inner = mgr.layers[idx + 1];
+            if (inner && !inner.isBase) inner.parentId = id;
             _setActive(idx + 1);
             _refreshList();
+            _invalidate();
             app.saveState();
         }
 
@@ -25091,15 +28505,11 @@ self.onmessage = function(e) {
             if (idx < 0 || idx >= mgr.layers.length) return;
             const l = mgr.layers[idx];
             l.visible = !l.visible;
-            if (l.canvas) l.canvas.style.display = l.visible ? '' : 'none';
-            if (l.isGroup) {
-                for (const child of mgr.layers) {
-                    if (child.parentId === l.id) {
-                        child.visible = l.visible;
-                        if (child.canvas) child.canvas.style.display = l.visible ? '' : 'none';
-                    }
-                }
-            }
+            // Hiding a group used to overwrite every child's own visibility, so
+            // re-showing the folder revealed layers you had hidden individually.
+            // The compositor skips a hidden group wholesale, so the children
+            // keep their own state and come back exactly as you left them.
+            _invalidate();
             _refreshList();
         }
 
@@ -25107,7 +28517,7 @@ self.onmessage = function(e) {
             if (!mgr.active || !mgr.layers.length) return;
             const l = mgr.layers[mgr.activeIdx];
             l.opacity = Math.max(0, Math.min(1, pct / 100));
-            l.canvas.style.opacity = l.opacity;
+            _applyLayerStyle(l);
             _syncOpacity();
         }
 
@@ -25117,11 +28527,22 @@ self.onmessage = function(e) {
         function _resizeLayers(w, h) {
             if (!mgr.active) return;
             for (const l of mgr.layers) {
-                if (l.isBase || l.isGroup) continue;
-                l.canvas.width  = w;
-                l.canvas.height = h;
-                app.disableSmoothing(l.ctx);
+                if (l.isGroup) continue;
+                // The bottom layer is off-screen like every other one now, so it
+                // resizes here too rather than riding along with cMain.
+                if (l.canvas && (l.canvas.width !== w || l.canvas.height !== h)) {
+                    l.canvas.width  = w;
+                    l.canvas.height = h;
+                    app.disableSmoothing(l.ctx);
+                }
+                if (l.mask && l.mask.canvas &&
+                    (l.mask.canvas.width !== w || l.mask.canvas.height !== h)) {
+                    l.mask.canvas.width  = w;
+                    l.mask.canvas.height = h;
+                    app.disableSmoothing(l.mask.ctx);
+                }
             }
+            _invalidate();
         }
 
         /* ──────────────────────────────────────────────────────────────────
@@ -25144,15 +28565,41 @@ self.onmessage = function(e) {
             }
             return false;
         }
-        function _setVisRecursive(groupId, visible) {
-            for (const child of mgr.layers) {
-                if (child.parentId === groupId) {
-                    child.visible = visible;
-                    if (child.canvas) child.canvas.style.display = visible ? '' : 'none';
-                    if (child.isGroup) _setVisRecursive(child.id, visible);
+        /* Deliberately no longer cascades visibility onto children: the
+         * compositor skips a hidden group as a whole, so each child keeps its
+         * own visible flag and survives the folder being toggled. */
+        /* Every layer inside this folder, at any depth, plus the folder itself.
+         * Built by repeated sweeps rather than recursion so it cannot be fooled
+         * by a child that sits before its parent in the array. */
+        function _subtreeIds(groupId) {
+            const ids = new Set([groupId]);
+            let grew = true;
+            while (grew) {
+                grew = false;
+                for (const l of mgr.layers) {
+                    if (l.parentId != null && ids.has(l.parentId) && !ids.has(l.id)) {
+                        ids.add(l.id);
+                        grew = true;
+                    }
                 }
             }
+            return ids;
         }
+
+        /* Clipping needs a sibling underneath to clip to. The bottom of the
+         * document is covered by idx > 0, but the bottom of a FOLDER is not:
+         * clipping there produced a layer that silently disappeared. */
+        function _canClip(idx) {
+            const l = mgr.layers[idx];
+            if (!l || idx <= 0 || l.isGroup) return false;
+            const parent = l.parentId || null;
+            for (let i = idx - 1; i >= 0; i--) {
+                if ((mgr.layers[i].parentId || null) === parent) return true;
+            }
+            return false;
+        }
+
+        function _setVisRecursive(groupId, visible) { _invalidate(); }
         function _unparentDescendants(groupId) {
             for (let i = 0; i < mgr.layers.length; i++) {
                 if (mgr.layers[i].parentId === groupId) {
@@ -25200,6 +28647,17 @@ self.onmessage = function(e) {
                 const lockClass = l.locked ? ' locked' : '';
                 const alphaBadge = (!l.isBase && l.alpha !== false)
                     ? '<span class="lsi-alpha-badge" title="Alpha channel">α</span>' : '';
+                // A clipped layer is confined to the one below — show it the way
+                // Photoshop does, with a turned corner arrow.
+                const clipBadge = l.clipped
+                    ? '<span class="lsi-clip-badge" title="Clipped to the layer below">⤷</span>' : '';
+                const maskBadge = l.mask
+                    ? '<span class="lsi-mask-badge' + (_isMaskEditing(l) ? ' editing' : '') +
+                      (l.mask.enabled === false ? ' off' : '') +
+                      '" title="' + (_isMaskEditing(l)
+                          ? 'Editing the mask — paint reveals, erase hides'
+                          : (l.mask.enabled === false ? 'Mask disabled' : 'Has a layer mask')) +
+                      '">◑</span>' : '';
 
                 item.innerHTML =
                     '<div class="lsi-icons">' +
@@ -25216,7 +28674,7 @@ self.onmessage = function(e) {
                     '</div>' +
                     '<div class="lsi-thumb-wrap"><canvas class="lsi-thumb" id="lsit-' + l.id + '" width="42" height="40"></canvas></div>' +
                     '<div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;padding-right:4px;">' +
-                      '<span class="lsi-name" title="' + app.escapeHtml(l.name) + '">' + app.escapeHtml(l.name) + alphaBadge + (l.alphaLock ? ' <span style="font-size:9px;color:#0078d7;background:rgba(0,120,215,.1);padding:0 3px;border-radius:2px;font-weight:600;">\u{1F512}</span>' : '') + '</span>' +
+                      '<span class="lsi-name" title="' + app.escapeHtml(l.name) + '">' + app.escapeHtml(l.name) + clipBadge + maskBadge + alphaBadge + (l.alphaLock ? ' <span style="font-size:9px;color:#0078d7;background:rgba(0,120,215,.1);padding:0 3px;border-radius:2px;font-weight:600;">\u{1F512}</span>' : '') + '</span>' +
                       '<select class="lsi-blend" data-bi="' + i + '" title="Blend mode" style="font-size:10px;border:1px solid #ccc;border-radius:2px;background:#fff;padding:0 2px;height:16px;width:100%;cursor:pointer;">' +
                         '<option value="source-over"'  + ((!l.blendMode || l.blendMode==='source-over')  ? ' selected' : '') + '>Normal</option>' +
                         '<option value="multiply"'     + (l.blendMode==='multiply'     ? ' selected' : '') + '>Multiply</option>' +
@@ -25294,6 +28752,7 @@ self.onmessage = function(e) {
                     e.stopPropagation();
                     const idx = parseInt(e.currentTarget.dataset.bi, 10);
                     mgr.layers[idx].blendMode = e.currentTarget.value;
+                    _applyLayerStyle(mgr.layers[idx]);   // make it visible on screen
                     app.saveState();
                 });
 
@@ -25448,12 +28907,10 @@ self.onmessage = function(e) {
             _schedThumb();
         }
 
-        function _rebuildZOrder() {
-            for (let i = 0; i < mgr.layers.length; i++) {
-                const l = mgr.layers[i];
-                if (!l.isBase) l.canvas.style.zIndex = String(10 + i);
-            }
-        }
+        /* Stacking order used to be CSS z-index on DOM canvases. The compositor
+         * draws mgr.layers bottom-to-top, so array order IS the z-order and
+         * reordering just needs a repaint. */
+        function _rebuildZOrder() { _invalidate(); }
 
         function _schedThumb() {
             if (mgr._thumbRaf) return;
@@ -25499,6 +28956,27 @@ self.onmessage = function(e) {
             if (del)   del.disabled   = !canDel;
             if (merge) merge.disabled = !canMrg;
             if (grp)   grp.disabled   = !has;
+
+            const clipBtn   = document.getElementById('lsys-clip');
+            const maskBtn   = document.getElementById('lsys-mask');
+            const flatBtn   = document.getElementById('lsys-flatten');
+            const exportBtn = document.getElementById('lsys-export');
+            // Clipping needs something underneath to clip to.
+            if (clipBtn) {
+                clipBtn.disabled = !(has && mgr.activeIdx > 0 && active && !active.isGroup);
+                clipBtn.classList.toggle('lstb-on', !!(active && active.clipped));
+            }
+            if (maskBtn) {
+                maskBtn.disabled = !(has && active && !active.isGroup);
+                maskBtn.classList.toggle('lstb-on', !!(active && active.mask));
+                maskBtn.title = active && active.mask
+                    ? (_isMaskEditing(active)
+                        ? 'Editing the mask — paint to reveal, erase to hide. Click to go back to the layer.'
+                        : 'Edit this layer’s mask')
+                    : 'Add a layer mask — hide parts without erasing them';
+            }
+            if (flatBtn)   flatBtn.disabled   = !(has && mgr.layers.length > 1);
+            if (exportBtn) exportBtn.disabled = !(has && mgr.layers.length > 1);
         }
 
         function _syncOpacity() {
@@ -25528,10 +29006,15 @@ self.onmessage = function(e) {
                 _schedThumb();
                 return;
             }
-            // Truncate forward history, releasing bitmaps.
+            // Same contract as the single-layer path: the index map is folded in
+            // before the snapshot. Layered artwork is read from the composite and
+            // not snapped — see projectIndexSurface().
+            this.commitProjectIndices();
+            // Truncate forward history, releasing the discarded entries without
+            // closing pixels the surviving entries still reference.
             if (this.state.step < this.state.history.length - 1) {
                 const dropped = this.state.history.splice(this.state.step + 1);
-                for (const e of dropped) this._closeBitmapEntry(e);
+                this._releaseHistoryEntries(dropped, this.state.history);
             }
 
             // Mark the active layer dirty — it was just drawn on.
@@ -25544,36 +29027,57 @@ self.onmessage = function(e) {
             const prevSnaps = (prevEntry && prevEntry._lsys) ? prevEntry.snaps : null;
 
             // Snapshot only dirty layers; reference the previous snap for clean ones.
+            let ownedBytes = 0;
             const snaps = mgr.layers.map((l, i) => {
-                if (!l._dirty && prevSnaps && prevSnaps[i] && prevSnaps[i].id === l.id) {
+                const prev = (prevSnaps && prevSnaps[i] && prevSnaps[i].id === l.id)
+                    ? prevSnaps[i] : null;
+                // A mask is only re-copied when the mask itself was painted on.
+                // Drawing on the artwork used to clone the mask as well, which
+                // doubled the cost of every stroke on a masked layer.
+                let mask;
+                if (prev && prev.mask && !l._maskDirty) {
+                    mask = prev.mask;
+                } else {
+                    mask = _snapshotMask(l);
+                    if (mask && mask.canvas) {
+                        ownedBytes += mask.canvas.width * mask.canvas.height * 4;
+                    }
+                }
+
+                if (!l._dirty && prev) {
                     // Layer unchanged — share the previous entry's snap by reference.
                     return { id: l.id, name: l.name, visible: l.visible, opacity: l.opacity,
                              blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock, locked: l.locked,
-                             parentId: l.parentId,
-                             isBase: l.isBase, snap: null, bitmap: null, ref: prevSnaps[i] };
+                             parentId: l.parentId, isGroup: !!l.isGroup, clipped: !!l.clipped,
+                             mask,
+                             isBase: l.isBase, snap: null, bitmap: null, ref: prev };
                 }
                 // Dirty — clone the canvas now (always safe / synchronous fallback).
                 const snap = document.createElement('canvas');
                 snap.width  = l.canvas.width;
                 snap.height = l.canvas.height;
                 snap.getContext('2d').drawImage(l.canvas, 0, 0);
+                ownedBytes += snap.width * snap.height * 4;
                 return { id: l.id, name: l.name, visible: l.visible, opacity: l.opacity,
                          blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock, locked: l.locked,
-                         parentId: l.parentId,
+                         parentId: l.parentId, isGroup: !!l.isGroup, clipped: !!l.clipped,
+                         mask,
                          isBase: l.isBase, snap, bitmap: null, ref: null };
             });
 
             // Clear dirty flags now that we've snapshotted.
-            for (const l of mgr.layers) l._dirty = false;
+            for (const l of mgr.layers) { l._dirty = false; l._maskDirty = false; }
 
             const entry = {
                 _lsys: true, snaps,
                 // activeIdx intentionally omitted - layer selection is navigation, not a document edit
                 width:  this.config.width,
-                height: this.config.height
+                height: this.config.height,
+                _bytes: ownedBytes
             };
             this.state.history.push(entry);
             this.state.step++;
+            this.attachProjectStep(entry);
             this.enforceHistoryLimit();
             this.state.isDirty = true;
             this.deferColorCounts();
@@ -25596,7 +29100,13 @@ self.onmessage = function(e) {
                         for (const r of results) {
                             if (!r) continue;
                             snaps[r.i].bitmap = r.bmp;
-                            snaps[r.i].snap   = null;
+                            // Zero the canvas before dropping it: that releases
+                            // the pixel buffer now rather than at the next
+                            // collection, which is the difference between a
+                            // steady footprint and a sawtooth one.
+                            const old = snaps[r.i].snap;
+                            if (old) { old.width = 0; old.height = 0; }
+                            snaps[r.i].snap = null;
                         }
                     });
                 }
@@ -25608,26 +29118,47 @@ self.onmessage = function(e) {
          *     — flat entries: collapses multi-layer back to base layer.
          *     — _lsys entries: restores all layer canvases.
          * ────────────────────────────────────────────────────────────────── */
+        /* Tear the stack back down to the single base layer. The layer stack is
+         * global (one set of canvases in the DOM), so any operation that starts
+         * a genuinely new document has to collapse it — otherwise the new
+         * document inherits the previous one's layers. */
+        function _collapseToBase(opts) {
+            // cMain is about to change role between composite and artwork; whatever
+            // was known about the untouched area no longer holds.
+            app.markAllDirty();
+            const fresh = !!(opts && opts.fresh);
+            // Bake the composite into cMain first: single-canvas mode draws
+            // straight onto it, so it has to hold the finished picture before we
+            // drop the layers. (Callers that immediately overwrite cMain — undo
+            // across the layer boundary, or a brand-new document — are
+            // unaffected.)
+            if (mgr.active && mgr.layers.length) {
+                try { _render(); } catch (e) { console.warn('[Layers] flatten on collapse failed', e); }
+            }
+            // Layers are off-screen; dropping the references is all that is
+            // needed. Emptying the array also restores the pristine state
+            // _activate() expects, so it can never build a second Background.
+            mgr.layers.length = 0;
+            // A brand-new document restarts layer numbering; undo must not, or
+            // it could hand out an id an existing history entry already uses.
+            if (fresh) mgr.nextId = 2;
+            mgr.activeIdx = 0;
+            mgr.active = false;
+            if (app.ui.cTemp) app.ui.cTemp.style.zIndex = '';
+            if (app.ui.stage) app.ui.stage.classList.remove('layers-active');
+            _refreshList();
+            _syncBtns();
+        }
+        mgr.collapseToBase = _collapseToBase;
+
         const _origRestoreEntry = app.restoreHistoryEntry.bind(app);
         app.restoreHistoryEntry = function (entry, stepIdx) {
             if (!entry._lsys) {
                 // Undo/redo crossed the layer-activation boundary — collapse.
-                if (mgr.active && mgr.layers.length > 1) {
-                    for (let i = mgr.layers.length - 1; i >= 1; i--) {
-                        const l = mgr.layers[i];
-                        if (l.canvas.parentNode) l.canvas.parentNode.removeChild(l.canvas);
-                    }
-                    mgr.layers.length = 1;
-                    mgr.activeIdx = 0;
-                    mgr.active = false;
-                    if (app.ui.cTemp) app.ui.cTemp.style.zIndex = '';
-                    if (app.ui.stage) app.ui.stage.classList.remove('layers-active');
-                    _refreshList();
-                    _syncBtns();
-                }
+                if (mgr.active && mgr.layers.length > 1) _collapseToBase();
                 _origRestoreEntry(entry, stepIdx);
                 // Re-sync the holder after setSize may have re-created the context.
-                _holder.ctx = app.ui.cMain.getContext('2d', { willReadFrequently: true });
+                _holder.ctx = app.trackCtx(app.ui.cMain.getContext('2d', { willReadFrequently: true }));
                 app.disableSmoothing(_holder.ctx);
                 return;
             }
@@ -25636,8 +29167,6 @@ self.onmessage = function(e) {
             // Remove surplus layers.
             while (mgr.layers.length > snaps.length) {
                 const l = mgr.layers.pop();
-                if (!l.isBase && l.canvas.parentNode)
-                    l.canvas.parentNode.removeChild(l.canvas);
             }
             // Restore existing layers and create missing ones.
             for (let i = 0; i < snaps.length; i++) {
@@ -25648,37 +29177,49 @@ self.onmessage = function(e) {
                     while (s.ref) s = s.ref;
                     return s.bitmap || s.snap;
                 })();
-                if (i === 0) this.setSize(width, height); // resizes cMain + cTemp
+                if (i === 0) this.setSize(width, height); // resizes the display canvas + cTemp
+                // A released entry has neither a bitmap nor a canvas — something
+                // freed pixels that were still in use. Leave that one layer
+                // blank rather than throwing, so the rest of the stack still
+                // rebuilds (and stays correctly aligned) instead of stranding
+                // the document half-restored.
+                if (!src) {
+                    console.warn('[Layers] history entry has no pixels for layer', sv.id, sv.name);
+                }
                 if (i < mgr.layers.length) {
                     const l = mgr.layers[i];
-                    if (!l.isBase) { l.canvas.width = width; l.canvas.height = height; }
+                    // Every layer is off-screen now, including the bottom one,
+                    // so they all resize the same way.
+                    if (l.canvas.width !== width || l.canvas.height !== height) {
+                        l.canvas.width = width; l.canvas.height = height;
+                    }
                     app.disableSmoothing(l.ctx);
                     l.ctx.clearRect(0, 0, width, height);
-                    l.ctx.drawImage(src, 0, 0);
+                    if (src) l.ctx.drawImage(src, 0, 0);
                     l.name = sv.name; l.visible = sv.visible; l.opacity = sv.opacity;
                     l.blendMode = sv.blendMode; l.alpha = sv.alpha; l.alphaLock = sv.alphaLock; l.locked = sv.locked; l.parentId = sv.parentId;
-                    l.canvas.style.display = l.visible ? '' : 'none';
-                    if (!l.isBase) l.canvas.style.opacity = l.opacity;
+                    l.isGroup = !!sv.isGroup;
+                    l.clipped = !!sv.clipped;
+                    _restoreMask(l, sv, width, height);
                     // Layer restored — clear dirty flag so next save can ref it.
                     l._dirty = false;
                 } else {
                     const c = _newCanvas(width, height);
-                    c.style.zIndex   = String(10 + i);
-                    c.style.display  = sv.visible ? '' : 'none';
-                    c.style.opacity  = sv.opacity;
                     const ctx = c.getContext('2d', { willReadFrequently: true });
                     app.disableSmoothing(ctx);
-                    ctx.drawImage(src, 0, 0);
-                    _insertBeforeTemp(c);
+                    if (src) ctx.drawImage(src, 0, 0);
                     if (sv.id >= mgr.nextId) mgr.nextId = sv.id + 1;
-                    mgr.layers.push({
+                    const nl = {
                         id: sv.id, name: sv.name,
                         canvas: c, ctx,
                         visible: sv.visible, opacity: sv.opacity,
                         blendMode: sv.blendMode, alpha: sv.alpha, alphaLock: sv.alphaLock, locked: sv.locked,
-                        isBase: false, _dirty: false,
+                        isBase: i === 0, _dirty: false,
+                        isGroup: !!sv.isGroup, clipped: !!sv.clipped, mask: null,
                         parentId: sv.parentId,
-                    });
+                    };
+                    mgr.layers.push(nl);
+                    _restoreMask(nl, sv, width, height);
                 }
             }
             // Do NOT restore activeIdx -- layer selection is a navigation
@@ -25688,6 +29229,13 @@ self.onmessage = function(e) {
             // it out of bounds.
             mgr.active    = true;
             mgr.activeIdx = Math.min(mgr.activeIdx, Math.max(0, mgr.layers.length - 1));
+            // Re-assert the multi-layer display state. Reaching here from a
+            // collapsed stack (undo across the layer boundary, or switching to a
+            // layered tab from a flat one) means _collapseToBase() cleared these.
+            if (app.ui.cTemp) app.ui.cTemp.style.zIndex = '200';
+            if (app.ui.stage) app.ui.stage.classList.add('layers-active');
+            _invalidate();
+            this.restoreProjectStep(entry);
             this.requestGlobalOverlayUpdate();
             this.deferColorCounts();
             _refreshList(); _syncBtns(); _syncOpacity();
@@ -25710,6 +29258,8 @@ self.onmessage = function(e) {
         app.drawBinaryLine = function (x0, y0, x1, y1, color, isPreview, widthOverride, isEraserOverride) {
             // Locked layer: silently skip all drawing
             if (mgr.active && mgr.layers.length && mgr.layers[mgr.activeIdx].locked && !isPreview) return;
+            // Layers are off-screen; anything drawn has to trigger a repaint.
+            if (!isPreview) _invalidate();
             const isEraser = (isEraserOverride !== null && isEraserOverride !== undefined)
                 ? !!isEraserOverride
                 : (this.config.tool === 'eraser');
@@ -25720,7 +29270,7 @@ self.onmessage = function(e) {
                 // and also for the base layer when the layer system is active
                 // (so erasing the base layer reveals the checkerboard).
                 const layerIdx = onBaseLayerActive ? 0 : mgr.activeIdx;
-                const ctx = mgr.layers[layerIdx].ctx;
+                const ctx = _targetCtx(mgr.layers[layerIdx]);
                 const w = (widthOverride !== null && widthOverride !== undefined)
                     ? widthOverride : this.config.eraserWidth;
                 const half = Math.floor(w / 2);
@@ -25745,7 +29295,7 @@ self.onmessage = function(e) {
             }
             // Alpha lock: constrain drawing to existing opaque pixels
             const activeLayer = mgr.active && mgr.layers.length ? mgr.layers[mgr.activeIdx] : null;
-            if (!isPreview && activeLayer && activeLayer.alphaLock) {
+            if (!isPreview && activeLayer && activeLayer.alphaLock && !_isMaskEditing(activeLayer)) {
                 const ctx = activeLayer.ctx;
                 ctx.save();
                 ctx.globalCompositeOperation = 'source-atop';
@@ -25767,7 +29317,7 @@ self.onmessage = function(e) {
         app.flushStrokes = function () {
             const onTransLayer = mgr.active && mgr.activeIdx > 0;
             const onBaseLayerActive = mgr.active && mgr.activeIdx === 0;
-            if (!onTransLayer && !onBaseLayerActive) { _origFlushStrokes(); _schedThumb(); return; }
+            if (!onTransLayer && !onBaseLayerActive) { _origFlushStrokes(); _invalidate(); _schedThumb(); return; }
             if (onBaseLayerActive) {
                 // Base layer: route eraser strokes through destination-out, normals unchanged
                 const q = this.strokeQueue;
@@ -25788,6 +29338,7 @@ self.onmessage = function(e) {
                     const dh = Math.min(this.config.height, Math.ceil(by1)) - dy;
                     this.drawBinaryLine(s.x0, s.y0, s.x1, s.y1, s.color, false, s.width, true);
                 }
+                _invalidate();
                 _schedThumb();
                 return;
             }
@@ -25800,6 +29351,7 @@ self.onmessage = function(e) {
             for (const s of erasers) {
                 this.drawBinaryLine(s.x0, s.y0, s.x1, s.y1, s.color, false, s.width, true);
             }
+            _invalidate();
             _schedThumb();
         };
 
@@ -25812,6 +29364,7 @@ self.onmessage = function(e) {
          * ────────────────────────────────────────────────────────────────── */
         const _origStampSel = app.stampSelection.bind(app);
         app.stampSelection = function () {
+            _invalidate();
             const onTransLayer = mgr.active && mgr.activeIdx > 0;
             if (!onTransLayer) { _origStampSel(); return; }
             const s = this.state.selection;
@@ -25831,11 +29384,52 @@ self.onmessage = function(e) {
          * 14. PATCH: saveFile — composite all layers onto the base canvas
          *     momentarily, then restore the base layer after the save.
          * ────────────────────────────────────────────────────────────────── */
-        const _origSaveFile = app.saveFile.bind(app);
-        app.saveFile = async function (options) {
-            /* When layers are active, always save as ORA to preserve layer data */
-            if (mgr.active && mgr.layers.length > 1) return this.saveAsORA();
-            return _origSaveFile(options);
+        /* NOTE: saveFile() already begins with its own "layers active -> save as
+         * ORA" check (see the class method), so no policy wrapper is needed
+         * here. A second one used to exist and only added a way for the two
+         * checks to disagree. Flattened export deliberately bypasses saveFile
+         * entirely — see app.exportFlattenedPng below.
+         *
+         * These wrappers add REPORTING only. Save is triggered from inline
+         * onclick handlers that neither await nor catch, so a thrown error
+         * became an unhandled rejection and the user saw nothing happen at all.
+         * A save that fails must say so. */
+        for (const _fn of ['saveFile', 'saveAsFile']) {
+            if (typeof app[_fn] !== 'function') continue;
+            const _orig = app[_fn].bind(app);
+            app[_fn] = async function (...args) {
+                try {
+                    return await _orig(...args);
+                } catch (e) {
+                    console.error('[Save] ' + _fn + ' failed', e);
+                    if (window.showToast) {
+                        showToast('Save failed: ' + ((e && e.message) || 'unknown error'), 'error');
+                    }
+                    throw e;
+                }
+            };
+        }
+
+        /* Export the composited picture as a PNG without disturbing the layered
+         * document.
+         *
+         * This deliberately does NOT go through saveFile(): that method starts
+         * with its own "if layers are active, save as ORA" check, so routing an
+         * export through it just produced another .ora. Build the blob and write
+         * it directly instead. */
+        app.exportFlattenedPng = async function () {
+            const canvas = mgr.getFlattenedCanvas();
+            if (!canvas) return null;
+            const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+            if (!blob) throw new Error('Could not read the canvas');
+            const baseName = (this.state.fileName || 'untitled').replace(/\.[^/.]+$/, '');
+            const saved = await _saveBlobAs(
+                blob, baseName + '.png', 'PNG Image', { 'image/png': ['.png'] }
+            );
+            // An export is not a save of the document — the .ora is still the
+            // file of record, so the unsaved-changes state is left alone.
+            if (saved && window.showToast) showToast('Exported ' + baseName + '.png', 'success');
+            return saved;
         };
 
         /* ──────────────────────────────────────────────────────────────────
@@ -25880,10 +29474,12 @@ self.onmessage = function(e) {
                     this._wandMaskBuf = new Uint8Array(w * h);
                     this._wandSelectedCutoff = -1;
                     this._initWandPreviewWorker(diff, keyArr, this._wandSortedIdx, w, h);
-                    this.magicWandSelectAsync(
-                        this.state.wandStart.x, this.state.wandStart.y,
-                        this.state.wandTol, this.getSelectionOp(e), compData
-                    );
+                    // Preview only, as in the unlayered path above. The base
+                    // handler already scheduled a frame; re-scheduling here is a
+                    // no-op that lets the queued frame run against the composite
+                    // diff installed just now instead of the layer-only one.
+                    this.state.wandOp = this.getSelectionOp(e);
+                    this._scheduleWandFrame();
                 }
             }
         };
@@ -25932,10 +29528,23 @@ self.onmessage = function(e) {
                 if (typeof CompressionStream !== 'undefined') {
                     try {
                         const cs = new CompressionStream('deflate-raw');
+                        // Start draining the output BEFORE pushing input.
+                        //
+                        // `await writer.write(data)` only settles once the chunk
+                        // has been accepted downstream. With nothing reading
+                        // cs.readable yet, anything larger than the stream's
+                        // internal queue blocks on backpressure that can never
+                        // clear — the promise simply never resolves and the save
+                        // hangs forever with no error. Small layers fit in the
+                        // queue and appeared to work, which is what made this
+                        // look intermittent.
+                        //
+                        // (The ORA *loader* already does it in this order.)
+                        const done = new Response(cs.readable).arrayBuffer();
                         const writer = cs.writable.getWriter();
                         await writer.write(data);
                         await writer.close();
-                        return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+                        return new Uint8Array(await done);
                     } catch (_) { /* fall through */ }
                 }
                 /* stored (method 0) — always works */
@@ -26025,6 +29634,77 @@ self.onmessage = function(e) {
             };
         })();
 
+        /* Write a blob to disk the same way the PNG save path does: a real file
+         * picker where one is available, the Tauri writer in the desktop app,
+         * and a download link only as a last resort. ORA saving used to always
+         * take the last branch, which silently dropped a file in the downloads
+         * folder — so "Save" looked like it did nothing at all. */
+        async function _saveBlobAs(blob, suggestedName, typeDesc, accept) {
+            const ext = (suggestedName.split('.').pop() || '').toLowerCase();
+
+            /* 1. Desktop app: the native OS save dialog.
+             *
+             * The subtlety that made "Save" look dead: tauriSaveFileDialog()
+             * returns undefined when the dialog plugin isn't reachable, and null
+             * when the user cancelled. Treating both as "cancelled" meant an
+             * unavailable dialog silently aborted the save with no error and no
+             * window. Only an explicit null counts as a cancel; undefined means
+             * "this mechanism isn't available" and we move on to the next one. */
+            if (window.__TAURI__ && app.tauriSaveFileDialog) {
+                let picked;
+                let dialogWorked = true;
+                try {
+                    picked = await app.tauriSaveFileDialog({
+                        defaultPath: suggestedName,
+                        filters: [{ name: typeDesc, extensions: [ext] }]
+                    });
+                } catch (e) {
+                    console.warn('[Save] native save dialog unavailable, trying the next option', e);
+                    dialogWorked = false;
+                }
+                if (dialogWorked && picked === null) return null;      // cancelled
+                if (dialogWorked && picked) {
+                    const bytes = new Uint8Array(await blob.arrayBuffer());
+                    await app.tauriWriteAllowedFile(picked, bytes);
+                    return picked;
+                }
+                // undefined => no dialog available; fall through.
+            }
+
+            /* 2. Browser with the File System Access API. */
+            if (window.showSaveFilePicker) {
+                let handle;
+                try {
+                    handle = await window.showSaveFilePicker({
+                        suggestedName,
+                        types: [{ description: typeDesc, accept }]
+                    });
+                } catch (e) {
+                    if (e && e.name === 'AbortError') return null;   // user cancelled
+                    console.warn('[Save] file picker unavailable, falling back to download', e);
+                    handle = null;
+                }
+                if (handle) {
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    return handle.name || suggestedName;
+                }
+            }
+
+            /* 3. Last resort: a plain download. No dialog, so say so rather than
+             * leaving the user wondering whether anything happened. */
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = suggestedName; a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+            if (window.showToast) {
+                showToast('Saved to your Downloads folder as ' + suggestedName +
+                          ' — this build could not open a file dialog.', 'warning');
+            }
+            return suggestedName;
+        }
+
         /* ── Canvas → PNG bytes ──────────────────────────────────────────── */
         async function _canvasToPngBytes(canvas) {
             return new Promise((res, rej) => {
@@ -26057,54 +29737,147 @@ self.onmessage = function(e) {
         const _oraToBlend = Object.fromEntries(Object.entries(_blendToOra).map(([k,v])=>[v,k]));
 
         /* ── SAVE ORA ────────────────────────────────────────────────────── */
+        /* Save is invoked from inline onclick handlers that neither await nor
+         * catch the promise, so anything thrown in here used to vanish into an
+         * unhandled rejection — the user just saw nothing happen. Wrap the whole
+         * thing so a failure is always reported. */
         app.saveAsORA = async function () {
+            try {
+                return await _saveAsORAInner.call(this);
+            } catch (e) {
+                console.error('[ORA] save failed', e);
+                if (window.showToast) {
+                    showToast('Could not save the .ora file: ' +
+                        ((e && e.message) || 'unknown error'), 'error');
+                }
+                throw e;
+            }
+        };
+
+        async function _saveAsORAInner() {
             const w = this.config.width, h = this.config.height;
             const layers = mgr.active && mgr.layers.length ? mgr.layers : null;
             const enc    = new TextEncoder();
 
             /* If no layer system or single layer, treat base canvas as sole layer */
-            const layerList = layers
+            const allLayers = (layers
                 ? [...mgr.layers]           /* bottom-first already */
-                : [{ name: 'Background', canvas: this.ui.cMain, visible: true,
+                : [{ id: 1, name: 'Background', canvas: this.ui.cMain, visible: true,
                      opacity: 1.0, blendMode: 'source-over', locked: false,
-                     alphaLock: false, isBase: true, alpha: false }];
+                     alphaLock: false, isBase: true, alpha: false }])
+                .filter(Boolean);
+            // A folder has no pixels of its own, but it still has to be written
+            // out — as a <stack> — or the structure is lost.
+            if (!allLayers.some(l => l.canvas && !l.isGroup)) throw new Error('nothing to save');
+
+            /* Folders become nested <stack> elements, which is exactly what
+             * OpenRaster is for. Everything used to be flattened into one list,
+             * so every group you made was silently dropped on save. */
+            const oraKids = new Map();
+            const oraRoots = [];
+            {
+                const known = new Set(allLayers.map(l => l.id));
+                for (const l of allLayers) {
+                    if (l.parentId != null && known.has(l.parentId)) {
+                        if (!oraKids.has(l.parentId)) oraKids.set(l.parentId, []);
+                        oraKids.get(l.parentId).push(l);
+                    } else oraRoots.push(l);
+                }
+            }
+            /* The order the loader will rebuild the flat array in: bottom-first,
+             * each folder immediately followed by its contents. Saving the
+             * active layer as an index into this keeps the selection correct. */
+            const _oraFlatten = (list) => {
+                const out = [];
+                for (const l of list) {
+                    out.push(l);
+                    if (l.isGroup) out.push(..._oraFlatten(oraKids.get(l.id) || []));
+                }
+                return out;
+            };
+            const flatOrder = _oraFlatten(oraRoots);
 
             const entries = [];
 
             /* 1. mimetype — MUST be first, MUST be stored (no compression) */
             entries.push({ name: 'mimetype', data: enc.encode('image/openraster'), store: true });
 
-            /* 2. Layer PNGs */
-            const layerElems = [];
-            for (let i = 0; i < layerList.length; i++) {
-                const l   = layerList[i];
-                const fname = `data/layer_${i}.png`;
-                const png  = await _canvasToPngBytes(l.canvas);
-                entries.push({ name: fname, data: png, store: false });
+            /* 2. Layer PNGs + stack elements */
+            const esc = s => String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            let layerIdx = 0, maskIdx = 0;
 
+            /* Attributes every node carries, folders included. Writing the mask
+             * PNG is folded in here so a folder's mask travels too. */
+            const _oraAttrs = async (l) => {
                 const blend   = _blendToOra[l.blendMode || 'source-over'] || 'svg:src-over';
                 const visible = l.visible !== false ? 'visible' : 'hidden';
                 const opacity = typeof l.opacity === 'number' ? l.opacity.toFixed(4) : '1.0000';
-                const extras  = [
-                    l.locked    ? ' paint:locked="true"'    : '',
-                    l.alphaLock ? ' paint:alphaLock="true"' : '',
-                    l.isBase    ? ' paint:isBase="true"'    : '',
-                ].join('');
-                layerElems.push(
-                    `        <layer name="${(l.name||'Layer').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" ` +
-                    `src="${fname}" x="0" y="0" ` +
-                    `opacity="${opacity}" visibility="${visible}" composite-op="${blend}"${extras}/>`
-                );
-            }
+                let mask = '';
+                if (l.mask && l.mask.canvas) {
+                    // A layer mask rides along as its own PNG. Readers that
+                    // don't know about paint:mask simply ignore the extra file.
+                    const mname = `data/mask_${maskIdx++}.png`;
+                    entries.push({
+                        name: mname,
+                        data: await _canvasToPngBytes(l.mask.canvas),
+                        store: false
+                    });
+                    mask = ` paint:mask="${mname}"` +
+                           (l.mask.enabled === false ? ' paint:maskDisabled="true"' : '');
+                }
+                return `opacity="${opacity}" visibility="${visible}" composite-op="${blend}"` +
+                       (l.locked    ? ' paint:locked="true"'    : '') +
+                       (l.alphaLock ? ' paint:alphaLock="true"' : '') +
+                       (l.isBase    ? ' paint:isBase="true"'    : '') +
+                       (l.clipped   ? ' paint:clipped="true"'   : '') +
+                       (l.alpha === false ? ' paint:opaque="true"' : '') +
+                       mask;
+            };
+
+            /* ORA lists siblings top-to-bottom; our arrays are bottom-to-top. */
+            const _oraEmit = async (list, indent) => {
+                const out = [];
+                for (const l of list.slice().reverse()) {
+                    const attrs = await _oraAttrs(l);
+                    if (l.isGroup) {
+                        const inner = await _oraEmit(oraKids.get(l.id) || [], indent + '    ');
+                        const pass  = l.blendMode === 'pass-through';
+                        out.push(
+                            `${indent}<stack name="${esc(l.name || 'Group')}" x="0" y="0" ${attrs}` +
+                            ` isolation="${pass ? 'auto' : 'isolate'}"` +
+                            (pass ? ' paint:passThrough="true"' : '') + '>',
+                            ...inner,
+                            `${indent}</stack>`
+                        );
+                    } else {
+                        if (!l.canvas) continue;
+                        const fname = `data/layer_${layerIdx++}.png`;
+                        entries.push({
+                            name: fname,
+                            data: await _canvasToPngBytes(l.canvas),
+                            store: false
+                        });
+                        out.push(
+                            `${indent}<layer name="${esc(l.name || 'Layer')}" ` +
+                            `src="${fname}" x="0" y="0" ${attrs}/>`
+                        );
+                    }
+                }
+                return out;
+            };
+            const stackLines = await _oraEmit(oraRoots, '        ');
 
             /* 3. stack.xml */
-            const activeIdx = mgr.active ? mgr.activeIdx : 0;
+            const activeLayer = mgr.active
+                ? Math.max(0, flatOrder.indexOf(mgr.layers[mgr.activeIdx]))
+                : 0;
             const xml = [
                 '<?xml version="1.0" encoding="UTF-8"?>',
-                `<image version="0.0.3" w="${w}" h="${h}" xres="96" yres="96" paint:activeLayer="${activeIdx}">`,
+                `<image version="0.0.3" w="${w}" h="${h}" xres="96" yres="96" paint:activeLayer="${activeLayer}">`,
                 '    <stack>',
-                /* ORA stack is top-to-bottom in XML, bottom-to-top visually */
-                ...layerElems.slice().reverse(),
+                ...stackLines,
                 '    </stack>',
                 '</image>',
             ].join('\n');
@@ -26114,14 +29887,11 @@ self.onmessage = function(e) {
             const mergeCanvas = document.createElement('canvas');
             mergeCanvas.width = w; mergeCanvas.height = h;
             const mctx = mergeCanvas.getContext('2d');
-            for (const l of layerList) {
-                if (!l.visible) continue;
-                mctx.save();
-                mctx.globalAlpha = typeof l.opacity === 'number' ? l.opacity : 1;
-                mctx.globalCompositeOperation = l.blendMode || 'source-over';
-                mctx.drawImage(l.canvas, 0, 0);
-                mctx.restore();
-            }
+            // Go through the real compositor rather than re-adding the layers by
+            // hand: the hand-rolled loop here ignored masks, clipping and groups,
+            // so the preview stored in the file disagreed with the picture.
+            const mergedSrc = (layers && _composite()) || this.ui.cMain;
+            mctx.drawImage(mergedSrc, 0, 0);
             entries.push({ name: 'mergedimage.png', data: await _canvasToPngBytes(mergeCanvas), store: false });
 
             /* 5. Thumbnails/thumbnail.png (≤256 px, required by spec) */
@@ -26133,17 +29903,18 @@ self.onmessage = function(e) {
             tCanvas.getContext('2d').drawImage(mergeCanvas, 0, 0, tw, th);
             entries.push({ name: 'Thumbnails/thumbnail.png', data: await _canvasToPngBytes(tCanvas), store: false });
 
-            /* Build ZIP and download */
+            /* Build the ZIP and write it through the normal save dialog. */
             const zipBytes = await _oraZip.build(entries);
             const blob = new Blob([zipBytes], { type: 'image/openraster' });
             const baseName = (this.state.fileName || 'untitled').replace(/\.[^/.]+$/, '');
             const fname = baseName + '.ora';
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = fname; a.click();
-            setTimeout(() => URL.revokeObjectURL(url), 2000);
-            this.markSaved(fname);
+            const saved = await _saveBlobAs(
+                blob, fname, 'OpenRaster Image', { 'image/openraster': ['.ora'] }
+            );
+            if (!saved) return;                       // cancelled — leave it dirty
+            this.markSaved(typeof saved === 'string' ? saved.split(/[\\/]/).pop() : fname);
             this.resetSaveReminderTimer();
+            if (window.showToast) showToast('Saved ' + fname, 'success');
         };
 
         /* ── LOAD ORA ────────────────────────────────────────────────────── */
@@ -26187,17 +29958,16 @@ self.onmessage = function(e) {
                 const fileH = parseInt(imageEl.getAttribute('h') || '0', 10);
                 if (!fileW || !fileH) throw new Error('ORA has invalid canvas dimensions');
 
-                /* Layer elements — XML order is top→bottom; we want bottom→top */
-                const stack     = imageEl.querySelector('stack');
-                const layerEls  = stack ? Array.from(stack.querySelectorAll(':scope > layer')).reverse() : [];
-                if (!layerEls.length) throw new Error('ORA contains no layers');
+                const stack = imageEl.querySelector('stack');
+                if (!stack) throw new Error('ORA contains no layers');
 
                 const activeIdxAttr = parseInt(imageEl.getAttribute('activeLayer') || '0', 10);
 
                 /* Load all layer PNGs */
-                const layerDefs = [];
-                for (const el of layerEls) {
-                    const src  = el.getAttribute('src') || '';
+                /* Decode one PNG entry out of the archive into a canvas.
+                 * Shared by layer images and their masks. */
+                const _decodeEntry = async (src) => {
+                    if (!src) return null;
                     let pngBytes = files[src] || files[src.replace(/^\//, '')];
                     /* If deflated and no pako, inflate via DecompressionStream */
                     if (!pngBytes) {
@@ -26219,7 +29989,7 @@ self.onmessage = function(e) {
                             }
                         }
                     }
-                    if (!pngBytes) { console.warn('[ORA] missing layer data:', src); continue; }
+                    if (!pngBytes) { console.warn('[ORA] missing entry:', src); return null; }
                     const blob = new Blob([pngBytes], { type: 'image/png' });
                     const img  = window.createImageBitmap
                         ? await createImageBitmap(blob)
@@ -26230,22 +30000,54 @@ self.onmessage = function(e) {
                             i.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
                             i.src = url;
                           });
-                    if (!img) { console.warn('[ORA] failed to decode layer image'); continue; }
-                    const lc   = document.createElement('canvas');
+                    if (!img) { console.warn('[ORA] failed to decode', src); return null; }
+                    const lc = document.createElement('canvas');
                     lc.width = fileW; lc.height = fileH;
                     lc.getContext('2d').drawImage(img, 0, 0);
-                    layerDefs.push({
-                        canvas:    lc,
-                        name:      el.getAttribute('name') || 'Layer',
-                        opacity:   parseFloat(el.getAttribute('opacity') || '1'),
-                        visible:   (el.getAttribute('visibility') || 'visible') !== 'hidden',
-                        blendMode: _oraToBlend[el.getAttribute('composite-op') || 'svg:src-over'] || 'source-over',
-                        locked:    el.getAttribute('locked') === 'true',
-                        alphaLock: el.getAttribute('alphaLock') === 'true',
-                        isBase:    el.getAttribute('isBase') === 'true',
-                    });
-                }
-                if (!layerDefs.length) throw new Error('No usable layers found in ORA');
+                    return lc;
+                };
+
+                /* Walk the stack depth-first: bottom-first, each folder followed
+                 * by its contents, which is the order the layer array uses. A
+                 * nested <stack> is a folder — only top-level <layer> tags used
+                 * to be read, so anything inside a group was lost on open. */
+                const layerDefs = [];
+                const _walkStack = async (stackEl, parentIdx) => {
+                    const children = Array.from(stackEl.children)
+                        .filter(el => el.tagName === 'layer' || el.tagName === 'stack')
+                        .reverse();                       /* XML lists top-first */
+                    for (const el of children) {
+                        const isGroup = el.tagName === 'stack';
+                        const lc = isGroup ? null : await _decodeEntry(el.getAttribute('src') || '');
+                        if (!isGroup && !lc) continue;
+                        const maskCanvas = await _decodeEntry(el.getAttribute('mask') || null);
+                        // A folder that does not isolate is our pass-through.
+                        const passThrough = isGroup &&
+                            (el.getAttribute('passThrough') === 'true' ||
+                             el.getAttribute('isolation') === 'auto');
+                        layerDefs.push({
+                            isGroup,
+                            parentIdx,
+                            canvas:     lc,
+                            maskCanvas: maskCanvas,
+                            name:      el.getAttribute('name') || (isGroup ? 'Group' : 'Layer'),
+                            opacity:   parseFloat(el.getAttribute('opacity') || '1'),
+                            visible:   (el.getAttribute('visibility') || 'visible') !== 'hidden',
+                            blendMode: passThrough ? 'pass-through'
+                                : (_oraToBlend[el.getAttribute('composite-op') || 'svg:src-over'] || 'source-over'),
+                            locked:    el.getAttribute('locked') === 'true',
+                            alphaLock: el.getAttribute('alphaLock') === 'true',
+                            clipped: el.getAttribute('clipped') === 'true',
+                            maskSrc: el.getAttribute('mask') || null,
+                            maskDisabled: el.getAttribute('maskDisabled') === 'true',
+                            isBase:    el.getAttribute('isBase') === 'true',
+                            opaque:    el.getAttribute('opaque') === 'true',
+                        });
+                        if (isGroup) await _walkStack(el, layerDefs.length - 1);
+                    }
+                };
+                await _walkStack(stack, -1);
+                if (!layerDefs.some(d => !d.isGroup)) throw new Error('No usable layers found in ORA');
 
                 /* ── Apply to app ── */
                 /* Reset app state */
@@ -26259,46 +30061,53 @@ self.onmessage = function(e) {
                 /* Resize canvas */
                 this.setSize(fileW, fileH);
 
-                /* Stamp base layer (index 0) onto the main canvas */
-                const baseLayer = layerDefs.find(l => l.isBase) || layerDefs[0];
-                _holder.ctx.clearRect(0, 0, fileW, fileH);
-                _holder.ctx.drawImage(baseLayer.canvas, 0, 0);
-
-                /* Activate layer system if needed */
-                if (!mgr.active) _activate();
-
-                /* Tear down existing non-base layers */
-                while (mgr.layers.length > 1) {
-                    const l = mgr.layers.pop();
-                    if (l.canvas && l.canvas.parentNode) l.canvas.parentNode.removeChild(l.canvas);
-                }
-                /* Sync base layer object */
-                mgr.layers[0].name      = baseLayer.name;
-                mgr.layers[0].visible   = baseLayer.visible;
-                mgr.layers[0].opacity   = baseLayer.opacity;
-                mgr.layers[0].blendMode = baseLayer.blendMode;
-                mgr.layers[0].locked    = baseLayer.locked;
-                mgr.layers[0].alphaLock = baseLayer.alphaLock;
-
-                /* Create upper layers */
+                /* Rebuild the stack from scratch. Every layer is an off-screen
+                 * canvas now, so the bottom one needs no special handling — it
+                 * is built by the same loop as the rest. */
+                _collapseToBase({ fresh: true });
+                mgr.active = true;
+                mgr.activeIdx = 0;
+                mgr.layers.length = 0;
+                const createdIds = [];
+                let baseAssigned = false;
                 for (let i = 0; i < layerDefs.length; i++) {
-                    const ld = layerDefs[i];
-                    if (ld === baseLayer && i === 0) continue; /* already handled */
-                    const id  = mgr.nextId++;
-                    const c   = _newCanvas(fileW, fileH);
-                    c.style.zIndex = String(10 + mgr.layers.length);
-                    const ctx = c.getContext('2d', { willReadFrequently: true });
-                    app.disableSmoothing(ctx);
-                    ctx.drawImage(ld.canvas, 0, 0);
-                    _insertBeforeTemp(c);
-                    mgr.layers.push({
-                        id, name: ld.name, canvas: c, ctx,
+                    const ld  = layerDefs[i];
+                    let c, ctx = null;
+                    if (ld.isGroup) {
+                        c = document.createElement('canvas');   // folders hold no pixels
+                    } else {
+                        c   = _newCanvas(fileW, fileH);
+                        ctx = c.getContext('2d', { willReadFrequently: true });
+                        app.disableSmoothing(ctx);
+                        ctx.drawImage(ld.canvas, 0, 0);
+                    }
+                    // The bottom-most real layer is the base; a folder never is,
+                    // even when one happens to sit at the bottom of the stack.
+                    const isBase = !ld.isGroup && !baseAssigned;
+                    if (isBase) baseAssigned = true;
+                    const layer = {
+                        id: mgr.nextId++, name: ld.name, canvas: c, ctx,
                         visible: ld.visible, opacity: ld.opacity,
                         blendMode: ld.blendMode, locked: ld.locked,
-                        alphaLock: ld.alphaLock, isBase: false, alpha: true,
-                        parentId: null,
-                    });
+                        alphaLock: ld.alphaLock,
+                        isGroup: ld.isGroup, _open: true,
+                        isBase, alpha: ld.opaque ? false : (!ld.isGroup && !isBase),
+                        clipped: !!ld.clipped, mask: null,
+                        // Parents are always written before their contents, so
+                        // the real id is known by the time a child needs it.
+                        parentId: ld.parentIdx >= 0 ? createdIds[ld.parentIdx] : null,
+                        _dirty: true,
+                    };
+                    createdIds.push(layer.id);
+                    if (ld.maskCanvas) {
+                        layer.mask = _makeMask(fileW, fileH, false);
+                        layer.mask.ctx.drawImage(ld.maskCanvas, 0, 0);
+                        layer.mask.enabled = !ld.maskDisabled;
+                    }
+                    mgr.layers.push(layer);
                 }
+                if (app.ui.stage) app.ui.stage.classList.add('layers-active');
+                _invalidate();
 
                 /* Set active layer */
                 const safeActive = Math.min(Math.max(0, activeIdxAttr), mgr.layers.length - 1);
@@ -26402,10 +30211,50 @@ self.onmessage = function(e) {
         const lsysGroup = document.getElementById('lsys-group');
         if (lsysGroup) lsysGroup.addEventListener('click', () => _makeGroup());
 
+        const lsysClip = document.getElementById('lsys-clip');
+        if (lsysClip) lsysClip.addEventListener('click', () => {
+            const l = mgr.layers[mgr.activeIdx];
+            if (!l || !_canClip(mgr.activeIdx)) return;
+            l.clipped = !l.clipped;
+            _refreshList(); _syncBtns(); _invalidate();
+            app.saveState();
+        });
+
+        const lsysMask = document.getElementById('lsys-mask');
+        if (lsysMask) lsysMask.addEventListener('click', () => {
+            const l = mgr.layers[mgr.activeIdx];
+            if (!l || l.isGroup) return;
+            if (!l.mask) {
+                _addMask(l);
+                _setMaskEditing(l, true);
+                app.saveState();
+            } else {
+                // Second click toggles between painting the mask and the layer.
+                _setMaskEditing(l, !_isMaskEditing(l));
+            }
+            _refreshList(); _syncBtns(); _invalidate();
+        });
+
+        const lsysFlatten = document.getElementById('lsys-flatten');
+        if (lsysFlatten) lsysFlatten.addEventListener('click', () => _flattenImage());
+
+        const lsysExport = document.getElementById('lsys-export');
+        if (lsysExport) lsysExport.addEventListener('click', () => {
+            Promise.resolve(app.exportFlattenedPng()).catch(err => {
+                console.warn('[Layers] flattened export failed', err);
+                if (window.showToast) showToast('Could not export the flattened PNG.', 'error');
+            });
+        });
+
         const _opSl = document.getElementById('lsys-op');
         if (_opSl) {
             _opSl.addEventListener('input',  () => _setOpacity(parseInt(_opSl.value, 10)));
-            _opSl.addEventListener('change', () => app.saveState());
+            // One history step per slider release. 'input' fires continuously
+            // while dragging, so recording there would bury the history; 'change'
+            // fires once, when the slider is let go. There must be exactly ONE
+            // of these — a second listener pushes two entries per release, and
+            // then a single undo only takes the opacity half way back.
+            _opSl.addEventListener('change', () => { if (mgr.active) app.saveState(); });
         }
 
         _syncBtns();
