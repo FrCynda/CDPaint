@@ -37,7 +37,8 @@ async function main() {
   }
   copyRecursive(srcDir, distDir);
 
-  const jsFiles = collectFiles(distDir, /\.js$/);
+  // esbuild minifies CSS as well as JS, and styles.css is render-blocking.
+  const jsFiles = collectFiles(distDir, /\.(js|css)$/);
   for (const file of jsFiles) {
     await esbuild.build({
       entryPoints: [file],
