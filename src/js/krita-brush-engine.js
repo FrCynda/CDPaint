@@ -557,7 +557,13 @@
 
     function _updateRopeSvg(rawX, rawY, brushX, brushY, amount, speedScale) {
         _ensureRopeSvg();
-        var canvas = app.ctx && app.ctx.canvas;
+        /* The DISPLAY canvas, never app.ctx. In layer mode app.ctx hands
+         * back the active layer's OFF-SCREEN canvas, which is not in the
+         * document — its bounding rect is all zeros, so the rope anchored
+         * to the viewport corner instead of the cursor the moment a second
+         * layer existed. Reading app.ctx here also cost a repaint per
+         * mouse move, since that getter invalidates the compositor. */
+        var canvas = app.ui && app.ui.cMain;
         if (!canvas) return;
         var rect = canvas.getBoundingClientRect();
         var zoom = (app.config && app.config.zoom) || 1;
