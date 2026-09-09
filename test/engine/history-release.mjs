@@ -12,8 +12,12 @@
 import { readFileSync } from 'fs';
 import vm from 'vm';
 
-const SRC = process.argv[2] || 'src/js/paint-engine.js';
-const lines = readFileSync(SRC, 'utf8').split(/\r?\n/);
+/* History lives in its own mixin now, and _resolveTiles stayed with the tile
+ * code that owns it, so the methods under test come from two files. */
+const SRCS = process.argv.length > 2
+    ? process.argv.slice(2)
+    : ['src/js/history.js', 'src/js/tiles.js', 'src/js/paint-engine.js'];
+const lines = SRCS.flatMap(f => readFileSync(f, 'utf8').split(/\r?\n/));
 
 let pass = 0, fail = 0;
 function check(name, cond, extra) {
@@ -23,8 +27,9 @@ function check(name, cond, extra) {
 
 /* Pull a class method out of the source by brace matching. */
 function extractMethod(name) {
-    const start = lines.findIndex(l => new RegExp(`^        ${name}\\s*\\(`).test(l));
-    if (start < 0) throw new Error(`method ${name} not found in ${SRC}`);
+    // Methods sit at 8 spaces in a class body, 12 in a mixin's object literal.
+    const start = lines.findIndex(l => new RegExp(`^\\s+${name}\\s*\\(`).test(l));
+    if (start < 0) throw new Error(`method ${name} not found in ${SRCS.join(', ')}`);
     let depth = 0, started = false, out = [];
     for (let i = start; i < lines.length; i++) {
         const line = lines[i];
@@ -33,7 +38,10 @@ function extractMethod(name) {
             if (ch === '{') { depth++; started = true; }
             else if (ch === '}') depth--;
         }
-        if (started && depth === 0) return out.join('\n');
+        // In a mixin the method is an object-literal entry, so it ends with the
+        // separator comma. These bodies get re-wrapped in a class, where a
+        // trailing comma is a syntax error.
+        if (started && depth === 0) return out.join('\n').replace(/,\s*$/, '');
     }
     throw new Error(`unbalanced braces extracting ${name}`);
 }
@@ -49,7 +57,7 @@ vm.runInContext(`class H {\n${body}\n}\nglobalThis.H = H;`, sandbox);
 const h = new sandbox.H();
 h.HISTORY_MIN_STEPS = 8;
 sandbox.navigator = { deviceMemory: 8 };
-console.log(`extracted ${NAMES.length} methods from ${SRC}\n`);
+console.log(`extracted ${NAMES.length} methods from ${SRCS.join(', ')}\n`);
 
 /* Fake ImageBitmap that records whether it was closed. */
 let nextBmp = 0;
@@ -208,7 +216,6 @@ console.log('\n== 10. document-replacing paths must DETACH, not release ==');
     // Reproduces the crash: creating a new document released the history array
     // that the outgoing tab's record still owned, so switching back to that tab
     // hit "drawImage: value is not of type ImageBitmap".
-    const src = readFileSync(SRC, 'utf8');
     const grab = (name) => extractMethod(name);
 
     for (const [name, label] of [['createNewCanvas', 'new document'],
