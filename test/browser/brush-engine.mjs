@@ -42,6 +42,24 @@ await withPage(async (page) => {
                 return app.layerMgr.layers[app.layerMgr.activeIdx];
             },
             layer: () => PaintApp.layerMgr.layers[PaintApp.layerMgr.activeIdx],
+            hash: (L) => {
+                const d = L.ctx.getImageData(0, 0, 200, 200).data;
+                let a = 0x811c9dc5;
+                for (let i = 0; i < d.length; i++) a = ((a ^ d[i]) * 16777619) >>> 0;
+                return a.toString(16);
+            },
+            /* Bristle strokes must be deterministic to compare: dynamics off
+             * and scatter zero means _dabRand never moves anything. */
+            bristles: (n) => {
+                const b = PaintApp.brush;
+                b.setParam('dynamicsMode', 'off');
+                b.setParam('scatter', 0);
+                b.setParam('bristleCount', n);
+                b.setParam('bristleLength', 20);
+                b.setParam('bristleWidth', 3);
+                b.setParam('bristleSpread', 60);
+                b.setParam('size', 24);
+            },
             px: (L, x, y) => {
                 const d = L.ctx.getImageData(x, y, 1, 1).data;
                 return [d[0], d[1], d[2], d[3]].join(',');
@@ -151,6 +169,46 @@ await withPage(async (page) => {
     check('the brush still paints inside an empty selection', o6.inside !== CLEAR,
         `got ${o6.inside} — the stencil came from lifted pixels, not the shape`);
 
+    /* ── bristle mode honours the tip settings ────────────────────────── */
+    console.log('\n== bristle mode is a real tip, not a bare line ==');
+    const r8 = await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        const out = {};
+        const strokeWith = async (mutate) => {
+            const L = __B.doc();
+            __B.bristles(12);
+            if (mutate) mutate();
+            await __B.stroke(40, 100, 160, 100);
+            return __B.hash(L);
+        };
+        out.painted   = await strokeWith(() => {});
+        const L0 = __B.layer();
+        out.blank     = (() => { __B.doc(); return __B.hash(__B.layer()); })();
+
+        out.hard      = await strokeWith(() => b.setParam('hardness', 100));
+        out.soft      = await strokeWith(() => b.setParam('hardness', 5));
+        out.circle    = await strokeWith(() => { b.setParam('hardness', 80); b.setParam('shape', 'circle'); });
+        out.square    = await strokeWith(() => { b.setParam('hardness', 80); b.setParam('shape', 'square'); });
+        out.noTexture = await strokeWith(() => { b.setParam('shape', 'circle'); b.setParam('texture', 0); });
+        out.texture   = await strokeWith(() => { b.setParam('shape', 'circle'); b.setParam('texture', 80); });
+        out.repeat    = await strokeWith(() => { b.setParam('texture', 0); b.setParam('shape', 'circle'); b.setParam('hardness', 80); });
+        out.repeat2   = await strokeWith(() => { b.setParam('texture', 0); b.setParam('shape', 'circle'); b.setParam('hardness', 80); });
+        ['hardness','shape','texture','bristleCount','bristleLength','bristleWidth',
+         'bristleSpread','dynamicsMode','scatter','size']
+            .forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true });
+    const o8 = JSON.parse(r8);
+    check('a bristle stroke paints something', o8.painted !== o8.blank);
+    check('the same bristle stroke twice is identical (no hidden randomness)',
+        o8.repeat === o8.repeat2, `${o8.repeat} vs ${o8.repeat2}`);
+    check('hardness changes a bristle stroke', o8.hard !== o8.soft,
+        'soft and hard bristles produced identical pixels');
+    check('shape changes a bristle stroke', o8.circle !== o8.square,
+        'circle and square bristles produced identical pixels');
+    check('texture changes a bristle stroke', o8.noTexture !== o8.texture,
+        'texture had no effect on bristles');
+
     /* ── performance guards ───────────────────────────────────────────── */
     console.log('\n== hot-path guards ==');
     const r7 = await page.eval(`(async () => {
@@ -184,8 +242,19 @@ await withPage(async (page) => {
         await run();
         const smudgeReads = reads;
         app.brush.setParam('colorRate', app.brush.DEFAULTS.colorRate);
+
+        // Bristles: one dab per bristle per position, and the tip cache must
+        // absorb them — a mask per bristle per position would be ruinous.
+        __B.doc();
+        __B.bristles(12);
+        reads = 0; masks = 0;
+        await run();
+        const bristle = { reads, masks };
+        ['bristleCount','bristleLength','bristleWidth','bristleSpread','dynamicsMode','scatter','size']
+            .forEach(k => app.brush.setParam(k, app.brush.DEFAULTS[k]));
+
         P.getImageData = oG; OP.getImageData = oOG; window.OffscreenCanvas = oOC;
-        return JSON.stringify({ plain, smudgeReads });
+        return JSON.stringify({ plain, smudgeReads, bristle });
     })()`, { awaitPromise: true });
     const o7 = JSON.parse(r7);
     console.log('  ' + JSON.stringify(o7));
@@ -196,6 +265,11 @@ await withPage(async (page) => {
     check('smudge does not read back once per dab',
         o7.smudgeReads <= 4,
         `${o7.smudgeReads} getImageData calls in one stroke — it should be one`);
+    check('a 12-bristle stroke does not thrash the tip cache',
+        o7.bristle.masks <= 80,
+        `${o7.bristle.masks} tip masks built for one bristle stroke`);
+    check('bristles do no per-dab readback either',
+        o7.bristle.reads <= 4, `${o7.bristle.reads} getImageData calls`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

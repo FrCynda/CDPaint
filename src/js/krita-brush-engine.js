@@ -633,13 +633,7 @@
             y += _sin(scatterAngle) * scatterDist;
         }
 
-        var mask;
-        if (p.shape === 'custom' && _customTipCanvas) {
-            mask = _getCustomTipMask(sz, effAngle, p.aspectRatio, p.hardness);
-            if (!mask) mask = _dabCache.get('circle', sz, p.hardness, 0, p.aspectRatio);
-        } else {
-            mask = _dabCache.get(p.shape, sz, p.hardness, effAngle, p.aspectRatio);
-        }
+        var mask = _maskFor(p.shape, sz, p.hardness, effAngle, p.aspectRatio);
 
         // Per-dab alpha: flow * pressure + dynamics
         var alpha = (p.flow / 100) * pressure;
@@ -649,6 +643,44 @@
         }
 
         _paintDab(_flowCtx, x, y, mask, finalColor, alpha, p.texture, p.textureScale);
+    }
+
+    /* Which tip to stamp. Shared by the single-dab and bristle paths so a
+     * bristle brush honours shape, hardness and custom tips like any other. */
+    function _maskFor(shape, sz, hardness, angleDeg, aspect) {
+        if (shape === 'custom' && _customTipCanvas) {
+            var m = _getCustomTipMask(sz, angleDeg, aspect, hardness);
+            if (m) return m;
+            return _dabCache.get('circle', sz, hardness, 0, aspect);
+        }
+        return _dabCache.get(shape, sz, hardness, angleDeg, aspect);
+    }
+
+    /* A whole bristle fan, baked into one reusable tip.
+     *
+     * One dab per bristle made every setting work but cost 4.5x the bare lines
+     * it replaced: 60ms to render a 300-point stroke at 12 bristles, 146ms at
+     * 30, all landing in one hitch at stroke end. The fan is the same shape
+     * every time it is drawn at a given size and angle, so it belongs in a
+     * cache and on the canvas as a single dab.
+     *
+     * Size and angle are bucketed on the way in, because both ride on pressure
+     * and stroke direction and an exact key would rebuild the fan every dab.
+     * Per-bristle alpha bakes into the mask; the stroke's own alpha is applied
+     * when the fan is stamped. Per-bristle COLOUR cannot bake in, so colour
+     * mixing (colorRate < 100) keeps the one-dab-per-bristle path. */
+    var _fanCache = {};
+    var _fanKeys = [];
+    var FAN_MAX = 96;
+
+    function _fanFor(key, build) {
+        var hit = _fanCache[key];
+        if (hit) return hit;
+        var c = build();
+        _fanCache[key] = c;
+        _fanKeys.push(key);
+        while (_fanKeys.length > FAN_MAX) delete _fanCache[_fanKeys.shift()];
+        return c;
     }
 
     function _renderBristleDabs(x, y, pressure, colorHex, strokeAngle) {
@@ -685,7 +717,55 @@
 
         if (sz < 2) return;
 
-        // Each bristle is a thin fiber drawn directly onto the flow buffer
+        if (p.colorRate >= 100) {
+            // Buckets: 2px of size, 6 degrees of angle. Both are finer than
+            // the eye can follow on a bristle streak and keep a whole stroke
+            // sharing a handful of fans instead of building one per dab.
+            var qSz = _max(2, _round(sz / 2) * 2);
+            var qAng = _round(effAngle / 6) * 6;
+            var lw0 = _max(0.5, width * 0.4);
+            var tipDist0 = qSz * 0.3 + length * 0.35;
+            var fanDist0 = qSz * 0.4;
+            var S = _max(2, _ceil((fanDist0 + tipDist0 + lw0 * 2 + 2) * 2));
+            var fan = _fanFor(p.shape + '|' + qSz + '|' + _round(p.hardness) + '|'
+                + qAng + '|' + count + '|' + _round(p.bristleSpread) + '|'
+                + _round(length) + '|' + _round(width), function () {
+                var fc = new OffscreenCanvas(S, S);
+                var fctx = fc.getContext('2d');
+                var a0 = qAng * _PI / 180 - spread / 2;
+                for (var k = 0; k < count; k++) {
+                    var tk = count > 1 ? k / (count - 1) : 0.5;
+                    var ak = a0 + tk * spread;
+                    var flen = _max(lw0, tipDist0);
+                    var fasp = _max(1, _round((flen / lw0) * 2) / 2);
+                    var fm = _maskFor(p.shape, lw0, p.hardness,
+                        ak * 180 / _PI - 90, fasp);
+                    fctx.save();
+                    // Shape factor only; stroke alpha lands at stamp time.
+                    fctx.globalAlpha = 0.5 + 0.5 * (1 - _abs(tk - 0.5) * 2);
+                    fctx.drawImage(fm,
+                        S / 2 + _cos(ak) * (fanDist0 + flen / 2) - fm.width / 2,
+                        S / 2 + _sin(ak) * (fanDist0 + flen / 2) - fm.height / 2);
+                    fctx.restore();
+                }
+                return fc;
+            });
+            // _paintDab extends _dirtyRect and _clearBounds itself.
+            _paintDab(_flowCtx, x, y, fan, colorHex,
+                _clamp(baseAlpha, 0, 1), p.texture, p.textureScale);
+            return;
+        }
+
+        /* Each bristle is one dab stretched along the fiber direction, rather
+         * than a bare stroked line. A stroked line cannot carry hardness, a
+         * shape, a texture or a custom tip, so every one of those settings used
+         * to go dead the moment bristleCount rose above 1 — while staying
+         * visible and adjustable in the sidebar.
+         *
+         * Stamping dabs ALONG each fiber would have been the obvious fix and is
+         * far too slow: it multiplies an already ~11k-draw stroke by the number
+         * of steps per fiber. An elongated, rotated tip gives the same streak
+         * for one dab per bristle, which is exactly what the old line cost. */
         for (var i = 0; i < count; i++) {
             var t = count > 1 ? i / (count - 1) : 0.5;
             var fiberAngle = startAngle + t * spread;
@@ -713,17 +793,23 @@
                 }
             }
 
-            // Draw fiber line directly on flow buffer
-            _flowCtx.save();
-            _flowCtx.globalAlpha = _clamp(bAlpha, 0, 1);
-            _flowCtx.strokeStyle = finalColor;
-            _flowCtx.lineWidth = lw;
-            _flowCtx.lineCap = 'round';
-            _flowCtx.beginPath();
-            _flowCtx.moveTo(x + fx, y + fy);
-            _flowCtx.lineTo(x + tx, y + ty);
-            _flowCtx.stroke();
-            _flowCtx.restore();
+            // The mask is built tall (aspect > 1 stretches along y) and then
+            // rotated, so the long axis lands on the fiber direction at -90.
+            var fiberLen = _max(lw, tipDist);
+            // Quantise the elongation before it reaches the cache key.
+            // Fiber length rides on pressure, so an exact ratio makes a
+            // fresh tip for practically every dab — measured at 1224 mask
+            // builds for one stroke. Half steps cost well under a pixel of
+            // length and let a whole stroke share a handful of tips.
+            var bAspect = _max(1, _round((fiberLen / lw) * 2) / 2);
+            var maskAngle = fiberAngle * 180 / _PI - 90;
+            var bMask = _maskFor(p.shape, lw, p.hardness, maskAngle, bAspect);
+            // Centred on the middle of the fiber run, so it spans the same
+            // ground the line did from (x+fx, y+fy) to (x+tx, y+ty).
+            var bcx = x + fx + _cos(fiberAngle) * fiberLen / 2;
+            var bcy = y + fy + _sin(fiberAngle) * fiberLen / 2;
+            _paintDab(_flowCtx, bcx, bcy, bMask, finalColor,
+                _clamp(bAlpha, 0, 1), p.texture, p.textureScale);
 
             // Extend dirty rect
             var _expand = _max(lw * 2, 4);
