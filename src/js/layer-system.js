@@ -38,6 +38,7 @@
 
         // Preserve original context reference so the engine can still reassign ctx freely.
         const _holder = { ctx: app.ctx };
+        const _tempHolder = { ctxTemp: app.ctxTemp };
 
         /* ──────────────────────────────────────────────────────────────────
          * 2.  ctx REDIRECT
@@ -83,6 +84,22 @@
             console.warn('[LayerSystem] ctx redirect unavailable:', e);
         }
 
+        /* The temp canvas is composited into the stack now (see _render), not
+         * stacked above it in the DOM, so the compositor has to know when
+         * something draws on it. Over a hundred call sites reach it through
+         * app.ctxTemp, so the accessor is the one place that catches them all —
+         * exactly the trick the ctx redirect above uses. */
+        try {
+            Object.defineProperty(app, 'ctxTemp', {
+                get() { _invalidate(); return _tempHolder.ctxTemp; },
+                set(v) { _tempHolder.ctxTemp = v; },
+                configurable: true,
+                enumerable:   true
+            });
+        } catch (e) {
+            console.warn('[LayerSystem] ctxTemp redirect unavailable:', e);
+        }
+
         // Minimal proxy that swallows draw calls on locked layers
         const _noopHandler = {
             get(target, prop) {
@@ -122,6 +139,11 @@
        below it and not with the app's UI. */
     isolation: isolate;
 }
+/* The compositor draws the temp canvas into the stack at the active layer's
+   depth, so the DOM copy would be a second, wrongly-stacked draw on top.
+   visibility rather than display keeps its layout box, which the pointer
+   geometry still measures. */
+#canvas-stage.layers-active #layer-temp { visibility: hidden; }
 #lsys-panel{
     position:fixed;top:145px;bottom:24px;right:-336px;width:320px;
     background:var(--bg-ribbon,#f5f6f7);
@@ -735,6 +757,33 @@
         /* Draw one list of siblings (bottom-to-top) into ctx. A run of clipped
          * layers is confined to the shape of the first unclipped layer beneath
          * it, exactly like a Photoshop/Krita clipping group. */
+        /* The floating selection and the live tool previews live on the temp
+         * canvas. They belong to the layer being edited, so layers above it
+         * must cover them — the temp canvas used to sit above the whole stack
+         * in the DOM, which drew a selection lifted off the Background over
+         * every layer above it. Krita, CSP and Photoshop all place a floating
+         * selection at its own layer's depth.
+         *
+         * _tempDrawn guards the fallback in _render: if the active layer never
+         * came up during the walk (it is hidden, or inside a clipped run drawn
+         * as part of its base), the temp canvas is still drawn on top at the
+         * end rather than vanishing. */
+        let _tempDrawn = false;
+        function _drawTemp(ctx) {
+            const t = app.ui && app.ui.cTemp;
+            if (!t) return;
+            _tempDrawn = true;
+            ctx.save();
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.drawImage(t, 0, 0);
+            ctx.restore();
+        }
+        function _isActiveLayer(l) {
+            const a = mgr.layers[mgr.activeIdx];
+            return !!(a && l && a.id === l.id);
+        }
+
         function _renderList(list, kids, ctx, w, h) {
             for (let i = 0; i < list.length; i++) {
                 const l = list[i];
@@ -796,6 +845,7 @@
                 ctx.drawImage(src, 0, 0);
                 ctx.restore();
                 if (srcTemp) _releaseScratch(src);
+                if (!_tempDrawn && _isActiveLayer(l)) _drawTemp(ctx);
             }
         }
 
@@ -814,7 +864,9 @@
             ctx.clearRect(0, 0, w, h);
             app.disableSmoothing(ctx);
             const { roots, kids } = _buildTree();
+            _tempDrawn = false;
             _renderList(roots, kids, ctx, w, h);
+            if (!_tempDrawn) _drawTemp(ctx);
             ctx.restore();
         }
         mgr.render = _render;
@@ -2174,51 +2226,19 @@
         app.updateHoverPreview = function (x, y) { /* disabled */ };
 
         /* ──────────────────────────────────────────────────────────────────
-         * 15b. PATCH: onMouseDown — wand samples composite, not active layer
+         * 15b. (removed) PATCH: onMouseDown — wand samples composite
+         *
+         * This used to re-run the whole wand setup block from onMouseDown with
+         * composite pixels swapped in, whenever the document had more than one
+         * layer. Two problems: it ran the full diff/sort/worker setup a second
+         * time on every wand click, and the composite ImageData it installed as
+         * state.wandBase was then used by applyMaskSelection as the *source*
+         * for the layer's new contents — so wanding a lower layer baked the
+         * upper layers' art into it.
+         *
+         * The engine now asks getSampleSource() what to read, honouring the
+         * "sample all layers" setting, so there is nothing to patch here.
          * ────────────────────────────────────────────────────────────────── */
-        const _origOnMouseDown = app.onMouseDown.bind(app);
-        app.onMouseDown = function (e) {
-            _origOnMouseDown(e);
-            if (this.config.tool === 'wand' && this.state.wandActive && mgr.active && mgr.layers.length > 1) {
-                const composite = _composite();
-                if (composite) {
-                    const w = this.config.width, h = this.config.height;
-                    const compCtx = composite.getContext('2d');
-                    const compData = compCtx.getImageData(0, 0, w, h);
-                    this.state.wandBase = compData;
-                    const data = compData.data;
-                    const px = Math.floor(this.state.wandStart.x);
-                    const py = Math.floor(this.state.wandStart.y);
-                    const startIdx = (py * w + px) * 4;
-                    const tr = data[startIdx], tg = data[startIdx+1], tb = data[startIdx+2], ta = data[startIdx+3];
-                    const diff = new Uint8Array(w * h);
-                    for (let i = 0, j = 0; i < diff.length; i++, j += 4) {
-                        const dr = Math.abs(data[j]   - tr);
-                        const dg = Math.abs(data[j+1] - tg);
-                        const db = Math.abs(data[j+2] - tb);
-                        const da = Math.abs(data[j+3] - ta);
-                        let m = dr > dg ? dr : dg;
-                        m = db > m ? db : m;
-                        m = da > m ? da : m;
-                        diff[i] = m;
-                    }
-                    this.state.wandDiff = diff;
-                    this._wandEntered = this.config.wandMode === 'contiguous'
-                        ? buildPriorityFlood(diff, w, h, Math.floor(this.state.wandStart.x), Math.floor(this.state.wandStart.y)) : null;
-                    const keyArr = this._wandEntered || diff;
-                    this._wandSortedIdx = buildSortedDiffIndex(keyArr);
-                    this._wandMaskBuf = new Uint8Array(w * h);
-                    this._wandSelectedCutoff = -1;
-                    this._initWandPreviewWorker(diff, keyArr, this._wandSortedIdx, w, h);
-                    // Preview only, as in the unlayered path above. The base
-                    // handler already scheduled a frame; re-scheduling here is a
-                    // no-op that lets the queued frame run against the composite
-                    // diff installed just now instead of the layer-only one.
-                    this.state.wandOp = this.getSelectionOp(e);
-                    this._scheduleWandFrame();
-                }
-            }
-        };
 
         /* ══════════════════════════════════════════════════════════════════
          * ORA  (OpenRaster)  SAVE / LOAD

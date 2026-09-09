@@ -382,6 +382,8 @@
                 const global = document.getElementById('item-wand-global');
                 if (contig) contig.classList.toggle('checked', this.config.wandMode === 'contiguous');
                 if (global) global.classList.toggle('checked', this.config.wandMode === 'global');
+                const sampleAll = document.getElementById('item-wand-sample-all');
+                if (sampleAll) sampleAll.classList.toggle('checked', !!this.config.sampleAllLayers);
                 const wandBtn = document.getElementById('wand-tool-btn');
                 if (wandBtn) {
                     const iconContig = wandBtn.querySelector('.wand-icon-contig');
@@ -399,6 +401,36 @@
             setWandMode(mode) {
                 this.config.wandMode = mode === 'global' ? 'global' : 'contiguous';
                 this.lsSet('paint.wandMode', this.config.wandMode);
+                this.syncWandMenu();
+                this.closeMenus();
+            },
+            /* ── Where the sampling tools read from ──────────────────────
+             * The wand and the eyedropper answer "what colour is under the
+             * cursor". That question has two reasonable answers when a
+             * document has layers, and Krita and CSP both default to the
+             * active layer and put the composite behind an explicit toggle.
+             *
+             * This used to be hardcoded to the composite whenever more than
+             * one layer existed, so wanding a uniform background stopped at
+             * artwork sitting on a layer above it. The bucket deliberately
+             * does NOT route through here: it writes its sample buffer
+             * straight back to the layer, so handing it composite pixels
+             * would bake the upper layers into the one being filled. */
+            getSampleSource() {
+                if (this.config.sampleAllLayers && this.layerMgr
+                    && this.layerMgr.active && this.layerMgr.layers.length > 1) {
+                    const comp = this.layerMgr.getFlattenedCanvas();
+                    if (comp) return comp.getContext('2d', { willReadFrequently: true });
+                }
+                return this.ctx;
+            },
+            getSampleImageData() {
+                return this.getSampleSource()
+                    .getImageData(0, 0, this.config.width, this.config.height);
+            },
+            toggleSampleAllLayers() {
+                this.config.sampleAllLayers = !this.config.sampleAllLayers;
+                this.lsSet('paint.sampleAllLayers', this.config.sampleAllLayers ? '1' : '0');
                 this.syncWandMenu();
                 this.closeMenus();
             },
