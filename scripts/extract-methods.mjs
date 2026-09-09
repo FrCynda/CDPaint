@@ -30,22 +30,26 @@ const EOL = raw.includes('\r\n') ? '\r\n' : '\n';
 const lines = raw.split(/\r?\n/);
 
 const CLASS_START = lines.findIndex(l => /^\s*class PaintEngine\b/.test(l));
-const CLASS_END = lines.findIndex((l, i) => i > CLASS_START && /^    \}$/.test(l));
-if (CLASS_START < 0 || CLASS_END < 0) throw new Error('could not locate the class body');
+if (CLASS_START < 0) throw new Error('could not locate the class');
 
 /* Strip strings, template literals, comments and regex literals so that brace
- * counting sees only real code. */
+ * counting sees only real code.
+ *
+ * Newlines inside what is removed are kept, so the stripped text still has the
+ * same number of lines as the original and line numbers stay usable. Without
+ * that, a multi-line template literal shifts every line after it. */
 function strip(src) {
+    const keepEol = s => s.replace(/[^\n]/g, '');
     let out = '', i = 0, prevSig = '';
     const n = src.length;
     while (i < n) {
         const c = src[i], d = src[i + 1];
-        if (c === '/' && d === '/') { while (i < n && src[i] !== '\n') i++; continue; }
-        if (c === '/' && d === '*') { i += 2; while (i < n && !(src[i] === '*' && src[i + 1] === '/')) i++; i += 2; continue; }
+        if (c === '/' && d === '/') { const a = i; while (i < n && src[i] !== '\n') i++; out += keepEol(src.slice(a, i)); continue; }
+        if (c === '/' && d === '*') { const a = i; i += 2; while (i < n && !(src[i] === '*' && src[i + 1] === '/')) i++; i += 2; out += keepEol(src.slice(a, i)); continue; }
         if (c === '"' || c === "'" || c === '`') {
-            const q = c; i++;
+            const q = c, a = i; i++;
             while (i < n && src[i] !== q) { if (src[i] === '\\') i++; i++; }
-            i++; out += '_'; prevSig = '_'; continue;
+            i++; out += '_' + keepEol(src.slice(a, i)); prevSig = '_'; continue;
         }
         if (c === '/' && /[=(,:[!&|?{};+\-*%~^]/.test(prevSig)) {
             i++; let cls = false;
@@ -64,17 +68,57 @@ function strip(src) {
     }
     return out;
 }
-const depthOf = txt => {
-    const s = strip(txt);
-    return (s.match(/\{/g) || []).length - (s.match(/\}/g) || []).length;
-};
 
-const isMethod = l =>
-    /^ {8}(async )?[A-Za-z_$][\w$]*\s*\(/.test(l) &&
-    !/^ {8}(if|for|while|switch|catch|return|else|do)\b/.test(l);
+// Stripped once, aligned line for line with `lines`.
+const codeLines = strip(lines.join('\n')).split('\n');
+if (codeLines.length !== lines.length) throw new Error('strip() lost line alignment');
+const depthAt = i => {
+    const l = codeLines[i] || '';
+    return (l.match(/\{/g) || []).length - (l.match(/\}/g) || []).length;
+};
+const depthOfRange = (a, b) => { let d = 0; for (let i = a; i < b; i++) d += depthAt(i); return d; };
+
+/* The class closes where its own brace depth returns to zero. A line-pattern
+ * search cannot find it: `^    }` also matches inside the GLSL shader source
+ * embedded in getHueSatGL(), which silently truncates the class body and hides
+ * every method defined after it. */
+let CLASS_END = -1;
+for (let i = CLASS_START, depth = 0; i < lines.length; i++) {
+    depth += depthAt(i);
+    if (i > CLASS_START && depth === 0) { CLASS_END = i; break; }
+}
+if (CLASS_END < 0) throw new Error('could not locate the end of the class body');
+
+/* A declaration in real code. The stripped line is checked too: a line of GLSL
+ * inside a template literal can look exactly like a method declaration, and in
+ * stripped code that line is blank. */
+const isMethod = i =>
+    /^ {8}(async )?[A-Za-z_$][\w$]*\s*\(/.test(lines[i]) &&
+    !/^ {8}(if|for|while|switch|catch|return|else|do)\b/.test(lines[i]) &&
+    codeLines[i].trim() !== '';
+
+/* Members that must not be moved. They still have to end the preceding method's
+ * slice, or they get dragged along inside it — which is how
+ * `static _freehandEasingMap` ended up in a mixin and failed to parse.
+ *
+ *   static members and class fields  no meaning in an object literal
+ *   get / set accessors              Object.assign COPIES THE VALUE: it would
+ *                                    invoke the getter once and assign whatever
+ *                                    it returned, turning an accessor into a
+ *                                    frozen property. Silent, and wrong.
+ */
+const isClassOnly = i =>
+    codeLines[i].trim() !== '' && (
+        /^ {8}static\b/.test(lines[i]) ||
+        /^ {8}(get|set)\s+[A-Za-z_$][\w$]*\s*\(/.test(lines[i]) ||
+        /^ {8}#?[A-Za-z_$][\w$]*\s*=[^=]/.test(lines[i]));
 
 const cand = [];
-for (let i = CLASS_START + 1; i < CLASS_END; i++) if (isMethod(lines[i])) cand.push(i);
+const barrier = new Set();
+for (let i = CLASS_START + 1; i < CLASS_END; i++) {
+    if (isMethod(i)) cand.push(i);
+    else if (isClassOnly(i)) { cand.push(i); barrier.add(i); }
+}
 
 const methods = [];
 for (let k = 0; k < cand.length;) {
@@ -82,15 +126,26 @@ for (let k = 0; k < cand.length;) {
     let j = k + 1, b;
     for (;;) {
         b = (j < cand.length ? cand[j] : CLASS_END);
-        if (depthOf(lines.slice(a, b).join('\n')) === 0 || b === CLASS_END) break;
+        if (depthOfRange(a, b) === 0 || b === CLASS_END) break;
         j++;
     }
     const name = (lines[a].trim().match(/^(?:async\s+)?([\w$]+)/) || [])[1];
-    methods.push({ a, b, name });
+    methods.push({ a, b, name, movable: !barrier.has(a) });
     k = j;
 }
 
-const taken = methods.filter(m => wanted.includes(m.name));
+const taken = methods.filter(m => m.movable && wanted.includes(m.name));
+
+/* A slice that still swallowed a class-only line cannot be moved as-is. */
+for (const m of taken) {
+    for (let i = m.a + 1; i < m.b; i++) {
+        if (barrier.has(i)) {
+            console.error(`ABORT: ${m.name} spans the class-only declaration at line ${i + 1}:`);
+            console.error(`  ${lines[i].trim()}`);
+            process.exit(1);
+        }
+    }
+}
 const missing = wanted.filter(w => !taken.some(m => m.name === w));
 if (missing.length) throw new Error(`not found in the class body: ${missing.join(', ')}`);
 
@@ -99,12 +154,22 @@ if (missing.length) throw new Error(`not found in the class body: ${missing.join
  * after re-indenting it back, not as written. */
 const removed = taken.map(m => lines.slice(m.a, m.b).join(EOL)).join(EOL);
 
-const body = taken.map(m => {
+/* Each entry needs a comma after it, and it has to land on the line that closes
+ * the method. A slice runs to the *next* declaration, so it often ends with the
+ * blank lines and lead-in comment belonging to the method that follows; a comma
+ * appended there would sit inside a `//` comment and be swallowed, leaving two
+ * entries fused together. Find the real last line of code and mark it. */
+const entries = taken.map(m => {
     const src = lines.slice(m.a, m.b);
-    // Trailing blank lines belong between entries, not inside one.
-    while (src.length && !src[src.length - 1].trim()) src.pop();
-    return src.map(l => (l.trim() ? '    ' + l : l)).join(EOL);
-}).join(',' + EOL + EOL);
+    let last = src.length - 1;
+    while (last >= 0 && (!src[last].trim() || codeLines[m.a + last].trim() === '')) last--;
+    return { src, last };
+});
+
+const body = entries.map(({ src, last }, i) => src.map((l, j) => {
+    const indented = l.trim() ? '    ' + l : l;
+    return (j === last && i < entries.length - 1) ? indented + ',' : indented;
+}).join(EOL)).join(EOL);
 
 const mixin = [
     `/* ${mixinName} — moved verbatim off the PaintEngine class body.`,
@@ -121,15 +186,17 @@ const mixin = [
     ''
 ].join(EOL);
 
-// Re-derive what the mixin contributes and compare against what was cut.
-const reindented = body
-    .split(EOL)
-    .map(l => (l.startsWith('    ') ? l.slice(4) : l))
-    .join(EOL)
-    .split(',' + EOL + EOL)
-    .join(EOL);
-const norm = s => s.replace(/[ \t]+$/gm, '').replace(/(\r?\n)+$/g, '').replace(/(\r?\n)\s*(\r?\n)/g, '$1');
-if (norm(reindented) !== norm(removed)) {
+/* Undo exactly what was added — the 4-space indent, and the separator comma on
+ * each entry's known last line — and require the result to be identical to the
+ * text cut out of the class. Nothing is written unless this holds. */
+const rebuilt = entries.map(({ src, last }, i) => src.map((l, j) => {
+    const indented = l.trim() ? '    ' + l : l;
+    const withComma = (j === last && i < entries.length - 1) ? indented + ',' : indented;
+    const decommaed = (j === last && i < entries.length - 1) ? withComma.slice(0, -1) : withComma;
+    return decommaed.startsWith('    ') ? decommaed.slice(4) : decommaed;
+}).join(EOL)).join(EOL);
+
+if (rebuilt !== removed) {
     console.error('ABORT: mixin text does not match the text removed from the class.');
     process.exit(1);
 }
