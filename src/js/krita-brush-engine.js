@@ -400,10 +400,65 @@
         }
     }
 
+    function _activeLayer() {
+        var mgr = app.layerMgr;
+        if (!mgr || !mgr.active || !mgr.layers || !mgr.layers.length) return null;
+        return mgr.layers[mgr.activeIdx] || null;
+    }
+
+    /* Painting a layer mask means painting the mask, where alpha lock has no
+     * meaning — same rule the pixel tools follow. */
+    function _alphaLocked() {
+        var l = _activeLayer();
+        return !!(l && l.alphaLock && !(l.mask && l._maskEdit));
+    }
+
+    /* A full-canvas alpha stencil for the active selection: opaque where paint
+     * is allowed. Wand and lasso selections carry their own mask; a plain
+     * marquee is just its rectangle — deliberately NOT the pixels it lifted,
+     * because a marquee dragged over empty space must still accept paint. */
+    function _buildSelectionStencil() {
+        var sel = app.state && app.state.selection;
+        if (!sel) return null;
+        var w = app.config.width, h = app.config.height;
+        if (!(w > 0 && h > 0)) return null;
+        var nr = app.getNormalizedRect ? app.getNormalizedRect(sel) : sel;
+        var c = new OffscreenCanvas(w, h);
+        var ctx = c.getContext('2d');
+        if (sel.mask) {
+            ctx.drawImage(sel.mask, nr.x, nr.y);
+        } else {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(nr.x, nr.y, nr.w, nr.h);
+        }
+        return c;
+    }
+
+    /* One readback per stroke, off the background snapshot the stroke already
+     * captured, rather than one per dab off the live canvas. */
+    function _primeSampleCache() {
+        _sampleData = null;
+        if (!_bgCtx || !_bgCanvas) return;
+        var w = app.config ? app.config.width : 0;
+        var h = app.config ? app.config.height : 0;
+        if (!(w > 0 && h > 0)) return;
+        try {
+            _sampleData = _bgCtx.getImageData(0, 0, w, h).data;
+            _sampleW = w; _sampleH = h;
+        } catch (e) {
+            _sampleData = null;
+        }
+    }
+
     function _sampleCanvasColor(ctx, x, y) {
-        if (!ctx) return null;
         var px = _round(x);
         var py = _round(y);
+        if (_sampleData) {
+            if (px < 0 || py < 0 || px >= _sampleW || py >= _sampleH) return null;
+            var i = (py * _sampleW + px) * 4;
+            return [_sampleData[i], _sampleData[i + 1], _sampleData[i + 2]];
+        }
+        if (!ctx) return null;
         var c = ctx.canvas;
         if (c && (px < 0 || py < 0 || px >= c.width || py >= c.height)) return null;
         try {
@@ -718,8 +773,21 @@
             mainCtx.clearRect(x, y, w, h);
             mainCtx.drawImage(_bgCanvas, x, y, w, h, x, y, w, h);
         }
+        // Clip the wet paint to the selection before it is composited. The
+        // stencil covers the whole canvas, so destination-in has to be given
+        // the whole flow buffer — a sub-rect would wipe the rest of the stroke.
+        if (_selStencil && _flowCtx) {
+            _flowCtx.save();
+            _flowCtx.globalCompositeOperation = 'destination-in';
+            _flowCtx.drawImage(_selStencil, 0, 0);
+            _flowCtx.restore();
+        }
         mainCtx.save();
         mainCtx.globalAlpha = opacity;
+        // Alpha lock: keep the destination's own alpha, so paint lands only
+        // where the layer already had pixels. The background restore above has
+        // already put the layer's original alpha back under us.
+        if (_alphaLocked()) mainCtx.globalCompositeOperation = 'source-atop';
         mainCtx.drawImage(_flowCanvas, x, y, w, h, x, y, w, h);
         mainCtx.restore();
         // Preview-mode: clear the flushed area from the flow buffer so the
@@ -734,6 +802,18 @@
     /* ------------------------------------------------------------------ */
     /*  Airbrush state                                                     */
     /* ------------------------------------------------------------------ */
+    /* Built once per stroke from the active selection, and used as a stencil
+     * when the flow buffer is composited. The brush reaches the layer by one
+     * drawImage rather than through the pixel-drawing helpers, so it never
+     * passed the selection clip every other tool goes through. */
+    var _selStencil = null;
+    /* The artwork under the stroke, read back ONCE per stroke. Colour mixing
+     * used to call getImageData per dab — nearly a thousand GPU readbacks for
+     * a single stroke. Sampling the stroke-start snapshot also makes the result
+     * deterministic: the old code sampled whatever the last frame happened to
+     * have flushed, so the same stroke could mix differently run to run. */
+    var _sampleData = null, _sampleW = 0, _sampleH = 0;
+
     var _airbrushTimer = null;
     var _airbrushLastPos = null;
     var _airbrushLastColor = null;
@@ -1324,6 +1404,9 @@
             console.warn('[brush] bgCanvas capture failed:', e);
         }
 
+        _selStencil = _buildSelectionStencil();
+        _primeSampleCache();
+
         if (getParams().airbrushMode) {
             _startAirbrush(x, y, color);
         }
@@ -1462,6 +1545,10 @@
         _flushPending(true);
         _state.strokePoints = [];
         _state.lastProcessedIdx = 0;
+        // Per-stroke buffers: a full-canvas stencil and a full-canvas
+        // pixel copy are not worth holding on to between strokes.
+        _selStencil = null;
+        _sampleData = null;
         if (wasDrawing && app.saveState && typeof app.saveState === 'function') {
             app.saveState();
         }
