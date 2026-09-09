@@ -1639,7 +1639,12 @@
             applyMaskSelection(newMask, op = 'replace', baseImageData = null, commit = true, opts = {}) {
                 const w = this.config.width;
                 const h = this.config.height;
-                const base = baseImageData || this.ctx.getImageData(0, 0, w, h);
+                // The pixels this selection lifts, and the pixels left behind,
+                // always come from the layer being edited — never from the
+                // caller's sample buffer. The wand may have built its mask from
+                // the composited picture ("sample all layers"), and writing
+                // that back here would stamp every upper layer into this one.
+                const base = this.ctx.getImageData(0, 0, w, h);
                 const baseData = base.data; // read-only reference — never mutated, no copy needed
                 const canvasData = new Uint8ClampedArray(base.data);
                 let selMask = this.buildMaskFromSelection();
@@ -1728,7 +1733,16 @@
                 const outImg = this.ctx.createImageData(w, h);
                 outImg.data.set(canvasData);
                 this.ctx.putImageData(outImg, 0, 0);
-                if (commit) this.saveState();
+                if (commit) {
+                    this.saveState();
+                    // A previous mask selection may still have its own cut step pending.
+                    // The entry we just saved already has those pixels put back (the
+                    // s && !c restore loop above), so the old "pixels lifted, hole left
+                    // behind" entry is dead scaffolding. Left in place it becomes the
+                    // state the first undo lands on, which looks like the earlier
+                    // selection vanishing. Collapse it before claiming the new one.
+                    this.collapseSelectionCutStep();
+                }
 
                 if (maxX < minX || maxY < minY) {
                     this._freeSelectionGlTex(this.state.selection); this.state.selection = null;

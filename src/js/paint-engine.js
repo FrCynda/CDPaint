@@ -922,6 +922,9 @@
                 anchorCanvas: true,
                 wandMode: 'contiguous',
                 wandTolerance: 0,
+                // Off = the wand reads the layer you have selected, as Krita and
+                // CSP do by default. On = it reads the composited picture.
+                sampleAllLayers: false,
                 debugWandPerf: false,
                 lassoSelectMode: 'free',
                 selectTool: 'select',
@@ -1774,6 +1777,7 @@
             if (storedWandMode === 'global' || storedWandMode === 'contiguous') {
                 this.config.wandMode = storedWandMode;
             }
+            this.config.sampleAllLayers = this.lsGet('paint.sampleAllLayers') === '1';
             this.syncWandMenu();
             const wandBtn = document.getElementById('wand-tool-btn');
             if (wandBtn) {
@@ -6274,7 +6278,7 @@
                 this.state.wandStart = { x: p.x, y: p.y };
                 this.state.wandStartScreen = { x: e.clientX, y: e.clientY };
                 this.state.wandTol = this.config.wandTolerance || 0;
-                this.state.wandBase = this.ctx.getImageData(0, 0, this.config.width, this.config.height);
+                this.state.wandBase = this.getSampleImageData();
                 const w = this.config.width;
                 const h = this.config.height;
                 const data = this.state.wandBase.data;
@@ -9486,7 +9490,7 @@ void main() {
             return rgb;
         }
         pickColor(x,y,slot) {
-            const p = this.ctx.getImageData(x,y,1,1).data;
+            const p = this.getSampleSource().getImageData(x,y,1,1).data;
             const hex = "#" + ((1 << 24) + (p[0] << 16) + (p[1] << 8) + p[2]).toString(16).slice(1);
             this.setColor(hex, slot);
         }
