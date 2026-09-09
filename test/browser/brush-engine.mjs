@@ -210,6 +210,53 @@ await withPage(async (page) => {
         'texture had no effect on bristles');
 
     /* ── performance guards ───────────────────────────────────────────── */
+    /* -- the rope overlay is positioned in SCREEN space ---------------- */
+    console.log('');
+    console.log('== the rope overlay follows the cursor on a layered document ==');
+    const rr = await page.eval(`(() => {
+        const app = PaintApp;
+        // The rope is an SVG in viewport coordinates. It used to measure
+        // app.ctx.canvas, which in layer mode is the active layer's OFF-SCREEN
+        // canvas -- rect all zeros, rope pinned to the viewport corner.
+        const read = () => {
+            const svg = document.querySelector('svg[style*="99999"]');
+            if (!svg || svg.style.display === 'none') return null;
+            const d = svg.querySelector('path').getAttribute('d');
+            const m = /^M ([-0-9.]+),([-0-9.]+)/.exec(d);
+            return m ? { x: +m[1], y: +m[2] } : null;
+        };
+        const drag = () => {
+            const b = app.brush;
+            b.setParam('smoothingMode', 'rope');
+            b.setParam('smoothingRope', 100);
+            b.beginStroke(40, 40, 0.9, '#ff0000');
+            for (let i = 1; i <= 10; i++) b.moveStroke(40 + i * 12, 40, 0.9, '#ff0000');
+            const at = read();
+            b.endStroke();
+            return at;
+        };
+        // A document where no extra layer was ever created.
+        app.layerMgr.collapseToBase({ fresh: true });
+        app.setSize(200, 200);
+        app.config.zoom = 1; app.updateBounds();
+        app.state.selection = null;
+        app.brush.loadPreset('Round');
+        const flat = drag();
+        // The same drag once a second layer exists.
+        __B.doc();
+        const layered = drag();
+        const r = app.ui.cMain.getBoundingClientRect();
+        return JSON.stringify({ flat, layered, left: r.left, top: r.top });
+    })()`);
+    const ro = JSON.parse(rr);
+    console.log('  ' + rr);
+    check('the rope is drawn at all', !!(ro.flat && ro.layered), rr);
+    check('a layered document puts the rope where a flat one does',
+        !!(ro.flat && ro.layered
+            && Math.abs(ro.flat.x - ro.layered.x) < 1
+            && Math.abs(ro.flat.y - ro.layered.y) < 1),
+        `flat ${JSON.stringify(ro.flat)} vs layered ${JSON.stringify(ro.layered)}`);
+
     console.log('\n== hot-path guards ==');
     const r7 = await page.eval(`(async () => {
         const app = PaintApp;
