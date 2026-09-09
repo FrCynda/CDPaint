@@ -1,5 +1,5 @@
 ## Changes
-- Reworked the paint engine into modular ES modules (paint-engine, layer-system, gradient-engine, smart-shape, freehand-path-engine)
+- Split the paint engine into separate scripts (paint-engine, layer-system, gradient-engine, freehand-path-engine)
 - Replaced the single-file standalone bundle with a modular src/ layout
 - Rewrote the README and clarified the LICENSE with third-party asset notices
 
