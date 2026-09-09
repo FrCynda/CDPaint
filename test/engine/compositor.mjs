@@ -7,7 +7,7 @@
 import { readFileSync } from 'fs';
 import vm from 'vm';
 
-const SRC = process.argv[2] || 'src/js/paint-engine.js';
+const SRC = process.argv[2] || 'src/js/layer-system.js';
 const lines = readFileSync(SRC, 'utf8').split(/\r?\n/);
 
 let pass = 0, fail = 0;
