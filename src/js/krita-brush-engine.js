@@ -252,6 +252,8 @@
     var _scratchCtx = null;
     var _bgCanvas = null;
     var _bgCtx = null;
+    var _grainCanvas = null;
+    var _grainCtx = null;
 
     var SHRINK_THRESHOLD = 0.5;
     function _ensureFlowBuffer(w, h) {
@@ -270,6 +272,18 @@
         }
     }
 
+    /* The dual tip grains the FINISHED stroke, so it needs somewhere to do
+     * that which is not the flow buffer itself: the flow buffer is
+     * re-composited whole on every flush, and graining it in place would
+     * apply the grain again to everything already flushed, squaring it. */
+    function _ensureGrainCanvas(w, h) {
+        if (!_grainCanvas || _grainCanvas.width < w || _grainCanvas.height < h
+            || (_grainCanvas.width > w * 2 && _grainCanvas.width * SHRINK_THRESHOLD > w)) {
+            _grainCanvas = new OffscreenCanvas(_max(1, w), _max(1, h));
+            _grainCtx = _grainCanvas.getContext('2d');
+        }
+    }
+
     function _ensureBgCanvas(w, h) {
         if (!_bgCanvas || _bgCanvas.width < w || _bgCanvas.height < h
             || (_bgCanvas.width > w * 2 && _bgCanvas.width * SHRINK_THRESHOLD > w)) {
@@ -284,6 +298,7 @@
         _flowCanvas = null; _flowCtx = null;
         _scratchCanvas = null; _scratchCtx = null;
         _bgCanvas = null; _bgCtx = null;
+        _grainCanvas = null; _grainCtx = null;
     }
 
     var _hexColorCache = {};
@@ -341,6 +356,7 @@
      * Generated rather than shipped as images: these are 64x64 tiles of pure
      * pattern, and a generator is smaller than the PNGs would be. */
     var _TEX_SIZE = 64;
+    var _TEX_TYPES = ['grain', 'chalk', 'canvas', 'spray', 'hatch'];
     var _texTiles = {};
 
     function _seededRand(seed) {
@@ -1166,7 +1182,27 @@
             _flowCtx.drawImage(_selStencil, 0, 0);
             _flowCtx.restore();
         }
-        var blend = _blendOp(getParams().blendMode);
+        /* Grain the finished stroke, on a copy: the flow buffer survives to
+         * the next flush and must stay ungrained, or every region already
+         * flushed would be grained a second time. */
+        var _p = getParams();
+        var src = _flowCanvas;
+        if (_hasDualTip(_p) && _flowCanvas) {
+            _ensureGrainCanvas(_flowCanvas.width, _flowCanvas.height);
+            var rec = _dualTile(_p.dualTip, _p.dualScale, _p.dualDepth);
+            _grainCtx.clearRect(x, y, w, h);
+            _grainCtx.drawImage(_flowCanvas, x, y, w, h, x, y, w, h);
+            _grainCtx.save();
+            _grainCtx.globalCompositeOperation = 'destination-in';
+            _grainCtx.fillStyle = rec.pattern;
+            // No translate: the buffer is already in document coordinates,
+            // which is exactly what anchors the grain to the canvas.
+            _grainCtx.fillRect(x, y, w, h);
+            _grainCtx.restore();
+            src = _grainCanvas;
+        }
+
+        var blend = _blendOp(_p.blendMode);
         var locked = _alphaLocked();
         mainCtx.save();
         mainCtx.globalAlpha = opacity;
@@ -1176,11 +1212,12 @@
              * paint instead: clip the flow buffer to where the layer already
              * had pixels, then let the blend run normally. _bgCanvas is the
              * untouched layer, which is exactly the alpha to clip against. */
-            if (_bgCanvas && _flowCtx) {
-                _flowCtx.save();
-                _flowCtx.globalCompositeOperation = 'destination-in';
-                _flowCtx.drawImage(_bgCanvas, 0, 0);
-                _flowCtx.restore();
+            var lockCtx = (src === _grainCanvas) ? _grainCtx : _flowCtx;
+            if (_bgCanvas && lockCtx) {
+                lockCtx.save();
+                lockCtx.globalCompositeOperation = 'destination-in';
+                lockCtx.drawImage(_bgCanvas, 0, 0);
+                lockCtx.restore();
             }
             mainCtx.globalCompositeOperation = blend;
         } else if (locked) {
@@ -1191,7 +1228,7 @@
         } else {
             mainCtx.globalCompositeOperation = blend;
         }
-        mainCtx.drawImage(_flowCanvas, x, y, w, h, x, y, w, h);
+        mainCtx.drawImage(src, x, y, w, h, x, y, w, h);
         mainCtx.restore();
         // Preview-mode: clear the flushed area from the flow buffer so the
         // dirty rect stays small and per-flush compositing stays O(new dabs)
@@ -1596,6 +1633,9 @@
         textureScale: 4,
         textureType: 'grain',
         blendMode: 'normal',
+        dualTip: 'none',
+        dualScale: 3,
+        dualDepth: 70,
         bristleCount: 1,
         bristleLength: 20,
         bristleWidth: 2,
@@ -1710,6 +1750,15 @@
         'Square Rough': { size: 18, opacity: 90, flow: 100, spacing: 12, hardness: 80, shape: 'custom', _tipUrl: 'brushes/square_rough_lightgrey.png' },
         'Abominable Snowman': { size: 28, opacity: 85, flow: 100, spacing: 15, hardness: 80, shape: 'custom', _tipUrl: 'brushes/abominable_snowman.png', scatter: 4 },
 
+        /* ---- Surfaces ---------------------------------------------------- */
+        'Pencil on Paper': { size: 7, opacity: 100, flow: 90, spacing: 6, hardness: 45, shape: 'circle', aspectRatio: 1.6, angle: 40, dualTip: 'canvas', dualScale: 2, dualDepth: 65, sizeMin: 55, flowMin: 15 },
+        'Charcoal on Paper': { size: 24, opacity: 100, flow: 95, spacing: 7, hardness: 35, shape: 'square', aspectRatio: 2.5, angleSrc: 'direction', dualTip: 'chalk', dualScale: 3, dualDepth: 85, sizeMin: 50 },
+        'Chalk on Board': { size: 20, opacity: 95, flow: 100, spacing: 8, hardness: 55, shape: 'circle', dualTip: 'chalk', dualScale: 5, dualDepth: 90 },
+        'Pastel on Tooth': { size: 22, opacity: 90, flow: 80, spacing: 7, hardness: 40, shape: 'circle', aspectRatio: 1.8, angle: 30, dualTip: 'hatch', dualScale: 2, dualDepth: 70, sizeMin: 60 },
+        'Watercolor on Rough': { size: 32, opacity: 70, flow: 25, spacing: 6, hardness: 10, shape: 'circle', dualTip: 'canvas', dualScale: 4, dualDepth: 75, flowMin: 25, sizeMin: 65 },
+        'Ink on Toothy': { size: 12, opacity: 100, flow: 100, spacing: 6, hardness: 80, shape: 'circle', taperStart: 25, taperEnd: 30, dualTip: 'grain', dualScale: 1, dualDepth: 55, sizeMin: 20 },
+        'Acrylic on Canvas': { size: 26, opacity: 100, flow: 100, spacing: 6, hardness: 85, shape: 'square', aspectRatio: 3, angleSrc: 'direction', dualTip: 'canvas', dualScale: 3, dualDepth: 80, sizeMin: 70 },
+
         /* ---- Smudge ------------------------------------------------------ */
         'Smudge': { size: 22, opacity: 100, flow: 100, spacing: 4, hardness: 30, shape: 'circle', colorRate: 0, smudgeLength: 82, sizeMin: 70 },
         'Smudge Hard': { size: 14, opacity: 100, flow: 100, spacing: 3, hardness: 85, shape: 'circle', colorRate: 0, smudgeLength: 60, sizeMin: 75 },
@@ -1755,6 +1804,7 @@
         { name: 'Watercolour', presets: ['Watercolor', 'Watercolor Wet', 'Watercolor Dry Edge', 'Wash', 'Watercolor Bloom'] },
         { name: 'Airbrush', presets: ['Airbrush', 'Airbrush Soft', 'Airbrush Hard', 'Spray Can', 'Speckle Spray'] },
         { name: 'Texture',  presets: ['Charcoal', 'Charcoal Stick', 'Conte', 'Canvas Grain', 'Crosshatch', 'Chalk', 'Chalk Round Hard', 'Chalk Sparse', 'Chalk Chisel', 'Chalk Chisel Random', 'Chalk Chisel Fine', 'Chisel Streaks', 'Rock Pitted', 'Rock Pitted Fine', 'Scratches', 'Rake', 'Bristles Grouped', 'Bristle', 'Bristles Circle Medium', 'Bristles Compact Mini', 'Deevad Painterly', 'Deevad Compact', 'Flat Tip Dirty', 'Square Rough', 'Abominable Snowman'] },
+        { name: 'Surfaces', presets: ['Pencil on Paper', 'Charcoal on Paper', 'Chalk on Board', 'Pastel on Tooth', 'Watercolor on Rough', 'Ink on Toothy', 'Acrylic on Canvas'] },
         { name: 'Smudge',   presets: ['Smudge', 'Smudge Hard', 'Wet Blender', 'Oil Mixer', 'Watercolor Bleed'] },
         { name: 'Blend',    presets: ['Shadow Multiply', 'Ink Multiply', 'Glow', 'Burn Shadow', 'Bleach', 'Tint', 'Shade Soft Light'] },
         { name: 'Erasers',  presets: ['Eraser Hard', 'Eraser Soft', 'Eraser Pencil', 'Eraser Chalk', 'Eraser Square', 'Eraser Airbrush'] },
@@ -2420,6 +2470,11 @@
             } catch (e_) {}
         }
         pp.size = _max(1, pp.size * _swatchSizeScale());
+        /* Shrink the surface with the brush. A tile is a fraction of a real
+         * canvas, so a coarse grain left at full size covers it in one or two
+         * lumps and the swatch reads as smooth — the one thing it must not
+         * say about a brush whose whole point is the grain. */
+        pp.dualScale = _max(1, _round(pp.dualScale * _swatchSizeScale()));
         // Smoothing is a feel-of-the-hand setting; on a scripted path it only
         // lags the stroke behind the points and clips the swatch short.
         pp.smoothingMode = 'none';
@@ -2528,6 +2583,8 @@
             'pb-aspect': 'aspectRatio',
             'pb-colorRate': 'colorRate',
             'pb-smudgeLength': 'smudgeLength',
+            'pb-dualScale': 'dualScale',
+            'pb-dualDepth': 'dualDepth',
             'pb-airbrushRate': 'airbrushRate',
             'pb-bristleCount': 'bristleCount',
             'pb-bristleLength': 'bristleLength',
@@ -2579,6 +2636,8 @@
         if (shapeEl) shapeEl.value = _params.shape;
         var blendEl = document.getElementById('pb-blend');
         if (blendEl) blendEl.value = _params.blendMode || 'normal';
+        var dualEl = document.getElementById('pb-dualTip');
+        if (dualEl) dualEl.value = _params.dualTip || 'none';
         /* The name field follows the active brush. It used to be set only by
          * a tile click, so any other route to a preset left it naming a
          * brush the user was no longer on — and Save would have written to
@@ -2676,6 +2735,8 @@
             'pb-aspect': 'aspectRatio',
             'pb-colorRate': 'colorRate',
             'pb-smudgeLength': 'smudgeLength',
+            'pb-dualScale': 'dualScale',
+            'pb-dualDepth': 'dualDepth',
             'pb-airbrushRate': 'airbrushRate',
             'pb-bristleCount': 'bristleCount',
             'pb-bristleLength': 'bristleLength',
@@ -2775,6 +2836,9 @@
             aspectRatio: 'Width-to-height ratio of the brush tip',
             colorRate: 'Rate at which the brush picks up color from the canvas (smudge)',
             smudgeLength: 'How far picked-up color travels before the brush lets go of it',
+            dualTip: 'A surface under the paint - paper tooth, canvas weave. It stays put on the canvas instead of travelling with the stroke',
+            dualScale: 'How coarse that surface is',
+            dualDepth: 'How much paint the surface holds back',
             airbrushMode: 'Keep painting while holding the brush still',
             airbrushRate: 'Paint flow rate when airbrush mode is active',
             bristleCount: 'Number of individual bristle splits',
@@ -2807,6 +2871,13 @@
         if (blendEl) {
             blendEl.addEventListener('change', function () {
                 engine.setParam('blendMode', this.value);
+            });
+        }
+
+        var dualEl = document.getElementById('pb-dualTip');
+        if (dualEl) {
+            dualEl.addEventListener('change', function () {
+                engine.setParam('dualTip', this.value);
             });
         }
 
@@ -2916,6 +2987,98 @@
         _updateBrushCursor();
     };
 
+
+    /* ------------------------------------------------------------------ */
+    /*  Dual tip                                                           */
+    /* ------------------------------------------------------------------ */
+
+    /* A second tip that does not paint — it decides where the first one is
+     * allowed to. Paper tooth, canvas weave, the grain of a chalk: the
+     * surface the paint is sitting on.
+     *
+     * It is stamped on the FINISHED stroke, at flush time, for the same
+     * reason blend modes are: applied per dab it would multiply itself
+     * wherever dabs overlap, so a slow stroke would come out darker-grained
+     * than a fast one over the same ground. Once per flush it also costs one
+     * fill instead of one per dab, and there are no per-dab allocations at
+     * all — the tiles and their patterns are built once and cached.
+     *
+     * And because the flow buffer is already in document coordinates, the
+     * grain is anchored to the CANVAS for free: no offset to compute, no
+     * fractional phase to resample, and the same pixel gets the same grain
+     * no matter which direction the stroke crossed it. Anchored to the dab
+     * instead it swims along with the brush and reads as a screen door
+     * dragged over the paper — which is what the existing per-dab texture
+     * still does, and why this is a separate control rather than a flag on
+     * that one. */
+    var _dualTiles = {};
+    var DUAL_SCALE_MAX = 12;
+
+    function _dualKey(type, scale, depth) {
+        // Depth in steps of 5: finer than the eye and it bounds the cache.
+        return type + '|' + scale + '|' + (_round(depth / 5) * 5);
+    }
+
+    function _dualTile(type, scale, depth) {
+        var key = _dualKey(type, scale, depth);
+        var hit = _dualTiles[key];
+        if (hit) return hit;
+
+        var src = _texTile(type);
+        var N = src.width;
+        var sctx = src.getContext('2d');
+        var sd = sctx.getImageData(0, 0, N, N).data;
+
+        var mag = _clamp(_round(scale), 1, DUAL_SCALE_MAX);
+        var T = N * mag;
+        var out = new OffscreenCanvas(T, T);
+        var octx = out.getContext('2d');
+        var img = octx.createImageData(T, T);
+        var d = img.data;
+        var k = _clamp(depth, 0, 100) / 100;
+
+        /* Grey becomes alpha: a dark spot in the grain lets less paint
+         * through, and depth says how far the darkest spot can close.
+         *
+         * The range is stretched first. The tiles were drawn to be looked at,
+         * so a weave sits between 180 and 255 while chalk uses the whole
+         * scale — taken literally, the same Bite setting would be barely
+         * visible on one surface and brutal on the next. Stretched, Bite
+         * means the same thing whichever surface is picked. */
+        var lo = 255, hi = 0;
+        for (var q = 0; q < sd.length; q += 4) {
+            if (sd[q] < lo) lo = sd[q];
+            if (sd[q] > hi) hi = sd[q];
+        }
+        var span = _max(1, hi - lo);
+        var lut = new Uint8Array(256);
+        for (var g = 0; g < 256; g++) {
+            var t = _clamp((g - lo) / span, 0, 1);
+            lut[g] = 255 - k * 255 * (1 - t) | 0;
+        }
+
+        for (var y = 0; y < T; y++) {
+            var sy = (y / mag) | 0;
+            var srow = sy * N;
+            var drow = y * T;
+            for (var x = 0; x < T; x++) {
+                var si = (srow + ((x / mag) | 0)) * 4;
+                var di = (drow + x) * 4;
+                d[di] = 0; d[di + 1] = 0; d[di + 2] = 0;
+                d[di + 3] = lut[sd[si]];
+            }
+        }
+        octx.putImageData(img, 0, 0);
+
+        var rec = { canvas: out, pattern: octx.createPattern(out, 'repeat') };
+        _dualTiles[key] = rec;
+        return rec;
+    }
+
+    function _hasDualTip(p) {
+        return !!(p.dualTip && p.dualTip !== 'none' && p.dualDepth > 0
+                  && _TEX_TYPES.indexOf(p.dualTip) !== -1);
+    }
 
     /* ------------------------------------------------------------------ */
     /*  Saved brushes                                                      */

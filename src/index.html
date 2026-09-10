@@ -2509,6 +2509,34 @@
                     </div>
                 </div>
             </div>
+            <div class="pb-section">
+                <div class="pb-label">Surface</div>
+                <div class="pb-row" data-setting="dualTip">
+                    <label>Type</label>
+                    <select id="pb-dualTip">
+                        <option value="none">None</option>
+                        <option value="grain">Grain</option>
+                        <option value="chalk">Chalk</option>
+                        <option value="canvas">Canvas</option>
+                        <option value="spray">Spray</option>
+                        <option value="hatch">Hatch</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="dualScale">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-dualScale" min="1" max="12" step="1" value="3">
+                    <span class="pb-label-inner">Grain Size</span>
+                    <span class="pb-val" id="pb-dualScale-val">3</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="dualDepth">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-dualDepth" min="0" max="100" step="1" value="70">
+                    <span class="pb-label-inner">Bite</span>
+                    <span class="pb-val" id="pb-dualDepth-val">70</span>
+                    </div>
+                </div>
+            </div>
         </div>
         <div id="pb-more-settings" class="pb-more-collapsed">
             <button id="pb-more-toggle" aria-expanded="false">Advanced <svg class="pb-arrow" viewBox="0 0 16 16" width="11" height="11"><path d="M2 5 L8 13 L14 5 Z" fill="#000000"/></svg></button>

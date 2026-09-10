@@ -1435,6 +1435,144 @@ await withPage(async (page) => {
         fs2.byName.indexOf('Wet Blender') !== -1 &&
         fs2.byName.indexOf('Bristle Blender') !== -1,
         fs2.byName.join(', '));
+
+    /* ── dual tip ─────────────────────────────────────────────────────── */
+    console.log('== the surface under the paint ==');
+    const dt = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        const out = {};
+        const setup = () => {
+            const L = __B.doc();
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+            b.setParam('size', 20); b.setParam('hardness', 100);
+            b.setParam('opacity', 100); b.setParam('flow', 100);
+            b.setParam('spacing', 3);
+            b.setParam('dualTip', 'none');
+            b.setParam('dualScale', 3); b.setParam('dualDepth', 80);
+            return L;
+        };
+        // Alpha straight down the middle of the band, one sample per pixel.
+        const row = (L) => {
+            const d = L.ctx.getImageData(30, 100, 140, 1).data;
+            const a = []; for (let i = 3; i < d.length; i += 4) a.push(d[i]);
+            return a;
+        };
+        const mean = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+        const sd = (a) => { const m = mean(a);
+            return Math.sqrt(mean(a.map(v => (v - m) * (v - m)))); };
+        const maxDiff = (a, c) => a.reduce((m, v, i) => Math.max(m, Math.abs(v - c[i])), 0);
+
+        let L = setup();
+        await __B.stroke(20, 100, 180, 100);
+        const plain = row(L);
+
+        L = setup(); b.setParam('dualTip', 'canvas');
+        await __B.stroke(20, 100, 180, 100);
+        const grained = row(L);
+
+        out.plainMean = Math.round(mean(plain));
+        out.grainMean = Math.round(mean(grained));
+        out.plainSd = Math.round(sd(plain));
+        out.grainSd = Math.round(sd(grained));
+
+        // Same band, walked the other way.
+        L = setup(); b.setParam('dualTip', 'canvas');
+        await __B.stroke(180, 100, 20, 100);
+        out.dirDiff = maxDiff(grained, row(L));
+
+        // Same band, far fewer dabs.
+        L = setup(); b.setParam('dualTip', 'canvas'); b.setParam('spacing', 25);
+        await __B.stroke(20, 100, 180, 100);
+        out.spacingDiff = maxDiff(grained, row(L));
+
+        /* Out and back over the same band, so the second half covers ground
+         * the first half already grained — and split across two flushes, so
+         * the grain gets a second chance to apply itself to paint that has
+         * already had it. Both runs must land on the same pixels. */
+        const outAndBack = async (pause) => {
+            const L2 = setup(); b.setParam('dualTip', 'canvas');
+            b.beginStroke(20, 100, 0.9, '#ff0000');
+            for (let i = 1; i <= 16; i++) b.moveStroke(20 + i * 10, 100, 0.9, '#ff0000');
+            if (pause) await new Promise(r => setTimeout(r, 140));
+            for (let i = 15; i >= 0; i--) b.moveStroke(20 + i * 10, 100, 0.9, '#ff0000');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 180));
+            return row(L2);
+        };
+        out.chunkDiff = maxDiff(await outAndBack(false), await outAndBack(true));
+
+        // No bite asked for, nothing taken.
+        L = setup(); b.setParam('dualTip', 'canvas'); b.setParam('dualDepth', 0);
+        await __B.stroke(20, 100, 180, 100);
+        out.offDiff = maxDiff(plain, row(L));
+
+        // A coarser surface leaves bigger lumps than a fine one.
+        L = setup(); b.setParam('dualTip', 'canvas'); b.setParam('dualScale', 1);
+        await __B.stroke(20, 100, 180, 100);
+        const fine = row(L);
+        L = setup(); b.setParam('dualTip', 'canvas'); b.setParam('dualScale', 8);
+        await __B.stroke(20, 100, 180, 100);
+        const coarse = row(L);
+        // Mean absolute step between neighbours: fine grain jumps every pixel,
+        // coarse grain holds its value for a run of them.
+        const churn = (a) => { let s = 0;
+            for (let i = 1; i < a.length; i++) s += Math.abs(a[i] - a[i - 1]);
+            return s / (a.length - 1); };
+        out.fineChurn = Math.round(churn(fine));
+        out.coarseChurn = Math.round(churn(coarse));
+
+        b.setParam('dualTip', 'none'); b.setParam('dualDepth', 70);
+        b.setParam('dualScale', 3);
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    console.log('  ' + JSON.stringify(dt));
+
+    check('a plain hard stroke lays down flat, solid paint',
+        dt.plainMean > 250 && dt.plainSd < 3,
+        `mean ${dt.plainMean} sd ${dt.plainSd}`);
+    check('the surface bites paint out of the stroke',
+        dt.grainMean < dt.plainMean - 15,
+        `${dt.grainMean} vs ${dt.plainMean} ungrained`);
+    check('what it leaves is mottled, not evenly thinner',
+        dt.grainSd > 15, `sd only ${dt.grainSd}`);
+    check('the grain does not care which way the stroke was drawn',
+        dt.dirDiff === 0, `${dt.dirDiff} levels apart at the worst pixel`);
+    check('the grain does not care how many dabs crossed it',
+        dt.spacingDiff === 0, `${dt.spacingDiff} levels apart at spacing 25`);
+    check('a stroke flushed in two pieces is grained once, not twice',
+        dt.chunkDiff === 0, `${dt.chunkDiff} levels apart at the worst pixel`);
+    check('bite 0 leaves the stroke exactly as it was',
+        dt.offDiff === 0, `${dt.offDiff} levels of difference`);
+    check('grain size makes the lumps bigger',
+        dt.coarseChurn < dt.fineChurn * 0.6,
+        `churn ${dt.fineChurn} at size 1 vs ${dt.coarseChurn} at size 8`);
+
+    const dsw = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        const fam = b.PRESET_CATEGORIES.filter(g => g.name === 'Surfaces')[0];
+        const blank = [];
+        (fam ? fam.presets : []).forEach(n => {
+            const c = b.generatePreview(n);
+            if (!c) { blank.push(n + ':none'); return; }
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            let ink = 0;
+            for (let i = 3; i < d.length; i += 4) if (d[i] > 24) ink++;
+            if (ink < 200) blank.push(n + ':' + ink);
+        });
+        b.buildBrushGrid();
+        const heads = [...document.querySelectorAll('.pb-brush-group')]
+            .map(h => h.textContent);
+        return JSON.stringify({ blank, heads, fam: fam ? fam.presets.length : 0,
+            count: Object.keys(b.PRESETS).length });
+    })()`));
+    console.log('  ' + JSON.stringify(dsw));
+    check('every surface brush paints a visible swatch',
+        dsw.blank.length === 0, dsw.blank.join(', '));
+    check('surface brushes have their own family',
+        dsw.heads.indexOf('Surfaces') !== -1, dsw.heads.join(', '));
+    check('the library holds 100 brushes', dsw.count === 100, 'count ' + dsw.count);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
