@@ -632,6 +632,99 @@ await withPage(async (page) => {
         `${o7.bristle.masks} tip masks built for one bristle stroke`);
     check('bristles do no per-dab readback either',
         o7.bristle.reads <= 4, `${o7.bristle.reads} getImageData calls`);
+
+    /* ================= brush library ================= */
+    console.log('\n== brush library ==');
+
+    const lib = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        const names = Object.keys(b.PRESETS);
+        const filed = {};
+        let dupes = [];
+        let missing = [];
+        b.PRESET_CATEGORIES.forEach(g => g.presets.forEach(n => {
+            if (filed[n]) dupes.push(n);
+            filed[n] = g.name;
+            if (!b.PRESETS[n]) missing.push(n);
+        }));
+        const unfiled = names.filter(n => !filed[n]);
+        // Every preset must load and leave the engine with usable params.
+        let bad = [];
+        names.forEach(n => {
+            try {
+                b.loadPreset(n);
+                const p = b.getParams();
+                if (!(p.size > 0) || !(p.spacing > 0)) bad.push(n);
+            } catch (e) { bad.push(n + ':' + e.message); }
+        });
+        b.loadPreset('Round');
+        return JSON.stringify({ count: names.length, dupes, missing, unfiled, bad,
+            cats: b.PRESET_CATEGORIES.map(g => g.name) });
+    })()`));
+    console.log('  ' + JSON.stringify(lib));
+    check('the library has a real number of brushes',
+        lib.count >= 60, `only ${lib.count} presets`);
+    check('every filed preset exists', lib.missing.length === 0, lib.missing.join(', '));
+    check('no preset is filed under two families', lib.dupes.length === 0, lib.dupes.join(', '));
+    check('every preset is filed under a family', lib.unfiled.length === 0, lib.unfiled.join(', '));
+    check('every preset loads with usable params', lib.bad.length === 0, lib.bad.join(', '));
+
+    /* Grain is what makes a chalk read as chalk. One shared white-noise tile
+     * meant every textured brush fizzed the same way — and, being built with
+     * Math.random(), differently in every session. */
+    const tex = JSON.parse(await page.eval(`(() => {
+        const app = PaintApp, b = app.brush;
+        const run = (type) => {
+            __B.doc();
+            b.loadPreset('Round');
+            ['sizeSrc','flowSrc','scatterSrc'].forEach(k => b.setParam(k, 'none'));
+            b.setParam('size', 26);
+            b.setParam('spacing', 12);
+            b.setParam('texture', 90);
+            b.setParam('textureScale', 3);
+            b.setParam('textureType', type);
+            b.beginStroke(30, 100, 1, '#000000');
+            for (let x = 30; x <= 170; x += 4) b.moveStroke(x, 100, 1, '#000000');
+            b.endStroke();
+            return __B.hash(__B.layer());
+        };
+        const types = ['grain', 'chalk', 'canvas', 'spray', 'hatch'];
+        const first = types.map(run);
+        const second = types.map(run);
+        try { localStorage.removeItem('pb-saved-Round'); } catch (e) {}
+        return JSON.stringify({ types, first, second });
+    })()`));
+    console.log('  ' + JSON.stringify(tex));
+    check('each texture grain paints something different',
+        new Set(tex.first).size === tex.types.length,
+        'grains collided: ' + tex.first.join(' '));
+    check('a texture grain is reproducible, not reseeded per run',
+        tex.first.join() === tex.second.join(),
+        'same brush, two runs, different pixels');
+
+    const grid = JSON.parse(await page.eval(`(() => {
+        PaintApp.brush.buildBrushGrid();
+        const g = document.getElementById('pb-brush-grid');
+        const heads = [...g.querySelectorAll('.pb-brush-group')].map(e => e.textContent);
+        const tiles = g.querySelectorAll('.pb-brush-tile').length;
+        // A header must be followed by at least one tile, never another header.
+        let empty = [];
+        [...g.children].forEach((el, i, all) => {
+            if (el.classList.contains('pb-brush-group') &&
+                (!all[i + 1] || all[i + 1].classList.contains('pb-brush-group'))) {
+                empty.push(el.textContent);
+            }
+        });
+        return JSON.stringify({ heads, tiles, empty,
+            presets: Object.keys(PaintApp.brush.PRESETS).length });
+    })()`));
+    console.log('  ' + JSON.stringify(grid));
+    check('the grid is grouped by family', grid.heads.length >= 6,
+        `${grid.heads.length} family headers`);
+    check('the grid shows every preset exactly once',
+        grid.tiles === grid.presets, `${grid.tiles} tiles for ${grid.presets} presets`);
+    check('no family header is left with no brushes under it',
+        grid.empty.length === 0, grid.empty.join(', '));
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
