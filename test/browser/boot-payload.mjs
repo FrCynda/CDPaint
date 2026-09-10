@@ -52,10 +52,28 @@ await withPage(async (page) => {
 
     const open = await page.run(PROBE);
     check('opening the panel builds the grid', open.tiles > 0, `${open.tiles} tiles`);
-    check('every tile gets a rendered preview', open.canvases === open.tiles,
+    /* A tile draws itself when it scrolls into view, so opening the panel
+     * must produce swatches — but only for the handful on screen, and only
+     * the tip PNGs those need. Deferring is only correct if the work still
+     * happens when it is actually needed, so both halves are checked. */
+    check('the visible tiles get a rendered preview', open.canvases > 0,
         `${open.canvases} canvases for ${open.tiles} tiles`);
-    check('and the tip images load then', open.count > 0,
-        `${open.count} requests, ${open.kb}kB`);
+    check('...and the ones nobody can see do not', open.canvases < open.tiles / 2,
+        `${open.canvases} of ${open.tiles} drawn on open`);
+    check('opening the panel no longer pulls every tip image',
+        open.kb < 200, `${open.count} requests, ${open.kb}kB`);
+
+    /* Scroll to the bottom: the tiles down there draw, and their tips load. */
+    await page.run(`
+        const g = document.getElementById('pb-brush-grid');
+        g.scrollTop = g.scrollHeight; return 1;`);
+    await new Promise(r => setTimeout(r, 1200));
+    const low = await page.run(PROBE);
+    check('scrolling draws the tiles you scroll to', low.canvases > open.canvases,
+        `${open.canvases} then ${low.canvases}`);
+    check('and their tip images load then', low.count > 0,
+        `${low.count} requests, ${low.kb}kB`);
+    await page.run(`document.getElementById('pb-brush-grid').scrollTop = 0; return 1;`);
 
     /* Re-entering the tool must not rebuild — the observer disconnects on the
      * first hit, so the tile count stays put rather than doubling. */

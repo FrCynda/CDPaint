@@ -395,7 +395,7 @@ await withPage(async (page) => {
             b.endStroke();
         };
         const fresh = () => {
-            try { localStorage.removeItem('pb-saved-Round'); } catch (e) {}
+            PaintApp.brush.forgetSaved('Round');
             b.loadPreset('Round');
             b.setParam('size', 20); b.setParam('spacing', 12);
             b.setParam('scatter', 0); b.setParam('smoothingMode', 'none');
@@ -506,7 +506,7 @@ await withPage(async (page) => {
         __B.doc();
         const out = {};
         const fresh = () => {
-            try { localStorage.removeItem('pb-saved-Round'); } catch (e) {}
+            PaintApp.brush.forgetSaved('Round');
             b.loadPreset('Round');
             b.setParam('size', 20); b.setParam('spacing', 12);
             b.setParam('smoothingMode', 'none');
@@ -709,7 +709,7 @@ await withPage(async (page) => {
         const types = ['grain', 'chalk', 'canvas', 'spray', 'hatch'];
         const first = types.map(run);
         const second = types.map(run);
-        try { localStorage.removeItem('pb-saved-Round'); } catch (e) {}
+        PaintApp.brush.forgetSaved('Round');
         return JSON.stringify({ types, first, second });
     })()`));
     console.log('  ' + JSON.stringify(tex));
@@ -768,7 +768,7 @@ await withPage(async (page) => {
         const out = [meas('Fan Brush', 0), meas('Fan Brush', 90),
                      meas('Dry Brush', 0), meas('Oil Flat', 0)];
         ['Fan Brush', 'Dry Brush', 'Oil Flat'].forEach(n => {
-            try { localStorage.removeItem('pb-saved-' + n); } catch (e) {}
+            PaintApp.brush.forgetSaved(n);
         });
         b.loadPreset('Round');
         return JSON.stringify(out);
@@ -814,7 +814,7 @@ await withPage(async (page) => {
         ['Fan Brush', 'Dry Brush', 'Oil Round', 'Oil Flat', 'Impasto',
          'Acrylic Dry', 'Bristle Blender'].forEach(n => {
             out[n] = { h: across(n, false), v: across(n, true) };
-            try { localStorage.removeItem('pb-saved-' + n); } catch (e) {}
+            PaintApp.brush.forgetSaved(n);
         });
         b.loadPreset('Round');
         return JSON.stringify(out);
@@ -836,7 +836,7 @@ await withPage(async (page) => {
             b.userPresetNames().forEach(n => b.deleteUserPreset(n));
             Object.keys(b.PRESETS).forEach(n => {
                 if (b.isFavourite(n)) b.toggleFavourite(n);
-                try { localStorage.removeItem('pb-saved-' + n); } catch (e) {}
+                PaintApp.brush.forgetSaved(n);
             });
             b.loadPreset('Round');
         };
@@ -1051,33 +1051,58 @@ await withPage(async (page) => {
     /* Both of a favourite's tiles need their own swatch node. The cache
      * handed the same canvas to each, and appending a node twice moves it,
      * so the first tile went blank. */
-    const twin = JSON.parse(await page.eval(`(() => {
+    /* Tiles draw themselves when they scroll into view, so this waits for
+     * the observer rather than reading straight after the build. */
+    const twin = JSON.parse(await page.eval(`(async () => {
         const b = PaintApp.brush;
+        const sb = document.getElementById('paintbrush-sidebar');
+        if (sb) { sb.style.display = 'block'; sb.classList.remove('collapsed'); }
         if (!b.isFavourite('Charcoal')) b.toggleFavourite('Charcoal');
         b.buildBrushGrid();
         const grid = document.getElementById('pb-brush-grid');
         const mine = [...grid.querySelectorAll('.pb-brush-tile')]
             .filter(t => t.getAttribute('data-preset') === 'Charcoal');
-        const inked = mine.map(t => {
+        const settle = () => new Promise(r => setTimeout(r, 120));
+        const ink = (t) => {
             const c = t.querySelector('canvas');
             if (!c) return 0;
             const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
             let n = 0;
             for (let i = 3; i < d.length; i += 4) if (d[i] > 8) n++;
             return n;
-        });
+        };
+        await settle();
+        const drawnAtRest = [...grid.querySelectorAll('.pb-brush-tile')]
+            .filter(t => t.querySelector('canvas')).length;
+        const total = grid.querySelectorAll('.pb-brush-tile').length;
+        // Scroll each of Charcoal's two tiles into view and let it draw.
+        const inked = [];
+        for (const t of mine) {
+            grid.scrollTop = t.offsetTop - grid.offsetTop - 20;
+            await settle();
+            inked.push(ink(t));
+        }
+        // Walk the whole list; nothing may stay blank once it has been seen.
+        for (let y = 0; y <= grid.scrollHeight; y += 150) {
+            grid.scrollTop = y;
+            await settle();
+        }
         const blank = [...grid.querySelectorAll('.pb-brush-tile')]
             .filter(t => !t.querySelector('canvas'))
             .map(t => t.getAttribute('data-preset'));
+        grid.scrollTop = 0;
         b.toggleFavourite('Charcoal');
         b.buildBrushGrid();
-        return JSON.stringify({ tiles: mine.length, inked, blank });
+        return JSON.stringify({ tiles: mine.length, inked, blank, drawnAtRest, total });
     })()`));
     console.log('  ' + JSON.stringify(twin));
     check('both tiles of a favourite draw their own swatch',
         twin.tiles === 2 && twin.inked.length === 2 && twin.inked.every(n => n > 50),
         `painted pixels per tile: ${twin.inked.join(', ')}`);
-    check('no tile in the grid is left without a swatch',
+    check('opening the panel only draws the tiles you can see',
+        twin.drawnAtRest > 0 && twin.drawnAtRest < twin.total / 2,
+        `${twin.drawnAtRest} of ${twin.total} drawn before scrolling`);
+    check('every tile draws its swatch once it has been scrolled to',
         twin.blank.length === 0, twin.blank.join(', '));
 
     /* ================= blend modes and erasers ================= */
@@ -1189,7 +1214,7 @@ await withPage(async (page) => {
 
         b.loadPreset('Round');
         ['Round', 'Eraser Hard'].forEach(n => {
-            try { localStorage.removeItem('pb-saved-' + n); } catch (e) {}
+            PaintApp.brush.forgetSaved(n);
         });
         return JSON.stringify(out);
     })()`));
@@ -1359,7 +1384,7 @@ await withPage(async (page) => {
         out.overNothing = __B.px(__B.layer(), 100, 40);
 
         b.loadPreset('Round');
-        try { localStorage.removeItem('pb-saved-Round'); } catch (e) {}
+        PaintApp.brush.forgetSaved('Round');
         return JSON.stringify(out);
     })()`));
     console.log('  ' + JSON.stringify(wet));
@@ -1688,6 +1713,96 @@ await withPage(async (page) => {
     check('measured by stroke length, the tip size stops mattering',
         Math.abs(tp.pctBig.wRamp[0] - tp.pctSml.wRamp[0]) <= 8,
         `${tp.pctBig.wRamp[0]} at size 16 vs ${tp.pctSml.wRamp[0]} at size 8`);
+
+    /* ── panel cost ───────────────────────────────────────────────────── */
+    console.log('== what the panel costs to use ==');
+    const pf = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, out = {};
+        const sb = document.getElementById('paintbrush-sidebar');
+        if (sb) { sb.style.display = 'block'; sb.classList.remove('collapsed'); }
+        b.loadPreset('Round');
+
+        const t0 = performance.now();
+        b.buildBrushGrid();
+        out.buildMs = +(performance.now() - t0).toFixed(1);
+
+        const grid = document.getElementById('pb-brush-grid');
+        const tile = grid.querySelector('.pb-brush-tile[data-preset="Round"]');
+        grid.scrollTop = tile.offsetTop - grid.offsetTop - 20;
+        await new Promise(r => setTimeout(r, 250));
+
+        /* A slider drag is one event per pointer move. Each used to redraw
+         * the swatch — a whole brush stroke — and write the brush to disk. */
+        let redraws = 0, writes = 0;
+        const mo = new MutationObserver(ms => {
+            for (const m of ms) if (m.addedNodes.length) redraws++;
+        });
+        mo.observe(tile, { childList: true });
+        const realSet = localStorage.setItem.bind(localStorage);
+        localStorage.setItem = function (k, v) {
+            if (String(k).indexOf('pb-saved-') === 0) writes++;
+            return realSet(k, v);
+        };
+        const el = document.getElementById('pb-hardness');
+        const t1 = performance.now();
+        for (let i = 0; i < 60; i++) {
+            el.value = String(20 + (i % 60));
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            await new Promise(r => requestAnimationFrame(r));
+        }
+        out.dragMs = +(performance.now() - t1).toFixed(0);
+        await new Promise(r => setTimeout(r, 700));
+        mo.disconnect();
+        localStorage.setItem = realSet;
+        out.events = 60;
+        out.redraws = redraws;
+        out.writes = writes;
+        out.settled = Number(el.value);
+        out.paramAfter = b.getParams().hardness;
+
+        // ...and the value that survives is the one the slider stopped on.
+        b.forgetSaved('Round');
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    console.log('  ' + JSON.stringify(pf));
+
+    check('building the grid does not render a hundred swatches',
+        pf.buildMs < 120, `${pf.buildMs}ms to build`);
+    check('a slider drag does not redraw the swatch on every event',
+        pf.redraws > 0 && pf.redraws < pf.events / 3,
+        `${pf.redraws} redraws for ${pf.events} events`);
+    check('a slider drag does not write to disk on every event',
+        pf.writes > 0 && pf.writes < pf.events / 3,
+        `${pf.writes} writes for ${pf.events} events`);
+    check('the brush still ends up on the value the slider stopped at',
+        pf.paramAfter === pf.settled, `${pf.paramAfter} vs slider ${pf.settled}`);
+
+    const pf2 = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        /* Saved tweaks live in a write queue before they reach the store, so
+         * clearing the store by hand is not enough to forget them. */
+        b.loadPreset('Round');
+        b.setParam('hardness', 33);
+        const straightAfter = JSON.parse(localStorage.getItem('pb-saved-Round') || '{}').hardness;
+        b.loadPreset('Ink');
+        b.loadPreset('Round');
+        const kept = b.getParams().hardness;
+        b.forgetSaved('Round');
+        b.loadPreset('Round');
+        const forgotten = b.getParams().hardness;
+        return JSON.stringify({ straightAfter, kept, forgotten,
+            dflt: b.PRESETS.Round.hardness });
+    })()`));
+    console.log('  ' + JSON.stringify(pf2));
+    check('a tweak survives a trip to another brush and back',
+        pf2.kept === 33, `came back as ${pf2.kept}`);
+    check('...even though it has not reached the store yet',
+        pf2.straightAfter !== 33,
+        `it was written immediately (${pf2.straightAfter}), so nothing was batched`);
+    check('forgetting a brush drops the queued write too',
+        pf2.forgotten === pf2.dflt,
+        `${pf2.forgotten}, expected the preset default ${pf2.dflt}`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
