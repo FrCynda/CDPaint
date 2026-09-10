@@ -1554,15 +1554,15 @@
         'Copic Soft': { size: 22, opacity: 45, flow: 60, spacing: 5, hardness: 55, shape: 'circle', sizeSrc: 'none', flowMin: 60 },
 
         /* ---- Paint ------------------------------------------------------- */
-        'Oil Round': { size: 20, opacity: 100, flow: 90, spacing: 8, hardness: 55, shape: 'circle', bristleCount: 9, bristleSpread: 55, texture: 25, textureScale: 3, textureType: 'canvas', sizeMin: 55 },
+        'Oil Round': { size: 20, opacity: 100, flow: 90, spacing: 8, hardness: 55, shape: 'circle', bristleCount: 9, bristleSpread: 55, texture: 25, textureScale: 3, textureType: 'canvas', sizeMin: 55 , angleSrc: 'direction' },
         'Oil Flat': { size: 26, opacity: 100, flow: 85, spacing: 7, hardness: 60, shape: 'circle', aspectRatio: 3, angleSrc: 'direction', bristleCount: 11, bristleSpread: 100, texture: 30, textureScale: 3, textureType: 'canvas' },
-        'Impasto': { size: 30, opacity: 100, flow: 100, spacing: 9, hardness: 70, shape: 'circle', bristleCount: 14, bristleSpread: 95, texture: 45, textureScale: 4, textureType: 'canvas', sizeMin: 60, taperStart: 5 },
+        'Impasto': { size: 30, opacity: 100, flow: 100, spacing: 9, hardness: 70, shape: 'circle', bristleCount: 14, bristleSpread: 95, texture: 45, textureScale: 4, textureType: 'canvas', sizeMin: 60, taperStart: 5 , angleSrc: 'direction' },
         'Acrylic Flat': { size: 24, opacity: 100, flow: 100, spacing: 6, hardness: 85, shape: 'square', aspectRatio: 3.5, angleSrc: 'direction', sizeMin: 75 },
-        'Acrylic Dry': { size: 22, opacity: 95, flow: 80, spacing: 12, hardness: 65, shape: 'circle', bristleCount: 10, bristleSpread: 110, bristleWidth: 3, texture: 70, textureScale: 2, textureType: 'canvas', hardnessSrc: 'pressure', hardnessMin: 40 },
+        'Acrylic Dry': { size: 22, opacity: 95, flow: 80, spacing: 12, hardness: 65, shape: 'circle', bristleCount: 10, bristleSpread: 110, bristleWidth: 3, texture: 70, textureScale: 2, textureType: 'canvas', hardnessSrc: 'pressure', hardnessMin: 40 , angleSrc: 'direction' },
         'Palette Knife': { size: 34, opacity: 100, flow: 100, spacing: 4, hardness: 100, shape: 'square', aspectRatio: 5, angleSrc: 'direction', sizeSrc: 'none', flowMin: 70 },
-        'Fan Brush': { size: 26, opacity: 90, flow: 80, spacing: 10, hardness: 50, shape: 'circle', bristleCount: 13, bristleSpread: 120, bristleWidth: 3, taperStart: 8, taperEnd: 8 },
-        'Dry Brush': { size: 20, opacity: 80, flow: 80, spacing: 12, hardness: 60, shape: 'circle', bristleCount: 8, bristleSpread: 90, bristleWidth: 3, texture: 60, textureScale: 2, taperStart: 6, taperEnd: 6 },
-        'Bristle Blender': { size: 28, opacity: 40, flow: 25, spacing: 8, hardness: 25, shape: 'circle', bristleCount: 16, bristleSpread: 130, flowMin: 10 },
+        'Fan Brush': { size: 26, opacity: 90, flow: 80, spacing: 10, hardness: 50, shape: 'circle', bristleCount: 13, bristleSpread: 120, bristleWidth: 3, taperStart: 8, taperEnd: 8 , angleSrc: 'direction' },
+        'Dry Brush': { size: 20, opacity: 80, flow: 80, spacing: 12, hardness: 60, shape: 'circle', bristleCount: 8, bristleSpread: 90, bristleWidth: 3, texture: 60, textureScale: 2, taperStart: 6, taperEnd: 6 , angleSrc: 'direction' },
+        'Bristle Blender': { size: 28, opacity: 40, flow: 25, spacing: 8, hardness: 25, shape: 'circle', bristleCount: 16, bristleSpread: 130, flowMin: 10 , angleSrc: 'direction' },
         'Impressionist': { size: 30, opacity: 95, flow: 100, spacing: 22, hardness: 80, shape: 'custom', _tipUrl: 'brushes/impressionism_brush.png', scatter: 5, angleSrc: 'direction' },
 
         /* ---- Watercolour ------------------------------------------------- */

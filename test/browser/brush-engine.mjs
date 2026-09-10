@@ -764,6 +764,50 @@ await withPage(async (page) => {
             Math.abs((100 - f.lo) - (f.hi - 100)) <= 3,
             `${100 - f.lo}px above the line, ${f.hi - 100}px below`);
     });
+
+    /* A bristle head has a front. With no sensor on angle it stays pinned
+     * pointing east, so dragging downwards drags the fan sideways and a
+     * 38px-wide brush paints a 9px line. Every bristle preset must track
+     * the stroke. */
+    const dir = JSON.parse(await page.eval(`(() => {
+        const app = PaintApp, b = app.brush;
+        const across = (preset, vert) => {
+            __B.doc();
+            b.loadPreset(preset);
+            const at = (t) => vert ? [100, 40 + t] : [40 + t, 100];
+            const s0 = at(0);
+            b.beginStroke(s0[0], s0[1], 1, '#000000');
+            for (let t = 0; t <= 120; t += 3) {
+                const q = at(t);
+                b.moveStroke(q[0], q[1], 1, '#000000');
+            }
+            b.endStroke();
+            const d = __B.layer().ctx.getImageData(0, 0, 200, 200).data;
+            let x0 = 999, x1 = -1, y0 = 999, y1 = -1;
+            for (let y = 0; y < 200; y++) for (let x = 0; x < 200; x++) {
+                if (d[(y * 200 + x) * 4 + 3] > 20) {
+                    if (x < x0) x0 = x; if (x > x1) x1 = x;
+                    if (y < y0) y0 = y; if (y > y1) y1 = y;
+                }
+            }
+            return vert ? x1 - x0 : y1 - y0;   // width ACROSS the path
+        };
+        const out = {};
+        ['Fan Brush', 'Dry Brush', 'Oil Round', 'Oil Flat', 'Impasto',
+         'Acrylic Dry', 'Bristle Blender'].forEach(n => {
+            out[n] = { h: across(n, false), v: across(n, true) };
+            try { localStorage.removeItem('pb-saved-' + n); } catch (e) {}
+        });
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    console.log('  ' + JSON.stringify(dir));
+    Object.keys(dir).forEach(n => {
+        const d = dir[n];
+        check(`${n} turns with the stroke`,
+            d.h > 0 && Math.abs(d.h - d.v) <= Math.max(3, d.h * 0.15),
+            `${d.h}px wide drawn across, ${d.v}px drawn down`);
+    });
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
