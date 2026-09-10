@@ -480,6 +480,98 @@ await withPage(async (page) => {
     check('the old Dynamics dropdown still works as a shortcut', d.shimSetsSizeSrc);
     check('switching that shortcut off restores the defaults', d.shimRestores);
 
+    /* -- response curves ------------------------------------------------ */
+    console.log('');
+    console.log('== response curves ==');
+    const cur = await page.eval(`(() => {
+        const app = PaintApp, b = app.brush;
+        __B.doc();
+        const out = {};
+        const fresh = () => {
+            try { localStorage.removeItem('pb-saved-Round'); } catch (e) {}
+            b.loadPreset('Round');
+            b.setParam('size', 20); b.setParam('spacing', 12);
+            b.setParam('smoothingMode', 'none');
+        };
+        const strokePx = (pressure) => {
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(20, 100, pressure, '#000000');
+            for (let i = 1; i <= 30; i++) b.moveStroke(20 + i * 5, 100, pressure, '#000000');
+            b.endStroke();
+            const d = __B.layer().ctx.getImageData(0, 0, 200, 200).data;
+            let n = 0;
+            for (let k = 3; k < d.length; k += 4) if (d[k] > 0) n++;
+            return n;
+        };
+
+        // linear by default
+        fresh();
+        out.defaultLinear = [0, 0.25, 0.5, 0.75, 1]
+            .every(v => Math.abs(b.evalCurve('size', v) - v) < 1e-6);
+
+        // a curve is applied exactly as drawn
+        fresh();
+        b.setCurve('size', [[0, 0], [0.5, 0.9], [1, 1]]);
+        out.at25  = +b.evalCurve('size', 0.25).toFixed(3);   // halfway to 0.9
+        out.at50  = +b.evalCurve('size', 0.5).toFixed(3);
+        out.at75  = +b.evalCurve('size', 0.75).toFixed(3);   // 0.9 -> 1.0
+        out.piecewiseLinear = Math.abs(out.at25 - 0.45) < 1e-3
+                           && Math.abs(out.at50 - 0.9) < 1e-3
+                           && Math.abs(out.at75 - 0.95) < 1e-3;
+
+        // and it actually changes what gets painted
+        fresh();
+        b.setParam('sizeSrc', 'pressure'); b.setParam('sizeMin', 0);
+        const plain = strokePx(0.25);
+        b.setCurve('size', [[0, 0], [0.5, 0.95], [1, 1]]);
+        const curved = strokePx(0.25);
+        out.curveChangesPaint = curved > plain * 1.3;
+
+        // points come back sorted, clamped and capped
+        fresh();
+        b.setCurve('size', [[1, 1], [0.5, 2], [0, -1], [0.2, 0.3]]);
+        const got = b.getCurve('size');
+        out.sorted  = got.every((pt, i) => i === 0 || pt[0] >= got[i - 1][0]);
+        out.clamped = got.every(pt => pt[0] >= 0 && pt[0] <= 1 && pt[1] >= 0 && pt[1] <= 1);
+        fresh();
+        b.setCurve('size', Array.from({ length: 20 }, (_, i) => [i / 19, i / 19]));
+        out.capped = b.getCurve('size').length <= 8;
+
+        // clearing goes back to linear
+        fresh();
+        b.setCurve('size', [[0, 0], [0.5, 0.9], [1, 1]]);
+        b.setCurve('size', null);
+        out.clearedLinear = Math.abs(b.evalCurve('size', 0.5) - 0.5) < 1e-6;
+
+        // editing one brush's curve must not rewrite another's
+        fresh();
+        b.setCurve('size', [[0, 0], [0.5, 0.95], [1, 1]]);
+        b.loadPreset('Ink');
+        out.otherPresetUntouched = Math.abs(b.evalCurve('size', 0.5) - 0.5) < 1e-6;
+        b.loadPreset('Round');
+        out.ownCurveKept = Math.abs(b.evalCurve('size', 0.5) - 0.95) < 1e-3;
+
+        // the widget plots evalCurve, so what is drawn is what is applied
+        const cv = document.getElementById('pb-size-curve');
+        out.widgetExists = !!cv;
+        return JSON.stringify(out);
+    })()`);
+    const c = JSON.parse(cur);
+    console.log('  ' + cur);
+
+    check('an untouched parameter responds linearly', c.defaultLinear);
+    check('a curve is applied exactly as drawn', c.piecewiseLinear,
+        `0.25→${c.at25}, 0.5→${c.at50}, 0.75→${c.at75}`);
+    check('a curve changes what actually gets painted', c.curveChangesPaint);
+    check('curve points are sorted by input', c.sorted);
+    check('curve points are clamped into range', c.clamped);
+    check('curve points are capped at 8', c.capped);
+    check('clearing a curve returns it to linear', c.clearedLinear);
+    check('editing one brush curve does not rewrite another brush',
+        c.otherPresetUntouched, 'the curve leaked across presets');
+    check('a brush keeps its own curve', c.ownCurveKept);
+    check('the curve widget is in the panel', c.widgetExists);
+
     console.log('\n== hot-path guards ==');
     const r7 = await page.eval(`(async () => {
         const app = PaintApp;
