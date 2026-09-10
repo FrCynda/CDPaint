@@ -1295,6 +1295,146 @@ await withPage(async (page) => {
         JSON.stringify(nf));
     check('rename is off for a built-in and on for your own',
         nf.renameOff === true && nf.renameOn === false);
+
+    /* ================= wet smudge ================= */
+    console.log('\n== wet smudge ==');
+
+    /* The test surface: a red half and a blue half, side by side. Drag a
+     * smudge brush from red into blue and red pigment must show up inside
+     * the blue — that is what "carries" means, and the old smudge could not
+     * do it at all. */
+    const wet = JSON.parse(await page.eval(`(() => {
+        const app = PaintApp, b = app.brush;
+        const halves = () => {
+            __B.doc();
+            const L = __B.layer();
+            L.ctx.fillStyle = '#ff0000'; L.ctx.fillRect(0, 0, 100, 200);
+            L.ctx.fillStyle = '#0000ff'; L.ctx.fillRect(100, 0, 100, 200);
+            return L;
+        };
+        const drag = (carry, rate) => {
+            const L = halves();
+            b.loadPreset('Round');
+            ['sizeSrc', 'flowSrc'].forEach(k => b.setParam(k, 'none'));
+            b.setParam('size', 16);
+            b.setParam('spacing', 4);
+            b.setParam('hardness', 90);
+            b.setParam('colorRate', rate);
+            b.setParam('smudgeLength', carry);
+            b.beginStroke(60, 100, 1, '#00ff00');   // green must not appear
+            for (let x = 60; x <= 175; x += 3) b.moveStroke(x, 100, 1, '#00ff00');
+            b.endStroke();
+            const at = (x) => __B.px(L, x, 100).split(',').map(Number);
+            return { in10: at(110), in25: at(125), in50: at(150), in70: at(170) };
+        };
+        const out = { carried: drag(85, 0), fresh: drag(0, 0), painted: drag(85, 100) };
+
+        /* Spacing is a texture setting. It must not quietly decide how far
+         * pigment travels, which it did while the load decayed per dab. */
+        const spaced = (sp) => {
+            const L = halves();
+            b.loadPreset('Round');
+            ['sizeSrc', 'flowSrc'].forEach(k => b.setParam(k, 'none'));
+            b.setParam('size', 16); b.setParam('hardness', 90);
+            b.setParam('colorRate', 0); b.setParam('smudgeLength', 85);
+            b.setParam('spacing', sp);
+            b.beginStroke(60, 100, 1, '#00ff00');
+            for (let x = 60; x <= 175; x += 3) b.moveStroke(x, 100, 1, '#00ff00');
+            b.endStroke();
+            return __B.px(L, 140, 100).split(',').map(Number)[0];
+        };
+        out.tight = spaced(3);
+        out.loose = spaced(25);
+
+        // Smudging over empty canvas must not smear black out of nothing.
+        __B.doc();
+        b.loadPreset('Round');
+        ['sizeSrc', 'flowSrc'].forEach(k => b.setParam(k, 'none'));
+        b.setParam('size', 16);
+        b.setParam('colorRate', 0);
+        b.setParam('smudgeLength', 85);
+        b.beginStroke(30, 40, 1, '#00ff00');
+        for (let x = 30; x <= 170; x += 3) b.moveStroke(x, 40, 1, '#00ff00');
+        b.endStroke();
+        out.overNothing = __B.px(__B.layer(), 100, 40);
+
+        b.loadPreset('Round');
+        try { localStorage.removeItem('pb-saved-Round'); } catch (e) {}
+        return JSON.stringify(out);
+    })()`));
+    console.log('  ' + JSON.stringify(wet));
+
+    const red = (p) => p[0], blue = (p) => p[2], green = (p) => p[1];
+    check('pigment is carried across into the new colour',
+        red(wet.carried.in10) > 120,
+        `10px into the blue the red is only ${red(wet.carried.in10)}`);
+    check('the carried pigment fades along the stroke',
+        red(wet.carried.in10) > red(wet.carried.in50) &&
+        red(wet.carried.in50) > red(wet.carried.in70),
+        `red ran ${wet.carried.in10[0]} -> ${wet.carried.in50[0]} -> ${wet.carried.in70[0]}`);
+    check('it eventually lets go and becomes the new colour',
+        blue(wet.carried.in70) > 150 &&
+        red(wet.carried.in70) < red(wet.carried.in10) * 0.4,
+        `70px in it is still ${wet.carried.in70.join(',')}`);
+    check('carry 0 is the old behaviour: nothing travels',
+        red(wet.fresh.in10) < 30,
+        `red ${red(wet.fresh.in10)} where nothing should have been carried`);
+    check('a smudge brush paints no colour of its own',
+        green(wet.carried.in25) < 40,
+        `the brush colour bled through: ${wet.carried.in25.join(',')}`);
+    check('mix at 100 goes back to plain painting',
+        green(wet.painted.in25) > 200 && red(wet.painted.in25) < 40,
+        wet.painted.in25.join(','));
+    check('smudging over empty canvas smears nothing',
+        wet.overNothing === CLEAR, `left ${wet.overNothing}`);
+    check('spacing does not change how far pigment carries',
+        Math.abs(wet.tight - wet.loose) <= 30,
+        `red ${wet.tight} at spacing 3 vs ${wet.loose} at spacing 25`);
+
+    const wp = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.buildBrushGrid();
+        const heads = [...document.querySelectorAll('.pb-brush-group')].map(h => h.textContent);
+        const unfiled = Object.keys(b.PRESETS).filter(n => {
+            for (const g of b.PRESET_CATEGORIES) if (g.presets.indexOf(n) !== -1) return false;
+            return !b.isUserPreset(n);
+        });
+        const slider = document.getElementById('pb-smudgeLength');
+        b.loadPreset('Smudge');
+        b.syncPanel();
+        const shown = slider ? slider.value : null;
+        b.loadPreset('Round');
+        b.syncPanel();
+        return JSON.stringify({ heads, unfiled, shown,
+            count: Object.keys(b.PRESETS).length });
+    })()`));
+    console.log('  ' + JSON.stringify(wp));
+    check('smudge brushes have their own family',
+        wp.heads.indexOf('Smudge') !== -1, wp.heads.join(', '));
+    check('every preset is still filed', wp.unfiled.length === 0, wp.unfiled.join(', '));
+    check('the carry slider follows the loaded brush',
+        Number(wp.shown) === 82, `slider read ${wp.shown}`);
+
+    const fs2 = JSON.parse(await page.eval(`(() => {
+        const box = document.getElementById('pb-search');
+        const shown = () => [...document.querySelectorAll('.pb-brush-tile')]
+            .filter(t => !t.hidden).map(t => t.getAttribute('data-preset'));
+        const run = (q) => { box.value = q;
+            box.dispatchEvent(new Event('input', { bubbles: true })); return shown(); };
+        const byFamily = run('smudge');
+        const byName = run('blender');
+        run('');
+        return JSON.stringify({ byFamily, byName });
+    })()`));
+    console.log('  ' + JSON.stringify(fs2));
+    check('searching a family name finds the whole family',
+        fs2.byFamily.indexOf('Wet Blender') !== -1 &&
+        fs2.byFamily.indexOf('Oil Mixer') !== -1,
+        fs2.byFamily.join(', '));
+    check('searching a brush name still works',
+        fs2.byName.indexOf('Wet Blender') !== -1 &&
+        fs2.byName.indexOf('Bristle Blender') !== -1,
+        fs2.byName.join(', '));
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
