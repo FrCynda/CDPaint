@@ -1630,9 +1630,27 @@
         { name: 'Effects',  presets: ['Round', 'Splatter', 'Splat Dots', 'Splats Large', 'Debris', 'Foliage', 'Stipple', 'Confetti', 'Scribbles'] }
     ];
 
-    /* Grid order follows the families; anything not filed lands in "Other". */
+    /* Grid order follows the families; anything not filed lands in "Other".
+     *
+     * Favourites and saved brushes come first and are the reason a preset can
+     * appear twice: a favourite is a shortcut TO a brush, not a move, so it is
+     * listed in both places and `seen` is only closed after the families. */
     function _groupedPresets() {
         var seen = {}, out = [], i, j, g, list, n;
+
+        list = [];
+        for (i = 0; i < engine.presetNames.length; i++) {
+            n = engine.presetNames[i];
+            if (engine.isFavourite(n)) list.push(n);
+        }
+        if (list.length) out.push({ name: 'Favourites', presets: list });
+
+        list = engine.userPresetNames().filter(function (u) { return !!engine.PRESETS[u]; });
+        if (list.length) {
+            out.push({ name: 'My Brushes', presets: list });
+            for (i = 0; i < list.length; i++) seen[list[i]] = 1;
+        }
+
         for (i = 0; i < engine.PRESET_CATEGORIES.length; i++) {
             g = engine.PRESET_CATEGORIES[i];
             list = [];
@@ -1651,11 +1669,13 @@
     }
 
     engine.presetNames = [];
-    for (var name in engine.PRESETS) {
-        if (engine.PRESETS.hasOwnProperty(name)) {
-            engine.presetNames.push(name);
+    function _rebuildNames() {
+        engine.presetNames.length = 0;
+        for (var n_ in engine.PRESETS) {
+            if (engine.PRESETS.hasOwnProperty(n_)) engine.presetNames.push(n_);
         }
     }
+    _rebuildNames();
 
     engine._currentPreset = 'Round';
 
@@ -2200,6 +2220,20 @@
      * the sliders edit — so that is the only entry ever invalidated. */
     var _swatchCache = {};
 
+    /* Every caller gets its own node. A favourited brush has a tile under
+     * Favourites and another under its family, and appending one canvas
+     * twice moves it rather than copying it — the first tile went blank.
+     * cloneNode is no use here: it copies the element, not the pixels. */
+    function _copySwatch(src) {
+        var c = document.createElement('canvas');
+        c.width = src.width;
+        c.height = src.height;
+        c.className = src.className;
+        c.style.cssText = src.style.cssText;
+        c.getContext('2d').drawImage(src, 0, 0);
+        return c;
+    }
+
     function _invalidateSwatch(name) {
         if (name) delete _swatchCache[name];
         else _swatchCache = {};
@@ -2210,7 +2244,7 @@
         if (!preset) return null;
         // Never interrupt a stroke in progress to draw a thumbnail.
         if (_state.isDrawing) return null;
-        if (_swatchCache[name]) return _swatchCache[name];
+        if (_swatchCache[name]) return _copySwatch(_swatchCache[name]);
 
         var W = SWATCH_W * SWATCH_SS;
         var H = SWATCH_H * SWATCH_SS;
@@ -2302,7 +2336,7 @@
         }
 
         _swatchCache[name] = canvas;
-        return canvas;
+        return _copySwatch(canvas);
     }
 
     /* Redraw the active preset's tile after an edit. Sliders fire this on
@@ -2698,9 +2732,266 @@
 
         // Load last-saved params for the active preset so customizations persist.
         _initCurves();
+        _loadUserPresets();
+        _bindLibraryBar();
+        var nameIn0 = document.getElementById('pb-preset-name');
+        if (nameIn0) nameIn0.value = engine._currentPreset;
         engine.loadPreset(engine._currentPreset);
         engine.syncPanel();
         _updateBrushCursor();
+    };
+
+
+    /* ------------------------------------------------------------------ */
+    /*  Saved brushes                                                      */
+    /* ------------------------------------------------------------------ */
+
+    /* Built-ins live in code and are never written to. A saved brush is a
+     * FULL snapshot of the live parameters, not a diff against the brush it
+     * came from: a diff silently changes under the user whenever a built-in
+     * is retuned, which is exactly what happened to all nine bristle presets
+     * when bristleSpread changed meaning.
+     *
+     * Saved brushes are merged into engine.PRESETS on load, so loadPreset,
+     * the swatch renderer and the grid need to know nothing about them. */
+    var USER_KEY = 'pb-user-presets';
+    var FAV_KEY  = 'pb-favs';
+    var NAME_MAX = 40;
+    /* localStorage is about 5MB for the whole app. A tip carried as a data:
+     * URL can eat that on its own, so it is capped and refused loudly rather
+     * than blowing the quota and taking the user's other brushes with it. */
+    var TIP_CAP = 262144;
+
+    function _readStore(key, dflt) {
+        try {
+            var raw = localStorage.getItem(key);
+            var v = raw ? JSON.parse(raw) : null;
+            return (v && typeof v === 'object') ? v : dflt;
+        } catch (e_) { return dflt; }
+    }
+    function _writeStore(key, val) {
+        try { localStorage.setItem(key, JSON.stringify(val)); return true; }
+        catch (e_) { return false; }
+    }
+
+    var _userPresets = {};
+    var _favs = {};
+
+    function _isUserPreset(name) {
+        return !!(engine.PRESETS[name] && engine.PRESETS[name]._user);
+    }
+
+    /* Names arrive from a text field. They become storage keys and DOM text,
+     * so they are cleaned here and rendered with textContent everywhere —
+     * never innerHTML. */
+    function _cleanName(raw) {
+        var n = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
+        if (!n) return null;
+        return n.length > NAME_MAX ? n.slice(0, NAME_MAX) : n;
+    }
+
+    function _snapshotParams() {
+        var snap = {};
+        for (var i = 0; i < _paramMeta.length; i++) {
+            var k = _paramMeta[i];
+            snap[k] = _isArray(_params[k]) ? _cloneCurve(_params[k]) : _params[k];
+        }
+        return snap;
+    }
+
+    function _installUserPreset(name, rec) {
+        var pr = {};
+        for (var k in rec) {
+            if (rec.hasOwnProperty(k)) pr[k] = _isArray(rec[k]) ? _cloneCurve(rec[k]) : rec[k];
+        }
+        pr._user = true;
+        engine.PRESETS[name] = pr;
+    }
+
+    function _loadUserPresets() {
+        _userPresets = _readStore(USER_KEY, {});
+        _favs = _readStore(FAV_KEY, {});
+        for (var n in _userPresets) {
+            if (!_userPresets.hasOwnProperty(n)) continue;
+            // A built-in of the same name always wins: a saved brush must
+            // never be able to shadow one and make it unreachable.
+            if (engine.PRESETS[n] && !engine.PRESETS[n]._user) { delete _userPresets[n]; continue; }
+            _installUserPreset(n, _userPresets[n]);
+        }
+        _rebuildNames();
+    }
+
+    function _commitUsers() {
+        if (_writeStore(USER_KEY, _userPresets)) return null;
+        return 'Out of browser storage. Delete a saved brush and try again.';
+    }
+
+    engine.isUserPreset = _isUserPreset;
+    engine.userPresetNames = function () { return Object.keys(_userPresets); };
+
+    engine.saveUserPreset = function (rawName) {
+        var name = _cleanName(rawName);
+        if (!name) return { ok: false, error: 'Give the brush a name.' };
+        if (engine.PRESETS[name] && !_isUserPreset(name)) {
+            return { ok: false, error: '"' + name + '" is a built-in brush. Pick another name.' };
+        }
+        var snap = _snapshotParams();
+        var src = engine.PRESETS[engine._currentPreset];
+        var tip = src && src._tipUrl;
+        if (tip) {
+            if (tip.length > TIP_CAP) {
+                return { ok: false, error: 'That brush tip is too big to save (' +
+                    _round(tip.length / 1024) + 'KB, limit ' + _round(TIP_CAP / 1024) + 'KB).' };
+            }
+            snap._tipUrl = tip;
+        }
+        var had = _userPresets[name];
+        _userPresets[name] = snap;
+        var err = _commitUsers();
+        if (err) {
+            if (had) _userPresets[name] = had; else delete _userPresets[name];
+            return { ok: false, error: err };
+        }
+        _installUserPreset(name, snap);
+        _rebuildNames();
+        _invalidateSwatch(name);
+        engine.loadPreset(name);
+        return { ok: true, name: name, replaced: !!had };
+    };
+
+    engine.duplicatePreset = function (from, rawName) {
+        var src = engine.PRESETS[from];
+        if (!src) return { ok: false, error: 'No brush called "' + from + '".' };
+        var name = _cleanName(rawName) || _uniqueName(from + ' copy');
+        if (engine.PRESETS[name] && !_isUserPreset(name)) {
+            return { ok: false, error: '"' + name + '" is a built-in brush. Pick another name.' };
+        }
+        // Snapshot the brush AS IT PAINTS — its own saved tweaks included,
+        // which is what the user sees on the tile and expects to copy.
+        var keep = engine._currentPreset;
+        engine.loadPreset(from);
+        var snap = _snapshotParams();
+        if (src._tipUrl && src._tipUrl.length <= TIP_CAP) snap._tipUrl = src._tipUrl;
+        if (keep !== from) engine.loadPreset(keep);
+        _userPresets[name] = snap;
+        var err = _commitUsers();
+        if (err) { delete _userPresets[name]; return { ok: false, error: err }; }
+        _installUserPreset(name, snap);
+        _rebuildNames();
+        _invalidateSwatch(name);
+        return { ok: true, name: name };
+    };
+
+    function _uniqueName(base) {
+        var n = _cleanName(base) || 'Brush';
+        if (!engine.PRESETS[n]) return n;
+        for (var i = 2; i < 999; i++) {
+            var c = _cleanName(n + ' ' + i);
+            if (!engine.PRESETS[c]) return c;
+        }
+        return n + ' ' + Date.now();
+    }
+
+    engine.renameUserPreset = function (from, rawName) {
+        if (!_isUserPreset(from)) {
+            return { ok: false, error: 'Built-in brushes cannot be renamed. Duplicate it first.' };
+        }
+        var name = _cleanName(rawName);
+        if (!name) return { ok: false, error: 'Give the brush a name.' };
+        if (name === from) return { ok: true, name: name };
+        if (engine.PRESETS[name]) return { ok: false, error: '"' + name + '" is already taken.' };
+        _userPresets[name] = _userPresets[from];
+        delete _userPresets[from];
+        var err = _commitUsers();
+        if (err) {
+            _userPresets[from] = _userPresets[name];
+            delete _userPresets[name];
+            return { ok: false, error: err };
+        }
+        _installUserPreset(name, _userPresets[name]);
+        delete engine.PRESETS[from];
+        // Any tweaks the user made after saving live under the old key.
+        try {
+            var carried = localStorage.getItem(STORAGE_PREFIX + from);
+            if (carried) localStorage.setItem(STORAGE_PREFIX + name, carried);
+            localStorage.removeItem(STORAGE_PREFIX + from);
+        } catch (e_) {}
+        if (_favs[from]) { delete _favs[from]; _favs[name] = 1; _writeStore(FAV_KEY, _favs); }
+        _rebuildNames();
+        _invalidateSwatch(from);
+        _invalidateSwatch(name);
+        if (engine._currentPreset === from) engine.loadPreset(name);
+        return { ok: true, name: name };
+    };
+
+    engine.deleteUserPreset = function (name) {
+        if (!_isUserPreset(name)) {
+            return { ok: false, error: 'Built-in brushes cannot be deleted.' };
+        }
+        delete _userPresets[name];
+        delete engine.PRESETS[name];
+        _commitUsers();
+        if (_favs[name]) { delete _favs[name]; _writeStore(FAV_KEY, _favs); }
+        try { localStorage.removeItem(STORAGE_PREFIX + name); } catch (e_) {}
+        _rebuildNames();
+        _invalidateSwatch(name);
+        if (engine._currentPreset === name) engine.loadPreset(engine.presetNames[0] || 'Round');
+        return { ok: true };
+    };
+
+    engine.isFavourite = function (name) { return !!_favs[name]; };
+    engine.toggleFavourite = function (name) {
+        if (!engine.PRESETS[name]) return false;
+        if (_favs[name]) delete _favs[name]; else _favs[name] = 1;
+        _writeStore(FAV_KEY, _favs);
+        return !!_favs[name];
+    };
+
+    /* Export/import is what makes a saved library survive clearing the
+     * browser's site data, which otherwise takes every brush with it. */
+    engine.exportUserPresets = function () {
+        return JSON.stringify({
+            format: 'cdpaint-brushes', version: 1,
+            presets: _userPresets, favourites: Object.keys(_favs)
+        }, null, 1);
+    };
+
+    engine.importUserPresets = function (json) {
+        var data;
+        try { data = typeof json === 'string' ? JSON.parse(json) : json; }
+        catch (e_) { return { ok: false, error: 'That file is not readable brush data.' }; }
+        if (!data || data.format !== 'cdpaint-brushes' || !data.presets ||
+            typeof data.presets !== 'object') {
+            return { ok: false, error: 'That file is not a CDPaint brush library.' };
+        }
+        var added = [], renamed = [];
+        for (var raw in data.presets) {
+            if (!data.presets.hasOwnProperty(raw)) continue;
+            var rec = data.presets[raw];
+            if (!rec || typeof rec !== 'object') continue;
+            if (rec._tipUrl && String(rec._tipUrl).length > TIP_CAP) delete rec._tipUrl;
+            var want = _cleanName(raw);
+            if (!want) continue;
+            // Never overwrite what is already there — an import that quietly
+            // replaced a brush the user had tuned would be unrecoverable.
+            var name = engine.PRESETS[want] ? _uniqueName(want) : want;
+            if (name !== want) renamed.push(want + ' \u2192 ' + name);
+            _userPresets[name] = rec;
+            _installUserPreset(name, rec);
+            added.push(name);
+        }
+        var err = _commitUsers();
+        if (err) return { ok: false, error: err };
+        if (_isArray(data.favourites)) {
+            for (var i = 0; i < data.favourites.length; i++) {
+                var f = _cleanName(data.favourites[i]);
+                if (f && engine.PRESETS[f]) _favs[f] = 1;
+            }
+            _writeStore(FAV_KEY, _favs);
+        }
+        _rebuildNames();
+        _invalidateSwatch();
+        return { ok: true, added: added, renamed: renamed };
     };
 
     engine.generatePreview = function (name) { return _pbRenderPreview(name); };
@@ -2721,6 +3012,151 @@
         engine.loadPreset(engine._currentPreset);
         engine.syncPanel();
     };
+
+
+    /* Search hides tiles rather than rebuilding the grid. Re-rendering means
+     * re-painting a swatch per brush with the real engine (~4ms each), which
+     * across 75+ brushes is a visible stall on every keystroke. */
+    function _applyBrushSearch() {
+        var grid = document.getElementById('pb-brush-grid');
+        var box = document.getElementById('pb-search');
+        if (!grid) return;
+        var q = box ? box.value.trim().toLowerCase() : '';
+        var kids = grid.children;
+        var head = null, shown = 0;
+        for (var i = 0; i < kids.length; i++) {
+            var el = kids[i];
+            if (el.classList.contains('pb-brush-group')) {
+                if (head) head.hidden = shown === 0;
+                head = el; shown = 0;
+                continue;
+            }
+            var n = (el.getAttribute('data-preset') || '').toLowerCase();
+            var hit = !q || n.indexOf(q) !== -1;
+            el.hidden = !hit;
+            if (hit) shown++;
+        }
+        if (head) head.hidden = shown === 0;
+    }
+
+    function _syncManageButtons() {
+        var mine = engine.isUserPreset(engine._currentPreset);
+        ['pb-rename-btn', 'pb-delete-btn'].forEach(function (id) {
+            var b = document.getElementById(id);
+            if (b) {
+                b.disabled = !mine;
+                b.title = mine ? b.getAttribute('data-tip-own')
+                               : 'Only brushes you saved can be renamed or deleted.';
+            }
+        });
+        var del = document.getElementById('pb-delete-btn');
+        if (del) { del.textContent = 'Delete'; del.classList.remove('armed'); }
+    }
+
+    function _say(msg, kind) {
+        try { showToast(msg, kind || 'info'); }
+        catch (e_) { console.log('[brushes] ' + msg); }
+    }
+
+    function _afterLibraryChange(msg) {
+        engine.buildBrushGrid();
+        _applyBrushSearch();
+        engine.syncPanel();
+        _syncManageButtons();
+        if (msg) _say(msg, 'success');
+    }
+
+    function _bindLibraryBar() {
+        var search = document.getElementById('pb-search');
+        if (search) search.addEventListener('input', _applyBrushSearch);
+
+        var nameIn = document.getElementById('pb-preset-name');
+        var nameOf = function () {
+            return (nameIn && nameIn.value) || engine._currentPreset;
+        };
+
+        var save = document.getElementById('pb-save-btn');
+        if (save) save.addEventListener('click', function () {
+            var r = engine.saveUserPreset(nameOf());
+            if (!r.ok) return _say(r.error, 'error');
+            _afterLibraryChange('Saved "' + r.name + '"' + (r.replaced ? ' (replaced)' : ''));
+        });
+
+        var dupe = document.getElementById('pb-dupe-btn');
+        if (dupe) dupe.addEventListener('click', function () {
+            var from = engine._currentPreset;
+            var want = nameIn && nameIn.value.trim() && nameIn.value.trim() !== from
+                ? nameIn.value : null;
+            var r = engine.duplicatePreset(from, want);
+            if (!r.ok) return _say(r.error, 'error');
+            engine.loadPreset(r.name);
+            if (nameIn) nameIn.value = r.name;
+            _afterLibraryChange('Duplicated as "' + r.name + '"');
+        });
+
+        var ren = document.getElementById('pb-rename-btn');
+        if (ren) ren.addEventListener('click', function () {
+            var r = engine.renameUserPreset(engine._currentPreset, nameOf());
+            if (!r.ok) return _say(r.error, 'error');
+            _afterLibraryChange('Renamed to "' + r.name + '"');
+        });
+
+        /* Delete arms itself for a few seconds instead of opening a dialog:
+         * this app has no modal of its own, and window.confirm is not
+         * reliably available inside the desktop shell. */
+        var del = document.getElementById('pb-delete-btn');
+        var armed = null;
+        if (del) del.addEventListener('click', function () {
+            var name = engine._currentPreset;
+            if (del.classList.contains('armed')) {
+                clearTimeout(armed);
+                var r = engine.deleteUserPreset(name);
+                if (!r.ok) return _say(r.error, 'error');
+                if (nameIn) nameIn.value = engine._currentPreset;
+                return _afterLibraryChange('Deleted "' + name + '"');
+            }
+            if (!engine.isUserPreset(name)) return _say('Only brushes you saved can be deleted.', 'warning');
+            del.classList.add('armed');
+            del.textContent = 'Delete?';
+            armed = setTimeout(function () {
+                del.classList.remove('armed');
+                del.textContent = 'Delete';
+            }, 4000);
+        });
+
+        var exp = document.getElementById('pb-export-btn');
+        if (exp) exp.addEventListener('click', function () {
+            if (!engine.userPresetNames().length) return _say('You have no saved brushes yet.', 'warning');
+            var blob = new Blob([engine.exportUserPresets()], { type: 'application/json' });
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'cdpaint-brushes.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+        });
+
+        var imp = document.getElementById('pb-import-btn');
+        var file = document.getElementById('pb-import-file');
+        if (imp && file) {
+            imp.addEventListener('click', function () { file.value = ''; file.click(); });
+            file.addEventListener('change', function () {
+                var f = file.files && file.files[0];
+                if (!f) return;
+                var rd = new FileReader();
+                rd.onload = function () {
+                    var r = engine.importUserPresets(String(rd.result));
+                    if (!r.ok) return _say(r.error, 'error');
+                    var msg = 'Imported ' + r.added.length + ' brush' +
+                        (r.added.length === 1 ? '' : 'es');
+                    if (r.renamed.length) msg += ' (' + r.renamed.length + ' renamed to avoid a clash)';
+                    _afterLibraryChange(msg);
+                };
+                rd.readAsText(f);
+            });
+        }
+    }
 
     engine.buildBrushGrid = function () {
         var grid = document.getElementById('pb-brush-grid');
@@ -2749,6 +3185,30 @@
                 tile.setAttribute('data-preset', name);
                 var c = engine.generatePreview(name);
                 if (c) tile.appendChild(c);
+
+                // A saved brush is named by the user, so it reaches the DOM
+                // as text and never as markup.
+                if (engine.isUserPreset(name)) {
+                    var cap = document.createElement('span');
+                    cap.className = 'pb-tile-name';
+                    cap.textContent = name;
+                    tile.appendChild(cap);
+                }
+
+                var star = document.createElement('button');
+                star.className = 'pb-fav';
+                star.type = 'button';
+                star.textContent = '\u2605';
+                star.title = 'Favourite';
+                star.setAttribute('aria-label', 'Favourite ' + name);
+                if (engine.isFavourite(name)) star.classList.add('on');
+                star.addEventListener('click', function (ev) {
+                    ev.stopPropagation();
+                    engine.toggleFavourite(name);
+                    engine.buildBrushGrid();
+                });
+                tile.appendChild(star);
+
                 tile.addEventListener('click', function () {
                     engine.loadPreset(name);
                     engine.syncPanel();
@@ -2758,28 +3218,35 @@
                         tiles2[t].classList.toggle('active', tiles2[t].getAttribute('data-preset') === name);
                     }
                     if (label) label.textContent = name;
+                    var nameIn = document.getElementById('pb-preset-name');
+                    if (nameIn) nameIn.value = name;
+                    _syncManageButtons();
                     try { _updateBrushCursor && _updateBrushCursor(); } catch (e_) {}
                 });
                 grid.appendChild(tile);
-                tiles[name] = tile;
+                // A favourite appears under Favourites AND under its family,
+                // so a name can own more than one tile.
+                (tiles[name] || (tiles[name] = [])).push(tile);
             })(list[i]);
         }
         }
 
         // Async load custom tip images and regenerate previews
+        var tipDone = {};
         for (var j = 0; j < names.length; j++) {
             (function (name) {
-                if (engine.PRESETS[name] && engine.PRESETS[name]._tipUrl) {
-                    _ensurePreviewTip(name, function () {
-                        var tile = tiles[name];
-                        if (tile) {
-                            var oldCanvas = tile.querySelector('canvas');
-                            if (oldCanvas) tile.removeChild(oldCanvas);
-                            var c = engine.generatePreview(name);
-                            if (c) tile.insertBefore(c, tile.firstChild);
-                        }
-                    });
-                }
+                if (!engine.PRESETS[name] || !engine.PRESETS[name]._tipUrl) return;
+                if (tipDone[name]) return;   // favourites list the name twice
+                tipDone[name] = 1;
+                _ensurePreviewTip(name, function () {
+                    var owned = tiles[name] || [];
+                    for (var q = 0; q < owned.length; q++) {
+                        var oldCanvas = owned[q].querySelector('canvas');
+                        if (oldCanvas) owned[q].removeChild(oldCanvas);
+                        var c = engine.generatePreview(name);
+                        if (c) owned[q].insertBefore(c, owned[q].firstChild);
+                    }
+                });
             })(names[j]);
         }
 
@@ -2790,6 +3257,8 @@
             tiles2[t].classList.toggle('active', tiles2[t].getAttribute('data-preset') === active);
         }
         engine.updateVisibleSettings();
+        _applyBrushSearch();
+        _syncManageButtons();
     };
 
     /* A floor slider only does something once its parameter has a sensor, so

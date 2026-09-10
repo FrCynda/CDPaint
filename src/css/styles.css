@@ -1309,12 +1309,38 @@
                     color: var(--win-blue, #0078d7); touch-action: none; }
         body.dark-mode .pb-curve { border-color: #4a5058; background: #23262b; }
         .pb-curve:focus-visible { outline: 2px solid var(--accent, #1a73e8); outline-offset: 1px; }
-        #pb-brush-grid { display: grid; grid-template-columns: repeat(2, 134px); gap: 5px 3px; margin-bottom: 6px; margin-left: -9px; max-height: 300px; overflow-y: auto; overflow-x: hidden; }
+        #pb-brush-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 3px; margin-bottom: 6px; margin-left: -9px; max-height: 300px; overflow-y: auto; overflow-x: hidden; }
         /* Family headers span both columns so the grid still reads as two
            rows of swatches under each one. */
         .pb-brush-group { grid-column: 1 / -1; font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; opacity: .62; padding: 6px 0 1px 2px; border-bottom: 1px solid var(--pb-border, #c8ccd2); margin-bottom: 2px; }
         .pb-brush-group:first-child { padding-top: 0; }
         body.dark-mode .pb-brush-group { border-bottom-color: #4a5058; }
+
+        #pb-search { display: block; width: calc(100% - 6px); box-sizing: border-box; margin: 0 0 5px -9px; padding: 3px 6px; font-size: 11px; border: 1px solid var(--pb-border, #c8ccd2); border-radius: 3px; background: #fff; color: inherit; }
+        body.dark-mode #pb-search { background: #23262b; border-color: #4a5058; }
+
+        /* The star sits on the swatch. It only shows on hover or when it is
+           on, so 75 tiles are not 75 pieces of permanent furniture. */
+        .pb-fav { position: absolute; top: 1px; right: 1px; width: 15px; height: 15px; padding: 0; line-height: 13px; font-size: 11px; border: 0; border-radius: 3px; background: rgba(255,255,255,.72); color: #b9bec6; cursor: pointer; opacity: 0; transition: opacity .12s; }
+        .pb-brush-tile:hover .pb-fav, .pb-fav.on { opacity: 1; }
+        .pb-fav.on { color: #f0a020; }
+        .pb-fav:hover { color: #f0a020; }
+        body.dark-mode .pb-fav { background: rgba(30,33,38,.72); color: #6b727c; }
+
+        /* A saved brush is named by the user, so the tile says which it is. */
+        .pb-tile-name { position: absolute; left: 0; right: 0; bottom: 0; padding: 1px 3px; font-size: 9px; line-height: 11px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: linear-gradient(rgba(255,255,255,0), rgba(255,255,255,.9) 40%); color: #333; pointer-events: none; }
+        body.dark-mode .pb-tile-name { background: linear-gradient(rgba(30,33,38,0), rgba(30,33,38,.9) 40%); color: #cfd4da; }
+
+        #pb-manage { margin: 0 0 8px -9px; }
+        #pb-preset-name { display: block; width: calc(100% - 6px); box-sizing: border-box; margin-bottom: 3px; padding: 3px 6px; font-size: 11px; border: 1px solid var(--pb-border, #c8ccd2); border-radius: 3px; background: #fff; color: inherit; }
+        body.dark-mode #pb-preset-name { background: #23262b; border-color: #4a5058; }
+        #pb-manage-btns { display: flex; flex-wrap: wrap; gap: 3px; }
+        #pb-manage-btns button { flex: 1 1 auto; min-width: 52px; padding: 3px 4px; font-size: 10px; border: 1px solid var(--pb-border, #c8ccd2); border-radius: 3px; background: #f4f5f7; color: inherit; cursor: pointer; }
+        #pb-manage-btns button:hover:not(:disabled) { background: #e6e9ee; }
+        #pb-manage-btns button:disabled { opacity: .45; cursor: default; }
+        #pb-manage-btns button.armed { background: #d94a3d; border-color: #b83c30; color: #fff; }
+        body.dark-mode #pb-manage-btns button { background: #2c3037; border-color: #4a5058; }
+        body.dark-mode #pb-manage-btns button:hover:not(:disabled) { background: #383d45; }
         .pb-brush-tile { position: relative; aspect-ratio: 134 / 54; border: 2px solid transparent; border-radius: 4px; cursor: pointer; overflow: hidden; background: #fff; transition: border-color .15s ease; }
         .pb-brush-tile:hover { border-color: var(--accent-light, #8ab4f8); }
         .pb-brush-tile.active { border-color: var(--accent, #1a73e8); }
