@@ -1729,6 +1729,66 @@ await withPage(async (page) => {
         Math.abs(tp.pctBig.wRamp[0] - tp.pctSml.wRamp[0]) <= 8,
         `${tp.pctBig.wRamp[0]} at size 16 vs ${tp.pctSml.wRamp[0]} at size 8`);
 
+    /* ── tip shape ────────────────────────────────────────────────────── */
+    console.log('== tip shape ==');
+    const ts = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, app = PaintApp;
+        /* One dab, measured. Aspect is width-to-height: the tip's long axis
+         * is the size you asked for and the short one is what gets squashed.
+         * It used to multiply the HEIGHT, so a flat brush came out four
+         * times too big and standing on end. */
+        const dab = async (o) => {
+            app.layerMgr.collapseToBase({ fresh: true });
+            app.setSize(300, 300); app.config.zoom = 1; app.updateBounds();
+            document.getElementById('lsys-add').click();
+            app.state.selection = null;
+            b.loadPreset(o.preset || 'Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+            if (o.shape) b.setParam('shape', o.shape);
+            b.setParam('size', o.size); b.setParam('hardness', 100);
+            b.setParam('angle', o.angle || 0);
+            b.setParam('aspectRatio', o.aspect);
+            const L = app.layerMgr.layers[app.layerMgr.activeIdx];
+            b.beginStroke(150, 150, 1, '#ff0000');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 150));
+            const d = L.ctx.getImageData(0, 0, 300, 300).data;
+            let x1 = 1e9, x2 = -1, y1 = 1e9, y2 = -1;
+            for (let y = 0; y < 300; y++) for (let x = 0; x < 300; x++) {
+                if (d[(y * 300 + x) * 4 + 3] > 20) {
+                    if (x < x1) x1 = x; if (x > x2) x2 = x;
+                    if (y < y1) y1 = y; if (y > y2) y2 = y;
+                }
+            }
+            return x2 < 0 ? { w: 0, h: 0 } : { w: x2 - x1 + 1, h: y2 - y1 + 1 };
+        };
+        const out = {};
+        out.round   = await dab({ size: 40, aspect: 1 });
+        out.flat    = await dab({ size: 40, aspect: 4 });
+        out.tall    = await dab({ size: 40, aspect: 0.25 });
+        out.turned  = await dab({ size: 40, aspect: 4, angle: 90 });
+        out.square  = await dab({ size: 40, aspect: 4, shape: 'square' });
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    console.log('  ' + JSON.stringify(ts));
+
+    check('a squashed tip keeps the size you asked for as its long side',
+        ts.flat.w === 40 && ts.flat.h <= 12,
+        `aspect 4 on a 40px brush drew ${ts.flat.w}x${ts.flat.h}, wanted 40x10`);
+    check('...and never comes out bigger than an unsquashed one',
+        ts.flat.w <= ts.round.w && ts.flat.h <= ts.round.h,
+        `${ts.flat.w}x${ts.flat.h} against a round ${ts.round.w}x${ts.round.h}`);
+    check('under one squashes the other way instead',
+        ts.tall.h === 40 && ts.tall.w <= 12,
+        `aspect 0.25 drew ${ts.tall.w}x${ts.tall.h}, wanted 10x40`);
+    check('the angle turns the flat tip on its side',
+        ts.turned.h === 40 && ts.turned.w <= 12,
+        `${ts.turned.w}x${ts.turned.h}`);
+    check('a square tip squashes the same way a round one does',
+        ts.square.w === 40 && ts.square.h <= 12,
+        `${ts.square.w}x${ts.square.h}`);
+
     /* ── panel cost ───────────────────────────────────────────────────── */
     console.log('== what the panel costs to use ==');
     const pf = JSON.parse(await page.eval(`(async () => {
