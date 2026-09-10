@@ -1624,8 +1624,12 @@ await withPage(async (page) => {
             const L = app.layerMgr.layers[app.layerMgr.activeIdx];
             const x0 = o.x0 == null ? 40 : o.x0, x1 = o.x1 == null ? 360 : o.x1;
             b.beginStroke(x0, 60, 1.0, '#ff0000');
-            for (let i = 1; i <= 60; i++)
+            for (let i = 1; i <= 60; i++) {
                 b.moveStroke(x0 + (x1 - x0) * i / 60, 60, 1.0, '#ff0000');
+                // A real stroke is drawn while the hand moves: the live
+                // passes land on the layer before the final one runs.
+                if (o.live) await new Promise(r => requestAnimationFrame(r));
+            }
             b.endStroke();
             await new Promise(r => setTimeout(r, 200));
             const d = L.ctx.getImageData(0, 0, 400, 120).data;
@@ -1671,6 +1675,10 @@ await withPage(async (page) => {
         out.brushSml = await run({ target: 'size', size: 8 });
         out.pctBig   = await run({ target: 'size', unit: 'stroke', size: 16 });
         out.pctSml   = await run({ target: 'size', unit: 'stroke', size: 8 });
+        /* Drawn for real, frame by frame, against the same stroke rendered
+         * in one go. A long end taper is the case that separates them. */
+        out.endFast = await run({ target: 'size', ts: 0, te: 60, size: 20 });
+        out.endLive = await run({ target: 'size', ts: 0, te: 60, size: 20, live: true });
         b.loadPreset('Round');
         return JSON.stringify(out);
     })()`));
@@ -1707,6 +1715,13 @@ await withPage(async (page) => {
     check('a stroke too short for its taper still tapers both ends',
         tp.short.tipW[0] <= 4 && tp.short.tipW[1] <= 4 && tp.short.maxW >= 10,
         `tips ${tp.short.tipW}, widest ${tp.short.maxW}`);
+    /* The last pass repaints the stroke, and an end taper makes it stop
+     * short of the blunt one already on the layer. Restore only the final
+     * pass's own rect and the blunt end stays welded on. */
+    check('a stroke drawn frame by frame ends where a re-rendered one does',
+        Math.abs(tp.endLive.last - tp.endFast.last) <= 2 && tp.endLive.tipW[1] <= 3,
+        `live ended at ${tp.endLive.last} (tip ${tp.endLive.tipW[1]}px), ` +
+        `re-rendered at ${tp.endFast.last} (tip ${tp.endFast.tipW[1]}px)`);
     check('measured by brush size, a smaller tip tapers over a shorter run',
         tp.brushSml.wRamp[0] < tp.brushBig.wRamp[0] * 0.7,
         `${tp.brushBig.wRamp[0]} at size 16 vs ${tp.brushSml.wRamp[0]} at size 8`);

@@ -1200,6 +1200,18 @@
         var y = _floor(dr.y1);
         var x2 = _ceil(dr.x2);
         var y2 = _ceil(dr.y2);
+        /* The last pass repaints the stroke from scratch, and what it paints
+         * can be SMALLER than what the live passes already put on the layer --
+         * an end taper thins the tail, so the final stroke stops short of the
+         * blunt one the user watched being drawn. Restoring only the final
+         * pass's own rect leaves that blunt end behind, welded to the layer.
+         * So the final composite covers everything this stroke ever touched. */
+        if (!clearFlow && _clearBounds) {
+            if (_clearBounds.x1 < x) x = _floor(_clearBounds.x1);
+            if (_clearBounds.y1 < y) y = _floor(_clearBounds.y1);
+            if (_clearBounds.x2 > x2) x2 = _ceil(_clearBounds.x2);
+            if (_clearBounds.y2 > y2) y2 = _ceil(_clearBounds.y2);
+        }
         var w = x2 - x;
         var h = y2 - y;
         if (w <= 0 || h <= 0) { _dirtyRect = null; return; }
@@ -2332,7 +2344,6 @@
             _state.paintRaf = null;
         }
         var pts = _state.strokePoints;
-        _clearBounds = null;
         // Stabilizer catch-up: inject interpolated points from delayed position to raw cursor
         if (pts.length > 0) {
             var mode = _params.smoothingMode || 'none';
