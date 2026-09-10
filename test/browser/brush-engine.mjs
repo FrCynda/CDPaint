@@ -1803,6 +1803,110 @@ await withPage(async (page) => {
     check('forgetting a brush drops the queued write too',
         pf2.forgotten === pf2.dflt,
         `${pf2.forgotten}, expected the preset default ${pf2.dflt}`);
+
+    /* ── what a stroke costs to start ─────────────────────────────────── */
+    console.log('== stroke setup ==');
+    const sc = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, app = PaintApp;
+        const out = {};
+
+        /* The flow buffer is only blanked where the last stroke left ink,
+         * so a mistake there leaves the previous stroke sitting in it.
+         *
+         * It only shows where the NEXT stroke's dirty rectangle covers the
+         * old ink, because a flush only composites its own rectangle. So the
+         * second stroke is an L: its rectangle is the whole square it spans,
+         * its ink runs along two edges, and the first stroke is drawn
+         * through the empty middle. */
+        const setup = () => {
+            __B.doc(400, 240);
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+            b.setParam('size', 14); b.setParam('hardness', 100);
+            b.setParam('smoothingMode', 'none');
+            return __B.layer();
+        };
+        const elStroke = async (L, colour) => {
+            b.beginStroke(60, 40, 0.9, colour);
+            for (let i = 1; i <= 20; i++) b.moveStroke(60 + 14 * i, 40, 0.9, colour);
+            for (let i = 1; i <= 15; i++) b.moveStroke(340, 40 + 10 * i, 0.9, colour);
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 200));
+        };
+        const L = setup();
+        await __B.stroke(90, 130, 260, 130, '#ff0000');   // through the middle
+        out.firstLanded = __B.px(L, 180, 130);
+        L.ctx.clearRect(0, 0, 400, 240);                  // wipe it off the layer
+        await elStroke(L, '#0000ff');
+        out.ghostInside = __B.px(L, 180, 130);            // inside the L's rect
+        out.elLanded = __B.px(L, 180, 40);                // on the L itself
+
+        /* Same thing, but the second stroke is drawn before the first has
+         * been wiped, so a stale buffer would double-composite instead. */
+        const L1 = setup();
+        await elStroke(L1, '#0000ff');
+        L1.ctx.clearRect(0, 0, 400, 240);
+        const L1b = L1;
+        await __B.stroke(90, 130, 260, 130, '#ff0000');
+        out.reverseGhost = __B.px(L1b, 180, 40);
+
+        /* A swatch drives the same painter over its own little buffer. If it
+         * leaves its bounds behind, the next real stroke blanks a tile-sized
+         * corner and the one before it ghosts back. */
+        __B.doc(400, 200);
+        b.loadPreset('Round');
+        b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+        b.setParam('size', 16); b.setParam('hardness', 100);
+        const L2 = __B.layer();
+        await __B.stroke(40, 60, 100, 60, '#ff0000');
+        b.generatePreview('Fan Brush');
+        b.generatePreview('Chalk on Board');
+        L2.ctx.clearRect(0, 0, 400, 200);
+        await __B.stroke(280, 140, 340, 140, '#0000ff');
+        out.afterSwatch = { ghost: __B.px(L2, 70, 60), real: __B.px(L2, 310, 140) };
+
+        /* Only a brush that mixes with the canvas needs the layer read back.
+         * Both still have to paint the same thing they always did. */
+        __B.doc(400, 200);
+        b.loadPreset('Round');
+        b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+        b.setParam('size', 16); b.setParam('hardness', 100);
+        const L3 = __B.layer();
+        L3.ctx.fillStyle = '#ff0000';
+        L3.ctx.fillRect(0, 0, 200, 200);
+        await __B.stroke(20, 100, 380, 100, '#0000ff');
+        out.plainOverInk = __B.px(L3, 100, 100);
+
+        __B.doc(400, 200);
+        const L4 = __B.layer();
+        L4.ctx.fillStyle = '#ff0000';
+        L4.ctx.fillRect(0, 0, 200, 200);
+        b.loadPreset('Smudge');
+        b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+        await __B.stroke(20, 100, 380, 100, '#00ff00');
+        out.smudgeCarries = __B.px(L4, 240, 100);
+
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    console.log('  ' + JSON.stringify(sc));
+
+    const clear = '0,0,0,0';
+    check('the previous stroke does not ghost back into the next',
+        sc.firstLanded !== clear && sc.ghostInside === clear,
+        `first stroke ${sc.firstLanded}, ghost left behind ${sc.ghostInside}`);
+    check('...and the new stroke still lands',
+        sc.elLanded !== clear, `the L came out ${sc.elLanded}`);
+    check('nor the other way round',
+        sc.reverseGhost === clear, `ghost ${sc.reverseGhost}`);
+    check('drawing a swatch in between does not ghost either',
+        sc.afterSwatch.ghost === clear && sc.afterSwatch.real !== clear,
+        `ghost ${sc.afterSwatch.ghost}, stroke ${sc.afterSwatch.real}`);
+    check('a plain brush paints its own colour over what is there',
+        sc.plainOverInk === '0,0,255,255', sc.plainOverInk);
+    check('a smudge brush still picks colour up off the canvas',
+        Number(sc.smudgeCarries.split(',')[0]) > 60,
+        `carried ${sc.smudgeCarries}`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

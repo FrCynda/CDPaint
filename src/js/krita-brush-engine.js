@@ -248,6 +248,10 @@
     var _flowCtx = null;
     var _dirtyRect = null;
     var _clearBounds = null;
+    /* What of the flow buffer has ink in it, across strokes. Wiping the
+     * whole buffer at every stroke cost 8ms at 4000x4000 to clear a few
+     * hundred pixels of last stroke. */
+    var _flowUsed = null;
     var _scratchCanvas = null;
     var _scratchCtx = null;
     var _bgCanvas = null;
@@ -261,6 +265,7 @@
             || (_flowCanvas.width > w * 2 && _flowCanvas.width * SHRINK_THRESHOLD > w)) {
             _flowCanvas = new OffscreenCanvas(_max(1, w), _max(1, h));
             _flowCtx = _flowCanvas.getContext('2d');
+            _flowUsed = null;   // a new buffer is already blank
         }
     }
 
@@ -284,6 +289,16 @@
         }
     }
 
+    /* Blank the flow buffer where the last stroke left ink, not end to end. */
+    function _clearFlowUsed() {
+        if (!_flowCtx) return;
+        if (!_flowUsed) return;
+        var x = _floor(_flowUsed.x1) - 1, y = _floor(_flowUsed.y1) - 1;
+        var w = _ceil(_flowUsed.x2) - x + 2, h = _ceil(_flowUsed.y2) - y + 2;
+        _flowCtx.clearRect(x, y, w, h);
+        _flowUsed = null;
+    }
+
     function _ensureBgCanvas(w, h) {
         if (!_bgCanvas || _bgCanvas.width < w || _bgCanvas.height < h
             || (_bgCanvas.width > w * 2 && _bgCanvas.width * SHRINK_THRESHOLD > w)) {
@@ -295,7 +310,7 @@
     // Release the full-canvas offscreen buffers (flow/scratch/bg) so they aren't held
     // resident while idle. The _ensure* functions recreate them lazily on the next stroke.
     function _releaseOffscreenBuffers() {
-        _flowCanvas = null; _flowCtx = null;
+        _flowCanvas = null; _flowCtx = null; _flowUsed = null;
         _scratchCanvas = null; _scratchCtx = null;
         _bgCanvas = null; _bgCtx = null;
         _grainCanvas = null; _grainCtx = null;
@@ -492,6 +507,14 @@
             if (oy - CB < _clearBounds.y1) _clearBounds.y1 = oy - CB;
             if (ox + mw + CB > _clearBounds.x2) _clearBounds.x2 = ox + mw + CB;
             if (oy + mh + CB > _clearBounds.y2) _clearBounds.y2 = oy + mh + CB;
+        }
+        if (!_flowUsed) {
+            _flowUsed = { x1: ox - CB, y1: oy - CB, x2: ox + mw + CB, y2: oy + mh + CB };
+        } else {
+            if (ox - CB < _flowUsed.x1) _flowUsed.x1 = ox - CB;
+            if (oy - CB < _flowUsed.y1) _flowUsed.y1 = oy - CB;
+            if (ox + mw + CB > _flowUsed.x2) _flowUsed.x2 = ox + mw + CB;
+            if (oy + mh + CB > _flowUsed.y2) _flowUsed.y2 = oy + mh + CB;
         }
     }
 
@@ -2170,19 +2193,29 @@
         var cw = _docW() || 1024;
         var ch = _docH() || 1024;
         _ensureFlowBuffer(cw, ch);
-        _flowCtx.clearRect(0, 0, _flowCanvas.width, _flowCanvas.height);
+        _clearFlowUsed();
         _dirtyRect = null;
         _clearBounds = null;
         _ensureBgCanvas(cw, ch);
-        _bgCtx.clearRect(0, 0, _bgCanvas.width, _bgCanvas.height);
         try {
+            /* 'copy' wipes whatever the buffer held and lays the layer down
+             * in one pass. The separate full-canvas clearRect it replaces
+             * was 8ms at 4000x4000, every stroke. */
+            _bgCtx.save();
+            _bgCtx.globalCompositeOperation = 'copy';
             _bgCtx.drawImage(_outCtx().canvas, 0, 0);
+            _bgCtx.restore();
         } catch (e) {
+            _bgCtx.restore();
             console.warn('[brush] bgCanvas capture failed:', e);
         }
 
         _selStencil = _buildSelectionStencil();
-        _primeSampleCache();
+        /* Only a brush that mixes with what is underneath ever reads this,
+         * and reading it back is 19ms at 4000x4000 — which every other
+         * brush was paying at the start of every stroke. */
+        _sampleData = null;
+        if (getParams().colorRate < 100) _primeSampleCache();
 
         // The airbrush timer keeps dabbing where the cursor stopped; a preview
         // has no cursor and renders synchronously, so it stays off.
@@ -2342,7 +2375,9 @@
                 (app.config ? app.config.width : 1024),
                 (app.config ? app.config.height : 1024)
             );
-            if (_flowCtx) _flowCtx.clearRect(0, 0, _flowCanvas.width, _flowCanvas.height);
+            // The final pass repaints the stroke from scratch, so the
+            // buffer has to be blank first — but only where it has ink.
+            _clearFlowUsed();
             _dirtyRect = null;
             _state.lastProcessedIdx = 0;
             _state.started = false;
@@ -2550,6 +2585,11 @@
         var savedState = _state;
         var savedTarget = _previewTarget;
         var savedFlow = _flowCanvas, savedFlowCtx = _flowCtx;
+        // _flowUsed says which part of the flow buffer to blank next
+        // stroke. A preview drives the same painter over its own tiny
+        // buffer, so leaving its bounds behind would blank a swatch-sized
+        // corner of the real one and ghost the last stroke into the next.
+        var savedFlowUsed = _flowUsed;
         var savedBg = _bgCanvas, savedBgCtx = _bgCtx;
 
         /* The active preset is whatever the sliders currently say, not what
@@ -2649,6 +2689,7 @@
             _params = savedParams;
             _state = savedState;
             _flowCanvas = savedFlow; _flowCtx = savedFlowCtx;
+            _flowUsed = savedFlowUsed;
             _bgCanvas = savedBg; _bgCtx = savedBgCtx;
         }
 
