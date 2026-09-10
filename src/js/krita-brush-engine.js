@@ -644,6 +644,47 @@
     // Tablet state, set by the paint engine from the pointer event.
     var _penTiltX = 0, _penTiltY = 0, _penTwist = 0;
 
+    var _isArray = Array.isArray;
+    function _cloneCurve(c) {
+        var out = [];
+        for (var i = 0; i < c.length; i++) out.push([c[i][0], c[i][1]]);
+        return out;
+    }
+
+    /* Points sorted by input, endpoints pinned, at most 8 — enough for an S
+     * with room to spare, few enough that the widget stays draggable. */
+    function _normalizeCurve(pts) {
+        var out = [];
+        for (var i = 0; i < pts.length; i++) {
+            out.push([_clamp(pts[i][0], 0, 1), _clamp(pts[i][1], 0, 1)]);
+        }
+        out.sort(function (a, b) { return a[0] - b[0]; });
+        if (out.length > 8) out.length = 8;
+        return out;
+    }
+
+    function _setCurve(key, pts) {
+        if (!pts || !pts.length) {
+            _params[key + 'Curve'] = 1;       // back to linear
+        } else {
+            _params[key + 'Curve'] = _normalizeCurve(pts);
+        }
+        _persistParams();
+        _invalidateSwatch(engine._currentPreset);
+        engine.refreshPreview();
+    }
+
+    function _getCurve(key) {
+        var c = _params[key + 'Curve'];
+        return _isArray(c) ? _cloneCurve(c) : null;
+    }
+
+    /* What the widget draws, and what _dyn applies — the same function, so the
+     * curve on screen is the curve the brush uses. */
+    function _evalCurve(key, v) {
+        return _curveAt(_params[key + 'Curve'], v);
+    }
+
     function _setPenState(e) {
         if (!e) return;
         // tiltX/tiltY are degrees from vertical, -90..90.
@@ -672,13 +713,38 @@
         }
     }
 
+    /* A response curve is either a gamma number (the shape phase 2 shipped,
+     * and still what an untouched parameter carries) or a list of [in, out]
+     * points the curve editor produced. Points are piecewise-linear rather
+     * than splined: at the size these widgets are drawn nobody can see the
+     * difference, and it is a fraction of the code.
+     *
+     * ponytail: linear interpolation between points; swap in a spline only if
+     * someone can actually see the corners. */
+    function _curveAt(curve, v) {
+        if (curve == null) return v;
+        if (typeof curve === 'number') {
+            return curve === 1 ? v : _pow(v, curve);
+        }
+        if (!curve.length) return v;
+        if (curve.length === 1) return _clamp(curve[0][1], 0, 1);
+        for (var i = 0; i < curve.length - 1; i++) {
+            var a = curve[i], b = curve[i + 1];
+            if (v <= b[0]) {
+                if (v <= a[0]) return _clamp(a[1], 0, 1);
+                var span = b[0] - a[0];
+                var t = span > 1e-6 ? (v - a[0]) / span : 0;
+                return _clamp(a[1] + (b[1] - a[1]) * t, 0, 1);
+            }
+        }
+        return _clamp(curve[curve.length - 1][1], 0, 1);
+    }
+
     /* base scaled by its sensor, floored at <param>Min percent. */
     function _dyn(p, key, base, sc, seed) {
         var src = p[key + 'Src'];
         if (!src || src === 'none') return base;
-        var v = _sensor(src, sc, seed);
-        var g = p[key + 'Curve'];
-        if (g && g !== 1) v = _pow(v, g);
+        var v = _curveAt(p[key + 'Curve'], _sensor(src, sc, seed));
         var lo = (p[key + 'Min'] != null ? p[key + 'Min'] : 0) / 100;
         return base * (lo + (1 - lo) * v);
     }
@@ -1525,7 +1591,11 @@
         if (!preset) return false;
         for (var i = 0; i < _paramMeta.length; i++) {
             var k = _paramMeta[i];
-            _params[k] = (k in preset) ? preset[k] : engine.DEFAULTS[k];
+            var v = (k in preset) ? preset[k] : engine.DEFAULTS[k];
+            // Curves are arrays. Handing out the preset's own array would let
+            // editing one brush's curve rewrite the preset and every other
+            // brush that inherited it.
+            _params[k] = _isArray(v) ? _cloneCurve(v) : v;
         }
         engine._currentPreset = name;
         _loadSavedParams(name);
@@ -2170,6 +2240,7 @@
             if (mWrap) mWrap.style.setProperty('--pct', mv + '%');
         }
         _updateDynamicsRows();
+        _redrawCurves();
         var smodeBtns = document.querySelectorAll('.pb-smode-btn');
         var activeMode = _params.smoothingMode || 'none';
         smodeBtns.forEach(function(btn) { btn.classList.toggle('active', btn.dataset.mode === activeMode); });
@@ -2460,6 +2531,7 @@
         }
 
         // Load last-saved params for the active preset so customizations persist.
+        _initCurves();
         engine.loadPreset(engine._currentPreset);
         engine.syncPanel();
         _updateBrushCursor();
@@ -2470,6 +2542,13 @@
     /* Tilt and barrel rotation, straight off the pointer event. Nothing read
      * them before, so a tilt-driven brush had nothing to respond to. */
     engine.setPenState = _setPenState;
+
+    /* Response curves. setCurve takes [in, out] points 0..1; passing nothing
+     * puts the parameter back to linear. evalCurve is what the widget draws,
+     * so the curve on screen is the one the brush applies. */
+    engine.setCurve = _setCurve;
+    engine.getCurve = _getCurve;
+    engine.evalCurve = _evalCurve;
 
     engine.resetCurrentPreset = function () {
         try { localStorage.removeItem(STORAGE_PREFIX + engine._currentPreset); } catch (e_) {}
@@ -2538,6 +2617,174 @@
     /* A floor slider only does something once its parameter has a sensor, so
      * it stays hidden until one is picked. Angle has no floor — it is degrees
      * added to the tip, not a factor scaling it. */
+    /* ------------------------------------------------------------------ */
+    /*  Curve widget                                                        */
+    /* ------------------------------------------------------------------ */
+
+    /* Draws the parameter's actual response — it plots engine.evalCurve, the
+     * same function _dyn applies, so there is no second implementation that
+     * can drift from what the brush does. Input runs left to right, output
+     * bottom to top. */
+
+    var CURVE_HIT = 9;      // px within which a drag grabs an existing point
+
+    function _curvePoints(key) {
+        var c = _getCurve(key);
+        if (c && c.length >= 2) return c;
+        // A gamma curve has no points to drag, so seed the ends.
+        return [[0, 0], [1, 1]];
+    }
+
+    function _drawCurve(cv) {
+        var key = cv.getAttribute('data-dyn-curve');
+        var ctx = cv.getContext('2d');
+        var W = cv.width, H = cv.height, PAD = 6;
+        var iw = W - PAD * 2, ih = H - PAD * 2;
+        var cs = getComputedStyle(cv);
+        var ink = cs.getPropertyValue('color') || '#1a73e8';
+
+        ctx.clearRect(0, 0, W, H);
+
+        // grid at the quarters
+        ctx.strokeStyle = 'rgba(128,132,140,0.28)';
+        ctx.lineWidth = 1;
+        for (var g = 1; g < 4; g++) {
+            var gx = PAD + iw * g / 4, gy = PAD + ih * g / 4;
+            ctx.beginPath();
+            ctx.moveTo(_round(gx) + 0.5, PAD);
+            ctx.lineTo(_round(gx) + 0.5, PAD + ih);
+            ctx.moveTo(PAD, _round(gy) + 0.5);
+            ctx.lineTo(PAD + iw, _round(gy) + 0.5);
+            ctx.stroke();
+        }
+
+        // linear reference
+        ctx.strokeStyle = 'rgba(128,132,140,0.45)';
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath();
+        ctx.moveTo(PAD, PAD + ih);
+        ctx.lineTo(PAD + iw, PAD);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // the response itself
+        ctx.strokeStyle = ink;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (var i = 0; i <= 48; i++) {
+            var t = i / 48;
+            var v = _evalCurve(key, t);
+            var px = PAD + iw * t;
+            var py = PAD + ih * (1 - v);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+
+        // handles
+        var pts = _curvePoints(key);
+        ctx.fillStyle = ink;
+        for (var j = 0; j < pts.length; j++) {
+            ctx.beginPath();
+            ctx.arc(PAD + iw * pts[j][0], PAD + ih * (1 - pts[j][1]), 3, 0, _PI * 2);
+            ctx.fill();
+        }
+    }
+
+    function _curveXY(cv, e) {
+        var r = cv.getBoundingClientRect();
+        var PAD = 6;
+        var iw = cv.width - PAD * 2, ih = cv.height - PAD * 2;
+        // The canvas is CSS-sized, so client px are not canvas px.
+        var sx = cv.width / r.width, sy = cv.height / r.height;
+        var x = ((e.clientX - r.left) * sx - PAD) / iw;
+        var y = 1 - ((e.clientY - r.top) * sy - PAD) / ih;
+        return [_clamp(x, 0, 1), _clamp(y, 0, 1)];
+    }
+
+    function _bindCurve(cv) {
+        var key = cv.getAttribute('data-dyn-curve');
+        var dragIdx = -1;
+
+        function nearest(pt) {
+            var pts = _curvePoints(key);
+            var PAD = 6;
+            var iw = cv.width - PAD * 2, ih = cv.height - PAD * 2;
+            var best = -1, bestD = Infinity;
+            for (var i = 0; i < pts.length; i++) {
+                var dx = (pts[i][0] - pt[0]) * iw, dy = (pts[i][1] - pt[1]) * ih;
+                var d = _hypot(dx, dy);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            return bestD <= CURVE_HIT ? best : -1;
+        }
+
+        cv.addEventListener('pointerdown', function (e) {
+            e.preventDefault();
+            var pt = _curveXY(cv, e);
+            var pts = _curvePoints(key);
+            var hit = nearest(pt);
+            if (hit < 0) {
+                // Clicking empty space adds a point there.
+                pts.push(pt);
+                pts.sort(function (a, b) { return a[0] - b[0]; });
+                hit = pts.indexOf(pt);
+                _setCurve(key, pts);
+            }
+            dragIdx = hit;
+            cv.setPointerCapture(e.pointerId);
+            _drawCurve(cv);
+        });
+
+        cv.addEventListener('pointermove', function (e) {
+            if (dragIdx < 0) return;
+            e.preventDefault();
+            var pt = _curveXY(cv, e);
+            var pts = _curvePoints(key);
+            if (dragIdx >= pts.length) { dragIdx = -1; return; }
+            // The first and last points stay pinned to the edges, or the curve
+            // would stop covering the whole input range.
+            if (dragIdx === 0) pts[0] = [0, pt[1]];
+            else if (dragIdx === pts.length - 1) pts[dragIdx] = [1, pt[1]];
+            else pts[dragIdx] = pt;
+            _setCurve(key, pts);
+            _drawCurve(cv);
+        });
+
+        function release(e) {
+            if (dragIdx < 0) return;
+            dragIdx = -1;
+            try { cv.releasePointerCapture(e.pointerId); } catch (e_) {}
+            _drawCurve(cv);
+        }
+        cv.addEventListener('pointerup', release);
+        cv.addEventListener('pointercancel', release);
+
+        cv.addEventListener('dblclick', function (e) {
+            e.preventDefault();
+            var pts = _curvePoints(key);
+            var hit = nearest(_curveXY(cv, e));
+            // Endpoints are what make it a function over the whole range.
+            if (hit > 0 && hit < pts.length - 1) {
+                pts.splice(hit, 1);
+                _setCurve(key, pts);
+                _drawCurve(cv);
+            }
+        });
+    }
+
+    function _initCurves() {
+        var cvs = document.querySelectorAll('[data-dyn-curve]');
+        for (var i = 0; i < cvs.length; i++) {
+            _bindCurve(cvs[i]);
+            _drawCurve(cvs[i]);
+        }
+    }
+
+    function _redrawCurves() {
+        var cvs = document.querySelectorAll('[data-dyn-curve]');
+        for (var i = 0; i < cvs.length; i++) _drawCurve(cvs[i]);
+    }
+
     function _updateDynamicsRows() {
         var mins = document.querySelectorAll('[data-dyn-min]');
         for (var i = 0; i < mins.length; i++) {
@@ -2546,6 +2793,10 @@
             if (!row) continue;
             var on = _params[k + 'Src'] && _params[k + 'Src'] !== 'none';
             row.style.display = on ? '' : 'none';
+            var cv = document.getElementById('pb-' + k + '-curve');
+            var crow = cv && cv.closest ? cv.closest('.pb-row') : null;
+            if (crow) crow.style.display = on ? '' : 'none';
+            if (on && cv) _drawCurve(cv);
         }
     }
 

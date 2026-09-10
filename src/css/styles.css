@@ -1297,6 +1297,18 @@
         /* Wide swatches are twice as tall as the old squares, so the grid is
            capped and scrolls — otherwise the brush settings below it are
            pushed off the bottom of the panel. */
+        .pb-curve-row { padding: 2px 0 4px; }
+        /* The global `canvas` rule below is for the document layers: it makes
+           every canvas absolutely positioned and pixelated. A widget canvas in
+           a panel needs neither, and inheriting them left this one stacked at
+           the sidebar's origin with no height of its own. */
+        .pb-curve { display: block; position: static; image-rendering: auto;
+                    width: 132px; height: 66px; margin: 0 auto; flex: 0 0 auto;
+                    border: 1px solid var(--pb-border, #c8ccd2); border-radius: 3px;
+                    background: var(--pb-curve-bg, #fbfcfd); cursor: crosshair;
+                    color: var(--win-blue, #0078d7); touch-action: none; }
+        body.dark-mode .pb-curve { border-color: #4a5058; background: #23262b; }
+        .pb-curve:focus-visible { outline: 2px solid var(--accent, #1a73e8); outline-offset: 1px; }
         #pb-brush-grid { display: grid; grid-template-columns: repeat(2, 134px); gap: 5px 3px; margin-bottom: 6px; margin-left: -9px; max-height: 300px; overflow-y: auto; overflow-x: hidden; }
         .pb-brush-tile { position: relative; aspect-ratio: 134 / 54; border: 2px solid transparent; border-radius: 4px; cursor: pointer; overflow: hidden; background: #fff; transition: border-color .15s ease; }
         .pb-brush-tile:hover { border-color: var(--accent-light, #8ab4f8); }
