@@ -272,5 +272,209 @@
         });
     };
 
+
+    /* ── Krita settings → our brush ───────────────────────────────────── */
+
+    /* Krita drives every option from a "sensor", and calls the same input by
+     * different names depending on which axis it came off. These are the ones
+     * that have an equivalent here; anything else is reported, not guessed. */
+    var SENSORS = {
+        pressure: 'pressure',
+        fuzzy: 'random',
+        fuzzydab: 'random',
+        fuzzystroke: 'random',
+        drawingangle: 'direction',
+        ascension: 'tilt',
+        declination: 'tilt',
+        tilt: 'tilt',
+        tiltdirection: 'tilt',
+        rotation: 'twist',
+        speed: 'speed',
+        xtilt: 'tilt',
+        ytilt: 'tilt'
+    };
+
+    /* Features Krita has and we do not. Reported by name when a preset
+     * actually switches one on, so an import says what it dropped instead of
+     * quietly painting something else. */
+    var DROPPED = [
+        ['MaskingBrush/Enabled', 'a second brush used as a mask'],
+        ['Texture/Pattern/Enabled', 'a canvas texture pattern'],
+        ['Sharpness/softness', 'edge sharpening'],
+        ['PaintThicknessEnabled', 'paint thickness (impasto)'],
+        ['PressureLightnessStrength', 'lightness-mapped tips'],
+        ['PressureMix', 'colour mixing driven by pressure'],
+        ['PressureRate', 'an airbrush rate curve']
+    ];
+
+    /* Krita has far more blend modes than we do, and it names the ones we
+     * share differently in places. */
+    var BLENDS = {
+        erase: 'erase', normal: 'normal', over: 'normal',
+        multiply: 'multiply', screen: 'screen', overlay: 'overlay',
+        darken: 'darken', lighten: 'lighten',
+        dodge: 'color-dodge', burn: 'color-burn',
+        hard_light: 'hard-light', soft_light: 'soft-light',
+        diff: 'difference', hue: 'hue', saturation: 'saturation',
+        color: 'color', luminize: 'luminosity'
+    };
+
+    function _num(v, dflt) {
+        var n = parseFloat(v);
+        return isFinite(n) ? n : dflt;
+    }
+    function _bool(v) { return String(v) === 'true' || String(v) === '1'; }
+
+    /* Which input drives one option, and how it responds. Krita spells the
+     * on/off switch "Pressure<Option>" for most options but leaves it out for
+     * the ones that are always live, where <Option>UseCurve is the switch. */
+    function _sensorFor(params, opt) {
+        var flag = params['Pressure' + opt];
+        var on = (flag === undefined) ? _bool(params[opt + 'UseCurve']) : _bool(flag);
+        if (!on) return null;
+        var raw = params[opt + 'Sensor'] || '';
+        var m = /<params\s+id="([^"]+)"/.exec(raw);
+        var id = m ? m[1].toLowerCase() : 'pressure';
+        return { id: id, src: SENSORS[id] || null,
+                 curve: BrushPack.parseCurve(raw) };
+    }
+
+    /* Turns one Krita preset into the parameters our engine takes.
+     *
+     * A stamped tip's real size is its image scaled by the preset's `scale`,
+     * so the caller has to have decoded the tip first and pass its pixel size
+     * in `tipSize`; without it the size comes back as the scale factor alone
+     * and `needsTipSize` says so.
+     *
+     * Returns { params, tipFile, warnings }. Nothing here touches the engine:
+     * the result is a plain preset object, which is what makes it testable
+     * against real files on its own. */
+    BrushPack.toPreset = function (preset, opts) {
+        opts = opts || {};
+        var P = preset.params || {};
+        var bd = BrushPack.brushDefinition(preset) || {};
+        var warn = [];
+        var out = {};
+
+        out.opacity = Math.round(_num(P.OpacityValue, 1) * 100);
+        out.flow = Math.round(_num(P.FlowValue, 1) * 100);
+
+        /* Spacing is a fraction of the tip in Krita and a percentage here,
+         * which is the same number twice. Auto-spacing is Krita computing it
+         * from the tip's own shape, which we cannot reproduce, so the stored
+         * value stands and the import says so. */
+        out.spacing = Math.max(1, Math.round(_num(bd.spacing, 0.1) * 100));
+        if (_bool(bd.useAutoSpacing)) warn.push('spacing was automatic; using ' + out.spacing + '%');
+
+        var mask = bd.mask;
+        if (mask) {
+            // A generated tip: numbers all the way down, which is our own case.
+            out.shape = (String(mask.type || '').indexOf('rect') === 0) ? 'square' : 'circle';
+            out.size = Math.max(1, Math.round(_num(mask.diameter, 20)));
+            /* Krita's ratio is the short axis over the long one, so it is our
+             * aspect upside down -- and ours squashes rather than stretches,
+             * which is the same convention once inverted. */
+            var ratio = _num(mask.ratio, 1);
+            out.aspectRatio = (ratio > 0 && ratio < 1) ? Math.round((1 / ratio) * 100) / 100 : 1;
+            // hfade/vfade are how much of the radius fades out: all fade is
+            // our softest brush, none is our hardest.
+            var fade = Math.max(_num(mask.hfade, 0), _num(mask.vfade, 0));
+            out.hardness = Math.round((1 - Math.min(1, fade)) * 100);
+            /* A "gauss" generator is soft by construction: its edge falls off
+             * over the whole radius even with the fade sliders at zero, so
+             * taking the fade at face value would import a soft airbrush as a
+             * hard disc. Half is the closest single number; anyone importing
+             * one can nudge the hardness slider from there. */
+            if (String(mask.id) === 'gauss') out.hardness = Math.round(out.hardness / 2);
+            if (_num(mask.spikes, 2) > 2) warn.push('a star-shaped tip became a plain one');
+        } else if (bd.filename) {
+            out.shape = 'custom';
+            out.hardness = 100;      // the image is the shape; do not fade it
+            var scale = _num(bd.scale, 1);
+            if (opts.tipSize) out.size = Math.max(1, Math.round(opts.tipSize * scale));
+            else { out.size = scale; out.needsTipSize = true; }
+        } else {
+            warn.push('no tip definition; falling back to a round brush');
+            out.shape = 'circle';
+            out.size = 20;
+        }
+
+        // Krita stores the tip's own turn in radians.
+        out.angle = Math.round(_num(bd.angle, 0) * 180 / Math.PI) % 360;
+
+        /* Scatter is a multiple of the tip diameter there and a percentage of
+         * it here. Krita can scatter along one axis only; we always scatter in
+         * both, so a one-axis preset is reported rather than silently widened. */
+        /* ScatterValue is stored whether or not the option is switched on --
+         * Krita keeps every widget's last value -- so the value alone would
+         * put a wild jitter on brushes that never scatter. */
+        var scat = _bool(P.PressureScatter) ? _num(P.ScatterValue, 0) : 0;
+        out.scatter = Math.round(scat * 100);
+        if (scat > 0 && (_bool(P['Scattering/AxisX']) !== _bool(P['Scattering/AxisY']))) {
+            warn.push('scatter was along one axis only; ours goes both ways');
+        }
+
+        var op = String(P.CompositeOp || 'normal');
+        if (_bool(P.EraserMode) || op === 'erase') out.blendMode = 'erase';
+        else if (op !== 'normal') {
+            if (BLENDS[op]) out.blendMode = BLENDS[op];
+            else warn.push('blend mode "' + op + '" has no equivalent; painting normally');
+        }
+
+        // Size and flow ride their sensors the same way ours do.
+        [['Size', 'size'], ['Flow', 'flow'], ['Opacity', 'opacity']].forEach(function (pair) {
+            var s = _sensorFor(P, pair[0]);
+            var key = pair[1];
+            if (!s) return;
+            if (key === 'opacity') {
+                /* Opacity is per stroke here and per dab there, where it does
+                 * the same job as flow. With flow left alone we can carry the
+                 * curve over on flow's back; with both driven we would be
+                 * applying the response twice, so the second one is reported
+                 * rather than folded in. */
+                if (!out.flowSrc && s.src) {
+                    out.flowSrc = s.src;
+                    out.flowMin = 0;
+                    if (s.curve) out.flowCurve = s.curve;
+                } else {
+                    warn.push('opacity also responded to ' + s.id +
+                        '; only the flow response was kept');
+                }
+                return;
+            }
+            if (!s.src) { warn.push(pair[0] + ' followed ' + s.id + ', which we have no input for'); return; }
+            out[key + 'Src'] = s.src;
+            out[key + 'Min'] = 0;
+            if (s.curve) out[key + 'Curve'] = s.curve;
+        });
+
+        /* Rotation is an angle, not a factor, so it takes the source only --
+         * its curve would reshape a full turn and we do not offer that. */
+        var rot = _sensorFor(P, 'Rotation');
+        if (rot) {
+            if (rot.src) out.angleSrc = rot.src;
+            else warn.push('the tip turned with ' + rot.id + ', which we have no input for');
+        }
+
+        var sc = _sensorFor(P, 'Scatter');
+        if (sc && sc.src) { out.scatterSrc = sc.src; out.scatterMin = 0; }
+
+        // A per-dab flip is exactly what our strip tips already do.
+        if (_bool(P.HorizontalMirrorEnabled) || _bool(P.VerticalMirrorEnabled)) out.tipMirror = true;
+
+        for (var i = 0; i < DROPPED.length; i++) {
+            var k = DROPPED[i][0], v = P[k];
+            if (v !== undefined && v !== '' && v !== 'false' && _num(v, 1) !== 0) {
+                warn.push('dropped: ' + DROPPED[i][1]);
+            }
+        }
+        if (preset.paintop && preset.paintop !== 'paintbrush') {
+            warn.push('this is a ' + preset.paintop + ', which we paint as an ordinary brush');
+        }
+
+        return { name: preset.name || 'Imported', params: out,
+                 tipFile: bd.filename || null, warnings: warn };
+    };
+
     window.BrushPack = BrushPack;
 })();

@@ -126,6 +126,108 @@ await withPage(async (page) => {
     check('nothing in the pack failed to read',
         pack.warnings.length === 0, JSON.stringify(pack.warnings));
 
+    console.log('== turning a Krita brush into one of ours ==');
+    const tr = JSON.parse(await page.eval(`(async () => {
+        const out = {};
+        const one = async (key) => {
+            const p = await BrushPack.read(window.__fx[key]);
+            const pr = p.presets[0];
+            const bd = BrushPack.brushDefinition(pr);
+            /* A stamped tip's real size is its image scaled by the preset's
+             * own factor, so the tip has to be decoded before the size means
+             * anything. */
+            let tipSize = 0, tipUrl = null;
+            if (bd && bd.filename && pr.resources[bd.filename]) {
+                const blob = new Blob([pr.resources[bd.filename].bytes], { type: 'image/png' });
+                const bmp = await createImageBitmap(blob);
+                tipSize = Math.max(bmp.width, bmp.height);
+                tipUrl = await new Promise(r => {
+                    const fr = new FileReader();
+                    fr.onload = () => r(fr.result);
+                    fr.readAsDataURL(blob);
+                });
+            }
+            const t = BrushPack.toPreset(pr, { tipSize });
+            t.tipSize = tipSize; t.tipUrl = tipUrl;
+            return t;
+        };
+        out.eraser = await one('auto');
+        out.stamp = await one('stamp');
+
+        /* The real test of a translation is that the engine accepts it. */
+        const b = PaintApp.brush, app = PaintApp;
+        const paint = async (t) => {
+            app.layerMgr.collapseToBase({ fresh: true });
+            app.setSize(400, 200); app.config.zoom = 1; app.updateBounds();
+            document.getElementById('lsys-add').click();
+            app.state.selection = null;
+            const L = app.layerMgr.layers[app.layerMgr.activeIdx];
+            const ps = Object.assign({}, t.params, { size: 30 });
+            if (t.tipUrl) ps._tipUrl = t.tipUrl;
+            b.PRESETS.__imported = ps;
+            b.loadPreset('__imported');
+            await new Promise(r => setTimeout(r, 500));
+            b.beginStroke(40, 100, 0.9, '#ff0000');
+            for (let x = 60; x <= 360; x += 10) b.moveStroke(x, 100, 0.9, '#ff0000');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 250));
+            const d = L.ctx.getImageData(0, 0, 400, 200).data;
+            let ink = 0;
+            for (let i = 3; i < d.length; i += 4) if (d[i] > 20) ink++;
+            delete b.PRESETS.__imported;
+            return ink;
+        };
+        out.stampInk = await paint(out.stamp);
+        b.loadPreset('Round');
+        out.blendKnown = b.BLEND_MODES.indexOf(out.eraser.params.blendMode) >= 0;
+        return JSON.stringify(out, (k, v) => k === 'tipUrl' ? (v ? 'data:' : null) : v);
+    })()`, { awaitPromise: true }));
+    console.log('  eraser ' + JSON.stringify(tr.eraser));
+    console.log('  stamp  ' + JSON.stringify(tr.stamp) + '  ink ' + tr.stampInk);
+
+    const E = tr.eraser.params, S = tr.stamp.params;
+    check('a generated tip becomes a shape, a size and a squash',
+        E.shape === 'circle' && E.size === 250 && E.aspectRatio === 1,
+        `${E.shape} ${E.size} aspect ${E.aspectRatio}`);
+    /* Krita's spacing is a fraction of the tip; ours is a percentage of it,
+     * which is the same number written differently. */
+    check('spacing arrives as our percentage of the tip',
+        E.spacing === 10 && S.spacing === 4, `${E.spacing}% and ${S.spacing}%`);
+    check('opacity and flow come across as percentages',
+        E.opacity === 100 && S.opacity === 100 && S.flow === 40,
+        `${E.opacity}/${E.flow} and ${S.opacity}/${S.flow}`);
+    /* A gaussian tip has no hard edge even with both fade sliders at zero,
+     * so reading the sliders literally would import a soft eraser as a disc. */
+    check('a soft generated tip does not arrive hard-edged',
+        E.hardness > 20 && E.hardness < 80, `hardness ${E.hardness}`);
+    check('an eraser still erases',
+        E.blendMode === 'erase' && tr.blendKnown, String(E.blendMode));
+    check('the pressure curve carries over point for point',
+        Array.isArray(E.sizeCurve) && E.sizeSrc === 'pressure' &&
+        E.sizeCurve.length === 2 && Math.abs(E.sizeCurve[0][1] - 0.487437) < 1e-4,
+        JSON.stringify(E.sizeCurve));
+    check('...and a four-point one keeps all four',
+        Array.isArray(S.sizeCurve) && S.sizeCurve.length === 4,
+        JSON.stringify(S.sizeCurve));
+    /* Krita keeps every widget's last value whether or not the option is
+     * switched on, so reading values alone flings unscattered brushes apart. */
+    check('a setting the brush had switched off stays off',
+        E.scatter === 0 && S.scatter === 0, `${E.scatter} / ${S.scatter}`);
+    check('a stamped tip is sized from its image, not from the scale alone',
+        S.shape === 'custom' && tr.stamp.tipFile === 'bristle.png' &&
+        S.size === Math.round(tr.stamp.tipSize * 0.296296) && S.size > 1,
+        `${S.size} from a ${tr.stamp.tipSize}px tip`);
+    check('a translated brush is one our engine will actually paint with',
+        tr.stampInk > 500, `${tr.stampInk} pixels of ink`);
+    check('a brush we can reproduce exactly reports nothing',
+        tr.stamp.warnings.length === 0, JSON.stringify(tr.stamp.warnings));
+    /* This eraser drives its opacity from pressure as well as its flow, and
+     * we only have the one dab-level control. Losing it silently is what an
+     * importer must not do. */
+    check('...and one we cannot says which part it could not keep',
+        tr.eraser.warnings.length === 1 && /opacity/.test(tr.eraser.warnings[0]),
+        JSON.stringify(tr.eraser.warnings));
+
     console.log('== junk in, no crash out ==');
     const junk = JSON.parse(await page.eval(`(async () => {
         const out = {};
