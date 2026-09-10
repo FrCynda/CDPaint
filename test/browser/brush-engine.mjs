@@ -257,6 +257,100 @@ await withPage(async (page) => {
             && Math.abs(ro.flat.y - ro.layered.y) < 1),
         `flat ${JSON.stringify(ro.flat)} vs layered ${JSON.stringify(ro.layered)}`);
 
+    /* -- preset swatches are drawn by the real engine ------------------- */
+    console.log('');
+    console.log('== preset swatches are real strokes ==');
+    const sw = await page.eval(`(() => {
+        const app = PaintApp, b = app.brush;
+        const L = __B.doc();
+        const hash = (c) => {
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            let a = 0x811c9dc5;
+            for (let i = 0; i < d.length; i++) a = ((a ^ d[i]) * 16777619) >>> 0;
+            return a.toString(16);
+        };
+        const ink = (c) => {
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            let n = 0;
+            for (let i = 3; i < d.length; i += 4) if (d[i] > 8) n++;
+            return n;
+        };
+        const out = {};
+
+        // Every stock preset must actually paint something.
+        const names = Object.keys(b.PRESETS);
+        out.empty = names.filter(n => {
+            const c = b.generatePreview(n);
+            return !c || ink(c) < 40;
+        });
+
+        // The old fake painter knew nothing of bristles or texture, so these
+        // all came out as the same thin line.
+        out.hRound     = hash(b.generatePreview('Round'));
+        out.hFan       = hash(b.generatePreview('Fan Brush'));
+        out.hAirbrush  = hash(b.generatePreview('Airbrush'));
+        out.hCalli     = hash(b.generatePreview('Calligraphy'));
+        out.hSplatter  = hash(b.generatePreview('Splatter'));
+        out.distinct   = new Set([out.hRound, out.hFan, out.hAirbrush,
+                                  out.hCalli, out.hSplatter]).size;
+
+        // Rendering a swatch must not touch the document at all.
+        const before = __B.hash(L);
+        const steps  = app.state.history.length;
+        const wasPreset = b._currentPreset;
+        const wasSize = b.getParams().size;
+        names.forEach(n => b.generatePreview(n));
+        out.docUntouched   = __B.hash(L) === before;
+        out.noUndoSteps    = app.state.history.length === steps;
+        out.presetKept     = b._currentPreset === wasPreset;
+        out.paramsKept     = b.getParams().size === wasSize;
+
+        // A swatch is not the document, so the document's selection and alpha
+        // lock must not clip it.
+        app.state.selection = { x: 0, y: 0, w: 1, h: 1 };
+        const clipped = b.generatePreview('Round');
+        app.state.selection = null;
+        out.ignoresSelection = ink(clipped) > 40;
+
+        // Cached until something changes it.
+        out.cached = b.generatePreview('Round') === b.generatePreview('Round');
+        return JSON.stringify(out);
+    })()`);
+    const so = JSON.parse(sw);
+    console.log('  ' + sw);
+
+    check('every stock preset paints a visible swatch', so.empty.length === 0,
+        `blank: ${so.empty.join(', ')}`);
+    check('visibly different presets produce different swatches',
+        so.distinct === 5, `only ${so.distinct}/5 unique`);
+    check('rendering swatches leaves the document untouched', so.docUntouched);
+    check('rendering swatches adds no undo steps', so.noUndoSteps);
+    check('rendering swatches does not change the active preset', so.presetKept);
+    check('rendering swatches does not disturb live brush settings', so.paramsKept);
+    check('a document selection does not clip a swatch', so.ignoresSelection);
+    check('a swatch is cached until something invalidates it', so.cached);
+
+    console.log('');
+    console.log('== editing a brush redraws its own swatch ==');
+    const sw2 = await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        __B.doc();
+        const hash = (c) => {
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            let a = 0x811c9dc5;
+            for (let i = 0; i < d.length; i++) a = ((a ^ d[i]) * 16777619) >>> 0;
+            return a.toString(16);
+        };
+        b.loadPreset('Round');
+        const before = hash(b.generatePreview('Round'));
+        b.setParam('size', b.getParams().size * 2.5);
+        await new Promise(r => requestAnimationFrame(r));
+        const after = hash(b.generatePreview('Round'));
+        return JSON.stringify({ changed: before !== after });
+    })()`, { awaitPromise: true });
+    check('changing a setting changes the active preset swatch',
+        JSON.parse(sw2).changed, 'the tile still shows the old brush');
+
     console.log('\n== hot-path guards ==');
     const r7 = await page.eval(`(async () => {
         const app = PaintApp;
