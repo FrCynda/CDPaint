@@ -1634,18 +1634,63 @@
 
     var STORAGE_PREFIX = 'pb-saved-';
     var _TRANSIENT_KEYS = { dynamicsMode: 1, angle: 1 };
+    /* Dragging a slider fires on every pointer move, and this used to write
+     * the whole brush to localStorage each time — a synchronous disk hop per
+     * frame. The settings are snapshotted immediately (cheap) and the write
+     * itself waits for the drag to settle.
+     *
+     * The snapshot is keyed by the brush it belongs to and kept in a map, so
+     * a pending write can never land under a brush you have since switched
+     * to; and every reader of the store flushes first, so nothing can read
+     * back a value that is still sitting in the queue. */
+    var _pending = {};
+    var _persistTimer = 0;
+    var PERSIST_IDLE = 400;
+
+    function _flushParams() {
+        if (_persistTimer) { clearTimeout(_persistTimer); _persistTimer = 0; }
+        for (var k in _pending) {
+            if (!_pending.hasOwnProperty(k)) continue;
+            try { localStorage.setItem(STORAGE_PREFIX + k, _pending[k]); } catch (e_) {}
+        }
+        _pending = {};
+    }
+
+    /* Read through the queue, never around it: a value still waiting to be
+     * written is the current one. Flushing on read instead would work, but
+     * it writes entries back out, which resurrects any that were cleared in
+     * the meantime. */
+    function _readSaved(name) {
+        if (_pending.hasOwnProperty(name)) return _pending[name];
+        try { return localStorage.getItem(STORAGE_PREFIX + name); } catch (e_) { return null; }
+    }
+
+    /* Drop a brush's saved tweaks, queue included. Clearing the store by
+     * hand is not enough — a queued write would put them straight back. */
+    function _forgetSaved(name) {
+        if (name == null) { _pending = {}; return; }
+        delete _pending[name];
+        try { localStorage.removeItem(STORAGE_PREFIX + name); } catch (e_) {}
+    }
+
     function _persistParams() {
-        try {
-            var keep = {};
-            for (var k in _params) {
-                if (_params.hasOwnProperty(k) && !_TRANSIENT_KEYS[k]) keep[k] = _params[k];
-            }
-            localStorage.setItem(STORAGE_PREFIX + engine._currentPreset, JSON.stringify(keep));
-        } catch (e_) {}
+        var keep = {};
+        for (var k in _params) {
+            if (_params.hasOwnProperty(k) && !_TRANSIENT_KEYS[k]) keep[k] = _params[k];
+        }
+        _pending[engine._currentPreset] = JSON.stringify(keep);
+        // Not reset per call: a long drag still gets written every 400ms.
+        if (!_persistTimer) _persistTimer = setTimeout(_flushParams, PERSIST_IDLE);
+    }
+
+    // A close or a reload must not eat the last few seconds of tweaking.
+    if (typeof window !== 'undefined') {
+        window.addEventListener('pagehide', _flushParams);
+        window.addEventListener('beforeunload', _flushParams);
     }
     function _loadSavedParams(name) {
         try {
-            var raw = localStorage.getItem(STORAGE_PREFIX + name);
+            var raw = _readSaved(name);
             if (raw) {
                 var saved = JSON.parse(raw);
                 for (var k in saved) {
@@ -2071,8 +2116,13 @@
         _params[key] = value;
         if (key === 'dynamicsMode') _applyDynamicsMode(value);
         _persistParams();
-        _invalidateSwatch(engine._currentPreset);
-        engine.refreshPreview();
+        /* Smoothing is a feel-of-the-hand setting and the swatch renders with
+         * it forced off, so redrawing one after a smoothing change costs a
+         * whole brush stroke to produce the identical picture. */
+        if (key.indexOf('smoothing') !== 0) {
+            _invalidateSwatch(engine._currentPreset);
+            engine.refreshPreview();
+        }
         if (key === 'size' || (key.indexOf('smoothing') === 0 && key !== 'smoothingMode')) {
             if (key === 'size') _updateRibbonSize();
             var szEl = document.getElementById(key === 'size' ? 'pb-size' : 'pb-smoothing');
@@ -2517,7 +2567,7 @@
          * have. Same source loadPreset reads. */
         if (!live) {
             try {
-                var rawSaved = localStorage.getItem(STORAGE_PREFIX + name);
+                var rawSaved = _readSaved(name);
                 if (rawSaved) {
                     var sv = JSON.parse(rawSaved);
                     for (var sk in sv) {
@@ -2610,10 +2660,19 @@
      * every step of a drag, and a swatch costs a whole stroke to render, so it
      * coalesces onto the next frame. */
     var _swatchRaf = 0;
+    var _swatchLast = 0;
+    var SWATCH_MIN_GAP = 150;   // ms between redraws while a slider is moving
+
+    /* A swatch costs a whole brush stroke, and a drag asked for one every
+     * frame. Six a second reads as live and leaves the other 90% of the
+     * frame for the panel itself; the trailing call guarantees the tile ends
+     * up showing where the slider actually stopped. */
     engine.refreshPreview = function () {
         if (_swatchRaf) return;
-        _swatchRaf = requestAnimationFrame(function () {
+        var wait = _max(0, SWATCH_MIN_GAP - (Date.now() - _swatchLast));
+        var go = function () {
             _swatchRaf = 0;
+            _swatchLast = Date.now();
             var name = engine._currentPreset;
             if (!name) return;
             _invalidateSwatch(name);
@@ -2627,7 +2686,11 @@
             var old = tile.querySelector('canvas');
             if (old) tile.removeChild(old);
             tile.insertBefore(c, tile.firstChild);
-        });
+            tile._swatched = true;
+        };
+        _swatchRaf = wait
+            ? setTimeout(function () { requestAnimationFrame(go); }, wait)
+            : requestAnimationFrame(go);
     };
 
     engine.syncPanel = function () {
@@ -3322,7 +3385,7 @@
         delete engine.PRESETS[from];
         // Any tweaks the user made after saving live under the old key.
         try {
-            var carried = localStorage.getItem(STORAGE_PREFIX + from);
+            var carried = _readSaved(from);
             if (carried) localStorage.setItem(STORAGE_PREFIX + name, carried);
             localStorage.removeItem(STORAGE_PREFIX + from);
         } catch (e_) {}
@@ -3342,7 +3405,7 @@
         delete engine.PRESETS[name];
         _commitUsers();
         if (_favs[name]) { delete _favs[name]; _writeStore(FAV_KEY, _favs); }
-        try { localStorage.removeItem(STORAGE_PREFIX + name); } catch (e_) {}
+        _forgetSaved(name);
         _rebuildNames();
         _invalidateSwatch(name);
         if (engine._currentPreset === name) engine.loadPreset(engine.presetNames[0] || 'Round');
@@ -3407,6 +3470,7 @@
     // Published down here: everything above `var engine` runs at module-eval
     // time, when engine is still undefined.
     engine.BLEND_MODES = Object.keys(_BLEND_OPS);
+    engine.forgetSaved = _forgetSaved;
 
     engine.generatePreview = function (name) { return _pbRenderPreview(name); };
 
@@ -3422,7 +3486,7 @@
     engine.evalCurve = _evalCurve;
 
     engine.resetCurrentPreset = function () {
-        try { localStorage.removeItem(STORAGE_PREFIX + engine._currentPreset); } catch (e_) {}
+        _forgetSaved(engine._currentPreset);
         engine.loadPreset(engine._currentPreset);
         engine.syncPanel();
     };
@@ -3573,20 +3637,54 @@
         }
     }
 
+    /* Nine of a hundred tiles fit in the scroller, and every swatch is a
+     * whole brush stroke rendered at double size. Drawing all hundred was
+     * 726ms of the 791ms it took to open the panel, to show nine. So a tile
+     * arrives empty and draws itself when it is about to be looked at.
+     * Tiles carry their aspect-ratio in CSS, so an undrawn one still holds
+     * its place and the scrollbar does not jump. */
+    var _gridObs = null;
+
+    function _swatchInto(tile) {
+        if (tile._swatched) return;
+        tile._swatched = true;
+        var name = tile.getAttribute('data-preset');
+        var draw = function () {
+            var old = tile.querySelector('canvas');
+            if (old) tile.removeChild(old);
+            var c = engine.generatePreview(name);
+            if (c) tile.insertBefore(c, tile.firstChild);
+        };
+        draw();
+        /* 27 presets stamp a PNG tip. Fetching and luminance-converting all
+         * of them was ~570kB and a decode each, every one paid on open to
+         * fill tiles nobody had scrolled to yet. A tile fetches its own. */
+        var pr = engine.PRESETS[name];
+        if (pr && pr._tipUrl && _previewTipCache[name] === undefined) {
+            _ensurePreviewTip(name, function () {
+                _invalidateSwatch(name);
+                draw();
+            });
+        }
+    }
+
     engine.buildBrushGrid = function () {
         var grid = document.getElementById('pb-brush-grid');
         var label = document.getElementById('pb-active-name');
         if (!grid) return;
+        if (_gridObs) { _gridObs.disconnect(); _gridObs = null; }
         while (grid.firstChild) grid.removeChild(grid.firstChild);
+        // One insertion instead of a hundred and twelve, each of which
+        // invalidated the panel's layout on the way in.
+        var frag = document.createDocumentFragment();
 
         var groups = _groupedPresets();
         var names = [];
-        var tiles = {};
         for (var gi = 0; gi < groups.length; gi++) {
             var head = document.createElement('div');
             head.className = 'pb-brush-group';
             head.textContent = groups[gi].name;
-            grid.appendChild(head);
+            frag.appendChild(head);
             for (var k = 0; k < groups[gi].presets.length; k++) names.push(groups[gi].presets[k]);
             addTiles(groups[gi].presets, groups[gi].name);
         }
@@ -3603,9 +3701,6 @@
                  * a tile matches on. */
                 tile.setAttribute('data-search',
                     (name + ' ' + (groupName || '')).toLowerCase());
-                var c = engine.generatePreview(name);
-                if (c) tile.appendChild(c);
-
                 // A saved brush is named by the user, so it reaches the DOM
                 // as text and never as markup.
                 if (engine.isUserPreset(name)) {
@@ -3643,31 +3738,26 @@
                     _syncManageButtons();
                     try { _updateBrushCursor && _updateBrushCursor(); } catch (e_) {}
                 });
-                grid.appendChild(tile);
-                // A favourite appears under Favourites AND under its family,
-                // so a name can own more than one tile.
-                (tiles[name] || (tiles[name] = [])).push(tile);
+                frag.appendChild(tile);
             })(list[i]);
         }
         }
 
-        // Async load custom tip images and regenerate previews
-        var tipDone = {};
-        for (var j = 0; j < names.length; j++) {
-            (function (name) {
-                if (!engine.PRESETS[name] || !engine.PRESETS[name]._tipUrl) return;
-                if (tipDone[name]) return;   // favourites list the name twice
-                tipDone[name] = 1;
-                _ensurePreviewTip(name, function () {
-                    var owned = tiles[name] || [];
-                    for (var q = 0; q < owned.length; q++) {
-                        var oldCanvas = owned[q].querySelector('canvas');
-                        if (oldCanvas) owned[q].removeChild(oldCanvas);
-                        var c = engine.generatePreview(name);
-                        if (c) owned[q].insertBefore(c, owned[q].firstChild);
-                    }
-                });
-            })(names[j]);
+        grid.appendChild(frag);
+
+        var all = grid.querySelectorAll('.pb-brush-tile');
+        if (window.IntersectionObserver) {
+            _gridObs = new IntersectionObserver(function (entries) {
+                for (var e = 0; e < entries.length; e++) {
+                    if (!entries[e].isIntersecting) continue;
+                    var t = entries[e].target;
+                    _gridObs.unobserve(t);
+                    _swatchInto(t);
+                }
+            }, { root: grid, rootMargin: '250px 0px' });
+            for (var ob = 0; ob < all.length; ob++) _gridObs.observe(all[ob]);
+        } else {
+            for (var ob2 = 0; ob2 < all.length; ob2++) _swatchInto(all[ob2]);
         }
 
         var active = engine._currentPreset || names[0];
