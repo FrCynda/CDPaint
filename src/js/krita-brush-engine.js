@@ -3519,6 +3519,145 @@
         return { ok: true, added: added, renamed: renamed };
     };
 
+    /* Installing a brush pack made for another program.
+     *
+     * brush-pack.js does the reading and the arithmetic and never touches
+     * the engine; this is the other side of that line. It takes what came
+     * back, stores each brush the same way a brush the user saved is stored,
+     * and reports what it could not keep rather than painting a near miss
+     * and saying nothing.
+     *
+     * ponytail: a tip shared by several brushes in one pack is stored once
+     * per brush. Worth a shared tip store if a pack ever fills the 5MB. */
+    function _packName(raw) {
+        /* Pack authors bracket the brush's real name: a sorting prefix in
+         * front -- "c6) Thin Brush Pointy" -- and their own signature and
+         * version behind it -- "- deevad 23.01". Both are shelf-tidying for
+         * a list we group our own way, and on a 66px tile they crowd out the
+         * part that says what the brush is. The name between them stays. */
+        return _cleanName(String(raw || '')
+            .replace(/^\s*\w{1,3}\)\s*/, '')
+            .replace(/\s+-\s+[^-]*\d[^-]*$/, '')) || null;
+    }
+
+    engine.importBrushPack = function (bytes, filename) {
+        if (!window.BrushPack) {
+            return Promise.resolve({ ok: false, error: 'The brush pack reader is not loaded.' });
+        }
+        var u8 = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
+        return BrushPack.read(u8).then(function (pack) {
+            var added = [], renamed = [], skipped = [], notes = [];
+            var tipCache = {};
+
+            function tipFor(preset, file) {
+                if (!file) return Promise.resolve(null);
+                if (tipCache[file]) return tipCache[file];
+                var src = (preset.resources && preset.resources[file] &&
+                           preset.resources[file].bytes) || pack.tips[file];
+                if (!src) return Promise.resolve(null);
+                var p = BrushPack.tipStrip(src, file).catch(function () { return null; });
+                tipCache[file] = p;
+                return p;
+            }
+
+            var chain = Promise.resolve();
+            pack.presets.forEach(function (pr) {
+                chain = chain.then(function () {
+                    var bd = BrushPack.brushDefinition(pr) || {};
+                    return tipFor(pr, bd.filename).then(function (tip) {
+                        var want = _packName(pr.name) || _packName(pr.file) || 'Imported brush';
+                        var t = BrushPack.toPreset(pr, { tipSize: tip ? tip.size : 0 });
+                        var ps = t.params;
+                        if (ps.needsTipSize) {
+                            skipped.push({ name: want, why: 'its tip image is missing from the pack' });
+                            return;
+                        }
+                        delete ps.needsTipSize;
+                        if (ps._checkBlend) {
+                            delete ps._checkBlend;
+                            if (engine.BLEND_MODES.indexOf(ps.blendMode) < 0) {
+                                t.warnings.push('it blended with "' + ps.blendMode + '", which we do not have');
+                                delete ps.blendMode;
+                            }
+                        }
+                        if (tip) {
+                            if (tip.url.length > TIP_CAP) {
+                                skipped.push({ name: want, why: 'its tip image is too big to store (' +
+                                    _round(tip.url.length / 1024) + 'KB)' });
+                                return;
+                            }
+                            ps._tipUrl = tip.url;
+                            if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = tip.pick; }
+                        }
+                        // Never overwrite: an import that quietly replaced a
+                        // brush the user had tuned would be unrecoverable.
+                        var name = engine.PRESETS[want] ? _uniqueName(want) : want;
+                        if (name !== want) renamed.push(want + ' → ' + name);
+                        _userPresets[name] = ps;
+                        var err = _commitUsers();
+                        if (err) {
+                            delete _userPresets[name];
+                            skipped.push({ name: want, why: 'the browser ran out of storage' });
+                            throw new Error('full');
+                        }
+                        _installUserPreset(name, ps);
+                        added.push(name);
+                        if (t.warnings.length) notes.push({ name: name, warnings: t.warnings });
+                    });
+                });
+            });
+
+            return chain.catch(function (e) {
+                if (e && e.message !== 'full') throw e;
+            }).then(function () {
+                _rebuildNames();
+                _invalidateSwatch();
+                for (var i = 0; i < pack.warnings.length; i++) {
+                    skipped.push({ name: pack.warnings[i], why: '' });
+                }
+                if (!added.length && !skipped.length) {
+                    return { ok: false, error: 'That pack holds no brushes we could read.' };
+                }
+                return { ok: true, kind: pack.kind, added: added, renamed: renamed,
+                         skipped: skipped, notes: notes };
+            });
+        }, function (e) {
+            return { ok: false, error: (e && e.message) || 'That file could not be read.' };
+        });
+    };
+
+    /* A tip image on its own -- a PNG, a GIMP .gbr, or a .gih strip of
+     * shapes. There are no settings in one, so it becomes a plain stamping
+     * brush at the tip's own size and the user tunes it from there. */
+    engine.importBrushTip = function (bytes, filename) {
+        if (!window.BrushPack) {
+            return Promise.resolve({ ok: false, error: 'The brush pack reader is not loaded.' });
+        }
+        var u8 = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
+        return BrushPack.tipStrip(u8, filename).then(function (tip) {
+            if (tip.url.length > TIP_CAP) {
+                return { ok: false, error: 'That tip image is too big to store (' +
+                    _round(tip.url.length / 1024) + 'KB, limit ' + _round(TIP_CAP / 1024) + 'KB).' };
+            }
+            var base = String(filename || 'Tip').replace(/\.[a-z]+$/i, '').replace(/[_-]+/g, ' ');
+            var name = _uniqueName(base);
+            var ps = {
+                size: _min(200, _max(2, tip.size)), opacity: 100, flow: 100,
+                spacing: 10, hardness: 100, shape: 'custom', _tipUrl: tip.url
+            };
+            if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = tip.pick; }
+            _userPresets[name] = ps;
+            var err = _commitUsers();
+            if (err) { delete _userPresets[name]; return { ok: false, error: err }; }
+            _installUserPreset(name, ps);
+            _rebuildNames();
+            _invalidateSwatch(name);
+            return { ok: true, name: name, cells: tip.cells };
+        }, function (e) {
+            return { ok: false, error: (e && e.message) || 'That file is not a brush tip we can read.' };
+        });
+    };
+
     // Published down here: everything above `var engine` runs at module-eval
     // time, when engine is still undefined.
     engine.BLEND_MODES = Object.keys(_BLEND_OPS);
@@ -3673,21 +3812,93 @@
         if (imp && file) {
             imp.addEventListener('click', function () { file.value = ''; file.click(); });
             file.addEventListener('change', function () {
-                var f = file.files && file.files[0];
-                if (!f) return;
-                var rd = new FileReader();
-                rd.onload = function () {
-                    var r = engine.importUserPresets(String(rd.result));
-                    if (!r.ok) return _say(r.error, 'error');
-                    var msg = 'Imported ' + r.added.length + ' brush' +
-                        (r.added.length === 1 ? '' : 'es');
-                    if (r.renamed.length) msg += ' (' + r.renamed.length + ' renamed to avoid a clash)';
-                    _afterLibraryChange(msg);
-                };
-                rd.readAsText(f);
+                engine.importFiles(file.files);
             });
         }
     }
+
+    /* One Import button for every shape a brush arrives in: our own export,
+     * a Krita pack, a single preset, or a bare tip image. Which it is comes
+     * off the file itself, so the user picks a file rather than first
+     * picking what kind of file it is. */
+    function _readFile(f, asText) {
+        return new Promise(function (res, rej) {
+            var rd = new FileReader();
+            rd.onerror = function () { rej(new Error('Could not read ' + f.name)); };
+            rd.onload = function () { res(rd.result); };
+            if (asText) rd.readAsText(f); else rd.readAsArrayBuffer(f);
+        });
+    }
+
+    engine.importFiles = function (files) {
+        var list = [].slice.call(files || []);
+        if (!list.length) return Promise.resolve(null);
+        var lines = [], failed = 0, brushes = 0, left = 0, one = null;
+
+        function note(r, what) {
+            if (!r || !r.ok) {
+                failed++;
+                lines.push(what + ': ' + ((r && r.error) || 'could not be read'));
+                return;
+            }
+            if (r.added) {
+                brushes += r.added.length;
+                left += (r.skipped || []).length;
+                if (r.added.length === 1) one = r.added[0];
+                lines.push(what + ': ' + r.added.length + ' brush' + (r.added.length === 1 ? '' : 'es') +
+                    ((r.skipped || []).length ? ', ' + r.skipped.length + ' left out' : ''));
+            } else {
+                brushes++;
+                one = r.name;
+                lines.push(what + ': "' + r.name + '"' +
+                    (r.cells > 1 ? ' (' + r.cells + ' shapes)' : ''));
+            }
+        }
+
+        var chain = Promise.resolve();
+        list.forEach(function (f) {
+            chain = chain.then(function () {
+                var n = f.name || '';
+                if (/\.json$/i.test(n)) {
+                    return _readFile(f, true).then(function (txt) {
+                        note(engine.importUserPresets(String(txt)), n);
+                    });
+                }
+                if (/\.(png|gbr|gih)$/i.test(n)) {
+                    return _readFile(f).then(function (buf) {
+                        return engine.importBrushTip(new Uint8Array(buf), n).then(function (r) { note(r, n); });
+                    });
+                }
+                return _readFile(f).then(function (buf) {
+                    return engine.importBrushPack(new Uint8Array(buf), n).then(function (r) { note(r, n); });
+                });
+            }).catch(function (e) {
+                failed++;
+                lines.push((f.name || 'file') + ': ' + ((e && e.message) || 'could not be read'));
+            });
+        });
+
+        return chain.then(function () {
+            _afterLibraryChange(null);
+            /* One line: a toast is one line whatever it is handed, and a
+             * newline in it only runs the sentences together. The per-file
+             * detail goes to the console and to the caller. */
+            var msg;
+            if (!brushes) {
+                msg = failed === 1 ? lines[0] : 'Nothing in those files could be imported';
+            } else if (brushes === 1 && one) {
+                msg = 'Added "' + one + '"';
+            } else {
+                msg = 'Added ' + brushes + ' brushes' +
+                    (list.length === 1 ? ' from ' + list[0].name : ' from ' + list.length + ' files');
+            }
+            if (brushes && left) msg += ' — ' + left + ' left out';
+            if (brushes && failed) msg += ' — ' + failed + ' file' + (failed === 1 ? '' : 's') + ' unreadable';
+            if (lines.length > 1) console.log('[brushes] ' + lines.join('\n[brushes] '));
+            _say(msg, brushes ? 'success' : 'error');
+            return { brushes: brushes, failed: failed, lines: lines };
+        });
+    };
 
     /* Nine of a hundred tiles fit in the scroller, and every swatch is a
      * whole brush stroke rendered at double size. Drawing all hundred was
