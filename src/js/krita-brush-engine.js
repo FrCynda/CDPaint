@@ -3686,9 +3686,47 @@
      * its place and the scrollbar does not jump. */
     var _gridObs = null;
 
+    /* ...and the ones it does draw go out a few per frame, not all at once.
+     * Sixteen tiles fit inside the observer's margin, each one a real brush
+     * stroke, and drawing the lot inside the observer callback blocked a
+     * single frame for 305ms on a large document -- one long freeze exactly
+     * when the panel appears. A frame's worth at a time keeps the panel
+     * interactive while the tiles fill in. */
+    var _swatchQueue = [];
+    var _swatchPump = 0;
+    var SWATCH_BUDGET = 4;   // ms of swatch drawing per slice
+
+    /* Idle time, not the next frame. Swatches cost anything from 3ms to
+     * 73ms each -- a bristle mixer is a real stroke with sixteen tips and
+     * paint pickup -- so one of them can miss a frame all by itself and
+     * there is no splitting it. Handing the browser the choice of when to
+     * run them keeps scrolling smooth; the timeout is there so a tile
+     * scrolled to still fills in on a page that never goes idle. */
+    var _idle = window.requestIdleCallback
+        ? function (fn) { return requestIdleCallback(fn, { timeout: 300 }); }
+        : function (fn) { return requestAnimationFrame(fn); };
+    var _unidle = window.cancelIdleCallback
+        ? function (h) { cancelIdleCallback(h); }
+        : function (h) { cancelAnimationFrame(h); };
+
+    function _pumpSwatches() {
+        _swatchPump = 0;
+        var t0 = Date.now();
+        while (_swatchQueue.length) {
+            _drawSwatch(_swatchQueue.shift());
+            if (Date.now() - t0 > SWATCH_BUDGET) break;
+        }
+        if (_swatchQueue.length) _swatchPump = _idle(_pumpSwatches);
+    }
+
     function _swatchInto(tile) {
         if (tile._swatched) return;
         tile._swatched = true;
+        _swatchQueue.push(tile);
+        if (!_swatchPump) _swatchPump = _idle(_pumpSwatches);
+    }
+
+    function _drawSwatch(tile) {
         var name = tile.getAttribute('data-preset');
         var draw = function () {
             var old = tile.querySelector('canvas');
@@ -3714,6 +3752,9 @@
         var label = document.getElementById('pb-active-name');
         if (!grid) return;
         if (_gridObs) { _gridObs.disconnect(); _gridObs = null; }
+        // The queued tiles are about to be thrown away.
+        _swatchQueue.length = 0;
+        if (_swatchPump) { _unidle(_swatchPump); _swatchPump = 0; }
         while (grid.firstChild) grid.removeChild(grid.firstChild);
         // One insertion instead of a hundred and twelve, each of which
         // invalidated the panel's layout on the way in.

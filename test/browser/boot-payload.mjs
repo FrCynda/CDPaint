@@ -47,8 +47,25 @@ await withPage(async (page) => {
 
     /* Picking the tool slides the sidebar to left:0, which is what the
      * observer is watching for. */
-    await page.run(`PaintApp.setTool('paintbrush'); return 1;`);
-    await new Promise(r => setTimeout(r, 2000));
+    /* Sixteen tiles fall inside the observer's margin and a swatch is a real
+     * brush stroke — up to 73ms for a bristle mixer. Drawn in one go that is
+     * a third of a second of frozen panel at the moment it appears, so they
+     * go out a slice at a time and the longest frame stays short. */
+    const worstFrame = await page.run(`
+        const gaps = [];
+        let prev = performance.now();
+        PaintApp.setTool('paintbrush');
+        for (let i = 0; i < 90; i++) {
+            await new Promise(r => requestAnimationFrame(r));
+            const now = performance.now();
+            gaps.push(now - prev);
+            prev = now;
+        }
+        return Math.round(Math.max.apply(null, gaps));
+    `);
+    check('opening the panel never freezes for a noticeable moment',
+        worstFrame < 60, `longest frame while opening was ${worstFrame}ms`);
+    await new Promise(r => setTimeout(r, 1500));
 
     const open = await page.run(PROBE);
     check('opening the panel builds the grid', open.tiles > 0, `${open.tiles} tiles`);
