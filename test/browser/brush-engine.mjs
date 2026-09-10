@@ -1573,6 +1573,121 @@ await withPage(async (page) => {
     check('surface brushes have their own family',
         dsw.heads.indexOf('Surfaces') !== -1, dsw.heads.join(', '));
     check('the library holds 100 brushes', dsw.count === 100, 'count ' + dsw.count);
+
+    /* ── taper ────────────────────────────────────────────────────────── */
+    console.log('== taper ==');
+    const tp = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, app = PaintApp;
+        /* A wide, short canvas and one horizontal line, measured column by
+         * column: how wide the ink is, and how dark. A width taper shows up
+         * in the first, an opacity taper in the second. */
+        const run = async (o) => {
+            app.layerMgr.collapseToBase({ fresh: true });
+            app.setSize(400, 120); app.config.zoom = 1; app.updateBounds();
+            document.getElementById('lsys-add').click();
+            app.state.selection = null;
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+            b.setParam('size', o.size == null ? 16 : o.size);
+            b.setParam('hardness', 100);
+            b.setParam('opacity', 100); b.setParam('flow', 100);
+            b.setParam('spacing', o.spacing == null ? 6 : o.spacing);
+            b.setParam('taperStart', o.ts == null ? 30 : o.ts);
+            b.setParam('taperEnd', o.te == null ? 30 : o.te);
+            b.setParam('taperTarget', o.target || 'size');
+            b.setParam('taperUnit', o.unit || 'brush');
+            const L = app.layerMgr.layers[app.layerMgr.activeIdx];
+            const x0 = o.x0 == null ? 40 : o.x0, x1 = o.x1 == null ? 360 : o.x1;
+            b.beginStroke(x0, 60, 1.0, '#ff0000');
+            for (let i = 1; i <= 60; i++)
+                b.moveStroke(x0 + (x1 - x0) * i / 60, 60, 1.0, '#ff0000');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 200));
+            const d = L.ctx.getImageData(0, 0, 400, 120).data;
+            const w = [], a = [];
+            for (let x = 0; x < 400; x++) {
+                let lo = -1, hi = -1, peak = 0;
+                for (let y = 0; y < 120; y++) {
+                    const v = d[(y * 400 + x) * 4 + 3];
+                    if (v > peak) peak = v;
+                    if (v > 10) { if (lo < 0) lo = y; hi = y; }
+                }
+                w.push(lo < 0 ? 0 : hi - lo + 1); a.push(peak);
+            }
+            const first = w.findIndex(v => v > 0);
+            let last = -1; for (let i = w.length - 1; i >= 0; i--) if (w[i] > 0) { last = i; break; }
+            if (first < 0) return { empty: true };
+            const maxW = Math.max.apply(null, w);
+            const upto = (arr, lim) => {
+                const u = arr.findIndex(v => v >= lim);
+                let dn = -1; for (let i = arr.length - 1; i >= 0; i--) if (arr[i] >= lim) { dn = i; break; }
+                return [u - first, last - dn];
+            };
+            return { first, last, maxW,
+                     tipW: [w[first], w[last]], tipA: [a[first], a[last]],
+                     midW: w[(first + last) >> 1], midA: a[(first + last) >> 1],
+                     wRamp: upto(w, maxW * 0.9), aRamp: upto(a, 250) };
+        };
+
+        const out = {};
+        out.off      = await run({ ts: 0, te: 0 });
+        out.size     = await run({ target: 'size' });
+        out.sizeLoose= await run({ target: 'size', spacing: 40 });
+        out.ink      = await run({ target: 'opacity' });
+        out.inkLoose = await run({ target: 'opacity', spacing: 40 });
+        out.both     = await run({ target: 'both' });
+        out.short    = await run({ target: 'size', x0: 180, x1: 220 });
+        /* Brush size is what separates the two modes: measured against the
+         * brush, halving the size halves the taper; measured against the
+         * stroke, the same line tapers over the same distance whatever tip
+         * is drawing it. Stroke length alone cannot tell them apart, because
+         * the short-stroke fit above shrinks the brush-relative one too. */
+        out.brushBig = await run({ target: 'size', size: 16 });
+        out.brushSml = await run({ target: 'size', size: 8 });
+        out.pctBig   = await run({ target: 'size', unit: 'stroke', size: 16 });
+        out.pctSml   = await run({ target: 'size', unit: 'stroke', size: 8 });
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    console.log('  ' + JSON.stringify(tp));
+
+    /* A round brush ends in a half-circle, so even an untapered line climbs
+     * to full width over its own radius. That cap is the baseline a taper
+     * has to beat: blunt is an 8px-wide first column, tapered is 1px. */
+    check('taper off leaves a blunt end, just the round tip itself',
+        tp.off.tipW[0] >= 7 && tp.off.wRamp[0] <= 5 && tp.off.maxW === 16,
+        `first column ${tp.off.tipW[0]}px, ramp ${tp.off.wRamp}`);
+    check('a taper narrows the line to a point, not a see-through stub',
+        tp.size.tipW[0] <= 3 && tp.size.tipW[1] <= 3 &&
+        tp.size.tipA[0] > 120 && tp.size.tipA[1] > 120,
+        `tips ${tp.size.tipW} wide at alpha ${tp.size.tipA}`);
+    check('...and it is still full width and full ink in the middle',
+        tp.size.midW === 16 && tp.size.midA === 255,
+        `${tp.size.midW}px at ${tp.size.midA}`);
+    check('both ends taper by the same amount',
+        Math.abs(tp.size.wRamp[0] - tp.size.wRamp[1]) <= 2,
+        `${tp.size.wRamp[0]} in vs ${tp.size.wRamp[1]} out`);
+    check('spacing does not change how long a width taper runs',
+        Math.abs(tp.size.wRamp[0] - tp.sizeLoose.wRamp[0]) <= 8,
+        `${tp.size.wRamp[0]} at spacing 6 vs ${tp.sizeLoose.wRamp[0]} at spacing 40`);
+    check('an opacity taper fades the ink and leaves the width alone',
+        tp.ink.maxW === 16 && tp.ink.tipA[0] < 120 && tp.ink.aRamp[0] > 60,
+        `width ${tp.ink.maxW}, tip alpha ${tp.ink.tipA}, ramp ${tp.ink.aRamp}`);
+    check('spacing does not change how long an opacity taper runs',
+        Math.abs(tp.ink.aRamp[0] - tp.inkLoose.aRamp[0]) <= 15,
+        `${tp.ink.aRamp[0]} at spacing 6 vs ${tp.inkLoose.aRamp[0]} at spacing 40`);
+    check('both does both',
+        tp.both.tipW[0] <= 3 && tp.both.aRamp[0] > 40,
+        `tip ${tp.both.tipW[0]}px, ink ramp ${tp.both.aRamp}`);
+    check('a stroke too short for its taper still tapers both ends',
+        tp.short.tipW[0] <= 4 && tp.short.tipW[1] <= 4 && tp.short.maxW >= 10,
+        `tips ${tp.short.tipW}, widest ${tp.short.maxW}`);
+    check('measured by brush size, a smaller tip tapers over a shorter run',
+        tp.brushSml.wRamp[0] < tp.brushBig.wRamp[0] * 0.7,
+        `${tp.brushBig.wRamp[0]} at size 16 vs ${tp.brushSml.wRamp[0]} at size 8`);
+    check('measured by stroke length, the tip size stops mattering',
+        Math.abs(tp.pctBig.wRamp[0] - tp.pctSml.wRamp[0]) <= 8,
+        `${tp.pctBig.wRamp[0]} at size 16 vs ${tp.pctSml.wRamp[0]} at size 8`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

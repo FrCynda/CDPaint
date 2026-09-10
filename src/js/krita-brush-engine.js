@@ -898,21 +898,43 @@
         return _mixColors(_wet, colorHex, p.colorRate);
     }
 
-    function _renderDab(x, y, pressure, colorHex, strokeAngle, rawPressure) {
+    /* Fading a dab's own alpha does not fade the LINE. Dabs overlap, and
+     * stacking n of them at alpha a with source-over reaches 1-(1-a)^n — so
+     * the ink saturated solid long before the ramp finished, and how far it
+     * ran depended on spacing, which has nothing to do with taper: a 144px
+     * taper measured 45px at spacing 4 and 95px at spacing 40. Solve for the
+     * per-dab alpha whose stack lands on the alpha the taper asked for. */
+    function _taperAlpha(alpha, tf, sz, p) {
+        var step = _max(1, p.size * p.spacing / 100);
+        var n = sz / step;
+        if (n <= 1.001 || alpha <= 0) return alpha * tf;
+        var want = (1 - _pow(1 - alpha, n)) * tf;
+        return _clamp(1 - _pow(1 - want, 1 / n), 0, 1);
+    }
+
+    function _renderDab(x, y, pressure, colorHex, strokeAngle, rawPressure, taper) {
         var p = getParams();
 
-        // rawPressure overrides the taper-baked pressure for size, keeping the
-        // brush at full width during taper fade.
         var _sp = rawPressure != null ? rawPressure : pressure;
         var sc = { x: x, y: y, pressure: _sp, strokeAngle: strokeAngle };
 
+        /* Which of the two a taper thins. Krita and CSP both default to the
+         * WIDTH — a nib lifting off the paper narrows to a point, it does not
+         * turn see-through — and CSP offers density as the alternative. This
+         * engine used to fade opacity only and hold the brush at full width,
+         * which is why an inked line ended in a translucent stub. */
+        var tf = (taper == null) ? 1 : taper;
+        var tgt = p.taperTarget || 'size';
+        var tfSize = (tf < 1 && tgt !== 'opacity') ? tf : 1;
+        var tfInk  = (tf < 1 && tgt !== 'size') ? tf : 1;
+
         var effAngle = _dynAngle(p, p.angle, sc);
-        var sz = _max(0.5, _dyn(p, 'size', p.size, sc, 1));
+        var sz = _dyn(p, 'size', p.size, sc, 1) * tfSize;
         if (sz < 0.5) return;
 
         // Bristle mode: render multiple fiber dabs
         if (p.bristleCount > 1) {
-            _renderBristleDabs(x, y, pressure, colorHex, strokeAngle);
+            _renderBristleDabs(x, y, pressure, colorHex, strokeAngle, tfSize, tfInk);
             return;
         }
 
@@ -936,10 +958,12 @@
         var hard = _clamp(_dyn(p, 'hardness', p.hardness, sc, 6), 0, 100);
         var mask = _maskFor(p.shape, sz, hard, effAngle, p.aspectRatio);
 
-        // Per-dab alpha. Taper rides on `pressure`, which is why flow's sensor
-        // reads the taper-baked value while size reads the raw one.
+        // Per-dab alpha. Both sensors now read the real pressure; the taper
+        // is applied on top of whatever they produce, not smuggled in as
+        // extra pressure, so a curved flow response cannot distort it.
         var flowSc = { x: x, y: y, pressure: pressure, strokeAngle: strokeAngle };
         var alpha = _clamp(_dyn(p, 'flow', p.flow / 100, flowSc, 4), 0, 1);
+        if (tfInk < 1) alpha = _taperAlpha(alpha, tfInk, sz, p);
 
         _paintDab(_flowCtx, x, y, mask, finalColor, alpha, p.texture, p.textureScale, p.textureType);
     }
@@ -1029,19 +1053,22 @@
         return { list: out, lw: lw, reach: reach };
     }
 
-    function _renderBristleDabs(x, y, pressure, colorHex, strokeAngle) {
+    function _renderBristleDabs(x, y, pressure, colorHex, strokeAngle, tfSize, tfInk) {
         var p = getParams();
+        if (tfSize == null) tfSize = 1;
+        if (tfInk == null) tfInk = 1;
         var sc = { x: x, y: y, pressure: pressure, strokeAngle: strokeAngle };
         var count = _clamp(_round(p.bristleCount), 2, 50);
         var length = _max(3, p.bristleLength);
         var width = _max(1, p.bristleWidth);
 
         var effAngle = _dynAngle(p, p.angle, sc);
-        var sz = _max(0.5, _dyn(p, 'size', p.size, sc, 1));
+        var sz = _max(0.5, _dyn(p, 'size', p.size, sc, 1)) * tfSize;
 
         // flow scales the CLAMPED pressure factor, not the other way round —
         // multiplying first and clamping after would brighten low-flow bristles.
         var baseAlpha = (p.flow / 100) * _clamp(_dyn(p, 'flow', 1, sc, 4) * 1.2, 0, 1);
+        if (tfInk < 1) baseAlpha = _taperAlpha(baseAlpha, tfInk, sz, p);
 
         if (sz < 2) return;
 
@@ -1306,20 +1333,47 @@
         var lastPt = points[points.length - 1];
         var totalDist = (lastPt && lastPt.dist) || 0;
 
+        /* How long each taper runs, resolved once for the stroke.
+         *
+         * 'stroke' measures the taper as a share of the line actually drawn,
+         * which is the mode CSP inkers live in — a fixed length is wrong for
+         * a long sweep and a short dash at the same time. It needs the total,
+         * so it can only be honoured on the final pass; the live preview
+         * falls back to brush-relative and the final pass redraws the stroke
+         * from scratch anyway. 100 means "half the stroke", so start and end
+         * at 100 meet in the middle and give a clean dart. */
+        var tStart = 0, tEnd = 0;
+        if (taperMode && (p.taperStart > 0 || p.taperEnd > 0)) {
+            if (p.taperUnit === 'stroke' && taperMode >= 2 && totalDist > 0) {
+                tStart = (p.taperStart / 100) * totalDist * 0.5;
+                tEnd   = (p.taperEnd   / 100) * totalDist * 0.5;
+            } else {
+                tStart = (p.taperStart / 100) * sz * 30;
+                tEnd   = (p.taperEnd   / 100) * sz * 30;
+            }
+            /* Too short to fit both? Shrink them to fit, the way CSP does.
+             * The old code dropped the end taper whole whenever the stroke
+             * was shorter than it, so a short flick ramped up across its
+             * entire length and then stopped dead at part ink — no point on
+             * either end, which is the opposite of what taper is for. */
+            if (taperMode >= 2 && totalDist > 0 && tStart + tEnd > totalDist) {
+                var _k = totalDist / (tStart + tEnd);
+                tStart *= _k; tEnd *= _k;
+            }
+        }
+
         function _taperAtDist(dabDist) {
-            if (!taperMode || (p.taperStart <= 0 && p.taperEnd <= 0)) return 1;
-            var startPx = (p.taperStart / 100) * sz * 30;
-            var endPx   = (p.taperEnd   / 100) * sz * 30;
+            if (tStart <= 0 && tEnd <= 0) return 1;
             var f = 1;
-            if (startPx > 0 && dabDist < startPx) {
-                var _t = dabDist / startPx;
+            if (tStart > 0 && dabDist < tStart) {
+                var _t = dabDist / tStart;
                 f = _t * _t * (3 - 2 * _t);
             }
-            if (taperMode >= 2 && endPx > 0 && totalDist > endPx) {
-                var fromEnd = totalDist - dabDist;
-                if (fromEnd < endPx) {
-                    var _t = fromEnd / endPx;
-                    f = _min(f, _t * _t * (3 - 2 * _t));
+            if (taperMode >= 2 && tEnd > 0) {
+                var fromEnd = _max(0, totalDist - dabDist);
+                if (fromEnd < tEnd) {
+                    var _e = fromEnd / tEnd;
+                    f = _min(f, _e * _e * (3 - 2 * _e));
                 }
             }
             return _clamp(f, 0, 1);
@@ -1328,7 +1382,8 @@
         var segAngle = 0;
 
         if (startIdx === 0) {
-            var _tp = (prev.pressure || 0.5) * _taperAtDist(strokeDist);
+            var _tp = prev.pressure || 0.5;
+            var _tf0 = _taperAtDist(strokeDist);
             var _firstAngle;
             if (endIdx > startIdx) {
                 var _dx = points[startIdx + 1].x - prev.x, _dy = points[startIdx + 1].y - prev.y;
@@ -1337,7 +1392,8 @@
                     _smoothAngle = _firstAngle;
                 }
             }
-            _renderDab(prev.x, prev.y, _tp, colorHex, _firstAngle, prev.pressure || 0.5);
+            _renderDab(prev.x, prev.y, _tp, colorHex, _firstAngle,
+                prev.pressure || 0.5, _tf0);
         }
 
         while (segIdx < endIdx) {
@@ -1384,8 +1440,8 @@
                     var fr = _clamp((dabDist - segStartDist) / (segLen || 1), 0, 1);
                     var pt = _lerpPoint(prev, next, fr);
                     var _rawPressure = _lerp(prev.pressure || 0.5, next.pressure || 0.5, fr);
-                    var pressure = _rawPressure * _taperAtDist(dabDist);
-                    _renderDab(pt.x, pt.y, pressure, colorHex, segAngle, _rawPressure);
+                    _renderDab(pt.x, pt.y, _rawPressure, colorHex, segAngle,
+                        _rawPressure, _taperAtDist(dabDist));
                     _lastDabDist = dabDist;
                     remaining = nextDist - _lastDabDist;
                 }
@@ -1642,6 +1698,8 @@
         bristleSpread: 60,
         taperStart: 0,
         taperEnd: 0,
+        taperTarget: 'size',
+        taperUnit: 'brush',
         dynamicsMode: 'off',
 
         /* Per-parameter dynamics. sizeSrc/sizeMin and flowSrc/flowMin below
@@ -2638,6 +2696,10 @@
         if (blendEl) blendEl.value = _params.blendMode || 'normal';
         var dualEl = document.getElementById('pb-dualTip');
         if (dualEl) dualEl.value = _params.dualTip || 'none';
+        var ttEl = document.getElementById('pb-taperTarget');
+        if (ttEl) ttEl.value = _params.taperTarget || 'size';
+        var tuEl = document.getElementById('pb-taperUnit');
+        if (tuEl) tuEl.value = _params.taperUnit || 'brush';
         /* The name field follows the active brush. It used to be set only by
          * a tile click, so any other route to a preset left it naming a
          * brush the user was no longer on — and Save would have written to
@@ -2846,8 +2908,10 @@
             bristleWidth: 'Width of each bristle',
             bristleSpread: 'Angular spread of bristles from center',
             scatter: 'Random offset of each dab from the stroke path',
-            taperStart: 'Taper amount at the start of the stroke',
-            taperEnd: 'Taper amount at the end of the stroke',
+            taperStart: 'How long the stroke takes to reach full strength',
+            taperEnd: 'How long the stroke takes to lift off at the end',
+            taperTarget: 'Whether the taper thins the line, fades it, or both',
+            taperUnit: 'Measure the taper against the brush size, or as a share of the whole stroke',
             texture: 'Opacity of paper texture grain overlaid on the stroke',
             textureScale: 'Scale of the paper texture pattern',
             smoothing: 'Strength of the smoothing effect (interpretation varies by mode)',
@@ -2880,6 +2944,14 @@
                 engine.setParam('dualTip', this.value);
             });
         }
+
+        ['taperTarget', 'taperUnit'].forEach(function (key) {
+            var el = document.getElementById('pb-' + key);
+            if (!el) return;
+            el.addEventListener('change', function () {
+                engine.setParam(key, this.value);
+            });
+        });
 
         var dynSrcEls = document.querySelectorAll('[data-dyn-src]');
         for (var dsi = 0; dsi < dynSrcEls.length; dsi++) {
