@@ -7,10 +7,10 @@
  * definition in a compressed text chunk as XML. Newer presets embed their tip
  * image in that XML as base64, so a single .kpp is often self-contained.
  *
- * This file only READS. It hands back plain data: names, parameters, and tip
- * bytes. Deciding what any of it means to our engine is somebody else's job,
- * so that the decoding can be tested against real packs without dragging the
- * brush engine into it.
+ * This file reads, and translates what it read into the numbers our own
+ * brush takes -- but it never touches the engine: everything in and out is
+ * plain data, so both halves can be tested against real packs without
+ * dragging the brush engine into it.
  */
 (function () {
     'use strict';
@@ -514,6 +514,486 @@
 
         return { name: preset.name || 'Imported', params: out,
                  tipFile: bd.filename || null, warnings: warn };
+    };
+
+    /* ── tip images ───────────────────────────────────────────────────── */
+
+    /* No tip is stored larger than the largest dab anyone paints with it;
+     * above that the extra pixels are resampled away on first use and only
+     * cost storage, which for an imported brush is the browser's 5MB. */
+    var TIP_CAP_PX = 200;
+
+    /* A GIMP brush (.gbr): five big-endian numbers, a name, then the pixels.
+     * `headerSize` says where they start, which is the only part that differs
+     * between the format's versions. One byte per pixel is coverage — that
+     * byte IS the alpha, nothing to invert. Four is RGBA, which Krita reads
+     * the way it reads a PNG tip: dark is ink, and the file's own alpha
+     * still counts. */
+    function _readGbr(b, off) {
+        if (off + 20 > b.length) return null;
+        var dv = new DataView(b.buffer, b.byteOffset + off, Math.min(20, b.length - off));
+        var hs = dv.getUint32(0), ver = dv.getUint32(4);
+        var w = dv.getUint32(8), h = dv.getUint32(12), bpp = dv.getUint32(16);
+        if (ver < 1 || ver > 3 || !w || !h || w > 8192 || h > 8192) return null;
+        if (bpp !== 1 && bpp !== 4) return null;
+        var start = off + hs, n = w * h;
+        if (start + n * bpp > b.length) return null;
+        var a = new Uint8ClampedArray(n), i;
+        if (bpp === 1) {
+            for (i = 0; i < n; i++) a[i] = b[start + i];
+        } else {
+            for (i = 0; i < n; i++) {
+                var p = start + i * 4;
+                var lum = (b[p] * 0.299 + b[p + 1] * 0.587 + b[p + 2] * 0.114) / 255;
+                a[i] = Math.round((1 - lum) * b[p + 3]);
+            }
+        }
+        return { w: w, h: h, alpha: a, next: start + n * bpp };
+    }
+
+    /* A GIMP brush pipe (.gih): a name line, a line of parameters, then that
+     * many .gbr images back to back. This is the file that makes a textured
+     * brush read as drawn rather than stamped, and `sel0` is the file saying
+     * whether the next dab takes a shape at random or the next one along. */
+    function _readGih(b) {
+        var head = '';
+        for (var i = 0; i < Math.min(b.length, 2048); i++) head += String.fromCharCode(b[i]);
+        var nl1 = head.indexOf('\n');
+        var nl2 = nl1 < 0 ? -1 : head.indexOf('\n', nl1 + 1);
+        if (nl2 < 0) return null;
+        var params = head.slice(nl1 + 1, nl2);
+        var m = /ncells:(\d+)/.exec(params);
+        var n = m ? Math.min(64, parseInt(m[1], 10)) : 1;
+        var sel = /sel0:(\w+)/.exec(params);
+        var cells = [], off = nl2 + 1;
+        for (var c = 0; c < n; c++) {
+            var g = _readGbr(b, off);
+            if (!g) break;
+            cells.push(g);
+            off = g.next;
+        }
+        if (!cells.length) return null;
+        return { cells: cells,
+                 pick: (sel && sel[1] === 'incremental') ? 'cycle' : 'random' };
+    }
+
+    function _canvasFromAlpha(cell) {
+        var c = document.createElement('canvas');
+        c.width = cell.w; c.height = cell.h;
+        var g = c.getContext('2d');
+        var id = g.createImageData(cell.w, cell.h);
+        for (var i = 0, n = cell.w * cell.h; i < n; i++) id.data[i * 4 + 3] = cell.alpha[i];
+        g.putImageData(id, 0, 0);
+        return c;
+    }
+
+    /* One image holding every shape side by side, black with the shape in the
+     * alpha channel. That is the form the engine reads without converting
+     * anything, and the blank paper round each shape costs nothing to store. */
+    function _strip(cells) {
+        var cw = 0, ch = 0, i;
+        for (i = 0; i < cells.length; i++) { cw = Math.max(cw, cells[i].w); ch = Math.max(ch, cells[i].h); }
+        var s = Math.min(1, TIP_CAP_PX / Math.max(cw, ch));
+        var ow = Math.max(1, Math.round(cw * s)), oh = Math.max(1, Math.round(ch * s));
+        var out = document.createElement('canvas');
+        out.width = ow * cells.length; out.height = oh;
+        var g = out.getContext('2d');
+        for (i = 0; i < cells.length; i++) {
+            var src = _canvasFromAlpha(cells[i]);
+            var w = Math.max(1, Math.round(cells[i].w * s)), h = Math.max(1, Math.round(cells[i].h * s));
+            g.drawImage(src, i * ow + ((ow - w) >> 1), (oh - h) >> 1, w, h);
+        }
+        return { url: out.toDataURL('image/png'), size: Math.max(cw, ch) };
+    }
+
+    /* Turns whatever a pack calls a tip into one our engine can stamp.
+     * Resolves to { url, cells, pick, size } — `size` being the tip's real
+     * pixel size BEFORE the cap, since a Krita preset's `scale` multiplies
+     * that and not what we chose to store. */
+    BrushPack.tipStrip = function (bytes, filename) {
+        var name = String(filename || '');
+        try {
+            if (/\.gih$/i.test(name)) {
+                var pipe = _readGih(bytes);
+                if (!pipe) throw new Error('unreadable brush pipe');
+                var st = _strip(pipe.cells);
+                return Promise.resolve({ url: st.url, size: st.size,
+                    cells: pipe.cells.length, pick: pipe.pick });
+            }
+            if (/\.gbr$/i.test(name)) {
+                var one = _readGbr(bytes, 0);
+                if (!one) throw new Error('unreadable brush file');
+                var st1 = _strip([one]);
+                return Promise.resolve({ url: st1.url, size: st1.size, cells: 1, pick: 'random' });
+            }
+        } catch (e) { return Promise.reject(e); }
+
+        // Anything else is an ordinary image, which the browser decodes.
+        var blob = new Blob([bytes]);
+        return createImageBitmap(blob).then(function (bmp) {
+            var c = document.createElement('canvas');
+            c.width = bmp.width; c.height = bmp.height;
+            var g = c.getContext('2d');
+            g.drawImage(bmp, 0, 0);
+            var id = g.getImageData(0, 0, c.width, c.height), d = id.data;
+            var a = new Uint8ClampedArray(c.width * c.height);
+            for (var i = 0; i < a.length; i++) {
+                var p = i * 4;
+                var lum = (d[p] * 0.299 + d[p + 1] * 0.587 + d[p + 2] * 0.114) / 255;
+                a[i] = Math.round((1 - lum) * d[p + 3]);
+            }
+            bmp.close && bmp.close();
+            var st2 = _strip([{ w: c.width, h: c.height, alpha: a }]);
+            return { url: st2.url, size: st2.size, cells: 1, pick: 'random' };
+        });
+    };
+
+    /* ── Photoshop brushes (.abr) ─────────────────────────────────────── */
+
+    /* An .abr holds tip images and nothing we can use besides -- the
+     * dynamics live in a separate descriptor language we do not speak -- so
+     * every brush in one arrives as a plain stamp at the tip's own size.
+     * That is still most of what the format is used for: it is by far the
+     * largest body of free brush art around, and nearly all of it is shapes.
+     *
+     * Two families of file. Version 1 and 2 are a count and then that many
+     * brushes. Version 6 and up wrap them in Photoshop's tagged sections,
+     * where the one called "samp" holds the images. Layouts follow GIMP's
+     * reader, which is the one implementation that has met every .abr in
+     * the wild for twenty years. */
+
+    function _rd(b) {
+        var dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+        return {
+            p: 0, len: b.byteLength,
+            u8: function () { return b[this.p++]; },
+            u16: function () { var v = dv.getUint16(this.p); this.p += 2; return v; },
+            i32: function () { var v = dv.getInt32(this.p); this.p += 4; return v; },
+            skip: function (n) { this.p += n; }
+        };
+    }
+
+    /* PackBits, one row at a time: a count of 0..127 means that many literal
+     * bytes follow, -1..-127 means the next byte repeated that many times. */
+    function _packBits(b, at, end, out, to, want) {
+        var n = 0;
+        while (n < want && at < end) {
+            var c = b[at++];
+            if (c === 128) continue;
+            if (c < 128) {
+                for (var i = 0; i <= c && n < want; i++) out[to + n++] = b[at++];
+            } else {
+                var v = b[at++];
+                for (var j = 0; j < 257 - c && n < want; j++) out[to + n++] = v;
+            }
+        }
+        return at;
+    }
+
+    /* The mask, right way up.
+     *
+     * Photoshop is not consistent about whether a stored byte is coverage or
+     * lightness, and the file does not say which. The tip itself does: its
+     * outermost pixels are always the paper it was cut out of, so whichever
+     * value rings the image is the transparent one. */
+    function _abrMask(px, w, h) {
+        var edge = 0, n = 0, x, y;
+        for (x = 0; x < w; x++) { edge += px[x] + px[(h - 1) * w + x]; n += 2; }
+        for (y = 0; y < h; y++) { edge += px[y * w] + px[y * w + w - 1]; n += 2; }
+        var a = new Uint8ClampedArray(w * h);
+        if (edge / n > 127) { for (var i = 0; i < a.length; i++) a[i] = 255 - px[i]; }
+        else { a.set(px); }
+        return a;
+    }
+
+    function _abrImage(b, r, depth, compress, w, h) {
+        if (w <= 0 || h <= 0 || w > 8192 || h > 8192) return null;
+        var step = Math.max(1, depth >> 3);
+        var px = new Uint8Array(w * h);
+        if (!compress) {
+            if (r.p + w * h * step > r.len) return null;
+            for (var i = 0; i < w * h; i++) px[i] = b[r.p + i * step];
+            r.p += w * h * step;
+        } else {
+            // A table of row lengths first, then the rows themselves.
+            var rows = [];
+            for (var y = 0; y < h; y++) rows.push(r.u16());
+            var at = r.p;
+            for (var y2 = 0; y2 < h; y2++) {
+                var end = Math.min(r.len, at + rows[y2]);
+                _packBits(b, at, end, px, y2 * w, w);
+                at = end;
+            }
+            r.p = at;
+        }
+        return { w: w, h: h, alpha: _abrMask(px, w, h) };
+    }
+
+    function _abrV12(b, version) {
+        var r = _rd(b);
+        r.skip(2);                       // version, already read by the caller
+        var count = r.u16(), out = [];
+        for (var i = 0; i < count && r.p + 6 <= r.len; i++) {
+            var type = r.u16(), size = r.i32();
+            var next = r.p + size;
+            if (type === 2 && size > 0 && next <= r.len) {
+                r.skip(4);               // misc
+                r.skip(2);               // spacing
+                if (version === 2) {     // a name, as UTF-16
+                    var nlen = r.i32();
+                    r.skip(Math.max(0, nlen) * 2);
+                }
+                r.skip(1);               // antialiasing
+                r.skip(8);               // the bounds again, as shorts
+                var top = r.i32(), left = r.i32(), bottom = r.i32(), right = r.i32();
+                var depth = r.u16(), compress = r.u8();
+                var im = _abrImage(b, r, depth, compress, right - left, bottom - top);
+                if (im) out.push(im);
+            }
+            r.p = next;
+            if (next <= 0) break;
+        }
+        return out;
+    }
+
+    function _abrV6(b, sub) {
+        var r = _rd(b);
+        r.skip(4);                       // version, subversion
+        var out = [];
+        while (r.p + 12 <= r.len) {
+            var tag = String.fromCharCode(b[r.p], b[r.p + 1], b[r.p + 2], b[r.p + 3]);
+            var key = String.fromCharCode(b[r.p + 4], b[r.p + 5], b[r.p + 6], b[r.p + 7]);
+            r.skip(8);
+            var size = r.i32();
+            if (tag !== '8BIM' || size < 0) break;
+            var end = Math.min(r.len, r.p + size);
+            if (key === 'samp') {
+                while (r.p + 4 <= end) {
+                    var blen = r.i32();
+                    if (blen <= 0) break;
+                    var bend = r.p + blen + ((4 - blen % 4) % 4);
+                    /* A block of brush settings we cannot use sits in front
+                     * of the image, and it is a different length in the two
+                     * subversions. */
+                    r.skip(sub === 1 ? 47 : 301);
+                    if (r.p + 18 > end) break;
+                    var top = r.i32(), left = r.i32(), bottom = r.i32(), right = r.i32();
+                    var depth = r.u16(), compress = r.u8();
+                    var im = _abrImage(b, r, depth, compress, right - left, bottom - top);
+                    if (im) out.push(im);
+                    r.p = bend;
+                }
+            }
+            r.p = end;
+        }
+        return out;
+    }
+
+    /* Every tip in a Photoshop brush file, as separate images. Each becomes
+     * a brush of its own -- unlike a .gih strip, these are unrelated shapes
+     * that happen to share a file, not variants of one brush. */
+    BrushPack.readAbr = function (bytes) {
+        if (bytes.length < 4) throw new Error('That file is too short to be a brush set.');
+        var version = (bytes[0] << 8) | bytes[1];
+        var sub = (bytes[2] << 8) | bytes[3];
+        var tips;
+        if (version === 1 || version === 2) tips = _abrV12(bytes, version);
+        else if (version >= 6 && version <= 10) tips = _abrV6(bytes, sub);
+        else throw new Error('Photoshop brush version ' + version + ' is one we cannot read.');
+        if (!tips.length) throw new Error('No brush tips could be read out of that file.');
+        return tips.map(function (t) {
+            var st = _strip([t]);
+            return { url: st.url, size: st.size, cells: 1, pick: 'random' };
+        });
+    };
+
+    /* ── MyPaint brushes (.myb) ───────────────────────────────────────── */
+
+    /* MyPaint paints with no tip image at all: every mark is a soft round
+     * dab and the character comes from forty settings, each of which can be
+     * driven by pressure, speed, direction or randomness. Only some of those
+     * forty have anything to correspond to here, so a .myb arrives as a
+     * likeness rather than a copy -- and says which parts of itself it left
+     * at the door.
+     *
+     * Two file shapes: newer ones are JSON, older ones a line per setting
+     * reading `name value | input (x,y), (x,y)`. Both say the same things. */
+
+    var MYB_INPUTS = { pressure: 'pressure', speed1: 'speed', speed2: 'speed',
+        random: 'random', direction: 'direction', tilt_declination: 'tilt',
+        tilt_ascension: 'tilt', barrel_rotation: 'twist' };
+
+    /* Settings we read. Everything else in the file is reported by name so
+     * the import says what it could not carry across. */
+    var MYB_KNOWN = {
+        radius_logarithmic: 1, hardness: 1, opaque: 1, opaque_multiply: 1,
+        dabs_per_actual_radius: 1, dabs_per_basic_radius: 1, offset_by_random: 1,
+        elliptical_dab_ratio: 1, elliptical_dab_angle: 1, eraser: 1,
+        smudge: 1, smudge_length: 1, color_h: 1, color_s: 1, color_v: 1,
+        opaque_linearize: 1, slow_tracking: 1, slow_tracking_per_dab: 1,
+        anti_aliasing: 1, restore_color: 1, change_color_h: 1, change_color_l: 1,
+        change_color_hsl_s: 1, change_color_v: 1, change_color_hsv_s: 1,
+        lock_alpha: 1, colorize: 1, snap_to_pixel: 1, pressure_gain_log: 1,
+        // named so they are not reported: they describe MyPaint's own
+        // smoothing and speed model, which we do not expose as brush settings
+        speed1_slowness: 1, speed2_slowness: 1, speed1_gamma: 1, speed2_gamma: 1,
+        stroke_duration_logarithmic: 1, stroke_holdtime: 1, stroke_threshold: 1,
+        custom_input: 1, custom_input_slowness: 1, direction_filter: 1,
+        tracking_noise: 1
+    };
+
+    /* The ones whose absence really changes the mark, so they are worth
+     * naming rather than counting. */
+    var MYB_NOTED = {
+        offset_by_speed: 'offset that follows speed',
+        offset_multiplier: 'a scattered offset multiplier',
+        dabs_per_second: 'dabs laid down by time rather than distance',
+        radius_by_random: 'a randomly varying dab size',
+        stroke_holdtime: '',
+        gridmap_scale: 'a texture grid',
+        posterize: 'posterising'
+    };
+
+    function _mybLines(text) {
+        var out = {}, lines = String(text).split(/\r?\n/);
+        for (var i = 0; i < lines.length; i++) {
+            var ln = lines[i].trim();
+            if (!ln || ln.charAt(0) === '#') continue;
+            var bar = ln.indexOf('|');
+            var head = (bar < 0 ? ln : ln.slice(0, bar)).trim().split(/\s+/);
+            var key = head[0];
+            if (!key) continue;
+            var rec = { base: parseFloat(head[1]), inputs: {} };
+            if (bar >= 0) {
+                var parts = ln.slice(bar + 1).split('|');
+                for (var j = 0; j < parts.length; j++) {
+                    var m = /^\s*(\w+)\s*(.*)$/.exec(parts[j]);
+                    if (!m) continue;
+                    var pts = [], pm, re = /\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)/g;
+                    while ((pm = re.exec(m[2]))) pts.push([parseFloat(pm[1]), parseFloat(pm[2])]);
+                    if (pts.length >= 2) rec.inputs[m[1]] = pts;
+                }
+            }
+            out[key] = rec;
+        }
+        return out;
+    }
+
+    function _mybJson(obj) {
+        var out = {}, st = obj.settings || {};
+        for (var k in st) {
+            if (!st.hasOwnProperty(k)) continue;
+            var v = st[k];
+            out[k] = { base: (v && typeof v === 'object') ? _num(v.base_value, 0) : _num(v, 0),
+                       inputs: (v && v.inputs) || {} };
+        }
+        return out;
+    }
+
+    /* MyPaint's input curves run over the input's own range -- pressure is
+     * 0..1, but the y axis is an ADDITION to the setting in its own units,
+     * not a multiplier. Ours is a multiplier over 0..1. So the curve is
+     * rescaled against the largest step it takes, which keeps its shape --
+     * the part that makes a brush feel the way it does -- and lets the
+     * setting's own value carry the magnitude. */
+    function _mybCurve(pts) {
+        if (!pts || pts.length < 2) return null;
+        var lo = Infinity, hi = -Infinity, i;
+        for (i = 0; i < pts.length; i++) { lo = Math.min(lo, pts[i][1]); hi = Math.max(hi, pts[i][1]); }
+        if (!(hi > lo)) return null;
+        var out = [];
+        for (i = 0; i < pts.length; i++) {
+            out.push([Math.max(0, Math.min(1, pts[i][0])),
+                      Math.max(0, Math.min(1, (pts[i][1] - lo) / (hi - lo)))]);
+        }
+        out.sort(function (a, b) { return a[0] - b[0]; });
+        return out;
+    }
+
+    function _mybDrive(out, key, set, name) {
+        var rec = set[name];
+        if (!rec || !rec.inputs) return;
+        for (var id in rec.inputs) {
+            if (!rec.inputs.hasOwnProperty(id)) continue;
+            var src = MYB_INPUTS[id];
+            if (!src) continue;
+            var curve = _mybCurve(rec.inputs[id]);
+            if (!curve) continue;
+            out[key + 'Src'] = src;
+            out[key + 'Min'] = 0;
+            out[key + 'Curve'] = curve;
+            return;
+        }
+    }
+
+    /* One MyPaint brush as our parameters. Same shape as toPreset, so the
+     * caller treats both the same way. */
+    BrushPack.readMyb = function (text, name) {
+        var set, obj = null;
+        var trimmed = String(text).replace(/^﻿/, '').trim();
+        if (trimmed.charAt(0) === '{') {
+            try { obj = JSON.parse(trimmed); } catch (e) { obj = null; }
+            if (!obj) throw new Error('That MyPaint brush is not readable.');
+            set = _mybJson(obj);
+        } else {
+            set = _mybLines(trimmed);
+            if (!set.radius_logarithmic && !set.opaque) {
+                throw new Error('That file is not a MyPaint brush.');
+            }
+        }
+        var base = function (k, d) { return set[k] ? _num(set[k].base, d) : d; };
+        var warn = [], out = {};
+
+        // MyPaint stores the log of the dab RADIUS in pixels.
+        out.size = Math.max(1, Math.min(800, Math.round(2 * Math.exp(base('radius_logarithmic', 1.5)))));
+        out.shape = 'circle';
+        out.hardness = Math.round(Math.max(0, Math.min(1, base('hardness', 0.8))) * 100);
+        out.opacity = 100;
+        /* `opaque` is per dab, which is our flow; the stroke's own opacity
+         * is a separate idea there and always full. */
+        out.flow = Math.round(Math.max(0, Math.min(1, base('opaque', 1) * base('opaque_multiply', 1))) * 100) || 100;
+
+        /* Dabs per radius, not spacing: MyPaint counts how many land within
+         * one radius, so the gap between them is the other way up. */
+        var per = base('dabs_per_actual_radius', 0) || base('dabs_per_basic_radius', 0);
+        out.spacing = per > 0 ? Math.max(1, Math.min(400, Math.round(50 / per))) : 10;
+
+        var off = base('offset_by_random', 0);
+        if (off > 0) out.scatter = Math.max(1, Math.min(400, Math.round(off * 100)));
+
+        var ratio = base('elliptical_dab_ratio', 1);
+        if (ratio > 1) out.aspectRatio = Math.round(Math.min(20, ratio) * 100) / 100;
+        var ang = base('elliptical_dab_angle', 0);
+        if (ang) out.angle = Math.round(ang) % 360;
+
+        if (base('eraser', 0) > 0.5) out.blendMode = 'erase';
+
+        var smudge = base('smudge', 0);
+        if (smudge > 0.02) {
+            out.colorRate = Math.round((1 - Math.min(1, smudge)) * 100);
+            out.smudgeLength = Math.round(Math.max(0, Math.min(1, base('smudge_length', 0.5))) * 100);
+        }
+
+        _mybDrive(out, 'size', set, 'radius_logarithmic');
+        _mybDrive(out, 'flow', set, 'opaque');
+
+        for (var k in set) {
+            if (!set.hasOwnProperty(k)) continue;
+            if (MYB_KNOWN[k]) continue;
+            var rec = set[k];
+            var live = _num(rec.base, 0) !== 0 ||
+                       (rec.inputs && Object.keys(rec.inputs).length > 0);
+            if (!live) continue;
+            var label = MYB_NOTED[k];
+            if (label === '') continue;
+            warn.push('dropped: ' + (label || k.replace(/_/g, ' ')));
+        }
+        if (out.aspectRatio && !out.angle) {
+            warn.push('the flattened dab does not turn with the stroke here');
+        }
+
+        return { name: (obj && obj.comment) ? String(obj.comment).slice(0, 40) : (name || 'MyPaint brush'),
+                 params: out, tipFile: null, warnings: warn };
     };
 
     window.BrushPack = BrushPack;

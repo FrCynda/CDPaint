@@ -3284,8 +3284,12 @@
     var NAME_MAX = 40;
     /* localStorage is about 5MB for the whole app. A tip carried as a data:
      * URL can eat that on its own, so it is capped and refused loudly rather
-     * than blowing the quota and taking the user's other brushes with it. */
-    var TIP_CAP = 262144;
+     * than blowing the quota and taking the user's other brushes with it.
+     * Half a megabyte, because a strip tip holds several shapes and three of
+     * the brushes in Revoy's pack were being turned away at a quarter --
+     * which is a tenth of the budget for the worst case, and his whole pack
+     * still lands in under a megabyte. */
+    var TIP_CAP = 524288;
 
     function _readStore(key, dflt) {
         try {
@@ -3626,6 +3630,76 @@
         });
     };
 
+    function _tipBaseName(filename) {
+        return String(filename || 'Tip').replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ');
+    }
+
+    /* A tip with no settings attached becomes a plain stamping brush at the
+     * tip's own size, which the user tunes from there. */
+    function _saveTipAsBrush(tip, base) {
+        if (tip.url.length > TIP_CAP) {
+            return { ok: false, error: 'That tip image is too big to store (' +
+                _round(tip.url.length / 1024) + 'KB, limit ' + _round(TIP_CAP / 1024) + 'KB).' };
+        }
+        var name = _uniqueName(base);
+        var ps = {
+            size: _min(200, _max(2, tip.size)), opacity: 100, flow: 100,
+            spacing: 10, hardness: 100, shape: 'custom', _tipUrl: tip.url
+        };
+        if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = tip.pick; }
+        _userPresets[name] = ps;
+        var err = _commitUsers();
+        if (err) { delete _userPresets[name]; return { ok: false, error: err }; }
+        _installUserPreset(name, ps);
+        return { ok: true, name: name, cells: tip.cells };
+    }
+
+    /* A MyPaint brush. It has settings but no tip image, and its engine
+     * is the least like ours of the three, so this is the one import that
+     * is openly a likeness -- the notes say what it left behind. */
+    engine.importMyb = function (text, filename) {
+        if (!window.BrushPack) {
+            return { ok: false, error: 'The brush pack reader is not loaded.' };
+        }
+        var t;
+        try { t = BrushPack.readMyb(text, _tipBaseName(filename)); }
+        catch (e) { return { ok: false, error: (e && e.message) || 'That file could not be read.' }; }
+        var name = _uniqueName(_cleanName(t.name) || _tipBaseName(filename));
+        _userPresets[name] = t.params;
+        var err = _commitUsers();
+        if (err) { delete _userPresets[name]; return { ok: false, error: err }; }
+        _installUserPreset(name, t.params);
+        _rebuildNames();
+        _invalidateSwatch(name);
+        return { ok: true, kind: 'myb', added: [name], renamed: [], skipped: [],
+                 notes: t.warnings.length ? [{ name: name, warnings: t.warnings }] : [] };
+    };
+
+    /* A Photoshop brush set. It carries tip images and no settings we can
+     * read, so each one becomes a stamp of its own -- which is what most of
+     * the .abr art out there is anyway. */
+    engine.importAbrPack = function (bytes, filename) {
+        if (!window.BrushPack) {
+            return Promise.resolve({ ok: false, error: 'The brush pack reader is not loaded.' });
+        }
+        var tips;
+        try {
+            tips = BrushPack.readAbr((bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes));
+        } catch (e) {
+            return Promise.resolve({ ok: false, error: (e && e.message) || 'That file could not be read.' });
+        }
+        var base = _tipBaseName(filename), added = [], skipped = [];
+        for (var i = 0; i < tips.length; i++) {
+            var r = _saveTipAsBrush(tips[i], tips.length > 1 ? base + ' ' + (i + 1) : base);
+            if (r.ok) added.push(r.name);
+            else { skipped.push({ name: base + ' ' + (i + 1), why: r.error }); break; }
+        }
+        _rebuildNames();
+        _invalidateSwatch();
+        return Promise.resolve({ ok: true, kind: 'abr', added: added,
+                                 renamed: [], skipped: skipped, notes: [] });
+    };
+
     /* A tip image on its own -- a PNG, a GIMP .gbr, or a .gih strip of
      * shapes. There are no settings in one, so it becomes a plain stamping
      * brush at the tip's own size and the user tunes it from there. */
@@ -3635,24 +3709,10 @@
         }
         var u8 = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
         return BrushPack.tipStrip(u8, filename).then(function (tip) {
-            if (tip.url.length > TIP_CAP) {
-                return { ok: false, error: 'That tip image is too big to store (' +
-                    _round(tip.url.length / 1024) + 'KB, limit ' + _round(TIP_CAP / 1024) + 'KB).' };
-            }
-            var base = String(filename || 'Tip').replace(/\.[a-z]+$/i, '').replace(/[_-]+/g, ' ');
-            var name = _uniqueName(base);
-            var ps = {
-                size: _min(200, _max(2, tip.size)), opacity: 100, flow: 100,
-                spacing: 10, hardness: 100, shape: 'custom', _tipUrl: tip.url
-            };
-            if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = tip.pick; }
-            _userPresets[name] = ps;
-            var err = _commitUsers();
-            if (err) { delete _userPresets[name]; return { ok: false, error: err }; }
-            _installUserPreset(name, ps);
+            var r = _saveTipAsBrush(tip, _tipBaseName(filename));
             _rebuildNames();
-            _invalidateSwatch(name);
-            return { ok: true, name: name, cells: tip.cells };
+            if (r.ok) _invalidateSwatch(r.name);
+            return r;
         }, function (e) {
             return { ok: false, error: (e && e.message) || 'That file is not a brush tip we can read.' };
         });
@@ -3807,6 +3867,32 @@
             setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
         });
 
+        /* Dropping the file on the panel is the same thing as picking it,
+         * and it is how a brush pack arrives from a download folder. The
+         * page has no other drop handler, so nothing is being stolen. */
+        var panel = document.getElementById('paintbrush-sidebar');
+        if (panel) {
+            var depth = 0;
+            panel.addEventListener('dragenter', function (e) {
+                if (!e.dataTransfer || e.dataTransfer.types.indexOf('Files') < 0) return;
+                e.preventDefault();
+                if (++depth === 1) panel.classList.add('pb-dropping');
+            });
+            panel.addEventListener('dragover', function (e) {
+                if (e.dataTransfer && e.dataTransfer.types.indexOf('Files') >= 0) e.preventDefault();
+            });
+            panel.addEventListener('dragleave', function () {
+                if (--depth <= 0) { depth = 0; panel.classList.remove('pb-dropping'); }
+            });
+            panel.addEventListener('drop', function (e) {
+                if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+                e.preventDefault();
+                depth = 0;
+                panel.classList.remove('pb-dropping');
+                engine.importFiles(e.dataTransfer.files);
+            });
+        }
+
         var imp = document.getElementById('pb-import-btn');
         var file = document.getElementById('pb-import-file');
         if (imp && file) {
@@ -3833,7 +3919,7 @@
     engine.importFiles = function (files) {
         var list = [].slice.call(files || []);
         if (!list.length) return Promise.resolve(null);
-        var lines = [], failed = 0, brushes = 0, left = 0, one = null;
+        var lines = [], failed = 0, brushes = 0, left = 0, changed = 0, one = null;
 
         function note(r, what) {
             if (!r || !r.ok) {
@@ -3844,7 +3930,14 @@
             if (r.added) {
                 brushes += r.added.length;
                 left += (r.skipped || []).length;
+                changed += (r.notes || []).length;
                 if (r.added.length === 1) one = r.added[0];
+                (r.skipped || []).forEach(function (k) {
+                    lines.push('  left out ' + k.name + (k.why ? ': ' + k.why : ''));
+                });
+                (r.notes || []).forEach(function (k) {
+                    lines.push('  ' + k.name + ' — ' + k.warnings.join('; '));
+                });
                 lines.push(what + ': ' + r.added.length + ' brush' + (r.added.length === 1 ? '' : 'es') +
                     ((r.skipped || []).length ? ', ' + r.skipped.length + ' left out' : ''));
             } else {
@@ -3862,6 +3955,16 @@
                 if (/\.json$/i.test(n)) {
                     return _readFile(f, true).then(function (txt) {
                         note(engine.importUserPresets(String(txt)), n);
+                    });
+                }
+                if (/\.myb$/i.test(n)) {
+                    return _readFile(f, true).then(function (txt) {
+                        note(engine.importMyb(String(txt), n), n);
+                    });
+                }
+                if (/\.abr$/i.test(n)) {
+                    return _readFile(f).then(function (buf) {
+                        return engine.importAbrPack(new Uint8Array(buf), n).then(function (r) { note(r, n); });
                     });
                 }
                 if (/\.(png|gbr|gih)$/i.test(n)) {
@@ -3893,6 +3996,10 @@
                     (list.length === 1 ? ' from ' + list[0].name : ' from ' + list.length + ' files');
             }
             if (brushes && left) msg += ' — ' + left + ' left out';
+            /* A brush that arrived missing something Krita or MyPaint can do
+             * and we cannot is still a brush, but the user should know it is
+             * not quite the one they downloaded. */
+            if (brushes && changed) msg += ' — ' + changed + ' changed to fit';
             if (brushes && failed) msg += ' — ' + failed + ' file' + (failed === 1 ? '' : 's') + ' unreadable';
             if (lines.length > 1) console.log('[brushes] ' + lines.join('\n[brushes] '));
             _say(msg, brushes ? 'success' : 'error');
