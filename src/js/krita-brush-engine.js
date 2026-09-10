@@ -17,6 +17,8 @@
     var _cos = Math.cos;
     var _sin = Math.sin;
     var _exp = Math.exp;
+    var _pow = Math.pow;
+    var _atan2 = Math.atan2;
     var _lerp = function (a, b, t) { return a + (b - a) * t; };
     var _lerpPoint = function (a, b, t) {
         return { x: _lerp(a.x, b.x, t), y: _lerp(a.y, b.y, t) };
@@ -618,27 +620,90 @@
         if (_ropeSvg) _ropeSvg.style.display = 'none';
     }
 
+    /* ------------------------------------------------------------------ */
+    /*  Dynamics — one input per parameter                                  */
+    /* ------------------------------------------------------------------ */
+
+    /* There used to be a single `dynamicsMode` dropdown: you picked ONE of
+     * off/direction/angle/size/opacity/flow and that was the only thing
+     * anything could respond to. Pressure driving size and flow was hardcoded
+     * on top and could not be turned off or retuned. Every brush therefore
+     * drew from the same one-dimensional well, which is why adding presets
+     * alone would never have made them feel different.
+     *
+     * Now each parameter names its own input, its own floor and its own curve:
+     *   <param>Src    which sensor drives it
+     *   <param>Min    what it reads at sensor 0, as a percentage of the base
+     *   <param>Curve  gamma on the sensor before it is applied
+     *
+     * The defaults reproduce the old hardcoded behaviour EXACTLY —
+     * sizeSrc/sizeMin of pressure/50 is size * (0.5 + pressure * 0.5), and
+     * flowSrc/flowMin of pressure/0 is flow * pressure — so every existing
+     * preset is unchanged, and now editable. */
+
+    // Tablet state, set by the paint engine from the pointer event.
+    var _penTiltX = 0, _penTiltY = 0, _penTwist = 0;
+
+    function _setPenState(e) {
+        if (!e) return;
+        // tiltX/tiltY are degrees from vertical, -90..90.
+        _penTiltX = e.tiltX || 0;
+        _penTiltY = e.tiltY || 0;
+        _penTwist = e.twist || 0;
+    }
+
+    function _tiltAmount() {
+        // How far from upright, 0 (vertical) .. 1 (flat on the tablet).
+        var t = _hypot(_penTiltX, _penTiltY) / 90;
+        return _clamp(t, 0, 1);
+    }
+
+    /* Every sensor returns 0..1 so one formula drives every parameter.
+     * Skipped: fade and distance. Neither needs new plumbing that the other
+     * six don't already have, but nothing here wants them yet. */
+    function _sensor(src, sc, seed) {
+        switch (src) {
+            case 'pressure': return _clamp(sc.pressure, 0, 1);
+            case 'tilt':     return _tiltAmount();
+            case 'twist':    return _clamp((_penTwist % 360) / 360, 0, 1);
+            case 'speed':    return _clamp(_smoothSpeed / 3, 0, 1);
+            case 'random':   return _dabRand(sc.x, sc.y, seed);
+            default:         return 1;
+        }
+    }
+
+    /* base scaled by its sensor, floored at <param>Min percent. */
+    function _dyn(p, key, base, sc, seed) {
+        var src = p[key + 'Src'];
+        if (!src || src === 'none') return base;
+        var v = _sensor(src, sc, seed);
+        var g = p[key + 'Curve'];
+        if (g && g !== 1) v = _pow(v, g);
+        var lo = (p[key + 'Min'] != null ? p[key + 'Min'] : 0) / 100;
+        return base * (lo + (1 - lo) * v);
+    }
+
+    /* Angle is degrees added to the tip, not a factor scaling it, so it reads
+     * its sensor directly rather than through _dyn. */
+    function _dynAngle(p, baseAngle, sc) {
+        var src = p.angleSrc;
+        if (src === 'direction' && sc.strokeAngle != null) return sc.strokeAngle + baseAngle;
+        if (src === 'twist') return baseAngle + (_penTwist % 360);
+        if (src === 'tilt') return baseAngle + _atan2(_penTiltY, _penTiltX) * 180 / _PI;
+        if (src === 'random') return baseAngle + (_dabRand(sc.x, sc.y, 11) * 2 - 1) * 180;
+        return baseAngle;
+    }
+
     function _renderDab(x, y, pressure, colorHex, strokeAngle, rawPressure) {
         var p = getParams();
-        var dm = p.dynamicsMode;
 
-        // Angle (base + dynamics)
-        var effAngle = p.angle;
-        if (dm === 'direction' && strokeAngle != null) {
-            effAngle = strokeAngle + p.angle;
-        } else if (dm === 'angle') {
-            effAngle += (_dabRand(x, y, 0) * 2 - 1) * 180;
-        }
-
-        // Size (pressure-modulated + dynamics)
-        // rawPressure overrides the taper-baked pressure for size,
-        // keeping the brush at full width during taper fade.
+        // rawPressure overrides the taper-baked pressure for size, keeping the
+        // brush at full width during taper fade.
         var _sp = rawPressure != null ? rawPressure : pressure;
-        var sz = p.size * (0.5 + _sp * 0.5);
-        if (dm === 'size') {
-            sz *= 1 + (_dabRand(x, y, 1) * 2 - 1);
-            sz = _max(0.5, sz);
-        }
+        var sc = { x: x, y: y, pressure: _sp, strokeAngle: strokeAngle };
+
+        var effAngle = _dynAngle(p, p.angle, sc);
+        var sz = _max(0.5, _dyn(p, 'size', p.size, sc, 1));
         if (sz < 0.5) return;
 
         // Bristle mode: render multiple fiber dabs
@@ -658,21 +723,21 @@
         }
 
         // Scatter: random offset from stroke path
-        if (p.scatter > 0) {
-            var scatterDist = (p.scatter / 100) * sz * _dabRand(x, y, 2);
+        var scatterAmt = _dyn(p, 'scatter', p.scatter, sc, 5);
+        if (scatterAmt > 0) {
+            var scatterDist = (scatterAmt / 100) * sz * _dabRand(x, y, 2);
             var scatterAngle = _dabRand(x, y, 3) * _PI * 2;
             x += _cos(scatterAngle) * scatterDist;
             y += _sin(scatterAngle) * scatterDist;
         }
 
-        var mask = _maskFor(p.shape, sz, p.hardness, effAngle, p.aspectRatio);
+        var hard = _clamp(_dyn(p, 'hardness', p.hardness, sc, 6), 0, 100);
+        var mask = _maskFor(p.shape, sz, hard, effAngle, p.aspectRatio);
 
-        // Per-dab alpha: flow * pressure + dynamics
-        var alpha = (p.flow / 100) * pressure;
-        if (dm === 'opacity' || dm === 'flow') {
-            alpha *= 1 + (_dabRand(x, y, 4) * 2 - 1);
-            alpha = _clamp(alpha, 0, 1);
-        }
+        // Per-dab alpha. Taper rides on `pressure`, which is why flow's sensor
+        // reads the taper-baked value while size reads the raw one.
+        var flowSc = { x: x, y: y, pressure: pressure, strokeAngle: strokeAngle };
+        var alpha = _clamp(_dyn(p, 'flow', p.flow / 100, flowSc, 4), 0, 1);
 
         _paintDab(_flowCtx, x, y, mask, finalColor, alpha, p.texture, p.textureScale);
     }
@@ -717,35 +782,21 @@
 
     function _renderBristleDabs(x, y, pressure, colorHex, strokeAngle) {
         var p = getParams();
-        var dm = p.dynamicsMode;
+        var sc = { x: x, y: y, pressure: pressure, strokeAngle: strokeAngle };
         var count = _clamp(_round(p.bristleCount), 2, 50);
         var spread = p.bristleSpread * _PI / 180;
         var length = _max(3, p.bristleLength);
         var width = _max(1, p.bristleWidth);
 
-        // Angle (base + dynamics)
-        var effAngle = p.angle;
-        if (dm === 'direction' && strokeAngle != null) {
-            effAngle = strokeAngle + p.angle;
-        } else if (dm === 'angle') {
-            effAngle += (_dabRand(x, y, 0) * 2 - 1) * 180;
-        }
-
-        // Size (pressure-modulated + dynamics)
-        var sz = p.size * (0.5 + pressure * 0.5);
-        if (dm === 'size') {
-            sz *= 1 + (_dabRand(x, y, 1) * 2 - 1);
-            sz = _max(0.5, sz);
-        }
+        var effAngle = _dynAngle(p, p.angle, sc);
+        var sz = _max(0.5, _dyn(p, 'size', p.size, sc, 1));
 
         var ang = effAngle * _PI / 180;
         var startAngle = ang - spread / 2;
 
-        // Per-dab alpha with flow/opacity dynamics
-        var baseAlpha = (p.flow / 100) * _clamp(pressure * 1.2, 0, 1);
-        if (dm === 'opacity' || dm === 'flow') {
-            baseAlpha *= 1 + (_dabRand(x, y, 2) * 2 - 1);
-        }
+        // flow scales the CLAMPED pressure factor, not the other way round —
+        // multiplying first and clamping after would brighten low-flow bristles.
+        var baseAlpha = (p.flow / 100) * _clamp(_dyn(p, 'flow', 1, sc, 4) * 1.2, 0, 1);
 
         if (sz < 2) return;
 
@@ -1315,6 +1366,16 @@
         taperStart: 0,
         taperEnd: 0,
         dynamicsMode: 'off',
+
+        /* Per-parameter dynamics. sizeSrc/sizeMin and flowSrc/flowMin below
+         * are not arbitrary: they reproduce the behaviour that used to be
+         * hardcoded — size * (0.5 + pressure * 0.5) and flow * pressure — so
+         * every existing preset paints identically and is now editable. */
+        sizeSrc: 'pressure',     sizeMin: 50,      sizeCurve: 1,
+        flowSrc: 'pressure',     flowMin: 0,       flowCurve: 1,
+        hardnessSrc: 'none',     hardnessMin: 0,   hardnessCurve: 1,
+        scatterSrc: 'none',      scatterMin: 0,    scatterCurve: 1,
+        angleSrc: 'none',
         smoothingBasic: 50,
         smoothingWeighted: 100,
         smoothingRope: 100,
@@ -1483,8 +1544,37 @@
         return true;
     };
 
+    /* The old single dropdown, kept as a shortcut. It never appeared in any
+     * preset — it was always a transient UI control — so translating it breaks
+     * nothing, and it now writes the same per-parameter keys the new controls
+     * do rather than being a separate mechanism the engine has to understand. */
+    var _DYN_MODE_MAP = {
+        off:       {},
+        direction: { angleSrc: 'direction' },
+        angle:     { angleSrc: 'random' },
+        size:      { sizeSrc: 'random', sizeMin: 0 },
+        opacity:   { flowSrc: 'random', flowMin: 0 },
+        flow:      { flowSrc: 'random', flowMin: 0 }
+    };
+
+    function _applyDynamicsMode(mode) {
+        // Put the parameters this shortcut owns back to their defaults first,
+        // or switching between modes would leave the previous one's settings
+        // silently in place.
+        var owned = ['angleSrc', 'sizeSrc', 'sizeMin', 'flowSrc', 'flowMin'];
+        for (var i = 0; i < owned.length; i++) {
+            _params[owned[i]] = engine.DEFAULTS[owned[i]];
+        }
+        var m = _DYN_MODE_MAP[mode];
+        if (!m) return;
+        for (var k in m) {
+            if (m.hasOwnProperty(k)) _params[k] = m[k];
+        }
+    }
+
     engine.setParam = function (key, value) {
         _params[key] = value;
+        if (key === 'dynamicsMode') _applyDynamicsMode(value);
         _persistParams();
         _invalidateSwatch(engine._currentPreset);
         engine.refreshPreview();
@@ -2062,8 +2152,24 @@
         }
         var shapeEl = document.getElementById('pb-shape');
         if (shapeEl) shapeEl.value = _params.shape;
-        var dynEl = document.getElementById('pb-dynamics');
-        if (dynEl) dynEl.value = _params.dynamicsMode;
+        // Per-parameter dynamics: one source dropdown and one floor slider each.
+        var dynSrcs = document.querySelectorAll('[data-dyn-src]');
+        for (var ds = 0; ds < dynSrcs.length; ds++) {
+            var dk = dynSrcs[ds].getAttribute('data-dyn-src');
+            dynSrcs[ds].value = _params[dk + 'Src'] || 'none';
+        }
+        var dynMins = document.querySelectorAll('[data-dyn-min]');
+        for (var dm2 = 0; dm2 < dynMins.length; dm2++) {
+            var mk = dynMins[dm2].getAttribute('data-dyn-min');
+            var mv = _params[mk + 'Min'];
+            if (mv == null) mv = 0;
+            dynMins[dm2].value = mv;
+            var mvEl = document.getElementById('pb-' + mk + '-min-val');
+            if (mvEl) mvEl.textContent = mv;
+            var mWrap = dynMins[dm2].parentNode;
+            if (mWrap) mWrap.style.setProperty('--pct', mv + '%');
+        }
+        _updateDynamicsRows();
         var smodeBtns = document.querySelectorAll('.pb-smode-btn');
         var activeMode = _params.smoothingMode || 'none';
         smodeBtns.forEach(function(btn) { btn.classList.toggle('active', btn.dataset.mode === activeMode); });
@@ -2258,11 +2364,26 @@
             });
         }
 
-        var dynEl = document.getElementById('pb-dynamics');
-        if (dynEl) {
-            dynEl.addEventListener('change', function () {
-                engine.setParam('dynamicsMode', this.value);
-            });
+        var dynSrcEls = document.querySelectorAll('[data-dyn-src]');
+        for (var dsi = 0; dsi < dynSrcEls.length; dsi++) {
+            (function (el) {
+                el.addEventListener('change', function () {
+                    engine.setParam(el.getAttribute('data-dyn-src') + 'Src', this.value);
+                    _updateDynamicsRows();
+                });
+            })(dynSrcEls[dsi]);
+        }
+        var dynMinEls = document.querySelectorAll('[data-dyn-min]');
+        for (var dmi = 0; dmi < dynMinEls.length; dmi++) {
+            (function (el) {
+                el.addEventListener('input', function () {
+                    var v = parseFloat(this.value);
+                    engine.setParam(el.getAttribute('data-dyn-min') + 'Min', v);
+                    var lbl = document.getElementById('pb-' + el.getAttribute('data-dyn-min') + '-min-val');
+                    if (lbl) lbl.textContent = v;
+                    if (this.parentNode) this.parentNode.style.setProperty('--pct', v + '%');
+                });
+            })(dynMinEls[dmi]);
         }
 
         var airbrushEl = document.getElementById('pb-airbrushMode');
@@ -2346,6 +2467,10 @@
 
     engine.generatePreview = function (name) { return _pbRenderPreview(name); };
 
+    /* Tilt and barrel rotation, straight off the pointer event. Nothing read
+     * them before, so a tilt-driven brush had nothing to respond to. */
+    engine.setPenState = _setPenState;
+
     engine.resetCurrentPreset = function () {
         try { localStorage.removeItem(STORAGE_PREFIX + engine._currentPreset); } catch (e_) {}
         engine.loadPreset(engine._currentPreset);
@@ -2410,11 +2535,26 @@
         engine.updateVisibleSettings();
     };
 
+    /* A floor slider only does something once its parameter has a sensor, so
+     * it stays hidden until one is picked. Angle has no floor — it is degrees
+     * added to the tip, not a factor scaling it. */
+    function _updateDynamicsRows() {
+        var mins = document.querySelectorAll('[data-dyn-min]');
+        for (var i = 0; i < mins.length; i++) {
+            var k = mins[i].getAttribute('data-dyn-min');
+            var row = mins[i].closest ? mins[i].closest('.pb-row') : null;
+            if (!row) continue;
+            var on = _params[k + 'Src'] && _params[k + 'Src'] !== 'none';
+            row.style.display = on ? '' : 'none';
+        }
+    }
+
     engine.updateVisibleSettings = function () {
         var all = _pbAllRows();
         for (var i = 0; i < all.length; i++) {
             all[i].style.display = '';
         }
+        _updateDynamicsRows();
     };
 
     engine.updateCursor = _updateBrushCursor;

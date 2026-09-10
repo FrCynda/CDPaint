@@ -2267,23 +2267,97 @@
                     <span class="pb-val" id="pb-angle-val">0</span>
                     </div>
                 </div>
-                <div class="pb-row" data-setting="dynamicsMode">
-                    <label>Dynamics</label>
-                    <select id="pb-dynamics">
-                        <option value="off">Off</option>
-                        <option value="direction">Direction</option>
-                        <option value="angle">Angle</option>
-                        <option value="size">Size</option>
-                        <option value="opacity">Opacity</option>
-                        <option value="flow">Flow</option>
-                    </select>
-                </div>
                 <div class="pb-row" data-setting="aspectRatio">
                     <div class="pb-slider-wrap">
                     <input type="range" id="pb-aspect" min="1" max="10" step="0.1" value="1">
                     <span class="pb-label-inner">Aspect</span>
                     <span class="pb-val" id="pb-aspect-val">1</span>
                     </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Dynamics</div>
+                <div class="pb-row" data-setting="sizeSrc">
+                    <label>Size</label>
+                    <select id="pb-size-src" data-dyn-src="size">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="sizeMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-size-min" data-dyn-min="size" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Size floor</span>
+                    <span class="pb-val" id="pb-size-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="flowSrc">
+                    <label>Flow</label>
+                    <select id="pb-flow-src" data-dyn-src="flow">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="flowMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-flow-min" data-dyn-min="flow" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Flow floor</span>
+                    <span class="pb-val" id="pb-flow-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="hardnessSrc">
+                    <label>Hardness</label>
+                    <select id="pb-hardness-src" data-dyn-src="hardness">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="hardnessMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-hardness-min" data-dyn-min="hardness" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Hardness floor</span>
+                    <span class="pb-val" id="pb-hardness-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="scatterSrc">
+                    <label>Scatter</label>
+                    <select id="pb-scatter-src" data-dyn-src="scatter">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="scatterMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-scatter-min" data-dyn-min="scatter" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Scatter floor</span>
+                    <span class="pb-val" id="pb-scatter-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="angleSrc">
+                    <label>Angle</label>
+                    <select id="pb-angle-src" data-dyn-src="angle">
+                        <option value="none">None</option>
+                        <option value="direction">Stroke direction</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="random">Random</option>
+                    </select>
                 </div>
             </div>
             <div class="pb-section">

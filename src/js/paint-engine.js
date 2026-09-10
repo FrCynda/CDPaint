@@ -6589,6 +6589,9 @@
                 this.state.paintbrushActive = true;
                 this.state.paintbrushSlot = e.button === 2 ? 2 : 1;
                 if (this.brush && this.brush.beginStroke) {
+                    // Tilt and barrel rotation ride on the pointer event and
+                    // are what a tilt-driven brush responds to.
+                    if (this.brush.setPenState) this.brush.setPenState(e);
                     this.brush.beginStroke(pp.x, pp.y, e.pressure != null ? e.pressure : 0.5, this.getActiveDrawColor(this.state.paintbrushSlot === 2));
                 }
                 return;
@@ -7061,11 +7064,13 @@
                     for (var _ci = 0; _ci < _coalesced.length; _ci++) {
                         var _cp = this.getMousePrecise(_coalesced[_ci]);
                         if (this.brush && this.brush.moveStroke) {
+                            if (this.brush.setPenState) this.brush.setPenState(_coalesced[_ci]);
                             this.brush.moveStroke(_cp.x, _cp.y, _coalesced[_ci].pressure != null ? _coalesced[_ci].pressure : 0.5, _color);
                         }
                     }
                 } else {
                     if (this.brush && this.brush.moveStroke) {
+                        if (this.brush.setPenState) this.brush.setPenState(e);
                         this.brush.moveStroke(pp.x, pp.y, e.pressure != null ? e.pressure : 0.5, _color);
                     }
                 }

@@ -351,6 +351,135 @@ await withPage(async (page) => {
     check('changing a setting changes the active preset swatch',
         JSON.parse(sw2).changed, 'the tile still shows the old brush');
 
+    /* -- per-parameter dynamics ----------------------------------------- */
+    console.log('');
+    console.log('== every parameter has its own input ==');
+    const dyn = await page.eval(`(() => {
+        const app = PaintApp, b = app.brush;
+        const L0 = __B.doc();
+        const hash = () => __B.hash(__B.layer());
+        const inkOf = () => {
+            const d = __B.layer().ctx.getImageData(0, 0, 200, 200).data;
+            let n = 0, sum = 0;
+            for (let i = 3; i < d.length; i += 4) if (d[i] > 0) { n++; sum += d[i]; }
+            return { px: n, meanAlpha: n ? Math.round(sum / n) : 0 };
+        };
+        // A stroke of CONSTANT pressure, so anything that varies must come
+        // from the sensor under test rather than from the pressure ramp.
+        const stroke = (pressure, pen) => {
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            if (pen && b.setPenState) b.setPenState(pen);
+            b.beginStroke(20, 100, pressure, '#000000');
+            for (let i = 1; i <= 30; i++) {
+                if (pen && b.setPenState) b.setPenState(pen);
+                b.moveStroke(20 + i * 5, 100, pressure, '#000000');
+            }
+            b.endStroke();
+        };
+        const fresh = () => {
+            try { localStorage.removeItem('pb-saved-Round'); } catch (e) {}
+            b.loadPreset('Round');
+            b.setParam('size', 20); b.setParam('spacing', 12);
+            b.setParam('scatter', 0); b.setParam('smoothingMode', 'none');
+        };
+        const out = {};
+
+        // -- defaults reproduce the old hardcoded pressure behaviour --------
+        fresh();
+        out.defSizeSrc = b.getParams().sizeSrc;
+        out.defSizeMin = b.getParams().sizeMin;
+        out.defFlowSrc = b.getParams().flowSrc;
+        out.defFlowMin = b.getParams().flowMin;
+
+        // -- pressure still drives size by default --------------------------
+        fresh(); stroke(0.2); const lightPx = inkOf().px;
+        fresh(); stroke(1.0); const heavyPx = inkOf().px;
+        out.pressureWidensStroke = heavyPx > lightPx * 1.4;
+
+        // -- and can be switched OFF, which was impossible before ------------
+        fresh();
+        b.setParam('sizeSrc', 'none');
+        stroke(0.2); const offLight = inkOf().px;
+        stroke(1.0); const offHeavy = inkOf().px;
+        out.sizeCanIgnorePressure = Math.abs(offHeavy - offLight) < offHeavy * 0.05;
+
+        // -- the floor sets how far it collapses ----------------------------
+        fresh(); b.setParam('sizeMin', 0);  stroke(0.1); const floor0 = inkOf().px;
+        fresh(); b.setParam('sizeMin', 90); stroke(0.1); const floor90 = inkOf().px;
+        out.floorRaisesMinimum = floor90 > floor0 * 1.3;
+
+        // -- the curve reshapes the response --------------------------------
+        fresh(); b.setParam('sizeCurve', 1); stroke(0.5); const g1 = inkOf().px;
+        fresh(); b.setParam('sizeCurve', 3); stroke(0.5); const g3 = inkOf().px;
+        out.curveChangesResponse = g1 !== g3;
+
+        // -- TILT, which nothing read before --------------------------------
+        fresh();
+        b.setParam('sizeSrc', 'tilt'); b.setParam('sizeMin', 0);
+        stroke(0.8, { tiltX: 0, tiltY: 0, twist: 0 });   const upright = inkOf().px;
+        stroke(0.8, { tiltX: 85, tiltY: 0, twist: 0 });  const flat = inkOf().px;
+        out.tiltDrivesSize = flat > upright * 1.4;
+
+        // -- pen rotation ---------------------------------------------------
+        fresh();
+        b.setParam('aspectRatio', 5); b.setParam('angleSrc', 'twist');
+        stroke(0.8, { tiltX: 0, tiltY: 0, twist: 0 });   const tw0 = hash();
+        stroke(0.8, { tiltX: 0, tiltY: 0, twist: 90 });  const tw90 = hash();
+        out.twistRotatesTip = tw0 !== tw90;
+
+        // -- hardness and scatter, which had no dynamics at all -------------
+        fresh();
+        b.setParam('hardnessSrc', 'pressure'); b.setParam('hardnessMin', 0);
+        b.setParam('sizeSrc', 'none');   // isolate hardness from size
+        stroke(0.15); const softA = hash();
+        stroke(1.0);  const hardA = hash();
+        out.hardnessDrivable = softA !== hardA;
+
+        fresh();
+        b.setParam('scatter', 60);
+        b.setParam('scatterSrc', 'pressure'); b.setParam('scatterMin', 0);
+        b.setParam('sizeSrc', 'none');   // isolate scatter from size
+        stroke(0.1); const tight = inkOf().px;
+        stroke(1.0); const loose = inkOf().px;
+        out.scatterDrivable = loose > tight * 1.2;
+
+        // -- independence: two parameters on different inputs at once -------
+        fresh();
+        b.setParam('sizeSrc', 'pressure');
+        b.setParam('hardnessSrc', 'tilt');
+        out.independent = b.getParams().sizeSrc === 'pressure'
+                       && b.getParams().hardnessSrc === 'tilt';
+
+        // -- the old dropdown still works as a shortcut ---------------------
+        fresh();
+        b.setParam('dynamicsMode', 'size');
+        out.shimSetsSizeSrc = b.getParams().sizeSrc === 'random';
+        b.setParam('dynamicsMode', 'off');
+        out.shimRestores = b.getParams().sizeSrc === 'pressure'
+                        && b.getParams().sizeMin === 50;
+        return JSON.stringify(out);
+    })()`);
+    const d = JSON.parse(dyn);
+    console.log('  ' + JSON.stringify(d, null, 1).replace(/\n/g, '\n  '));
+
+    check('size defaults to the pressure response it always had',
+        d.defSizeSrc === 'pressure' && d.defSizeMin === 50,
+        `${d.defSizeSrc}/${d.defSizeMin}`);
+    check('flow defaults to the pressure response it always had',
+        d.defFlowSrc === 'pressure' && d.defFlowMin === 0,
+        `${d.defFlowSrc}/${d.defFlowMin}`);
+    check('pressure still widens a stroke', d.pressureWidensStroke);
+    check('pressure-to-size can now be turned off', d.sizeCanIgnorePressure);
+    check('the floor sets how far a parameter collapses', d.floorRaisesMinimum);
+    check('the curve reshapes the response', d.curveChangesResponse);
+    check('tilt drives a parameter', d.tiltDrivesSize);
+    check('pen rotation turns the tip', d.twistRotatesTip);
+    check('hardness can be driven, which it never could', d.hardnessDrivable);
+    check('scatter can be driven, which it never could', d.scatterDrivable);
+    check('two parameters can follow different inputs at once', d.independent);
+    check('the old Dynamics dropdown still works as a shortcut', d.shimSetsSizeSrc);
+    check('switching that shortcut off restores the defaults', d.shimRestores);
+
     console.log('\n== hot-path guards ==');
     const r7 = await page.eval(`(async () => {
         const app = PaintApp;
