@@ -923,19 +923,62 @@
         return c;
     }
 
+    /* Where a fan brush's hairs actually sit.
+     *
+     * They used to radiate: every bristle was pushed away from the centre
+     * along its own angle, and all those angles lay inside one `spread`
+     * wedge, so the whole cluster sat off to one side of the pointer and
+     * grew further off it as the brush got bigger. That is what made the
+     * fan look uncentred and wrong — it was painting a splayed burst
+     * beside the cursor rather than a brush head on it.
+     *
+     * A ferrule spreads hairs SIDEWAYS across the brush and each hair runs
+     * ALONG it. So: lay the bristles out on the perpendicular, run each one
+     * down the stroke axis, and centre the lot on the cursor. `spread` now
+     * does what its name says — how wide the head is splayed, from a single
+     * packed streak at 0 to wider than the tip itself at 135 and up.
+     *
+     * One layout function, shared by the cached and the per-bristle paths,
+     * so the fast path cannot drift from the accurate one. */
+    function _bristleLayout(p, sz, axisRad, count, length, width) {
+        var spread = p.bristleSpread * _PI / 180;
+        var lw = _max(0.5, width * 0.4);
+        var flen = _max(lw, sz * 0.3 + length * 0.35);
+        var fanW = sz * _clamp(p.bristleSpread / 90, 0, 1.5);
+        var px = -_sin(axisRad), py = _cos(axisRad);
+        var out = [];
+        var reach = 0;
+        for (var i = 0; i < count; i++) {
+            var t = count > 1 ? i / (count - 1) : 0.5;
+            var u = t - 0.5;
+            /* Real hairs are uneven, and a perfectly regular comb is the
+             * other half of why this looked synthetic. The jitter is a hash
+             * of the bristle index alone, so the fan is still identical
+             * every time it is built and still caches. */
+            var j = ((Math.imul(i + 1, 2654435761) >>> 0) % 1000) / 1000;
+            var dir = axisRad + u * spread * 0.5;
+            var len = flen * (0.72 + j * 0.56);
+            var slide = (j - 0.5) * flen * 0.3;
+            var cx = px * u * fanW + _cos(dir) * slide;
+            var cy = py * u * fanW + _sin(dir) * slide;
+            out.push({
+                cx: cx, cy: cy, dir: dir, len: len,
+                alpha: 0.45 + 0.55 * (1 - _abs(u) * 2)
+            });
+            reach = _max(reach, _hypot(cx, cy) + len / 2 + lw);
+        }
+        return { list: out, lw: lw, reach: reach };
+    }
+
     function _renderBristleDabs(x, y, pressure, colorHex, strokeAngle) {
         var p = getParams();
         var sc = { x: x, y: y, pressure: pressure, strokeAngle: strokeAngle };
         var count = _clamp(_round(p.bristleCount), 2, 50);
-        var spread = p.bristleSpread * _PI / 180;
         var length = _max(3, p.bristleLength);
         var width = _max(1, p.bristleWidth);
 
         var effAngle = _dynAngle(p, p.angle, sc);
         var sz = _max(0.5, _dyn(p, 'size', p.size, sc, 1));
-
-        var ang = effAngle * _PI / 180;
-        var startAngle = ang - spread / 2;
 
         // flow scales the CLAMPED pressure factor, not the other way round —
         // multiplying first and clamping after would brighten low-flow bristles.
@@ -949,29 +992,23 @@
             // sharing a handful of fans instead of building one per dab.
             var qSz = _max(2, _round(sz / 2) * 2);
             var qAng = _round(effAngle / 6) * 6;
-            var lw0 = _max(0.5, width * 0.4);
-            var tipDist0 = qSz * 0.3 + length * 0.35;
-            var fanDist0 = qSz * 0.4;
-            var S = _max(2, _ceil((fanDist0 + tipDist0 + lw0 * 2 + 2) * 2));
+            var lay0 = _bristleLayout(p, qSz, qAng * _PI / 180, count, length, width);
+            var S = _max(2, _ceil((lay0.reach + 2) * 2));
             var fan = _fanFor(p.shape + '|' + qSz + '|' + _round(p.hardness) + '|'
                 + qAng + '|' + count + '|' + _round(p.bristleSpread) + '|'
                 + _round(length) + '|' + _round(width), function () {
                 var fc = new OffscreenCanvas(S, S);
                 var fctx = fc.getContext('2d');
-                var a0 = qAng * _PI / 180 - spread / 2;
-                for (var k = 0; k < count; k++) {
-                    var tk = count > 1 ? k / (count - 1) : 0.5;
-                    var ak = a0 + tk * spread;
-                    var flen = _max(lw0, tipDist0);
-                    var fasp = _max(1, _round((flen / lw0) * 2) / 2);
-                    var fm = _maskFor(p.shape, lw0, p.hardness,
-                        ak * 180 / _PI - 90, fasp);
+                for (var k = 0; k < lay0.list.length; k++) {
+                    var b = lay0.list[k];
+                    var fasp = _max(1, _round((b.len / lay0.lw) * 2) / 2);
+                    var fm = _maskFor(p.shape, lay0.lw, p.hardness,
+                        b.dir * 180 / _PI - 90, fasp);
                     fctx.save();
                     // Shape factor only; stroke alpha lands at stamp time.
-                    fctx.globalAlpha = 0.5 + 0.5 * (1 - _abs(tk - 0.5) * 2);
-                    fctx.drawImage(fm,
-                        S / 2 + _cos(ak) * (fanDist0 + flen / 2) - fm.width / 2,
-                        S / 2 + _sin(ak) * (fanDist0 + flen / 2) - fm.height / 2);
+                    fctx.globalAlpha = b.alpha;
+                    fctx.drawImage(fm, S / 2 + b.cx - fm.width / 2,
+                        S / 2 + b.cy - fm.height / 2);
                     fctx.restore();
                 }
                 return fc;
@@ -982,84 +1019,36 @@
             return;
         }
 
-        /* Each bristle is one dab stretched along the fiber direction, rather
+        /* Smudge keeps one dab per bristle: per-bristle colour is sampled from
+         * the canvas under each hair and so cannot bake into a shared fan.
+         *
+         * Each bristle is one dab stretched along the fiber direction, rather
          * than a bare stroked line. A stroked line cannot carry hardness, a
          * shape, a texture or a custom tip, so every one of those settings used
          * to go dead the moment bristleCount rose above 1 — while staying
-         * visible and adjustable in the sidebar.
-         *
-         * Stamping dabs ALONG each fiber would have been the obvious fix and is
-         * far too slow: it multiplies an already ~11k-draw stroke by the number
-         * of steps per fiber. An elongated, rotated tip gives the same streak
-         * for one dab per bristle, which is exactly what the old line cost. */
-        for (var i = 0; i < count; i++) {
-            var t = count > 1 ? i / (count - 1) : 0.5;
-            var fiberAngle = startAngle + t * spread;
-
-            // Bristle offset from center (spread fan)
-            var fanDist = sz * 0.4;
-            var fx = _cos(fiberAngle) * fanDist;
-            var fy = _sin(fiberAngle) * fanDist;
-
-            // Fiber end point (tip extends outward)
-            var tipDist = sz * 0.3 + length * 0.35;
-            var tx = fx + _cos(fiberAngle) * tipDist;
-            var ty = fy + _sin(fiberAngle) * tipDist;
-
-            var lw = _max(0.5, width * 0.4);
-
-            // Per-bristle opacity: center bristles more opaque, edge ones lighter
-            var bAlpha = baseAlpha * (0.5 + 0.5 * (1 - _abs(t - 0.5) * 2));
+         * visible and adjustable in the sidebar. */
+        var lay = _bristleLayout(p, sz, effAngle * _PI / 180, count, length, width);
+        for (var i = 0; i < lay.list.length; i++) {
+            var br = lay.list[i];
+            var bcx = x + br.cx;
+            var bcy = y + br.cy;
 
             var finalColor = colorHex;
-            if (p.colorRate < 100) {
-                var sampled = _sampleCanvasColor(_outCtx(), x + fx, y + fy);
-                if (sampled) {
-                    finalColor = _mixColors(sampled, colorHex, p.colorRate);
-                }
-            }
+            var sampled = _sampleCanvasColor(_outCtx(), bcx, bcy);
+            if (sampled) finalColor = _mixColors(sampled, colorHex, p.colorRate);
 
             // The mask is built tall (aspect > 1 stretches along y) and then
             // rotated, so the long axis lands on the fiber direction at -90.
-            var fiberLen = _max(lw, tipDist);
-            // Quantise the elongation before it reaches the cache key.
-            // Fiber length rides on pressure, so an exact ratio makes a
-            // fresh tip for practically every dab — measured at 1224 mask
-            // builds for one stroke. Half steps cost well under a pixel of
-            // length and let a whole stroke share a handful of tips.
-            var bAspect = _max(1, _round((fiberLen / lw) * 2) / 2);
-            var maskAngle = fiberAngle * 180 / _PI - 90;
-            var bMask = _maskFor(p.shape, lw, p.hardness, maskAngle, bAspect);
-            // Centred on the middle of the fiber run, so it spans the same
-            // ground the line did from (x+fx, y+fy) to (x+tx, y+ty).
-            var bcx = x + fx + _cos(fiberAngle) * fiberLen / 2;
-            var bcy = y + fy + _sin(fiberAngle) * fiberLen / 2;
+            // Quantise the elongation before it reaches the cache key: fiber
+            // length rides on pressure, and an exact ratio made a fresh tip
+            // for practically every dab (1224 mask builds for one stroke).
+            var bAspect = _max(1, _round((br.len / lay.lw) * 2) / 2);
+            var bMask = _maskFor(p.shape, lay.lw, p.hardness,
+                br.dir * 180 / _PI - 90, bAspect);
+            // _paintDab extends _dirtyRect and _clearBounds itself.
             _paintDab(_flowCtx, bcx, bcy, bMask, finalColor,
-                _clamp(bAlpha, 0, 1), p.texture, p.textureScale, p.textureType);
-
-            // Extend dirty rect
-            var _expand = _max(lw * 2, 4);
-            var minX = _min(x + fx, x + tx) - _expand;
-            var minY = _min(y + fy, y + ty) - _expand;
-            var maxX = _max(x + fx, x + tx) + _expand;
-            var maxY = _max(y + fy, y + ty) + _expand;
-            if (!_dirtyRect) {
-                _dirtyRect = { x1: minX, y1: minY, x2: maxX, y2: maxY };
-            } else {
-                if (minX < _dirtyRect.x1) _dirtyRect.x1 = minX;
-                if (minY < _dirtyRect.y1) _dirtyRect.y1 = minY;
-                if (maxX > _dirtyRect.x2) _dirtyRect.x2 = maxX;
-                if (maxY > _dirtyRect.y2) _dirtyRect.y2 = maxY;
-            }
-            // Track accumulated painted area for endStroke background restore
-            if (!_clearBounds) {
-                _clearBounds = { x1: minX, y1: minY, x2: maxX, y2: maxY };
-            } else {
-                if (minX < _clearBounds.x1) _clearBounds.x1 = minX;
-                if (minY < _clearBounds.y1) _clearBounds.y1 = minY;
-                if (maxX > _clearBounds.x2) _clearBounds.x2 = maxX;
-                if (maxY > _clearBounds.y2) _clearBounds.y2 = maxY;
-            }
+                _clamp(baseAlpha * br.alpha, 0, 1),
+                p.texture, p.textureScale, p.textureType);
         }
     }
 
@@ -1565,15 +1554,15 @@
         'Copic Soft': { size: 22, opacity: 45, flow: 60, spacing: 5, hardness: 55, shape: 'circle', sizeSrc: 'none', flowMin: 60 },
 
         /* ---- Paint ------------------------------------------------------- */
-        'Oil Round': { size: 20, opacity: 100, flow: 90, spacing: 8, hardness: 55, shape: 'circle', bristleCount: 9, bristleSpread: 25, texture: 25, textureScale: 3, textureType: 'canvas', sizeMin: 55 },
-        'Oil Flat': { size: 26, opacity: 100, flow: 85, spacing: 7, hardness: 60, shape: 'circle', aspectRatio: 3, angleSrc: 'direction', bristleCount: 11, bristleSpread: 70, texture: 30, textureScale: 3, textureType: 'canvas' },
-        'Impasto': { size: 30, opacity: 100, flow: 100, spacing: 9, hardness: 70, shape: 'circle', bristleCount: 14, bristleSpread: 55, texture: 45, textureScale: 4, textureType: 'canvas', sizeMin: 60, taperStart: 5 },
+        'Oil Round': { size: 20, opacity: 100, flow: 90, spacing: 8, hardness: 55, shape: 'circle', bristleCount: 9, bristleSpread: 55, texture: 25, textureScale: 3, textureType: 'canvas', sizeMin: 55 },
+        'Oil Flat': { size: 26, opacity: 100, flow: 85, spacing: 7, hardness: 60, shape: 'circle', aspectRatio: 3, angleSrc: 'direction', bristleCount: 11, bristleSpread: 100, texture: 30, textureScale: 3, textureType: 'canvas' },
+        'Impasto': { size: 30, opacity: 100, flow: 100, spacing: 9, hardness: 70, shape: 'circle', bristleCount: 14, bristleSpread: 95, texture: 45, textureScale: 4, textureType: 'canvas', sizeMin: 60, taperStart: 5 },
         'Acrylic Flat': { size: 24, opacity: 100, flow: 100, spacing: 6, hardness: 85, shape: 'square', aspectRatio: 3.5, angleSrc: 'direction', sizeMin: 75 },
-        'Acrylic Dry': { size: 22, opacity: 95, flow: 80, spacing: 12, hardness: 65, shape: 'circle', bristleCount: 10, bristleSpread: 45, texture: 70, textureScale: 2, textureType: 'canvas', hardnessSrc: 'pressure', hardnessMin: 40 },
+        'Acrylic Dry': { size: 22, opacity: 95, flow: 80, spacing: 12, hardness: 65, shape: 'circle', bristleCount: 10, bristleSpread: 110, bristleWidth: 3, texture: 70, textureScale: 2, textureType: 'canvas', hardnessSrc: 'pressure', hardnessMin: 40 },
         'Palette Knife': { size: 34, opacity: 100, flow: 100, spacing: 4, hardness: 100, shape: 'square', aspectRatio: 5, angleSrc: 'direction', sizeSrc: 'none', flowMin: 70 },
-        'Fan Brush': { size: 22, opacity: 90, flow: 80, spacing: 12, hardness: 50, shape: 'circle', bristleCount: 12, bristleSpread: 60, taperStart: 8, taperEnd: 8 },
-        'Dry Brush': { size: 18, opacity: 80, flow: 80, spacing: 14, hardness: 60, shape: 'circle', bristleCount: 7, bristleSpread: 30, texture: 60, textureScale: 2, taperStart: 6, taperEnd: 6 },
-        'Bristle Blender': { size: 28, opacity: 40, flow: 25, spacing: 8, hardness: 25, shape: 'circle', bristleCount: 16, bristleSpread: 80, flowMin: 10 },
+        'Fan Brush': { size: 26, opacity: 90, flow: 80, spacing: 10, hardness: 50, shape: 'circle', bristleCount: 13, bristleSpread: 120, bristleWidth: 3, taperStart: 8, taperEnd: 8 },
+        'Dry Brush': { size: 20, opacity: 80, flow: 80, spacing: 12, hardness: 60, shape: 'circle', bristleCount: 8, bristleSpread: 90, bristleWidth: 3, texture: 60, textureScale: 2, taperStart: 6, taperEnd: 6 },
+        'Bristle Blender': { size: 28, opacity: 40, flow: 25, spacing: 8, hardness: 25, shape: 'circle', bristleCount: 16, bristleSpread: 130, flowMin: 10 },
         'Impressionist': { size: 30, opacity: 95, flow: 100, spacing: 22, hardness: 80, shape: 'custom', _tipUrl: 'brushes/impressionism_brush.png', scatter: 5, angleSrc: 'direction' },
 
         /* ---- Watercolour ------------------------------------------------- */

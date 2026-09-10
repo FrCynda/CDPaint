@@ -725,6 +725,45 @@ await withPage(async (page) => {
         grid.tiles === grid.presets, `${grid.tiles} tiles for ${grid.presets} presets`);
     check('no family header is left with no brushes under it',
         grid.empty.length === 0, grid.empty.join(', '));
+
+    /* The fan used to be a radial burst: all its bristles pushed out from
+     * the centre inside one wedge, so the head sat beside the pointer
+     * instead of on it, further off the bigger the brush got. */
+    const fan = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        const meas = (preset, angle) => {
+            __B.doc();
+            b.loadPreset(preset);
+            b.setParam('angle', angle);
+            b.beginStroke(40, 100, 1, '#000000');
+            for (let x = 40; x <= 160; x += 3) b.moveStroke(x, 100, 1, '#000000');
+            b.endStroke();
+            const d = __B.layer().ctx.getImageData(0, 0, 200, 200).data;
+            let sy = 0, n = 0, lo = 999, hi = -1;
+            for (let y = 0; y < 200; y++) for (let x = 0; x < 200; x++) {
+                if (d[(y * 200 + x) * 4 + 3] > 20) {
+                    sy += y; n++; if (y < lo) lo = y; if (y > hi) hi = y;
+                }
+            }
+            return { preset, angle, n, cy: n ? sy / n : null, lo, hi };
+        };
+        const out = [meas('Fan Brush', 0), meas('Fan Brush', 90),
+                     meas('Dry Brush', 0), meas('Oil Flat', 0)];
+        ['Fan Brush', 'Dry Brush', 'Oil Flat'].forEach(n => {
+            try { localStorage.removeItem('pb-saved-' + n); } catch (e) {}
+        });
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    console.log('  ' + JSON.stringify(fan));
+    fan.forEach(f => {
+        check(`${f.preset} at ${f.angle}deg paints on the cursor, not beside it`,
+            f.n > 0 && Math.abs(f.cy - 100) < 2,
+            `ink centre y=${f.cy && f.cy.toFixed(1)} for a stroke along y=100`);
+        check(`${f.preset} at ${f.angle}deg spreads evenly either side of the stroke`,
+            Math.abs((100 - f.lo) - (f.hi - 100)) <= 3,
+            `${100 - f.lo}px above the line, ${f.hi - 100}px below`);
+    });
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
