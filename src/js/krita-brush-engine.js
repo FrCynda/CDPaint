@@ -1052,6 +1052,36 @@
         }
     }
 
+    /* How a brush lays its paint down.
+     *
+     * The whole stroke lives on the flow buffer and reaches the layer as ONE
+     * drawImage, against a restored copy of the original pixels — so the
+     * blend applies to the finished stroke, not to each overlapping dab.
+     * That is what makes multiply usable: dabs inside a single stroke do not
+     * darken each other, which is how a real ink behaves and how Krita and
+     * CSP do it too.
+     *
+     * 'erase' is why this exists at all. Until now the engine could only add
+     * paint, so there was no way to have an eraser that was a brush. */
+    var _BLEND_OPS = {
+        normal:      'source-over',
+        erase:       'destination-out',
+        multiply:    'multiply',
+        screen:      'screen',
+        overlay:     'overlay',
+        darken:      'darken',
+        lighten:     'lighten',
+        'color-dodge': 'color-dodge',
+        'color-burn':  'color-burn',
+        'hard-light':  'hard-light',
+        'soft-light':  'soft-light',
+        difference:  'difference',
+        hue:         'hue',
+        saturation:  'saturation',
+        color:       'color',
+        luminosity:  'luminosity'
+    };
+    function _blendOp(mode) { return _BLEND_OPS[mode] || 'source-over'; }
     function _flushFlowBuffer(mainCtx, clearFlow) {
         if (!_dirtyRect || !_flowCanvas) return;
         var dr = _dirtyRect;
@@ -1063,6 +1093,14 @@
         var h = y2 - y;
         if (w <= 0 || h <= 0) { _dirtyRect = null; return; }
         var opacity = getParams().opacity / 100;
+        /* Alpha lock exists to protect a layer's shape. An eraser is the one
+         * brush that attacks exactly that, so on a locked layer it does
+         * nothing rather than punching holes — same as Krita. */
+        if (_alphaLocked() && getParams().blendMode === 'erase') {
+            if (_flowCtx) _flowCtx.clearRect(x, y, w, h);
+            _dirtyRect = null;
+            return;
+        }
         // Preview mode (clearFlow=true): composite new dabs on top of the
         // existing canvas without restoring the background — old dabs from
         // previous flushes stay on the canvas. This avoids re-compositing
@@ -1083,12 +1121,31 @@
             _flowCtx.drawImage(_selStencil, 0, 0);
             _flowCtx.restore();
         }
+        var blend = _blendOp(getParams().blendMode);
+        var locked = _alphaLocked();
         mainCtx.save();
         mainCtx.globalAlpha = opacity;
-        // Alpha lock: keep the destination's own alpha, so paint lands only
-        // where the layer already had pixels. The background restore above has
-        // already put the layer's original alpha back under us.
-        if (_alphaLocked()) mainCtx.globalCompositeOperation = 'source-atop';
+        if (locked && blend !== 'source-over') {
+            /* Alpha lock and a blend mode both want the composite operator,
+             * and only one can have it. So the lock is applied to the wet
+             * paint instead: clip the flow buffer to where the layer already
+             * had pixels, then let the blend run normally. _bgCanvas is the
+             * untouched layer, which is exactly the alpha to clip against. */
+            if (_bgCanvas && _flowCtx) {
+                _flowCtx.save();
+                _flowCtx.globalCompositeOperation = 'destination-in';
+                _flowCtx.drawImage(_bgCanvas, 0, 0);
+                _flowCtx.restore();
+            }
+            mainCtx.globalCompositeOperation = blend;
+        } else if (locked) {
+            // Alpha lock: keep the destination's own alpha, so paint lands only
+            // where the layer already had pixels. The background restore above has
+            // already put the layer's original alpha back under us.
+            mainCtx.globalCompositeOperation = 'source-atop';
+        } else {
+            mainCtx.globalCompositeOperation = blend;
+        }
         mainCtx.drawImage(_flowCanvas, x, y, w, h, x, y, w, h);
         mainCtx.restore();
         // Preview-mode: clear the flushed area from the flow buffer so the
@@ -1492,6 +1549,7 @@
         texture: 0,
         textureScale: 4,
         textureType: 'grain',
+        blendMode: 'normal',
         bristleCount: 1,
         bristleLength: 20,
         bristleWidth: 2,
@@ -1606,6 +1664,23 @@
         'Square Rough': { size: 18, opacity: 90, flow: 100, spacing: 12, hardness: 80, shape: 'custom', _tipUrl: 'brushes/square_rough_lightgrey.png' },
         'Abominable Snowman': { size: 28, opacity: 85, flow: 100, spacing: 15, hardness: 80, shape: 'custom', _tipUrl: 'brushes/abominable_snowman.png', scatter: 4 },
 
+        /* ---- Blend ------------------------------------------------------- */
+        'Shadow Multiply': { size: 26, opacity: 60, flow: 45, spacing: 8, hardness: 25, shape: 'circle', blendMode: 'multiply', flowMin: 20 },
+        'Ink Multiply': { size: 9, opacity: 100, flow: 100, spacing: 6, hardness: 80, shape: 'circle', blendMode: 'multiply', taperStart: 20, taperEnd: 25 },
+        'Glow': { size: 30, opacity: 70, flow: 20, spacing: 6, hardness: 0, shape: 'circle', blendMode: 'color-dodge', airbrushMode: true, airbrushRate: 45, flowMin: 25 },
+        'Burn Shadow': { size: 28, opacity: 60, flow: 18, spacing: 6, hardness: 5, shape: 'circle', blendMode: 'color-burn', flowMin: 25 },
+        'Bleach': { size: 24, opacity: 80, flow: 35, spacing: 8, hardness: 20, shape: 'circle', blendMode: 'screen', flowMin: 20 },
+        'Tint': { size: 30, opacity: 80, flow: 40, spacing: 8, hardness: 15, shape: 'circle', blendMode: 'color', flowMin: 25 },
+        'Shade Soft Light': { size: 34, opacity: 85, flow: 30, spacing: 8, hardness: 10, shape: 'circle', blendMode: 'soft-light', flowMin: 20 },
+
+        /* ---- Erasers ----------------------------------------------------- */
+        'Eraser Hard': { size: 20, opacity: 100, flow: 100, spacing: 6, hardness: 95, shape: 'circle', blendMode: 'erase', sizeSrc: 'none', flowSrc: 'none' },
+        'Eraser Soft': { size: 32, opacity: 100, flow: 45, spacing: 6, hardness: 5, shape: 'circle', blendMode: 'erase', flowMin: 15 },
+        'Eraser Pencil': { size: 7, opacity: 100, flow: 85, spacing: 5, hardness: 70, shape: 'circle', blendMode: 'erase', texture: 45, textureScale: 2, textureType: 'grain' },
+        'Eraser Chalk': { size: 24, opacity: 100, flow: 80, spacing: 9, hardness: 45, shape: 'circle', blendMode: 'erase', texture: 75, textureScale: 3, textureType: 'chalk' },
+        'Eraser Square': { size: 22, opacity: 100, flow: 100, spacing: 5, hardness: 100, shape: 'square', blendMode: 'erase', sizeSrc: 'none', flowSrc: 'none' },
+        'Eraser Airbrush': { size: 40, opacity: 100, flow: 12, spacing: 6, hardness: 0, shape: 'circle', blendMode: 'erase', airbrushMode: true, airbrushRate: 50, flowMin: 20 },
+
         /* ---- Effects ------------------------------------------------------ */
         'Round': { size: 12, opacity: 100, flow: 100, spacing: 15, hardness: 80, shape: 'circle' },
         'Splatter': { size: 24, opacity: 80, flow: 100, spacing: 25, hardness: 50, shape: 'circle', scatter: 14, texture: 30 },
@@ -1627,6 +1702,8 @@
         { name: 'Watercolour', presets: ['Watercolor', 'Watercolor Wet', 'Watercolor Dry Edge', 'Wash', 'Watercolor Bloom'] },
         { name: 'Airbrush', presets: ['Airbrush', 'Airbrush Soft', 'Airbrush Hard', 'Spray Can', 'Speckle Spray'] },
         { name: 'Texture',  presets: ['Charcoal', 'Charcoal Stick', 'Conte', 'Canvas Grain', 'Crosshatch', 'Chalk', 'Chalk Round Hard', 'Chalk Sparse', 'Chalk Chisel', 'Chalk Chisel Random', 'Chalk Chisel Fine', 'Chisel Streaks', 'Rock Pitted', 'Rock Pitted Fine', 'Scratches', 'Rake', 'Bristles Grouped', 'Bristle', 'Bristles Circle Medium', 'Bristles Compact Mini', 'Deevad Painterly', 'Deevad Compact', 'Flat Tip Dirty', 'Square Rough', 'Abominable Snowman'] },
+        { name: 'Blend',    presets: ['Shadow Multiply', 'Ink Multiply', 'Glow', 'Burn Shadow', 'Bleach', 'Tint', 'Shade Soft Light'] },
+        { name: 'Erasers',  presets: ['Eraser Hard', 'Eraser Soft', 'Eraser Pencil', 'Eraser Chalk', 'Eraser Square', 'Eraser Airbrush'] },
         { name: 'Effects',  presets: ['Round', 'Splatter', 'Splat Dots', 'Splats Large', 'Debris', 'Foliage', 'Stipple', 'Confetti', 'Scribbles'] }
     ];
 
@@ -2307,6 +2384,18 @@
             var padX = W * 0.07;
             var x0 = padX, x1 = W - padX;
             var midY = H * 0.5;
+
+            /* An eraser stroke on an empty tile paints nothing, which is a
+             * true but useless swatch. Give it something to erase: the tile
+             * shows the bite taken out of a band of ink, which is what the
+             * brush actually does. */
+            if (pp.blendMode === 'erase') {
+                ctx.save();
+                ctx.fillStyle = SWATCH_INK;
+                ctx.globalAlpha = 0.72;
+                ctx.fillRect(0, H * 0.16, W, H * 0.68);
+                ctx.restore();
+            }
             // A full S rather than a lopsided arc: it shows both directions of
             // travel, which is what makes an angled or bristle tip readable.
             var amp = H * 0.20;
@@ -2422,6 +2511,17 @@
         }
         var shapeEl = document.getElementById('pb-shape');
         if (shapeEl) shapeEl.value = _params.shape;
+        var blendEl = document.getElementById('pb-blend');
+        if (blendEl) blendEl.value = _params.blendMode || 'normal';
+        /* The name field follows the active brush. It used to be set only by
+         * a tile click, so any other route to a preset left it naming a
+         * brush the user was no longer on — and Save would have written to
+         * that stale name. */
+        var nameEl2 = document.getElementById('pb-preset-name');
+        if (nameEl2 && document.activeElement !== nameEl2) {
+            nameEl2.value = engine._currentPreset || '';
+        }
+        _syncManageButtons();
         // Per-parameter dynamics: one source dropdown and one floor slider each.
         var dynSrcs = document.querySelectorAll('[data-dyn-src]');
         for (var ds = 0; ds < dynSrcs.length; ds++) {
@@ -2632,6 +2732,13 @@
         if (shapeEl) {
             shapeEl.addEventListener('change', function () {
                 engine.setParam('shape', this.value);
+            });
+        }
+
+        var blendEl = document.getElementById('pb-blend');
+        if (blendEl) {
+            blendEl.addEventListener('change', function () {
+                engine.setParam('blendMode', this.value);
             });
         }
 
@@ -2993,6 +3100,10 @@
         _invalidateSwatch();
         return { ok: true, added: added, renamed: renamed };
     };
+
+    // Published down here: everything above `var engine` runs at module-eval
+    // time, when engine is still undefined.
+    engine.BLEND_MODES = Object.keys(_BLEND_OPS);
 
     engine.generatePreview = function (name) { return _pbRenderPreview(name); };
 

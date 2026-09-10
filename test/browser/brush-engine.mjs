@@ -1079,6 +1079,222 @@ await withPage(async (page) => {
         `painted pixels per tile: ${twin.inked.join(', ')}`);
     check('no tile in the grid is left without a swatch',
         twin.blank.length === 0, twin.blank.join(', '));
+
+    /* ================= blend modes and erasers ================= */
+    console.log('\n== blend modes ==');
+
+    const bl = JSON.parse(await page.eval(`(() => {
+        const app = PaintApp, b = app.brush;
+        const lay = (fn) => {
+            __B.doc();
+            b.loadPreset('Round');
+            ['sizeSrc', 'flowSrc'].forEach(k => b.setParam(k, 'none'));
+            b.setParam('size', 20);
+            b.setParam('spacing', 8);
+            return fn();
+        };
+        const paint = (color, y) => {
+            b.beginStroke(30, y, 1, color);
+            for (let x = 30; x <= 170; x += 4) b.moveStroke(x, y, 1, color);
+            b.endStroke();
+        };
+        const out = {};
+
+        // --- erase removes what is there --------------------------------
+        out.erase = lay(() => {
+            b.setParam('blendMode', 'normal');
+            paint('#ff0000', 100);
+            paint('#ff0000', 60);           // a second band the eraser misses
+            const before = __B.px(__B.layer(), 100, 100);
+            b.loadPreset('Eraser Hard');
+            b.setParam('size', 20);
+            paint('#000000', 100);
+            const after = __B.px(__B.layer(), 100, 100);
+            const untouched = __B.px(__B.layer(), 100, 60);
+            return { before, after, untouched };
+        });
+
+        // --- erase is a real hole, not white paint ----------------------
+        out.notWhite = lay(() => {
+            b.setParam('blendMode', 'normal');
+            paint('#ff0000', 100);
+            b.loadPreset('Eraser Hard');
+            b.setParam('size', 20);
+            paint('#00ff00', 100);          // colour must be irrelevant
+            return __B.px(__B.layer(), 100, 100);
+        });
+
+        // --- multiply darkens, normal replaces --------------------------
+        const cross = (mode) => lay(() => {
+            b.setParam('blendMode', 'normal');
+            paint('#ffcc00', 100);
+            b.loadPreset('Round');
+            ['sizeSrc', 'flowSrc'].forEach(k => b.setParam(k, 'none'));
+            b.setParam('size', 20);
+            b.setParam('spacing', 8);
+            b.setParam('blendMode', mode);
+            b.beginStroke(100, 60, 1, '#0066ff');
+            for (let y = 60; y <= 140; y += 4) b.moveStroke(100, y, 1, '#0066ff');
+            b.endStroke();
+            return __B.px(__B.layer(), 100, 100);
+        });
+        out.normalCross = cross('normal');
+        out.multiplyCross = cross('multiply');
+        out.screenCross = cross('screen');
+
+        // --- dabs inside ONE multiply stroke must not darken each other --
+        out.selfDarken = lay(() => {
+            b.setParam('blendMode', 'normal');
+            paint('#ffffff', 100);
+            b.loadPreset('Round');
+            ['sizeSrc', 'flowSrc'].forEach(k => b.setParam(k, 'none'));
+            b.setParam('size', 20);
+            b.setParam('spacing', 2);       // heavy overlap
+            b.setParam('blendMode', 'multiply');
+            paint('#808080', 100);
+            return __B.px(__B.layer(), 100, 100);
+        });
+
+        // --- alpha lock ---------------------------------------------------
+        out.lock = lay(() => {
+            b.setParam('blendMode', 'normal');
+            paint('#ff0000', 100);
+            const L = __B.layer();
+            L.alphaLock = true;
+            b.loadPreset('Eraser Hard');
+            b.setParam('size', 20);
+            paint('#000000', 100);
+            const kept = __B.px(L, 100, 100);
+            L.alphaLock = false;
+            return kept;
+        });
+
+        out.lockedBlend = lay(() => {
+            b.setParam('blendMode', 'normal');
+            paint('#ffcc00', 100);
+            const L = __B.layer();
+            L.alphaLock = true;
+            b.loadPreset('Round');
+            ['sizeSrc', 'flowSrc'].forEach(k => b.setParam(k, 'none'));
+            b.setParam('size', 20);
+            b.setParam('blendMode', 'multiply');
+            paint('#0066ff', 40);           // well clear of the yellow band
+            const off = __B.px(L, 100, 40);
+            b.setParam('spacing', 8);
+            paint('#0066ff', 100);          // straight over it
+            const on = __B.px(L, 100, 100);
+            L.alphaLock = false;
+            return { off, on };
+        });
+
+        b.loadPreset('Round');
+        ['Round', 'Eraser Hard'].forEach(n => {
+            try { localStorage.removeItem('pb-saved-' + n); } catch (e) {}
+        });
+        return JSON.stringify(out);
+    })()`));
+    console.log('  ' + JSON.stringify(bl));
+
+    const alphaOf = (px) => Number(px.split(',')[3]);
+    check('an eraser brush removes paint', alphaOf(bl.erase.after) === 0,
+        `pixel was ${bl.erase.before}, is ${bl.erase.after}`);
+    check('an eraser only takes what it passes over',
+        alphaOf(bl.erase.untouched) > 200, bl.erase.untouched);
+    check('erasing leaves a hole, not paint the colour of the brush',
+        bl.notWhite === CLEAR, `left ${bl.notWhite}`);
+    check('multiply darkens what is under it',
+        alphaOf(bl.multiplyCross) > 200 &&
+        Number(bl.multiplyCross.split(',')[0]) < Number(bl.normalCross.split(',')[0]) + 1 &&
+        bl.multiplyCross !== bl.normalCross,
+        `normal ${bl.normalCross} vs multiply ${bl.multiplyCross}`);
+    check('screen lightens what is under it',
+        bl.screenCross !== bl.normalCross &&
+        Number(bl.screenCross.split(',')[1]) >= Number(bl.multiplyCross.split(',')[1]),
+        `screen ${bl.screenCross} vs multiply ${bl.multiplyCross}`);
+    /* This is the whole reason the blend runs on the finished stroke rather
+     * than per dab: at spacing 2 a 50% grey would go almost black if each
+     * dab multiplied the one before it. */
+    check('overlapping dabs in one multiply stroke do not darken each other',
+        Math.abs(Number(bl.selfDarken.split(',')[0]) - 128) <= 6,
+        `50% grey over white came out ${bl.selfDarken}`);
+    check('alpha lock stops an eraser punching holes',
+        alphaOf(bl.lock) > 200, `pixel became ${bl.lock}`);
+    check('alpha lock confines a blend-mode brush to existing pixels',
+        bl.lockedBlend.off === CLEAR, `paint landed off-shape: ${bl.lockedBlend.off}`);
+    check('...and the blend still runs where paint is allowed',
+        alphaOf(bl.lockedBlend.on) > 200 && bl.lockedBlend.on !== '255,204,0,255',
+        `yellow band came out ${bl.lockedBlend.on}`);
+
+    /* An erase stroke on an empty tile paints nothing, so the swatch has to
+     * give it something to bite out of. */
+    const esw = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        const ink = (name) => {
+            const c = b.generatePreview(name);
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            let n = 0, clear = 0;
+            for (let i = 3; i < d.length; i += 4) { if (d[i] > 8) n++; else clear++; }
+            return { painted: n, clear };
+        };
+        return JSON.stringify({ hard: ink('Eraser Hard'), soft: ink('Eraser Soft'),
+                                round: ink('Round') });
+    })()`));
+    console.log('  ' + JSON.stringify(esw));
+    check('an eraser swatch shows the bite it takes',
+        esw.hard.painted > 1000 && esw.hard.clear > 1000,
+        `${esw.hard.painted} painted / ${esw.hard.clear} clear`);
+    check('a normal brush swatch is unaffected by that',
+        esw.round.painted > 500 && esw.round.clear > esw.round.painted,
+        JSON.stringify(esw.round));
+
+    const bfam = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.buildBrushGrid();
+        const heads = [...document.querySelectorAll('.pb-brush-group')].map(h => h.textContent);
+        const modes = b.BLEND_MODES;
+        const unfiled = Object.keys(b.PRESETS).filter(n => {
+            for (const g of b.PRESET_CATEGORIES) if (g.presets.indexOf(n) !== -1) return false;
+            return !b.isUserPreset(n);
+        });
+        const badMode = Object.keys(b.PRESETS).filter(n =>
+            b.PRESETS[n].blendMode && modes.indexOf(b.PRESETS[n].blendMode) === -1);
+        return JSON.stringify({ heads, count: Object.keys(b.PRESETS).length,
+                                modes: modes.length, unfiled, badMode });
+    })()`));
+    console.log('  ' + JSON.stringify(bfam));
+    check('erasers and blend brushes have their own families',
+        bfam.heads.indexOf('Erasers') !== -1 && bfam.heads.indexOf('Blend') !== -1,
+        bfam.heads.join(', '));
+    check('every preset is still filed', bfam.unfiled.length === 0, bfam.unfiled.join(', '));
+    check('no preset asks for a blend mode the engine does not have',
+        bfam.badMode.length === 0, bfam.badMode.join(', '));
+
+    /* Save writes to whatever the name field says, so a stale field would
+     * quietly overwrite the wrong brush. */
+    const nf = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.loadPreset('Round');
+        b.syncPanel();
+        const first = document.getElementById('pb-preset-name').value;
+        b.loadPreset('Eraser Hard');
+        b.syncPanel();
+        const second = document.getElementById('pb-preset-name').value;
+        const renameOff = document.getElementById('pb-rename-btn').disabled;
+        b.loadPreset('Round');
+        b.saveUserPreset('Field Test');
+        b.syncPanel();
+        const mine = document.getElementById('pb-preset-name').value;
+        const renameOn = document.getElementById('pb-rename-btn').disabled;
+        b.deleteUserPreset('Field Test');
+        b.loadPreset('Round');
+        return JSON.stringify({ first, second, mine, renameOff, renameOn });
+    })()`));
+    console.log('  ' + JSON.stringify(nf));
+    check('the name field follows whichever brush is active',
+        nf.first === 'Round' && nf.second === 'Eraser Hard' && nf.mine === 'Field Test',
+        JSON.stringify(nf));
+    check('rename is off for a built-in and on for your own',
+        nf.renameOff === true && nf.renameOn === false);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
