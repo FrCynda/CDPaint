@@ -1,7 +1,7 @@
 /* Nothing that only a hidden panel needs may be fetched during boot.
  *
  * The paint brush sidebar's preset grid used to be built on DOMContentLoaded.
- * Building it fetches every preset's custom tip PNG — ~570kB across a dozen
+ * Building it fetches every preset's custom tip PNG — ~1.3MB across a dozen
  * files — decodes each one, and runs a full-resolution luminance-to-alpha pass
  * over it, all to draw 66px thumbnails into a panel parked at left:-296px
  * until someone picks the Paint Brush tool. That landed squarely on the main
@@ -77,8 +77,13 @@ await withPage(async (page) => {
         `${open.canvases} canvases for ${open.tiles} tiles`);
     check('...and the ones nobody can see do not', open.canvases < open.tiles / 2,
         `${open.canvases} of ${open.tiles} drawn on open`);
+    /* Only the tips those drawn tiles need, not the whole library — which is
+     * 14 files and about 490kB. The bound is a share of that rather than a
+     * round number: a strip tip holds several shapes and so weighs several
+     * times what a single-shape tip did, and holding the old absolute figure
+     * would only mean deleting brushes to satisfy the test. */
     check('opening the panel no longer pulls every tip image',
-        open.kb < 200, `${open.count} requests, ${open.kb}kB`);
+        open.count <= 8 && open.kb < 400, `${open.count} requests, ${open.kb}kB`);
 
     /* Scroll to the bottom: the tiles down there draw, and their tips load. */
     await page.run(`

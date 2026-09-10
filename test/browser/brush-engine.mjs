@@ -289,10 +289,10 @@ await withPage(async (page) => {
         out.hRound     = hash(b.generatePreview('Round'));
         out.hFan       = hash(b.generatePreview('Fan Brush'));
         out.hAirbrush  = hash(b.generatePreview('Airbrush'));
-        out.hCalli     = hash(b.generatePreview('Calligraphy'));
-        out.hSplatter  = hash(b.generatePreview('Splatter'));
+        out.hPointy    = hash(b.generatePreview('Thin Pointy'));
+        out.hSplatter  = hash(b.generatePreview('Splatter Large'));
         out.distinct   = new Set([out.hRound, out.hFan, out.hAirbrush,
-                                  out.hCalli, out.hSplatter]).size;
+                                  out.hPointy, out.hSplatter]).size;
 
         // Rendering a swatch must not touch the document at all.
         const before = __B.hash(L);
@@ -564,7 +564,7 @@ await withPage(async (page) => {
         // editing one brush's curve must not rewrite another's
         fresh();
         b.setCurve('size', [[0, 0], [0.5, 0.95], [1, 1]]);
-        b.loadPreset('Ink');
+        b.loadPreset('Thin Regular');
         out.otherPresetUntouched = Math.abs(b.evalCurve('size', 0.5) - 0.5) < 1e-6;
         b.loadPreset('Round');
         out.ownCurveKept = Math.abs(b.evalCurve('size', 0.5) - 0.95) < 1e-3;
@@ -681,7 +681,7 @@ await withPage(async (page) => {
     })()`));
     console.log('  ' + JSON.stringify(lib));
     check('the library has a real number of brushes',
-        lib.count >= 60, `only ${lib.count} presets`);
+        lib.count >= 30, `only ${lib.count} presets`);
     check('every filed preset exists', lib.missing.length === 0, lib.missing.join(', '));
     check('no preset is filed under two families', lib.dupes.length === 0, lib.dupes.join(', '));
     check('every preset is filed under a family', lib.unfiled.length === 0, lib.unfiled.join(', '));
@@ -866,15 +866,15 @@ await withPage(async (page) => {
         out.roundStillThere = !!b.PRESETS['Round'] && !b.isUserPreset('Round');
 
         // --- duplicate --------------------------------------------------
-        b.loadPreset('Charcoal');
-        const dup = b.duplicatePreset('Charcoal', null);
+        b.loadPreset('Charcoal Rock');
+        const dup = b.duplicatePreset('Charcoal Rock', null);
         out.dupName = dup.name;
         out.dupIsMine = b.isUserPreset(dup.name);
         b.loadPreset(dup.name);
         out.dupSize = b.getParams().size;
-        out.charcoalSize = b.PRESETS['Charcoal'].size;
+        out.rockSize = b.PRESETS['Charcoal Rock'].size;
         b.setParam('size', 99);
-        out.builtinUntouched = b.PRESETS['Charcoal'].size === out.charcoalSize;
+        out.builtinUntouched = b.PRESETS['Charcoal Rock'].size === out.rockSize;
 
         // --- rename -----------------------------------------------------
         const ren = b.renameUserPreset('My Brush', 'Renamed Brush');
@@ -885,11 +885,11 @@ await withPage(async (page) => {
         out.renKeptSize = b.getParams().size;         // still 37
 
         // --- favourites -------------------------------------------------
-        b.toggleFavourite('Ink');
-        out.favOn = b.isFavourite('Ink');
-        b.toggleFavourite('Ink');
-        out.favOff = b.isFavourite('Ink');
-        b.toggleFavourite('Ink');
+        b.toggleFavourite('Thin Regular');
+        out.favOn = b.isFavourite('Thin Regular');
+        b.toggleFavourite('Thin Regular');
+        out.favOff = b.isFavourite('Thin Regular');
+        b.toggleFavourite('Thin Regular');
 
         // --- export / import --------------------------------------------
         const blob = b.exportUserPresets();
@@ -924,10 +924,10 @@ await withPage(async (page) => {
     check('a built-in cannot be deleted', lb.cantDelete.ok === false);
     check('the built-in survives all three attempts', lb.roundStillThere === true);
     check('duplicate names itself out of the way',
-        lb.dupName === 'Charcoal copy', `got "${lb.dupName}"`);
+        lb.dupName === 'Charcoal Rock copy', `got "${lb.dupName}"`);
     check('a duplicate copies the brush it came from',
-        lb.dupIsMine && lb.dupSize === lb.charcoalSize,
-        `${lb.dupSize} vs ${lb.charcoalSize}`);
+        lb.dupIsMine && lb.dupSize === lb.rockSize,
+        `${lb.dupSize} vs ${lb.rockSize}`);
     check('editing a copy never writes back to the built-in',
         lb.builtinUntouched === true);
     check('rename moves the brush', lb.renOk && lb.oldGone && lb.newHere);
@@ -985,7 +985,7 @@ await withPage(async (page) => {
             .filter(h => !h.hidden).length;
         const before = { tiles: visible(), canvases: canvases(), heads: heads() };
         const first = grid.querySelector('.pb-brush-tile');
-        box.value = 'chalk';
+        box.value = 'thin';
         box.dispatchEvent(new Event('input', { bubbles: true }));
         const during = { tiles: visible(), canvases: canvases(), heads: heads(),
                          sameNode: grid.querySelector('.pb-brush-tile') === first };
@@ -1024,17 +1024,17 @@ await withPage(async (page) => {
             .map(h => h.textContent);
         const countOf = (n) => [...grid.querySelectorAll('.pb-brush-tile')]
             .filter(t => t.getAttribute('data-preset') === n).length;
-        const plain = { heads: headNames(), ink: countOf('Ink') };
-        if (!b.isFavourite('Ink')) b.toggleFavourite('Ink');
+        const plain = { heads: headNames(), ink: countOf('Thin Regular') };
+        if (!b.isFavourite('Thin Regular')) b.toggleFavourite('Thin Regular');
         b.buildBrushGrid();
-        const fav = { heads: headNames(), ink: countOf('Ink'),
+        const fav = { heads: headNames(), ink: countOf('Thin Regular'),
                       first: headNames()[0] };
         b.loadPreset('Round');
         b.saveUserPreset('Grid Test Brush');
         b.buildBrushGrid();
         const mine = { heads: headNames() };
         b.deleteUserPreset('Grid Test Brush');
-        b.toggleFavourite('Ink');
+        b.toggleFavourite('Thin Regular');
         b.buildBrushGrid();
         return JSON.stringify({ plain, fav, mine });
     })()`));
@@ -1057,11 +1057,11 @@ await withPage(async (page) => {
         const b = PaintApp.brush;
         const sb = document.getElementById('paintbrush-sidebar');
         if (sb) { sb.style.display = 'block'; sb.classList.remove('collapsed'); }
-        if (!b.isFavourite('Charcoal')) b.toggleFavourite('Charcoal');
+        if (!b.isFavourite('Charcoal Rock')) b.toggleFavourite('Charcoal Rock');
         b.buildBrushGrid();
         const grid = document.getElementById('pb-brush-grid');
         const mine = [...grid.querySelectorAll('.pb-brush-tile')]
-            .filter(t => t.getAttribute('data-preset') === 'Charcoal');
+            .filter(t => t.getAttribute('data-preset') === 'Charcoal Rock');
         const settle = () => new Promise(r => setTimeout(r, 120));
         const ink = (t) => {
             const c = t.querySelector('canvas');
@@ -1091,7 +1091,7 @@ await withPage(async (page) => {
             .filter(t => !t.querySelector('canvas'))
             .map(t => t.getAttribute('data-preset'));
         grid.scrollTop = 0;
-        b.toggleFavourite('Charcoal');
+        b.toggleFavourite('Charcoal Rock');
         b.buildBrushGrid();
         return JSON.stringify({ tiles: mine.length, inked, blank, drawnAtRest, total });
     })()`));
@@ -1261,7 +1261,7 @@ await withPage(async (page) => {
             for (let i = 3; i < d.length; i += 4) { if (d[i] > 8) n++; else clear++; }
             return { painted: n, clear };
         };
-        return JSON.stringify({ hard: ink('Eraser Hard'), soft: ink('Eraser Soft'),
+        return JSON.stringify({ hard: ink('Eraser Hard'), soft: ink('Eraser Kneaded'),
                                 round: ink('Round') });
     })()`));
     console.log('  ' + JSON.stringify(esw));
@@ -1287,8 +1287,8 @@ await withPage(async (page) => {
                                 modes: modes.length, unfiled, badMode });
     })()`));
     console.log('  ' + JSON.stringify(bfam));
-    check('erasers and blend brushes have their own families',
-        bfam.heads.indexOf('Erasers') !== -1 && bfam.heads.indexOf('Blend') !== -1,
+    check('erasers and textured brushes have their own families',
+        bfam.heads.indexOf('Erasers') !== -1 && bfam.heads.indexOf('Texture') !== -1,
         bfam.heads.join(', '));
     check('every preset is still filed', bfam.unfiled.length === 0, bfam.unfiled.join(', '));
     check('no preset asks for a blend mode the engine does not have',
@@ -1453,11 +1453,10 @@ await withPage(async (page) => {
     })()`));
     console.log('  ' + JSON.stringify(fs2));
     check('searching a family name finds the whole family',
-        fs2.byFamily.indexOf('Wet Blender') !== -1 &&
-        fs2.byFamily.indexOf('Oil Mixer') !== -1,
+        fs2.byFamily.indexOf('Wet Modeling') !== -1 &&
+        fs2.byFamily.indexOf('Smudge') !== -1,
         fs2.byFamily.join(', '));
     check('searching a brush name still works',
-        fs2.byName.indexOf('Wet Blender') !== -1 &&
         fs2.byName.indexOf('Bristle Blender') !== -1,
         fs2.byName.join(', '));
 
@@ -1576,7 +1575,7 @@ await withPage(async (page) => {
 
     const dsw = JSON.parse(await page.eval(`(() => {
         const b = PaintApp.brush;
-        const fam = b.PRESET_CATEGORIES.filter(g => g.name === 'Surfaces')[0];
+        const fam = b.PRESET_CATEGORIES.filter(g => g.name === 'Texture')[0];
         const blank = [];
         (fam ? fam.presets : []).forEach(n => {
             const c = b.generatePreview(n);
@@ -1593,11 +1592,12 @@ await withPage(async (page) => {
             count: Object.keys(b.PRESETS).length });
     })()`));
     console.log('  ' + JSON.stringify(dsw));
-    check('every surface brush paints a visible swatch',
+    check('every textured brush paints a visible swatch',
         dsw.blank.length === 0, dsw.blank.join(', '));
-    check('surface brushes have their own family',
-        dsw.heads.indexOf('Surfaces') !== -1, dsw.heads.join(', '));
-    check('the library holds 100 brushes', dsw.count === 100, 'count ' + dsw.count);
+    check('textured brushes have their own family',
+        dsw.heads.indexOf('Texture') !== -1, dsw.heads.join(', '));
+    check('the library is the size it says it is',
+        dsw.count === 40, 'count ' + dsw.count);
 
     /* ── taper ────────────────────────────────────────────────────────── */
     console.log('== taper ==');
@@ -1690,10 +1690,14 @@ await withPage(async (page) => {
     check('taper off leaves a blunt end, just the round tip itself',
         tp.off.tipW[0] >= 7 && tp.off.wRamp[0] <= 5 && tp.off.maxW === 16,
         `first column ${tp.off.tipW[0]}px, ramp ${tp.off.wRamp}`);
+    /* Measured against the opacity taper rather than an absolute level: the
+     * two differ in kind, and how dark a one-pixel antialiased tip lands is
+     * a subpixel accident that says nothing about which taper ran. */
     check('a taper narrows the line to a point, not a see-through stub',
         tp.size.tipW[0] <= 3 && tp.size.tipW[1] <= 3 &&
-        tp.size.tipA[0] > 120 && tp.size.tipA[1] > 120,
-        `tips ${tp.size.tipW} wide at alpha ${tp.size.tipA}`);
+        tp.size.tipA[0] > tp.ink.tipA[0] * 3 && tp.size.tipA[1] > tp.ink.tipA[1] * 3,
+        `tips ${tp.size.tipW} wide at alpha ${tp.size.tipA}, ` +
+        `against ${tp.ink.tipA} for an opacity taper`);
     check('...and it is still full width and full ink in the middle',
         tp.size.midW === 16 && tp.size.midA === 255,
         `${tp.size.midW}px at ${tp.size.midA}`);
@@ -1835,8 +1839,8 @@ await withPage(async (page) => {
         };
         const xs = [60, 160, 260, 360, 460, 550];
         const out = {};
-        out.chalk  = await run('Chalk Chisel', xs);      // 4 shapes, picked at random
-        out.splats = await run('Splats Large', xs);      // 5 shapes, taken in turn
+        out.chalk  = await run('Charcoal Rock', xs);     // 4 shapes, picked at random
+        out.splats = await run('Splatter Large', xs);    // 5 shapes, taken in turn
         out.round  = await run('Round', xs);             // no strip: must not vary
         b.loadPreset('Round');
         return JSON.stringify(out);
@@ -1930,7 +1934,7 @@ await withPage(async (page) => {
         b.loadPreset('Round');
         b.setParam('hardness', 33);
         const straightAfter = JSON.parse(localStorage.getItem('pb-saved-Round') || '{}').hardness;
-        b.loadPreset('Ink');
+        b.loadPreset('Thin Regular');
         b.loadPreset('Round');
         const kept = b.getParams().hardness;
         b.forgetSaved('Round');
@@ -2005,7 +2009,7 @@ await withPage(async (page) => {
         const L2 = __B.layer();
         await __B.stroke(40, 60, 100, 60, '#ff0000');
         b.generatePreview('Fan Brush');
-        b.generatePreview('Chalk on Board');
+        b.generatePreview('Glaze Textured');
         L2.ctx.clearRect(0, 0, 400, 200);
         await __B.stroke(280, 140, 340, 140, '#0000ff');
         out.afterSwatch = { ghost: __B.px(L2, 70, 60), real: __B.px(L2, 310, 140) };

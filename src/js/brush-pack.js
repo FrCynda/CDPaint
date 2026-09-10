@@ -335,6 +335,19 @@
         var raw = params[opt + 'Sensor'] || '';
         var m = /<params\s+id="([^"]+)"/.exec(raw);
         var id = m ? m[1].toLowerCase() : 'pressure';
+        /* "sensorslist" is several inputs multiplied together. We drive one
+         * parameter from one input, so take the first we understand rather
+         * than reporting a brush we can very nearly reproduce as unreadable. */
+        if (id === 'sensorslist') {
+            var ch = /<ChildSensor\s+id="([^"]+)"[\s\S]*?<\/ChildSensor>/g, c;
+            while ((c = ch.exec(raw))) {
+                if (SENSORS[c[1].toLowerCase()]) {
+                    id = c[1].toLowerCase();
+                    raw = c[0];
+                    break;
+                }
+            }
+        }
         return { id: id, src: SENSORS[id] || null,
                  curve: BrushPack.parseCurve(raw) };
     }
@@ -364,7 +377,14 @@
          * from the tip's own shape, which we cannot reproduce, so the stored
          * value stands and the import says so. */
         out.spacing = Math.max(1, Math.round(_num(bd.spacing, 0.1) * 100));
-        if (_bool(bd.useAutoSpacing)) warn.push('spacing was automatic; using ' + out.spacing + '%');
+        /* Auto spacing means Krita worked the gap out from the tip's own
+         * shape and never wrote it down; the stored number is whatever the
+         * slider last held, and it is always far too wide -- a rake brush
+         * imported at 10% comes out as a row of dots. The coefficient is the
+         * only thing on file that scales with the author's intent. */
+        if (_bool(bd.useAutoSpacing)) {
+            out.spacing = Math.max(1, Math.round(_num(bd.autoSpacingCoeff, 1) * 25));
+        }
 
         var mask = bd.mask;
         if (mask) {
@@ -385,7 +405,12 @@
              * taking the fade at face value would import a soft airbrush as a
              * hard disc. Half is the closest single number; anyone importing
              * one can nudge the hardness slider from there. */
-            if (String(mask.id) === 'gauss') out.hardness = Math.round(out.hardness / 2);
+            /* "gauss" and "soft" fall off over the whole radius whatever the
+             * fade sliders say, so taking those at face value imports an
+             * airbrush as a hard disc. A third is the closest single number;
+             * the hardness slider goes the rest of the way. */
+            var gen = String(mask.id || 'default');
+            if (gen === 'gauss' || gen === 'soft') out.hardness = Math.round(out.hardness * 0.3);
             if (_num(mask.spikes, 2) > 2) warn.push('a star-shaped tip became a plain one');
         } else if (bd.filename) {
             out.shape = 'custom';
@@ -452,8 +477,12 @@
          * its curve would reshape a full turn and we do not offer that. */
         var rot = _sensorFor(P, 'Rotation');
         if (rot) {
-            if (rot.src) out.angleSrc = rot.src;
-            else warn.push('the tip turned with ' + rot.id + ', which we have no input for');
+            /* Only some inputs mean anything as an angle. Pressure driving a
+             * rotation is a spin we do not have, and letting it through would
+             * set an angle source the engine quietly ignores. */
+            if (rot.src === 'direction' || rot.src === 'twist' ||
+                rot.src === 'tilt' || rot.src === 'random') out.angleSrc = rot.src;
+            else warn.push('the tip turned with ' + rot.id + ', which we cannot turn it with');
         }
 
         var sc = _sensorFor(P, 'Scatter');
@@ -468,7 +497,18 @@
                 warn.push('dropped: ' + DROPPED[i][1]);
             }
         }
-        if (preset.paintop && preset.paintop !== 'paintbrush') {
+        /* A smudge brush lays down a little fresh colour and drags the rest
+         * along, which is exactly the pair of dials we already have. */
+        if (preset.paintop === 'colorsmudge') {
+            /* Krita runs two dials side by side: how much fresh colour goes
+             * down, and how much of what is already there gets dragged along.
+             * Ours is one dial between the same two ends, so the split
+             * between them is what carries over -- both at full there means
+             * half and half, not a brush that never picks anything up. */
+            var cr = _num(P.ColorRateValue, 0.5), sr = _num(P.SmudgeRateValue, 0.5);
+            out.colorRate = Math.round((cr / Math.max(1e-6, cr + sr)) * 100);
+            out.smudgeLength = Math.round(sr * 100);
+        } else if (preset.paintop && preset.paintop !== 'paintbrush') {
             warn.push('this is a ' + preset.paintop + ', which we paint as an ordinary brush');
         }
 
