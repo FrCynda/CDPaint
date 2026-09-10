@@ -1789,6 +1789,76 @@ await withPage(async (page) => {
         ts.square.w === 40 && ts.square.h <= 12,
         `${ts.square.w}x${ts.square.h}`);
 
+    /* ── multi-shape tips ─────────────────────────────────────────────── */
+    console.log('== a tip with several shapes ==');
+    const mt = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, app = PaintApp;
+        /* Six of our stamp brushes come from GIMP .gih files, which hold
+         * four to nine shapes side by side. We used to keep the first one
+         * and throw the rest away, so every dab was the same rubber stamp.
+         * Each dab is drawn on its own so the shapes cannot overlap. */
+        const run = async (preset, xs) => {
+            app.layerMgr.collapseToBase({ fresh: true });
+            app.setSize(600, 200); app.config.zoom = 1; app.updateBounds();
+            document.getElementById('lsys-add').click();
+            app.state.selection = null;
+            const L = app.layerMgr.layers[app.layerMgr.activeIdx];
+            b.loadPreset(preset);
+            await new Promise(r => setTimeout(r, 600));   // the tip is fetched
+            b.setParam('dynamicsMode', 'off');
+            b.setParam('scatter', 0);
+            b.setParam('angleSrc', 'none');
+            b.setParam('angle', 0);
+            b.setParam('size', 40);
+            const out = [];
+            for (const x of xs) {
+                L.ctx.clearRect(0, 0, 600, 200);
+                b.beginStroke(x, 100, 1, '#ff0000');
+                b.endStroke();
+                await new Promise(r => setTimeout(r, 90));
+                const d = L.ctx.getImageData(x - 45, 55, 90, 90).data;
+                let h = 0, ink = 0, x1 = 1e9, x2 = -1, y1 = 1e9, y2 = -1;
+                for (let i = 0; i < d.length; i += 4) {
+                    const a = d[i + 3];
+                    h = (h * 31 + a) | 0;
+                    if (a > 20) {
+                        ink++;
+                        const px = (i / 4) % 90, py = (i / 4 / 90) | 0;
+                        if (px < x1) x1 = px; if (px > x2) x2 = px;
+                        if (py < y1) y1 = py; if (py > y2) y2 = py;
+                    }
+                }
+                out.push({ h: h, ink: ink,
+                    w: x2 < 0 ? 0 : x2 - x1 + 1, hgt: x2 < 0 ? 0 : y2 - y1 + 1 });
+            }
+            return out;
+        };
+        const xs = [60, 160, 260, 360, 460, 550];
+        const out = {};
+        out.chalk  = await run('Chalk Chisel', xs);      // 4 shapes, picked at random
+        out.splats = await run('Splats Large', xs);      // 5 shapes, taken in turn
+        out.round  = await run('Round', xs);             // no strip: must not vary
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    const shapes = (a) => new Set(a.map(s => s.h)).size;
+    console.log('  chalk ' + JSON.stringify(mt.chalk));
+    console.log('  splats ' + JSON.stringify(mt.splats));
+
+    check('a strip brush stamps more than one shape',
+        shapes(mt.chalk) >= 3, `${shapes(mt.chalk)} different shapes in 6 dabs`);
+    check('...and never twice the same in a row',
+        mt.splats.every((s, i) => i === 0 || s.h !== mt.splats[i - 1].h),
+        JSON.stringify(mt.splats.map(s => s.ink)));
+    check('a strip is cut apart, not stamped whole',
+        mt.chalk.every(s => s.hgt > s.w * 0.5),
+        JSON.stringify(mt.chalk.map(s => s.w + 'x' + s.hgt)));
+    check('every shape in the strip actually paints',
+        mt.chalk.every(s => s.ink > 100) && mt.splats.every(s => s.ink > 100),
+        JSON.stringify(mt.chalk.concat(mt.splats).map(s => s.ink)));
+    check('a plain brush still stamps the same shape every time',
+        shapes(mt.round) === 1, `${shapes(mt.round)} shapes`);
+
     /* ── panel cost ───────────────────────────────────────────────────── */
     console.log('== what the panel costs to use ==');
     const pf = JSON.parse(await page.eval(`(async () => {

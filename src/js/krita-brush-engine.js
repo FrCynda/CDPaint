@@ -985,6 +985,7 @@
         }
 
         var hard = _clamp(_dyn(p, 'hardness', p.hardness, sc, 6), 0, 100);
+        if (p.shape === 'custom') _pickTipCell(p, x, y);
         var mask = _maskFor(p.shape, sz, hard, effAngle, p.aspectRatio);
 
         // Per-dab alpha. Both sensors now read the real pressure; the taper
@@ -1502,8 +1503,29 @@
     /*  Custom PNG tip support                                              */
     /* ------------------------------------------------------------------ */
 
+    /* Cut a tip strip into its separate shapes, left to right, and optionally
+     * add a mirrored copy of each. Cells are always equal width -- a .gih
+     * records one cell size for the whole file -- so this is a plain divide.
+     * Mirroring costs nothing at paint time because the flip happens once,
+     * here, and the picker just sees a longer list. */
+    function _sliceCells(src, n, mirror) {
+        n = _max(1, n | 0);
+        if (n > src.width) n = 1;
+        var cw = _floor(src.width / n), out = [];
+        for (var i = 0; i < n; i++) {
+            for (var m = 0; m < (mirror ? 2 : 1); m++) {
+                var c = new OffscreenCanvas(cw, src.height);
+                var cx = c.getContext('2d');
+                if (m) { cx.translate(cw, 0); cx.scale(-1, 1); }
+                cx.drawImage(src, i * cw, 0, cw, src.height, 0, 0, cw, src.height);
+                out.push(c);
+            }
+        }
+        return out;
+    }
+
     /* Re-bake custom tip from raw luminance mask.
-       Applies hardness radial falloff and invert, stores in _customTipCanvas. */
+       Applies hardness radial falloff and invert, stores in _customTipCells. */
     function _rebakeTip() {
         var raw = _customTipRaw;
         if (!raw) return;
@@ -1523,7 +1545,7 @@
             d[i + 3] = Math.round(_clamp(a, 0, 1) * 255);
         }
         ox.putImageData(id, 0, 0);
-        _customTipCanvas = oc;
+        _customTipCells = _sliceCells(oc, _params.tipCells || 1, _params.tipMirror);
         _invalidateSwatch(engine._currentPreset);
     }
 
@@ -1535,9 +1557,27 @@
      * preset is loaded. A preview needs its own, or every custom-tip preset
      * would render with the active brush's tip. */
     var _tipSerial = 0;
+    var _tipCell = 0;      // which shape of the strip the next dab stamps
+    var _tipCycle = 0;     // running count, for tips that rotate in order
+    function _tipCells() {
+        var c = (_previewTarget && _previewTarget.tip) || _customTipCells;
+        return (c && c.length) ? c : null;
+    }
     function _tipCanvas() {
-        if (_previewTarget && _previewTarget.tip) return _previewTarget.tip;
-        return _customTipCanvas;
+        var c = _tipCells();
+        return c ? c[_tipCell % c.length] : null;
+    }
+    /* Pick the shape for one dab. Random reuses the same hash the scatter and
+     * angle jitter use, so a dab at a given spot always draws the same shape
+     * however many times the stroke is re-rendered -- otherwise the live
+     * passes and the final one would disagree and the stroke would flicker. */
+    function _pickTipCell(p, x, y) {
+        var c = _tipCells();
+        var n = c ? c.length : 1;
+        if (n < 2) { _tipCell = 0; return; }
+        _tipCell = (p.tipPick === 'cycle')
+            ? (_tipCycle++ % n)
+            : _min(n - 1, _floor(_dabRand(x, y, 23) * n));
     }
     function _tipKey() {
         var t = _tipCanvas();
@@ -1619,7 +1659,7 @@
     var _params = {};
     var _paramMeta = [];
 
-    var _customTipCanvas = null;
+    var _customTipCells = null;
     var _customTipRaw = null;
     var _tipInvert = false;
     var _tipHardness = 100;
@@ -1772,6 +1812,14 @@
         shape: 'circle',
         angle: 0,
         aspectRatio: 1,
+        /* A stamp tip may hold several shapes side by side in one strip --
+         * that is what a GIMP .gih is, and it is the whole reason Revoy's
+         * chalk does not read as one shape repeated. tipCells says how many
+         * are in the strip; tipPick says whether the next dab takes one at
+         * random or the next one along, which the .gih itself specifies. */
+        tipCells: 1,
+        tipPick: 'random',
+        tipMirror: false,
         scatter: 0,
         colorRate: 100,
         smudgeLength: 50,
@@ -1857,7 +1905,7 @@
         'Fan Brush': { size: 26, opacity: 90, flow: 80, spacing: 10, hardness: 50, shape: 'circle', bristleCount: 13, bristleSpread: 120, bristleWidth: 3, taperStart: 8, taperEnd: 8 , angleSrc: 'direction' },
         'Dry Brush': { size: 20, opacity: 80, flow: 80, spacing: 12, hardness: 60, shape: 'circle', bristleCount: 8, bristleSpread: 90, bristleWidth: 3, texture: 60, textureScale: 2, taperStart: 6, taperEnd: 6 , angleSrc: 'direction' },
         'Bristle Blender': { size: 28, opacity: 40, flow: 25, spacing: 8, hardness: 25, shape: 'circle', bristleCount: 16, bristleSpread: 130, flowMin: 10 , angleSrc: 'direction' },
-        'Impressionist': { size: 30, opacity: 95, flow: 100, spacing: 22, hardness: 80, shape: 'custom', _tipUrl: 'brushes/impressionism_brush.png', scatter: 5, angleSrc: 'direction' },
+        'Impressionist': { size: 30, opacity: 95, flow: 100, spacing: 22, hardness: 80, shape: 'custom', _tipUrl: 'brushes/impressionism_brush.png', tipCells: 4, tipPick: 'cycle', scatter: 5, angleSrc: 'direction' },
 
         /* ---- Watercolour ------------------------------------------------- */
         'Watercolor': { size: 20, opacity: 80, flow: 40, spacing: 12, hardness: 30, shape: 'circle', scatter: 3, texture: 20, textureScale: 3 },
@@ -1882,20 +1930,20 @@
         'Chalk': { size: 18, opacity: 85, flow: 100, spacing: 10, hardness: 75, shape: 'custom', _tipUrl: 'brushes/chalk.png', texture: 30, textureScale: 3 },
         'Chalk Round Hard': { size: 14, opacity: 90, flow: 100, spacing: 8, hardness: 90, shape: 'custom', _tipUrl: 'brushes/chalk_round_hard.png' },
         'Chalk Sparse': { size: 22, opacity: 70, flow: 100, spacing: 15, hardness: 60, shape: 'custom', _tipUrl: 'brushes/chalk_sparse.png', scatter: 6 },
-        'Chalk Chisel': { size: 20, opacity: 90, flow: 100, spacing: 9, hardness: 85, shape: 'custom', _tipUrl: 'brushes/chalk_chisel_losange_202210A.png', angleSrc: 'direction' },
+        'Chalk Chisel': { size: 20, opacity: 90, flow: 100, spacing: 9, hardness: 85, shape: 'custom', _tipUrl: 'brushes/chalk_chisel_losange_202210A.png', tipCells: 4, angleSrc: 'direction' },
         'Chalk Chisel Random': { size: 24, opacity: 85, flow: 100, spacing: 12, hardness: 80, shape: 'custom', _tipUrl: 'brushes/chalk_chisel_random.png', angleSrc: 'random', scatter: 4 },
-        'Chalk Chisel Fine': { size: 12, opacity: 90, flow: 100, spacing: 8, hardness: 85, shape: 'custom', _tipUrl: 'brushes/chalk_chisel_random_small.png', angleSrc: 'random' },
+        'Chalk Chisel Fine': { size: 12, opacity: 90, flow: 100, spacing: 8, hardness: 85, shape: 'custom', _tipUrl: 'brushes/chalk_chisel_random_small.png', tipCells: 4, angleSrc: 'random' },
         'Chisel Streaks': { size: 22, opacity: 100, flow: 100, spacing: 2, hardness: 90, shape: 'custom', _tipUrl: 'brushes/chisel_streaks.png', angle: 180, taperStart: 10, taperEnd: 10 },
-        'Rock Pitted': { size: 34, opacity: 90, flow: 100, spacing: 16, hardness: 80, shape: 'custom', _tipUrl: 'brushes/rock_pitted-fixed.png', angleSrc: 'random', scatter: 6 },
+        'Rock Pitted': { size: 34, opacity: 90, flow: 100, spacing: 16, hardness: 80, shape: 'custom', _tipUrl: 'brushes/rock_pitted-fixed.png', tipCells: 7, angleSrc: 'random', scatter: 6 },
         'Rock Pitted Fine': { size: 22, opacity: 90, flow: 100, spacing: 12, hardness: 80, shape: 'custom', _tipUrl: 'brushes/rock_pitted-fixed-B.png', angleSrc: 'random' },
-        'Scratches': { size: 30, opacity: 100, flow: 100, spacing: 18, hardness: 90, shape: 'custom', _tipUrl: 'brushes/scratches_rough.png', angleSrc: 'direction' },
+        'Scratches': { size: 30, opacity: 100, flow: 100, spacing: 18, hardness: 90, shape: 'custom', _tipUrl: 'brushes/scratches_rough.png', tipCells: 9, angleSrc: 'direction' },
         'Rake': { size: 28, opacity: 95, flow: 100, spacing: 5, hardness: 85, shape: 'custom', _tipUrl: 'brushes/3_rake.png', angleSrc: 'direction' },
         'Bristles Grouped': { size: 26, opacity: 95, flow: 100, spacing: 8, hardness: 85, shape: 'custom', _tipUrl: 'brushes/bristles_grouped.png', angleSrc: 'direction' },
         'Bristle': { size: 20, opacity: 90, flow: 100, spacing: 12, hardness: 85, shape: 'custom', _tipUrl: 'brushes/bristle.png' },
         'Bristles Circle Medium': { size: 24, opacity: 95, flow: 100, spacing: 14, hardness: 90, shape: 'custom', _tipUrl: 'brushes/bristles_circle_medium.png' },
         'Bristles Compact Mini': { size: 14, opacity: 95, flow: 100, spacing: 10, hardness: 90, shape: 'custom', _tipUrl: 'brushes/bristles_compact_mini.png' },
         'Deevad Painterly': { size: 26, opacity: 90, flow: 100, spacing: 12, hardness: 85, shape: 'custom', _tipUrl: 'brushes/deevad-painterly-brush-tip_2023C.png' },
-        'Deevad Compact': { size: 22, opacity: 90, flow: 100, spacing: 10, hardness: 85, shape: 'custom', _tipUrl: 'brushes/deevad-202210C_compact-fix.png' },
+        'Deevad Compact': { size: 22, opacity: 90, flow: 100, spacing: 10, hardness: 85, shape: 'custom', _tipUrl: 'brushes/deevad-202210C_compact-fix.png', tipCells: 4 },
         'Flat Tip Dirty': { size: 20, opacity: 85, flow: 100, spacing: 10, hardness: 80, shape: 'custom', _tipUrl: 'brushes/flat-tip-dirty.png', texture: 20, textureScale: 3 },
         'Square Rough': { size: 18, opacity: 90, flow: 100, spacing: 12, hardness: 80, shape: 'custom', _tipUrl: 'brushes/square_rough_lightgrey.png' },
         'Abominable Snowman': { size: 28, opacity: 85, flow: 100, spacing: 15, hardness: 80, shape: 'custom', _tipUrl: 'brushes/abominable_snowman.png', scatter: 4 },
@@ -1937,7 +1985,7 @@
         'Round': { size: 12, opacity: 100, flow: 100, spacing: 15, hardness: 80, shape: 'circle' },
         'Splatter': { size: 24, opacity: 80, flow: 100, spacing: 25, hardness: 50, shape: 'circle', scatter: 14, texture: 30 },
         'Splat Dots': { size: 28, opacity: 80, flow: 100, spacing: 20, hardness: 80, shape: 'custom', _tipUrl: 'brushes/splat_dots.png', scatter: 12 },
-        'Splats Large': { size: 40, opacity: 85, flow: 100, spacing: 35, hardness: 80, shape: 'custom', _tipUrl: 'brushes/splats_large.png', scatter: 18, angleSrc: 'random', sizeSrc: 'random', sizeMin: 40 },
+        'Splats Large': { size: 40, opacity: 85, flow: 100, spacing: 35, hardness: 80, shape: 'custom', _tipUrl: 'brushes/splats_large.png', tipCells: 5, tipPick: 'cycle', scatter: 18, angleSrc: 'random', sizeSrc: 'random', sizeMin: 40 },
         'Debris': { size: 30, opacity: 90, flow: 100, spacing: 24, hardness: 85, shape: 'custom', _tipUrl: 'brushes/random-debris.png', scatter: 20, angleSrc: 'random' },
         'Foliage': { size: 32, opacity: 90, flow: 100, spacing: 28, hardness: 85, shape: 'custom', _tipUrl: 'brushes/vegetal_stylised.png', scatter: 14, angleSrc: 'random', sizeSrc: 'random', sizeMin: 45 },
         'Stipple': { size: 6, opacity: 100, flow: 100, spacing: 45, hardness: 95, shape: 'circle', scatter: 22, sizeSrc: 'random', sizeMin: 35 },
@@ -2122,7 +2170,7 @@
 
         // If preset has a custom tip URL, load it asynchronously.
         // _params.shape is already 'custom' from the preset — _renderDab
-        // will fall back to a circle mask if _customTipCanvas is still null.
+        // will fall back to a circle mask if _customTipCells is still null.
         if (preset._tipUrl) {
             console.log('[KritaEngine] Preset', name, 'has _tipUrl:', preset._tipUrl);
             engine.loadCustomTip(preset._tipUrl);
@@ -2501,7 +2549,7 @@
                     d[ci] = 255 - d[ci];
                 }
                 ox.putImageData(id, 0, 0);
-                _previewTipCache[name] = oc;
+                _previewTipCache[name] = _sliceCells(oc, preset.tipCells || 1, preset.tipMirror);
             } catch (e) {
                 _previewTipCache[name] = null;
             }
