@@ -400,6 +400,30 @@
         }
     }
 
+    /* Preview render target.
+     *
+     * The preview tiles used to be drawn by a second, simplified painter that
+     * knew about size, spacing, hardness and angle and nothing else — so a
+     * bristle brush, a textured brush and a plain round brush all previewed as
+     * the same thin line. The only preview that can be trusted is one the real
+     * engine drew, so the engine renders into a swatch instead of the document.
+     *
+     * While this is set, the stroke path targets the swatch and the things that
+     * belong to the document — the active selection, alpha lock, the airbrush
+     * timer — are off. Everything else runs exactly as it does for a real
+     * stroke, which is the whole point. */
+    var _previewTarget = null;
+
+    function _outCtx() {
+        return _previewTarget ? _previewTarget.ctx : app.ctx;
+    }
+    function _docW() {
+        return _previewTarget ? _previewTarget.w : (app.config ? app.config.width : 0);
+    }
+    function _docH() {
+        return _previewTarget ? _previewTarget.h : (app.config ? app.config.height : 0);
+    }
+
     function _activeLayer() {
         var mgr = app.layerMgr;
         if (!mgr || !mgr.active || !mgr.layers || !mgr.layers.length) return null;
@@ -409,6 +433,7 @@
     /* Painting a layer mask means painting the mask, where alpha lock has no
      * meaning — same rule the pixel tools follow. */
     function _alphaLocked() {
+        if (_previewTarget) return false;
         var l = _activeLayer();
         return !!(l && l.alphaLock && !(l.mask && l._maskEdit));
     }
@@ -418,6 +443,7 @@
      * marquee is just its rectangle — deliberately NOT the pixels it lifted,
      * because a marquee dragged over empty space must still accept paint. */
     function _buildSelectionStencil() {
+        if (_previewTarget) return null;
         var sel = app.state && app.state.selection;
         if (!sel) return null;
         var w = app.config.width, h = app.config.height;
@@ -439,8 +465,8 @@
     function _primeSampleCache() {
         _sampleData = null;
         if (!_bgCtx || !_bgCanvas) return;
-        var w = app.config ? app.config.width : 0;
-        var h = app.config ? app.config.height : 0;
+        var w = _docW();
+        var h = _docH();
         if (!(w > 0 && h > 0)) return;
         try {
             _sampleData = _bgCtx.getImageData(0, 0, w, h).data;
@@ -625,7 +651,7 @@
 
         // Smudge: sample canvas color and mix with brush color
         if (p.colorRate < 100) {
-            var sampled = _sampleCanvasColor(app.ctx, x, y);
+            var sampled = _sampleCanvasColor(_outCtx(), x, y);
             if (sampled) {
                 finalColor = _mixColors(sampled, colorHex, p.colorRate);
             }
@@ -654,7 +680,7 @@
     /* Which tip to stamp. Shared by the single-dab and bristle paths so a
      * bristle brush honours shape, hardness and custom tips like any other. */
     function _maskFor(shape, sz, hardness, angleDeg, aspect) {
-        if (shape === 'custom' && _customTipCanvas) {
+        if (shape === 'custom' && _tipCanvas()) {
             var m = _getCustomTipMask(sz, angleDeg, aspect, hardness);
             if (m) return m;
             return _dabCache.get('circle', sz, hardness, 0, aspect);
@@ -793,7 +819,7 @@
 
             var finalColor = colorHex;
             if (p.colorRate < 100) {
-                var sampled = _sampleCanvasColor(app.ctx, x + fx, y + fy);
+                var sampled = _sampleCanvasColor(_outCtx(), x + fx, y + fy);
                 if (sampled) {
                     finalColor = _mixColors(sampled, colorHex, p.colorRate);
                 }
@@ -920,8 +946,8 @@
             if (!_state.isDrawing || !_airbrushLastPos) return;
             var pressure = 0.3 + Math.random() * 0.4;
             _renderDab(_airbrushLastPos.x, _airbrushLastPos.y, pressure, _airbrushLastColor);
-            if (app.ctx) {
-                _flushFlowBuffer(app.ctx);
+            if (_outCtx()) {
+                _flushFlowBuffer(_outCtx());
             }
         }, interval);
     }
@@ -1074,18 +1100,35 @@
         }
         ox.putImageData(id, 0, 0);
         _customTipCanvas = oc;
+        _invalidateSwatch(engine._currentPreset);
     }
 
     /* Scale the baked custom tip to the given dab size, caching results.
        Returns a white-on-transparent mask canvas compatible with _paintDab. */
     var _customTipSizeCache = {};
+
+    /* There is only ONE baked custom tip at a time, belonging to whichever
+     * preset is loaded. A preview needs its own, or every custom-tip preset
+     * would render with the active brush's tip. */
+    var _tipSerial = 0;
+    function _tipCanvas() {
+        if (_previewTarget && _previewTarget.tip) return _previewTarget.tip;
+        return _customTipCanvas;
+    }
+    function _tipKey() {
+        var t = _tipCanvas();
+        if (!t) return 'none';
+        if (!t._tipId) t._tipId = ++_tipSerial;
+        return t._tipId;
+    }
+
     function _getCustomTipMask(sz, angleDeg, aspectRatio, hardness) {
-        if (!_customTipCanvas) return null;
+        if (!_tipCanvas()) return null;
         var asp = aspectRatio || 1;
         var hard = (hardness != null ? hardness : 100) / 100;
-        var key = _round(sz) + '|' + _round(angleDeg || 0) + '|' + asp.toFixed(2) + '|' + _round(hardness || 100);
+        var key = _tipKey() + '|' + _round(sz) + '|' + _round(angleDeg || 0) + '|' + asp.toFixed(2) + '|' + _round(hardness || 100);
         if (_customTipSizeCache[key]) return _customTipSizeCache[key];
-        var src = _customTipCanvas;
+        var src = _tipCanvas();
         var s = _max(1, _round(sz));
         var scale = s / _max(src.width, src.height);
         var w = _max(1, _round(src.width * scale));
@@ -1425,6 +1468,9 @@
         }
         engine._currentPreset = name;
         _loadSavedParams(name);
+        // The tile for a preset is rendered from live params while it is the
+        // active one, so its cached copy is stale as soon as it stops being.
+        _invalidateSwatch(name);
 
         // If preset has a custom tip URL, load it asynchronously.
         // _params.shape is already 'custom' from the preset — _renderDab
@@ -1440,6 +1486,8 @@
     engine.setParam = function (key, value) {
         _params[key] = value;
         _persistParams();
+        _invalidateSwatch(engine._currentPreset);
+        engine.refreshPreview();
         if (key === 'size' || (key.indexOf('smoothing') === 0 && key !== 'smoothingMode')) {
             if (key === 'size') _updateRibbonSize();
             var szEl = document.getElementById(key === 'size' ? 'pb-size' : 'pb-smoothing');
@@ -1482,8 +1530,8 @@
         _state.lastProcessedIdx = 0;
         _state.started = false;
         _state.bounds = { x1: x, y1: y, x2: x, y2: y };
-        var cw = app.config ? app.config.width : 1024;
-        var ch = app.config ? app.config.height : 1024;
+        var cw = _docW() || 1024;
+        var ch = _docH() || 1024;
         _ensureFlowBuffer(cw, ch);
         _flowCtx.clearRect(0, 0, _flowCanvas.width, _flowCanvas.height);
         _dirtyRect = null;
@@ -1491,7 +1539,7 @@
         _ensureBgCanvas(cw, ch);
         _bgCtx.clearRect(0, 0, _bgCanvas.width, _bgCanvas.height);
         try {
-            _bgCtx.drawImage(app.ctx.canvas, 0, 0);
+            _bgCtx.drawImage(_outCtx().canvas, 0, 0);
         } catch (e) {
             console.warn('[brush] bgCanvas capture failed:', e);
         }
@@ -1499,7 +1547,9 @@
         _selStencil = _buildSelectionStencil();
         _primeSampleCache();
 
-        if (getParams().airbrushMode) {
+        // The airbrush timer keeps dabbing where the cursor stopped; a preview
+        // has no cursor and renders synchronously, so it stays off.
+        if (getParams().airbrushMode && !_previewTarget) {
             _startAirbrush(x, y, color);
         }
         _hideRopeSvg();
@@ -1641,7 +1691,8 @@
         // pixel copy are not worth holding on to between strokes.
         _selStencil = null;
         _sampleData = null;
-        if (wasDrawing && app.saveState && typeof app.saveState === 'function') {
+        if (wasDrawing && !_previewTarget
+            && app.saveState && typeof app.saveState === 'function') {
             app.saveState();
         }
     };
@@ -1675,8 +1726,8 @@
                 _processSegment(pts, startIdx, pts.length - 1, _state.lastColor, 0);
             }
         }
-        if (app.ctx) {
-            _flushFlowBuffer(app.ctx);
+        if (_outCtx()) {
+            _flushFlowBuffer(_outCtx());
         }
     }
 
@@ -1692,8 +1743,8 @@
                 _processSegment(pts, startIdx, endIdx, _state.lastColor, 1);
                 _state.lastProcessedIdx = endIdx;
                 _state.started = true;
-                if (app.ctx) {
-                    _flushFlowBuffer(app.ctx);
+                if (_outCtx()) {
+                    _flushFlowBuffer(_outCtx());
                 }
             }
         });
@@ -1779,114 +1830,177 @@
         }
     }
 
-    function _drawPreviewStroke(ctx, size, p) {
-        var yBase = _round(size * 0.78);
-        var margin = _round(size * 0.12);
-        var xStart = margin;
-        var xEnd = size - margin;
-        var brushSize = _min(p.size || 8, _round(size * 0.12));
-        var spacing = ((p.spacing != null ? p.spacing : 20)) / 100;
-        var step = _max(0.5, brushSize * spacing);
-        var totalDist = xEnd - xStart;
-        var numDabs = _max(2, _round(totalDist / step));
-        var actualStep = totalDist / (numDabs - 1);
-        var scatter = p.scatter || 0;
-        var shape = p.shape || 'circle';
-        var hardness = (p.hardness != null) ? p.hardness : 80;
-        var angle = p.angle || 0;
-        var aspect = p.aspectRatio || 1;
-        var waveAmp = _round(size * 0.04);
-        for (var i = 0; i < numDabs; i++) {
-            var t = i / (numDabs - 1);
-            var x = _round(xStart + i * actualStep);
-            var wave = _sin(t * _PI * 2) * waveAmp;
-            var jitter = (scatter / 100) * brushSize * 0.5 * (_sin(i * 137.5) - 0.5);
-            var s = shape === 'custom' ? 'circle' : shape;
-            var dab = _dabCache.get(s, brushSize, hardness, angle, aspect);
-            if (dab) {
-                ctx.drawImage(dab, _round(x - dab.width / 2), _round(yBase + wave + jitter - dab.height / 2));
-            }
+    /* ------------------------------------------------------------------ */
+    /*  Preset swatches — rendered by the engine, not imitated              */
+    /* ------------------------------------------------------------------ */
+
+    /* The old preview painter hand-drew a wavy line from size, spacing,
+     * hardness and angle alone. Bristles, texture, flow, taper, scatter,
+     * pressure and colour pickup were invisible to it, so six visibly
+     * different presets all previewed as the same thin noodle. It also capped
+     * the brush at 12% of the tile — flattening every size difference — and
+     * tinted each tile from a hash of the preset's NAME, which is where the
+     * arbitrary purples and olives came from.
+     *
+     * A swatch is now a real stroke: the engine paints into an offscreen
+     * canvas through the same beginStroke/moveStroke/endStroke path a person
+     * would drive, so whatever a preset does to a stroke is what the tile
+     * shows. */
+
+    var SWATCH_W = 134;
+    var SWATCH_H = 54;
+    var SWATCH_SS = 2;          // supersample, then let CSS scale it back down
+    var SWATCH_INK = '#1d1f22';
+
+    /* One scale for every preset, so tiles stay comparable: the largest brush
+     * in the library fills a fixed share of the swatch and everything else
+     * keeps its true proportion to it. */
+    var _swatchScale = 0;
+    function _swatchSizeScale() {
+        if (_swatchScale) return _swatchScale;
+        var maxSz = 1;
+        for (var n in engine.PRESETS) {
+            if (!engine.PRESETS.hasOwnProperty(n)) continue;
+            var sz = engine.PRESETS[n].size;
+            if (sz == null) sz = engine.DEFAULTS.size;
+            if (sz > maxSz) maxSz = sz;
         }
+        _swatchScale = (SWATCH_H * SWATCH_SS * 0.28) / maxSz;
+        return _swatchScale;
     }
 
-    function _pbRenderPreview(name, size) {
+    /* A swatch costs a full stroke to draw, so it is kept until something
+     * actually changes it. Only the active preset can change — it is the one
+     * the sliders edit — so that is the only entry ever invalidated. */
+    var _swatchCache = {};
+
+    function _invalidateSwatch(name) {
+        if (name) delete _swatchCache[name];
+        else _swatchCache = {};
+    }
+
+    function _pbRenderPreview(name) {
         var preset = engine.PRESETS[name];
         if (!preset) return null;
-        size = size || 72;
+        // Never interrupt a stroke in progress to draw a thumbnail.
+        if (_state.isDrawing) return null;
+        if (_swatchCache[name]) return _swatchCache[name];
 
+        var W = SWATCH_W * SWATCH_SS;
+        var H = SWATCH_H * SWATCH_SS;
         var canvas = document.createElement('canvas');
-        canvas.width = size;
-        canvas.height = size;
-        var ctx = canvas.getContext('2d');
-        // Subtle checkerboard background
-        _drawCheckerboard(ctx, size);
+        canvas.width = W;
+        canvas.height = H;
+        var ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-        var p = preset;
-        var brushSize = _clamp(p.size || 8, 2, _round(size * 0.5));
-        var hardness = (p.hardness != null) ? p.hardness : 80;
-        var angle = p.angle || 0;
-        var aspect = p.aspectRatio || 1;
-        var shape = p.shape || 'circle';
+        // Everything the stroke path touches is module state, so it is saved
+        // whole and put back whole — a preview must leave no trace.
+        var savedParams = _params;
+        var savedState = _state;
+        var savedTarget = _previewTarget;
+        var savedFlow = _flowCanvas, savedFlowCtx = _flowCtx;
+        var savedBg = _bgCanvas, savedBgCtx = _bgCtx;
 
-        // Build white mask on temp canvas (so tint doesn't affect background)
-        var maskCanvas = document.createElement('canvas');
-        maskCanvas.width = size;
-        maskCanvas.height = size;
-        var maskCtx = maskCanvas.getContext('2d');
-        maskCtx.imageSmoothingEnabled = true;
+        /* The active preset is whatever the sliders currently say, not what
+         * the stored preset says — otherwise editing a brush leaves its own
+         * tile showing the version you started from. */
+        var live = (name === engine._currentPreset) ? _params : null;
+        var pp = {};
+        for (var i = 0; i < _paramMeta.length; i++) {
+            var k = _paramMeta[i];
+            if (live) pp[k] = live[k];
+            else pp[k] = (k in preset) ? preset[k] : engine.DEFAULTS[k];
+        }
+        /* A preset the user has tuned carries saved overrides, so a tile built
+         * from the stock definition alone would show a brush they no longer
+         * have. Same source loadPreset reads. */
+        if (!live) {
+            try {
+                var rawSaved = localStorage.getItem(STORAGE_PREFIX + name);
+                if (rawSaved) {
+                    var sv = JSON.parse(rawSaved);
+                    for (var sk in sv) {
+                        if (sv.hasOwnProperty(sk) && !_TRANSIENT_KEYS[sk]
+                            && pp.hasOwnProperty(sk)) pp[sk] = sv[sk];
+                    }
+                }
+            } catch (e_) {}
+        }
+        pp.size = _max(1, pp.size * _swatchSizeScale());
+        // Smoothing is a feel-of-the-hand setting; on a scripted path it only
+        // lags the stroke behind the points and clips the swatch short.
+        pp.smoothingMode = 'none';
 
-        // Centered tip dab
-        var dabSize = _min(brushSize, _round(size * 0.42));
-        var dabCx = size / 2;
-        var dabCy = _round(size * 0.35);
+        try {
+            _params = pp;
+            _state = {
+                isDrawing: false, strokePoints: [], lastColor: null,
+                lastProcessedIdx: 0, started: false, bounds: null, paintRaf: null
+            };
+            _flowCanvas = null; _flowCtx = null;
+            _bgCanvas = null; _bgCtx = null;
+            _previewTarget = {
+                ctx: ctx, w: W, h: H,
+                tip: (pp.shape === 'custom') ? (_previewTipCache[name] || null) : null
+            };
 
-        if (shape === 'custom' && _previewTipCache[name]) {
-            var tip = _previewTipCache[name];
-            var s = _max(1, dabSize);
-            var sc = s / _max(tip.width, tip.height);
-            var tw = _max(1, _round(tip.width * sc));
-            var th = _max(1, _round(tip.height * sc));
-            if (aspect >= 1) {
-                th = _max(1, _round(th * aspect));
-            } else {
-                tw = _max(1, _round(tw * aspect));
+            var padX = W * 0.07;
+            var x0 = padX, x1 = W - padX;
+            var midY = H * 0.5;
+            // A full S rather than a lopsided arc: it shows both directions of
+            // travel, which is what makes an angled or bristle tip readable.
+            var amp = H * 0.20;
+            var STEPS = 64;
+
+            for (var i2 = 0; i2 <= STEPS; i2++) {
+                var t = i2 / STEPS;
+                var x = x0 + (x1 - x0) * t;
+                var y = midY - _sin(t * _PI * 2) * amp;
+                // Press in, hold, release — so taper and pressure dynamics
+                // show up the way they would in a real stroke.
+                var pr = _clamp(_sin(t * _PI) * 1.25, 0.12, 1);
+                if (i2 === 0) engine.beginStroke(x, y, pr, SWATCH_INK);
+                else engine.moveStroke(x, y, pr, SWATCH_INK);
             }
-            maskCtx.save();
-            maskCtx.translate(dabCx, dabCy);
-            maskCtx.rotate(angle * _PI / 180);
-            maskCtx.fillStyle = '#fff';
-            maskCtx.fillRect(-tw / 2, -th / 2, tw, th);
-            maskCtx.globalCompositeOperation = 'destination-in';
-            maskCtx.drawImage(tip, -tw / 2, -th / 2, tw, th);
-            maskCtx.restore();
-        } else {
-            var s = shape === 'custom' ? 'circle' : shape;
-            var dab = _dabCache.get(s, dabSize, hardness, angle, aspect);
-            if (dab) {
-                maskCtx.drawImage(dab, _round(dabCx - dab.width / 2), _round(dabCy - dab.height / 2));
-            }
+            // The scheduled rAF paint never runs inside a synchronous render;
+            // endStroke flushes everything still pending.
+            engine.endStroke();
+        } catch (e) {
+            console.warn('[KritaEngine] swatch failed for', name, e);
+        } finally {
+            _previewTarget = savedTarget;
+            _params = savedParams;
+            _state = savedState;
+            _flowCanvas = savedFlow; _flowCtx = savedFlowCtx;
+            _bgCanvas = savedBg; _bgCtx = savedBgCtx;
         }
 
-        // Stroke sample
-        _drawPreviewStroke(maskCtx, size, p);
-
-        // Tint mask with preset-specific hue
-        var hue = 0;
-        for (var ci = 0; ci < name.length; ci++) {
-            hue += name.charCodeAt(ci);
-        }
-        hue = (hue * 137.5) % 360;
-        maskCtx.globalCompositeOperation = 'source-in';
-        maskCtx.fillStyle = 'hsl(' + hue + ', 35%, 18%)';
-        maskCtx.fillRect(0, 0, size, size);
-
-        // Composite mask onto checkerboard background
-        ctx.drawImage(maskCanvas, 0, 0);
+        _swatchCache[name] = canvas;
         return canvas;
     }
 
+    /* Redraw the active preset's tile after an edit. Sliders fire this on
+     * every step of a drag, and a swatch costs a whole stroke to render, so it
+     * coalesces onto the next frame. */
+    var _swatchRaf = 0;
     engine.refreshPreview = function () {
-        // No-op: the brush grid tiles replace the legacy pb-preview canvas.
+        if (_swatchRaf) return;
+        _swatchRaf = requestAnimationFrame(function () {
+            _swatchRaf = 0;
+            var name = engine._currentPreset;
+            if (!name) return;
+            _invalidateSwatch(name);
+            var grid = document.getElementById('pb-brush-grid');
+            if (!grid || !grid.offsetParent) return;   // panel not visible
+            var tile = grid.querySelector('.pb-brush-tile[data-preset="'
+                + (window.CSS && CSS.escape ? CSS.escape(name) : name) + '"]');
+            if (!tile) return;
+            var c = _pbRenderPreview(name);
+            if (!c) return;
+            var old = tile.querySelector('canvas');
+            if (old) tile.removeChild(old);
+            tile.insertBefore(c, tile.firstChild);
+        });
     };
 
     engine.syncPanel = function () {
@@ -2230,7 +2344,7 @@
         _updateBrushCursor();
     };
 
-    engine.generatePreview = function (name) { return _pbRenderPreview(name, 66); };
+    engine.generatePreview = function (name) { return _pbRenderPreview(name); };
 
     engine.resetCurrentPreset = function () {
         try { localStorage.removeItem(STORAGE_PREFIX + engine._currentPreset); } catch (e_) {}
