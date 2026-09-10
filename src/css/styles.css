@@ -1309,7 +1309,12 @@
                     color: var(--win-blue, #0078d7); touch-action: none; }
         body.dark-mode .pb-curve { border-color: #4a5058; background: #23262b; }
         .pb-curve:focus-visible { outline: 2px solid var(--accent, #1a73e8); outline-offset: 1px; }
-        #pb-brush-grid { display: grid; grid-template-columns: repeat(2, 134px); gap: 5px 3px; margin-bottom: 6px; margin-left: -9px; max-height: 300px; overflow-y: auto; overflow-x: hidden; }
+        #pb-brush-grid { display: grid; grid-template-columns: repeat(2, 134px); gap: 5px 3px; margin-bottom: 6px; margin-left: -9px; max-height: 300px; overflow-y: auto; overflow-x: hidden; }
+        /* Family headers span both columns so the grid still reads as two
+           rows of swatches under each one. */
+        .pb-brush-group { grid-column: 1 / -1; font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; opacity: .62; padding: 6px 0 1px 2px; border-bottom: 1px solid var(--pb-border, #c8ccd2); margin-bottom: 2px; }
+        .pb-brush-group:first-child { padding-top: 0; }
+        body.dark-mode .pb-brush-group { border-bottom-color: #4a5058; }
         .pb-brush-tile { position: relative; aspect-ratio: 134 / 54; border: 2px solid transparent; border-radius: 4px; cursor: pointer; overflow: hidden; background: #fff; transition: border-color .15s ease; }
         .pb-brush-tile:hover { border-color: var(--accent-light, #8ab4f8); }
         .pb-brush-tile.active { border-color: var(--accent, #1a73e8); }
