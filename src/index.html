@@ -2187,8 +2187,21 @@
         <button id="paintbrush-close-btn" class="sb-close-x" title="Close sidebar">&#10005;</button>
     </div>
     <div id="paintbrush-sidebar-body">
+        <input type="search" id="pb-search" placeholder="Search brushes" autocomplete="off" spellcheck="false">
         <div id="pb-brush-grid"></div>
         <div id="pb-active-name">Round</div>
+        <div id="pb-manage">
+            <input type="text" id="pb-preset-name" placeholder="Brush name" maxlength="40" autocomplete="off" spellcheck="false">
+            <div id="pb-manage-btns">
+                <button type="button" id="pb-save-btn" title="Save the current settings as a brush of your own">Save</button>
+                <button type="button" id="pb-dupe-btn" title="Copy this brush so you can change it">Duplicate</button>
+                <button type="button" id="pb-rename-btn" data-tip-own="Rename this brush">Rename</button>
+                <button type="button" id="pb-delete-btn" data-tip-own="Delete this brush">Delete</button>
+                <button type="button" id="pb-export-btn" title="Save your brushes to a file">Export</button>
+                <button type="button" id="pb-import-btn" title="Load brushes from a file">Import</button>
+                <input type="file" id="pb-import-file" accept="application/json,.json" hidden>
+            </div>
+        </div>
         <div id="pb-key-settings">
             <div class="pb-section">
                 <div class="pb-label">Basic</div>

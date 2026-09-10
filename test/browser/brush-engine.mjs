@@ -313,7 +313,21 @@ await withPage(async (page) => {
         out.ignoresSelection = ink(clipped) > 40;
 
         // Cached until something changes it.
-        out.cached = b.generatePreview('Round') === b.generatePreview('Round');
+        /* The cache is about not re-rendering, not about node identity:
+         * each caller needs its own canvas, because a favourite's brush has
+         * a tile in two groups and appending one node twice moves it. */
+        const oOC = window.OffscreenCanvas;
+        let built = 0;
+        window.OffscreenCanvas = function (w, h) { built++; return new oOC(w, h); };
+        b.generatePreview('Round');
+        built = 0;
+        const c1 = b.generatePreview('Round');
+        const c2 = b.generatePreview('Round');
+        window.OffscreenCanvas = oOC;
+        const px = (c) => c.getContext('2d').getImageData(0, 0, c.width, c.height).data.join();
+        out.cached = built === 0;
+        out.freshNodes = c1 !== c2;
+        out.samePixels = px(c1) === px(c2);
         return JSON.stringify(out);
     })()`);
     const so = JSON.parse(sw);
@@ -328,7 +342,11 @@ await withPage(async (page) => {
     check('rendering swatches does not change the active preset', so.presetKept);
     check('rendering swatches does not disturb live brush settings', so.paramsKept);
     check('a document selection does not clip a swatch', so.ignoresSelection);
-    check('a swatch is cached until something invalidates it', so.cached);
+    check('a swatch is cached until something invalidates it', so.cached,
+        're-rendered on a repeat call');
+    check('each caller gets its own swatch node, with the same pixels',
+        so.freshNodes && so.samePixels,
+        `freshNodes=${so.freshNodes} samePixels=${so.samePixels}`);
 
     console.log('');
     console.log('== editing a brush redraws its own swatch ==');
@@ -808,6 +826,259 @@ await withPage(async (page) => {
             d.h > 0 && Math.abs(d.h - d.v) <= Math.max(3, d.h * 0.15),
             `${d.h}px wide drawn across, ${d.v}px drawn down`);
     });
+
+    /* ================= saved brushes ================= */
+    console.log('\n== saved brushes ==');
+
+    const lb = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        const wipe = () => {
+            b.userPresetNames().forEach(n => b.deleteUserPreset(n));
+            Object.keys(b.PRESETS).forEach(n => {
+                if (b.isFavourite(n)) b.toggleFavourite(n);
+                try { localStorage.removeItem('pb-saved-' + n); } catch (e) {}
+            });
+            b.loadPreset('Round');
+        };
+        const out = {};
+        wipe();
+
+        // --- save -------------------------------------------------------
+        b.loadPreset('Round');
+        b.setParam('size', 37);
+        b.setParam('hardness', 12);
+        const saved = b.saveUserPreset('  My   Brush  ');
+        out.savedOk = saved.ok;
+        out.trimmedName = saved.name;                 // whitespace collapsed
+        out.isMine = b.isUserPreset('My Brush');
+        out.inNames = b.presetNames.indexOf('My Brush') !== -1;
+
+        // The saved brush must not be a live view of the one it came from.
+        b.loadPreset('Round');
+        b.setParam('size', 3);
+        b.loadPreset('My Brush');
+        out.keptOwnSize = b.getParams().size;         // 37, not 3
+
+        // --- built-ins are untouchable ----------------------------------
+        out.cantShadow = b.saveUserPreset('Round');
+        out.cantRename = b.renameUserPreset('Round', 'Nope');
+        out.cantDelete = b.deleteUserPreset('Round');
+        out.roundStillThere = !!b.PRESETS['Round'] && !b.isUserPreset('Round');
+
+        // --- duplicate --------------------------------------------------
+        b.loadPreset('Charcoal');
+        const dup = b.duplicatePreset('Charcoal', null);
+        out.dupName = dup.name;
+        out.dupIsMine = b.isUserPreset(dup.name);
+        b.loadPreset(dup.name);
+        out.dupSize = b.getParams().size;
+        out.charcoalSize = b.PRESETS['Charcoal'].size;
+        b.setParam('size', 99);
+        out.builtinUntouched = b.PRESETS['Charcoal'].size === out.charcoalSize;
+
+        // --- rename -----------------------------------------------------
+        const ren = b.renameUserPreset('My Brush', 'Renamed Brush');
+        out.renOk = ren.ok;
+        out.oldGone = !b.PRESETS['My Brush'];
+        out.newHere = b.isUserPreset('Renamed Brush');
+        b.loadPreset('Renamed Brush');
+        out.renKeptSize = b.getParams().size;         // still 37
+
+        // --- favourites -------------------------------------------------
+        b.toggleFavourite('Ink');
+        out.favOn = b.isFavourite('Ink');
+        b.toggleFavourite('Ink');
+        out.favOff = b.isFavourite('Ink');
+        b.toggleFavourite('Ink');
+
+        // --- export / import --------------------------------------------
+        const blob = b.exportUserPresets();
+        const before = b.userPresetNames().slice().sort();
+        const imp = b.importUserPresets(blob);
+        out.impOk = imp.ok;
+        out.impRenamedAll = imp.renamed.length === before.length;
+        out.impNoOverwrite = before.every(n => b.userPresetNames().indexOf(n) !== -1);
+        out.impGrew = b.userPresetNames().length === before.length * 2;
+        out.badImport = b.importUserPresets('{"format":"something-else"}');
+        out.junkImport = b.importUserPresets('not json at all');
+
+        // --- delete -----------------------------------------------------
+        const doomed = b.userPresetNames()[0];
+        b.deleteUserPreset(doomed);
+        out.deleted = !b.PRESETS[doomed];
+
+        out.names = b.userPresetNames().slice().sort();
+        return JSON.stringify(out);
+    })()`));
+    console.log('  ' + JSON.stringify(lb));
+
+    check('a brush can be saved', lb.savedOk === true);
+    check('a saved name is tidied, not taken raw',
+        lb.trimmedName === 'My Brush', `got "${lb.trimmedName}"`);
+    check('a saved brush joins the library', lb.isMine && lb.inNames);
+    check('a saved brush is a snapshot, not a live view of its source',
+        lb.keptOwnSize === 37, `size came back as ${lb.keptOwnSize}`);
+    check('a saved brush cannot shadow a built-in',
+        lb.cantShadow.ok === false, lb.cantShadow.error);
+    check('a built-in cannot be renamed', lb.cantRename.ok === false);
+    check('a built-in cannot be deleted', lb.cantDelete.ok === false);
+    check('the built-in survives all three attempts', lb.roundStillThere === true);
+    check('duplicate names itself out of the way',
+        lb.dupName === 'Charcoal copy', `got "${lb.dupName}"`);
+    check('a duplicate copies the brush it came from',
+        lb.dupIsMine && lb.dupSize === lb.charcoalSize,
+        `${lb.dupSize} vs ${lb.charcoalSize}`);
+    check('editing a copy never writes back to the built-in',
+        lb.builtinUntouched === true);
+    check('rename moves the brush', lb.renOk && lb.oldGone && lb.newHere);
+    check('rename keeps the settings with it',
+        lb.renKeptSize === 37, `size came back as ${lb.renKeptSize}`);
+    check('a brush can be favourited and unfavourited',
+        lb.favOn === true && lb.favOff === false);
+    check('export then import brings the brushes back', lb.impOk === true);
+    check('import never overwrites what is already saved',
+        lb.impNoOverwrite && lb.impRenamedAll && lb.impGrew,
+        JSON.stringify({ renamed: lb.impRenamedAll, kept: lb.impNoOverwrite, grew: lb.impGrew }));
+    check('a foreign file is refused', lb.badImport.ok === false, lb.badImport.error);
+    check('unreadable text is refused', lb.junkImport.ok === false, lb.junkImport.error);
+    check('a brush can be deleted', lb.deleted === true);
+
+    /* A brush name is user text. It reaches the DOM as text and nowhere
+     * else, so a name that looks like markup stays a name. */
+    const hostile = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        const evil = '<img src=x onerror="window.__pwned=1">';
+        window.__pwned = 0;
+        b.loadPreset('Round');
+        const r = b.saveUserPreset(evil);
+        b.buildBrushGrid();
+        const grid = document.getElementById('pb-brush-grid');
+        const tile = [...grid.querySelectorAll('.pb-brush-tile')]
+            .find(t => t.getAttribute('data-preset') === r.name);
+        const cap = tile && tile.querySelector('.pb-tile-name');
+        const out = {
+            saved: r.ok,
+            pwned: window.__pwned,
+            injected: grid.querySelectorAll('img').length,
+            shownAsText: cap ? cap.textContent === r.name : false
+        };
+        b.deleteUserPreset(r.name);
+        return JSON.stringify(out);
+    })()`));
+    console.log('  ' + JSON.stringify(hostile));
+    check('a brush named like markup runs nothing',
+        hostile.pwned === 0 && hostile.injected === 0);
+    check('a brush named like markup shows as plain text',
+        hostile.shownAsText === true);
+
+    /* Search hides tiles instead of rebuilding them: re-rendering means
+     * repainting a real stroke per swatch on every keystroke. */
+    const srch = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.buildBrushGrid();
+        const grid = document.getElementById('pb-brush-grid');
+        const box = document.getElementById('pb-search');
+        const canvases = () => grid.querySelectorAll('canvas').length;
+        const visible = () => [...grid.querySelectorAll('.pb-brush-tile')]
+            .filter(t => !t.hidden).length;
+        const heads = () => [...grid.querySelectorAll('.pb-brush-group')]
+            .filter(h => !h.hidden).length;
+        const before = { tiles: visible(), canvases: canvases(), heads: heads() };
+        const first = grid.querySelector('.pb-brush-tile');
+        box.value = 'chalk';
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        const during = { tiles: visible(), canvases: canvases(), heads: heads(),
+                         sameNode: grid.querySelector('.pb-brush-tile') === first };
+        box.value = 'zzzznothing';
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        const none = { tiles: visible(), heads: heads() };
+        box.value = '';
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        const after = { tiles: visible(), heads: heads() };
+        return JSON.stringify({ before, during, none, after });
+    })()`));
+    console.log('  ' + JSON.stringify(srch));
+    check('search narrows the grid',
+        srch.during.tiles > 0 && srch.during.tiles < srch.before.tiles,
+        `${srch.during.tiles} of ${srch.before.tiles} shown`);
+    check('search does not re-render the swatches',
+        srch.during.canvases === srch.before.canvases && srch.during.sameNode,
+        `${srch.before.canvases} canvases became ${srch.during.canvases}`);
+    check('a family header hides when nothing under it matches',
+        srch.during.heads < srch.before.heads && srch.none.heads === 0,
+        `${srch.during.heads} headers on a match, ${srch.none.heads} on no match`);
+    check('clearing the search restores every brush',
+        srch.after.tiles === srch.before.tiles && srch.after.heads === srch.before.heads);
+
+    /* Favourites are a shortcut TO a brush, not a move: it shows in both
+     * places, which is the one case where a name owns two tiles. */
+    const favg = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        // Earlier blocks leave brushes and stars behind.
+        b.userPresetNames().forEach(n => b.deleteUserPreset(n));
+        Object.keys(b.PRESETS).forEach(n => { if (b.isFavourite(n)) b.toggleFavourite(n); });
+        b.loadPreset('Round');
+        b.buildBrushGrid();
+        const grid = document.getElementById('pb-brush-grid');
+        const headNames = () => [...grid.querySelectorAll('.pb-brush-group')]
+            .map(h => h.textContent);
+        const countOf = (n) => [...grid.querySelectorAll('.pb-brush-tile')]
+            .filter(t => t.getAttribute('data-preset') === n).length;
+        const plain = { heads: headNames(), ink: countOf('Ink') };
+        if (!b.isFavourite('Ink')) b.toggleFavourite('Ink');
+        b.buildBrushGrid();
+        const fav = { heads: headNames(), ink: countOf('Ink'),
+                      first: headNames()[0] };
+        b.loadPreset('Round');
+        b.saveUserPreset('Grid Test Brush');
+        b.buildBrushGrid();
+        const mine = { heads: headNames() };
+        b.deleteUserPreset('Grid Test Brush');
+        b.toggleFavourite('Ink');
+        b.buildBrushGrid();
+        return JSON.stringify({ plain, fav, mine });
+    })()`));
+    console.log('  ' + JSON.stringify(favg));
+    check('Favourites leads the grid once something is starred',
+        favg.plain.heads.indexOf('Favourites') === -1 &&
+        favg.fav.first === 'Favourites');
+    check('a favourite still shows under its family too',
+        favg.plain.ink === 1 && favg.fav.ink === 2,
+        `${favg.fav.ink} tiles for Ink when favourited`);
+    check('saved brushes get their own group',
+        favg.mine.heads.indexOf('My Brushes') !== -1, favg.mine.heads.join(', '));
+
+    /* Both of a favourite's tiles need their own swatch node. The cache
+     * handed the same canvas to each, and appending a node twice moves it,
+     * so the first tile went blank. */
+    const twin = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        if (!b.isFavourite('Charcoal')) b.toggleFavourite('Charcoal');
+        b.buildBrushGrid();
+        const grid = document.getElementById('pb-brush-grid');
+        const mine = [...grid.querySelectorAll('.pb-brush-tile')]
+            .filter(t => t.getAttribute('data-preset') === 'Charcoal');
+        const inked = mine.map(t => {
+            const c = t.querySelector('canvas');
+            if (!c) return 0;
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            let n = 0;
+            for (let i = 3; i < d.length; i += 4) if (d[i] > 8) n++;
+            return n;
+        });
+        const blank = [...grid.querySelectorAll('.pb-brush-tile')]
+            .filter(t => !t.querySelector('canvas'))
+            .map(t => t.getAttribute('data-preset'));
+        b.toggleFavourite('Charcoal');
+        b.buildBrushGrid();
+        return JSON.stringify({ tiles: mine.length, inked, blank });
+    })()`));
+    console.log('  ' + JSON.stringify(twin));
+    check('both tiles of a favourite draw their own swatch',
+        twin.tiles === 2 && twin.inked.length === 2 && twin.inked.every(n => n > 50),
+        `painted pixels per tile: ${twin.inked.join(', ')}`);
+    check('no tile in the grid is left without a swatch',
+        twin.blank.length === 0, twin.blank.join(', '));
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
