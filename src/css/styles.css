@@ -1309,6 +1309,7 @@
                     color: var(--win-blue, #0078d7); touch-action: none; }
         body.dark-mode .pb-curve { border-color: #4a5058; background: #23262b; }
         .pb-curve:focus-visible { outline: 2px solid var(--accent, #1a73e8); outline-offset: 1px; }
+        #paintbrush-sidebar.pb-dropping { outline: 2px dashed var(--accent, #0078d7); outline-offset: -4px; }
         #pb-brush-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 3px; margin-bottom: 6px; margin-left: -9px; max-height: 300px; overflow-y: auto; overflow-x: hidden; }
         /* Family headers span both columns so the grid still reads as two
            rows of swatches under each one. */

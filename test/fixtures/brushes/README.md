@@ -10,3 +10,18 @@ They are here as test material, not as brushes we ship:
   as base64, so it exercises the resource path.
 - mini-pack.bundle — the two of them in the ZIP layout a real pack uses,
   plus one loose tip in brushes/.
+- bristles-grouped.gbr — a GIMP brush: one shape stored as coverage, so its
+  bytes are the alpha as they stand.
+- chalk-chisel-random-small.gih — a GIMP brush pipe: four shapes in one file,
+  which Krita picks between per dab.
+
+The three .abr files are not from anywhere: they are written by hand from the
+Photoshop brush format's description (scripts are in the session scratchpad,
+not the repo) to cover version 2, version 6 subversion 1, and version 6
+subversion 2, compressed rows and raw. They check that the reader agrees with
+the format as documented. They cannot check that Photoshop does — for that a
+real .abr is needed, and there is none here.
+
+The two .myb files are likewise written by hand, one in each of MyPaint's
+formats — the newer JSON and the older line-per-setting — to cover a
+stamping-free brush with pressure curves and an eraser.
