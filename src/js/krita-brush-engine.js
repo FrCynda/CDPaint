@@ -561,14 +561,16 @@
         if (_sampleData) {
             if (px < 0 || py < 0 || px >= _sampleW || py >= _sampleH) return null;
             var i = (py * _sampleW + px) * 4;
-            return [_sampleData[i], _sampleData[i + 1], _sampleData[i + 2]];
+            // Alpha comes back too: an empty pixel carries no pigment, and
+            // treating it as colour smears black out of nothing.
+            return [_sampleData[i], _sampleData[i + 1], _sampleData[i + 2], _sampleData[i + 3]];
         }
         if (!ctx) return null;
         var c = ctx.canvas;
         if (c && (px < 0 || py < 0 || px >= c.width || py >= c.height)) return null;
         try {
             var data = ctx.getImageData(px, py, 1, 1).data;
-            return [data[0], data[1], data[2]];
+            return [data[0], data[1], data[2], data[3]];
         } catch (e) {
             return null;
         }
@@ -837,6 +839,49 @@
         return baseAngle;
     }
 
+    /* What the brush is currently carrying.
+     *
+     * Smudge used to re-sample the canvas at every dab and mix that with the
+     * brush colour. That cannot carry pigment: each dab started again from
+     * whatever was underneath, so colour never travelled along the stroke,
+     * and because the sampler reads a snapshot taken BEFORE the stroke, a
+     * smudge could not even see its own trail.
+     *
+     * A brush that smudges has to remember what it picked up and let go of
+     * it gradually. smudgeLength is how much of the load survives each dab:
+     * 0 re-loads every dab (the old behaviour), 100 never lets go. */
+    var _wet = null;
+    var _wetX = 0, _wetY = 0;
+    var WET_HALF_MAX = 40;   // px the load takes to half fade, at carry 100
+
+    function _wetColor(p, x, y, colorHex) {
+        var s = _sampleCanvasColor(_outCtx(), x, y);
+        // Nothing under the brush means nothing to pick up. Without this the
+        // load is dragged toward a transparent pixel's black.
+        if (s && s[3] > 8) {
+            if (_wet && p.smudgeLength > 0) {
+                /* Decay per pixel travelled, never per dab. Per dab, spacing
+                 * silently decides how far colour carries — a tight brush
+                 * turns its load over in a few pixels and a sparse one drags
+                 * it across the canvas, from the same slider setting. */
+                var half = _max(0.5, _pow(_clamp(p.smudgeLength, 0, 100) / 100, 2) * WET_HALF_MAX);
+                var k = _pow(0.5, _hypot(x - _wetX, y - _wetY) / half);
+                _wet = [_lerp(s[0], _wet[0], k),
+                        _lerp(s[1], _wet[1], k),
+                        _lerp(s[2], _wet[2], k)];
+            } else {
+                _wet = [s[0], s[1], s[2]];
+            }
+            _wetX = x; _wetY = y;
+        }
+        /* An unloaded pure smudge has nothing to put down. Painting the
+         * brush colour instead would make a smudge brush draw over empty
+         * canvas, and the old code was worse still — it read a transparent
+         * pixel as opaque black and smeared that. */
+        if (!_wet) return p.colorRate <= 0 ? null : colorHex;
+        return _mixColors(_wet, colorHex, p.colorRate);
+    }
+
     function _renderDab(x, y, pressure, colorHex, strokeAngle, rawPressure) {
         var p = getParams();
 
@@ -859,10 +904,8 @@
 
         // Smudge: sample canvas color and mix with brush color
         if (p.colorRate < 100) {
-            var sampled = _sampleCanvasColor(_outCtx(), x, y);
-            if (sampled) {
-                finalColor = _mixColors(sampled, colorHex, p.colorRate);
-            }
+            finalColor = _wetColor(p, x, y, colorHex);
+            if (finalColor === null) return;      // nothing loaded, nothing to lay down
         }
 
         // Scatter: random offset from stroke path
@@ -1033,9 +1076,11 @@
             var bcx = x + br.cx;
             var bcy = y + br.cy;
 
-            var finalColor = colorHex;
-            var sampled = _sampleCanvasColor(_outCtx(), bcx, bcy);
-            if (sampled) finalColor = _mixColors(sampled, colorHex, p.colorRate);
+            // One load for the whole head. Per-bristle reservoirs would be
+            // truer to a real brush and are not worth a dab-rate allocation
+            // until someone can see the difference.
+            var finalColor = _wetColor(p, bcx, bcy, colorHex);
+            if (finalColor === null) continue;
 
             // The mask is built tall (aspect > 1 stretches along y) and then
             // rotated, so the long axis lands on the fiber direction at -90.
@@ -1544,6 +1589,7 @@
         aspectRatio: 1,
         scatter: 0,
         colorRate: 100,
+        smudgeLength: 50,
         airbrushRate: 40,
         airbrushMode: false,
         texture: 0,
@@ -1664,6 +1710,13 @@
         'Square Rough': { size: 18, opacity: 90, flow: 100, spacing: 12, hardness: 80, shape: 'custom', _tipUrl: 'brushes/square_rough_lightgrey.png' },
         'Abominable Snowman': { size: 28, opacity: 85, flow: 100, spacing: 15, hardness: 80, shape: 'custom', _tipUrl: 'brushes/abominable_snowman.png', scatter: 4 },
 
+        /* ---- Smudge ------------------------------------------------------ */
+        'Smudge': { size: 22, opacity: 100, flow: 100, spacing: 4, hardness: 30, shape: 'circle', colorRate: 0, smudgeLength: 82, sizeMin: 70 },
+        'Smudge Hard': { size: 14, opacity: 100, flow: 100, spacing: 3, hardness: 85, shape: 'circle', colorRate: 0, smudgeLength: 60, sizeMin: 75 },
+        'Wet Blender': { size: 34, opacity: 100, flow: 60, spacing: 4, hardness: 8, shape: 'circle', colorRate: 0, smudgeLength: 92, flowMin: 30 },
+        'Oil Mixer': { size: 26, opacity: 100, flow: 90, spacing: 5, hardness: 45, shape: 'circle', colorRate: 18, smudgeLength: 78, bristleCount: 9, bristleSpread: 70, bristleWidth: 3, angleSrc: 'direction', texture: 25, textureScale: 3, textureType: 'canvas' },
+        'Watercolor Bleed': { size: 30, opacity: 90, flow: 30, spacing: 6, hardness: 12, shape: 'circle', colorRate: 25, smudgeLength: 88, scatter: 4, flowMin: 25 },
+
         /* ---- Blend ------------------------------------------------------- */
         'Shadow Multiply': { size: 26, opacity: 60, flow: 45, spacing: 8, hardness: 25, shape: 'circle', blendMode: 'multiply', flowMin: 20 },
         'Ink Multiply': { size: 9, opacity: 100, flow: 100, spacing: 6, hardness: 80, shape: 'circle', blendMode: 'multiply', taperStart: 20, taperEnd: 25 },
@@ -1702,6 +1755,7 @@
         { name: 'Watercolour', presets: ['Watercolor', 'Watercolor Wet', 'Watercolor Dry Edge', 'Wash', 'Watercolor Bloom'] },
         { name: 'Airbrush', presets: ['Airbrush', 'Airbrush Soft', 'Airbrush Hard', 'Spray Can', 'Speckle Spray'] },
         { name: 'Texture',  presets: ['Charcoal', 'Charcoal Stick', 'Conte', 'Canvas Grain', 'Crosshatch', 'Chalk', 'Chalk Round Hard', 'Chalk Sparse', 'Chalk Chisel', 'Chalk Chisel Random', 'Chalk Chisel Fine', 'Chisel Streaks', 'Rock Pitted', 'Rock Pitted Fine', 'Scratches', 'Rake', 'Bristles Grouped', 'Bristle', 'Bristles Circle Medium', 'Bristles Compact Mini', 'Deevad Painterly', 'Deevad Compact', 'Flat Tip Dirty', 'Square Rough', 'Abominable Snowman'] },
+        { name: 'Smudge',   presets: ['Smudge', 'Smudge Hard', 'Wet Blender', 'Oil Mixer', 'Watercolor Bleed'] },
         { name: 'Blend',    presets: ['Shadow Multiply', 'Ink Multiply', 'Glow', 'Burn Shadow', 'Bleach', 'Tint', 'Shade Soft Light'] },
         { name: 'Erasers',  presets: ['Eraser Hard', 'Eraser Soft', 'Eraser Pencil', 'Eraser Chalk', 'Eraser Square', 'Eraser Airbrush'] },
         { name: 'Effects',  presets: ['Round', 'Splatter', 'Splat Dots', 'Splats Large', 'Debris', 'Foliage', 'Stipple', 'Confetti', 'Scribbles'] }
@@ -1935,6 +1989,8 @@
 
     engine.beginStroke = function (x, y, pressure, color) {
         _strokeSeed = Math.floor(Math.random() * 2147483647);
+        _wet = null;              // the brush is loaded fresh each stroke
+        _wetX = x; _wetY = y;
         _smoothAngle = NaN;
         _lastDabDist = 0;
         _smoothPosX = x; _smoothPosY = y;
@@ -2385,15 +2441,24 @@
             var x0 = padX, x1 = W - padX;
             var midY = H * 0.5;
 
-            /* An eraser stroke on an empty tile paints nothing, which is a
-             * true but useless swatch. Give it something to erase: the tile
-             * shows the bite taken out of a band of ink, which is what the
-             * brush actually does. */
+            /* Some brushes only rearrange what is already there, so on an
+             * empty tile they paint nothing — a true but useless swatch.
+             * Give them something to work on: an eraser shows the bite it
+             * takes out of a band of ink, and a smudge shows how far it
+             * drags one tone into another. */
             if (pp.blendMode === 'erase') {
                 ctx.save();
                 ctx.fillStyle = SWATCH_INK;
                 ctx.globalAlpha = 0.72;
                 ctx.fillRect(0, H * 0.16, W, H * 0.68);
+                ctx.restore();
+            } else if (pp.colorRate < 100) {
+                ctx.save();
+                ctx.fillStyle = SWATCH_INK;
+                ctx.globalAlpha = 0.8;
+                ctx.fillRect(0, H * 0.12, W * 0.38, H * 0.76);
+                ctx.globalAlpha = 0.14;
+                ctx.fillRect(W * 0.38, H * 0.12, W * 0.62, H * 0.76);
                 ctx.restore();
             }
             // A full S rather than a lopsided arc: it shows both directions of
@@ -2462,6 +2527,7 @@
             'pb-angle': 'angle',
             'pb-aspect': 'aspectRatio',
             'pb-colorRate': 'colorRate',
+            'pb-smudgeLength': 'smudgeLength',
             'pb-airbrushRate': 'airbrushRate',
             'pb-bristleCount': 'bristleCount',
             'pb-bristleLength': 'bristleLength',
@@ -2609,6 +2675,7 @@
             'pb-angle': 'angle',
             'pb-aspect': 'aspectRatio',
             'pb-colorRate': 'colorRate',
+            'pb-smudgeLength': 'smudgeLength',
             'pb-airbrushRate': 'airbrushRate',
             'pb-bristleCount': 'bristleCount',
             'pb-bristleLength': 'bristleLength',
@@ -2707,6 +2774,7 @@
             dynamicsMode: 'How brush responds to stroke direction or pen pressure',
             aspectRatio: 'Width-to-height ratio of the brush tip',
             colorRate: 'Rate at which the brush picks up color from the canvas (smudge)',
+            smudgeLength: 'How far picked-up color travels before the brush lets go of it',
             airbrushMode: 'Keep painting while holding the brush still',
             airbrushRate: 'Paint flow rate when airbrush mode is active',
             bristleCount: 'Number of individual bristle splits',
@@ -3142,7 +3210,8 @@
                 head = el; shown = 0;
                 continue;
             }
-            var n = (el.getAttribute('data-preset') || '').toLowerCase();
+            var n = el.getAttribute('data-search') ||
+                    (el.getAttribute('data-preset') || '').toLowerCase();
             var hit = !q || n.indexOf(q) !== -1;
             el.hidden = !hit;
             if (hit) shown++;
@@ -3284,16 +3353,21 @@
             head.textContent = groups[gi].name;
             grid.appendChild(head);
             for (var k = 0; k < groups[gi].presets.length; k++) names.push(groups[gi].presets[k]);
-            addTiles(groups[gi].presets);
+            addTiles(groups[gi].presets, groups[gi].name);
         }
 
-        function addTiles(list) {
+        function addTiles(list, groupName) {
         for (var i = 0; i < list.length; i++) {
             (function (name) {
                 var tile = document.createElement('div');
                 tile.className = 'pb-brush-tile';
                 tile.title = name;
                 tile.setAttribute('data-preset', name);
+                /* Searching "smudge" should find Wet Blender. The family is
+                 * how people describe what they want, so it is part of what
+                 * a tile matches on. */
+                tile.setAttribute('data-search',
+                    (name + ' ' + (groupName || '')).toLowerCase());
                 var c = engine.generatePreview(name);
                 if (c) tile.appendChild(c);
 
