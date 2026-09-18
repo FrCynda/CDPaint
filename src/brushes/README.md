@@ -33,14 +33,18 @@ the next dab takes one at random or the next one along with `tipPick`.
 
 ## What was left out
 
-Ten of Revoy's presets were dropped rather than shipped as near misses, after
-comparing every one side by side against Krita's own thumbnail:
+Eight of the ten presets that were first dropped as near misses are now
+shipped: the engine grew the features they lean on -- canvas texture
+patterns, edge sharpening, one-axis scatter and a reservoir of colour per
+bristle rather than one for the whole head. Their tips and patterns are here
+as `*_tip.png` and `*_pattern.png`.
 
-- **Thick Dry Canvas**, **Canvas Rub Texture**, **Texture Feeding Canvas** —
-  lean on a canvas texture pattern, which we do not have.
-- **Blender Rake Smudge**, **Blender Textured Soft**, **Blender Wet Area** —
-  smudge behaviour we reproduce only roughly.
-- **Bristle Flat Glazing**, **Rough Rake Textured** — fine streaks that blur
-  into a solid slab at the sizes we resample to.
+Two are still out, and are meant to stay out:
+
 - **Shapes Alchemy** (experimentbrush) and **Distort Move Update**
-  (deformbrush) — Krita paint engines with no counterpart here.
+  (deformbrush) -- Krita paint engines with no counterpart here. Reproducing
+  them means writing two more engines for two brushes.
+
+One shipped brush is a knowing near miss: **Oval Basic** turns its tip with
+Krita's `tangentialpressure`, a barrel-wheel reading no browser reports, so
+its tip does not turn.

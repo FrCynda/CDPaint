@@ -221,12 +221,23 @@ await withPage(async (page) => {
         tr.stampInk > 500, `${tr.stampInk} pixels of ink`);
     check('a brush we can reproduce exactly reports nothing',
         tr.stamp.warnings.length === 0, JSON.stringify(tr.stamp.warnings));
-    /* This eraser drives its opacity from pressure as well as its flow, and
-     * we only have the one dab-level control. Losing it silently is what an
-     * importer must not do. */
-    check('...and one we cannot says which part it could not keep',
-        tr.eraser.warnings.length === 1 && /opacity/.test(tr.eraser.warnings[0]),
-        JSON.stringify(tr.eraser.warnings));
+    /* This eraser drives its opacity from pressure as well as its flow.
+     * Krita scales a dab's alpha by both, so the two responses multiply into
+     * the one dab-level control we have rather than one of them being
+     * dropped -- which is what used to happen, and which left the brush
+     * holding far too much ink at low pressure. */
+    check('two responses on one input are folded together, not halved',
+        tr.eraser.warnings.length === 0 &&
+        Array.isArray(tr.eraser.params.flowCurve) && tr.eraser.params.flowCurve.length === 8,
+        JSON.stringify(tr.eraser.warnings) + ' curve ' + JSON.stringify(tr.eraser.params.flowCurve));
+    check('...and the fold really is the product of the two',
+        (() => {
+            const c = tr.eraser.params.flowCurve || [];
+            const mid = c[3];            // halfway along the pressure range
+            // Two responses that each reduce ink must reduce it more together.
+            return mid && mid[1] <= 0.5 + 1e-6;
+        })(),
+        JSON.stringify(tr.eraser.params.flowCurve));
 
     console.log('== junk in, no crash out ==');
     const junk = JSON.parse(await page.eval(`(async () => {

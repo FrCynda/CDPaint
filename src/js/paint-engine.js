@@ -85,12 +85,17 @@
         }
         static async deflateWithCompressionStream(bytes, timeoutMs = 1200) {
             const stream = new CompressionStream('deflate');
-            const writer = stream.writable.getWriter();
             const compress = (async () => {
+                /* Start draining the readable side BEFORE writing. close() does not
+                   settle until the compressed bytes have been consumed, so awaiting
+                   it with nothing reading deadlocks -- which looked like a timeout
+                   and quietly dropped every write to deflateStored, i.e. no
+                   compression at all in any PNG this app wrote. */
+                const compressed = new Response(stream.readable).arrayBuffer();
+                const writer = stream.writable.getWriter();
                 await writer.write(bytes);
                 await writer.close();
-                const compressed = await new Response(stream.readable).arrayBuffer();
-                return new Uint8Array(compressed);
+                return new Uint8Array(await compressed);
             })();
             if (!timeoutMs || timeoutMs <= 0) return compress;
             let timer = null;
@@ -6592,7 +6597,15 @@
                     // Tilt and barrel rotation ride on the pointer event and
                     // are what a tilt-driven brush responds to.
                     if (this.brush.setPenState) this.brush.setPenState(e);
-                    this.brush.beginStroke(pp.x, pp.y, e.pressure != null ? e.pressure : 0.5, this.getActiveDrawColor(this.state.paintbrushSlot === 2));
+                    // A literal 0 is a device that doesn't report pressure
+                    // (a plain mouse, or an automated/synthetic pointer), not
+                    // a real "no pressure" -- fall back to the neutral 0.5
+                    // used everywhere else in this file (`||`, not `!= null`,
+                    // deliberately treats 0 as falsy here). A pressure-driven
+                    // brush (flowSrc: 'pressure') otherwise paints at zero
+                    // flow for the device's entire input, which is invisible
+                    // regardless of any brush tuning.
+                    this.brush.beginStroke(pp.x, pp.y, e.pressure || 0.5, this.getActiveDrawColor(this.state.paintbrushSlot === 2));
                 }
                 return;
             }
@@ -7065,13 +7078,13 @@
                         var _cp = this.getMousePrecise(_coalesced[_ci]);
                         if (this.brush && this.brush.moveStroke) {
                             if (this.brush.setPenState) this.brush.setPenState(_coalesced[_ci]);
-                            this.brush.moveStroke(_cp.x, _cp.y, _coalesced[_ci].pressure != null ? _coalesced[_ci].pressure : 0.5, _color);
+                            this.brush.moveStroke(_cp.x, _cp.y, _coalesced[_ci].pressure || 0.5, _color);
                         }
                     }
                 } else {
                     if (this.brush && this.brush.moveStroke) {
                         if (this.brush.setPenState) this.brush.setPenState(e);
-                        this.brush.moveStroke(pp.x, pp.y, e.pressure != null ? e.pressure : 0.5, _color);
+                        this.brush.moveStroke(pp.x, pp.y, e.pressure || 0.5, _color);
                     }
                 }
                 this.updateHoverPreview(p.x, p.y);
@@ -9884,7 +9897,8 @@ void main() {
                 'modal-colors',
                 'modal-confirm-reset',
                 'modal-toolbar',
-                'modal-wincolor'
+                'modal-wincolor',
+                'modal-brush-pack'
             ];
             ids.forEach((id) => {
                 const modal = document.getElementById(id);

@@ -830,7 +830,7 @@ await withPage(async (page) => {
     /* ================= saved brushes ================= */
     console.log('\n== saved brushes ==');
 
-    const lb = JSON.parse(await page.eval(`(() => {
+    const lb = JSON.parse(await page.eval(`(async () => {
         const b = PaintApp.brush;
         const wipe = () => {
             b.userPresetNames().forEach(n => b.deleteUserPreset(n));
@@ -892,7 +892,7 @@ await withPage(async (page) => {
         b.toggleFavourite('Thin Regular');
 
         // --- export / import --------------------------------------------
-        const blob = b.exportUserPresets();
+        const blob = await b.exportUserPresets();
         const before = b.userPresetNames().slice().sort();
         const imp = b.importUserPresets(blob);
         out.impOk = imp.ok;
@@ -909,7 +909,7 @@ await withPage(async (page) => {
 
         out.names = b.userPresetNames().slice().sort();
         return JSON.stringify(out);
-    })()`));
+    })()`, { awaitPromise: true }));
     console.log('  ' + JSON.stringify(lb));
 
     check('a brush can be saved', lb.savedOk === true);
@@ -1597,7 +1597,7 @@ await withPage(async (page) => {
     check('textured brushes have their own family',
         dsw.heads.indexOf('Texture') !== -1, dsw.heads.join(', '));
     check('the library is the size it says it is',
-        dsw.count === 40, 'count ' + dsw.count);
+        dsw.count === 48, 'count ' + dsw.count);
 
     /* ── taper ────────────────────────────────────────────────────────── */
     console.log('== taper ==');
@@ -1792,6 +1792,384 @@ await withPage(async (page) => {
     check('a square tip squashes the same way a round one does',
         ts.square.w === 40 && ts.square.h <= 12,
         `${ts.square.w}x${ts.square.h}`);
+
+    /* ── the stroke-position sensors, and the dials they can now drive ── */
+    console.log('\n== fade, distance, and dynamics on four more dials ==');
+    const b3 = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        /* How thick the line is at one x, in pixels of ink. Fade and
+         * distance are the only two sensors that are not the pen, so the
+         * only way to see them is to look at two places along ONE stroke. */
+        const thick = (L, x) => {
+            const d = L.ctx.getImageData(x, 0, 1, 200).data;
+            let n = 0;
+            for (let i = 3; i < d.length; i += 4) if (d[i] > 20) n++;
+            return n;
+        };
+        const ink = (L) => {
+            const d = L.ctx.getImageData(0, 0, 400, 200).data;
+            let n = 0;
+            for (let i = 3; i < d.length; i += 4) if (d[i] > 20) n++;
+            return n;
+        };
+        const line = async (set) => {
+            __B.doc(400, 200);
+            /* Settings are saved per preset, so an earlier test's Round is
+             * still Round when this one loads it. Put every dial this block
+             * touches back to its default first. */
+            ['colorRate', 'texture', 'opacity', 'flow', 'aspectRatio', 'shape',
+             'tipCells', 'bristleCount', 'sizeSrc', 'sizeMin', 'sizeCurve',
+             'aspectRatioSrc', 'aspectRatioMin', 'spacingSrc', 'spacingMin',
+             'fadeSteps', 'distanceLength', 'smoothingMode', 'taperStart',
+             'taperEnd', 'flowSrc', 'flowMin', 'angleSrc'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+            b.setParam('size', 30); b.setParam('hardness', 100);
+            b.setParam('spacing', 10);
+            b.setParam('sizeSrc', 'none');
+            set(b);
+            const L = __B.layer();
+            await __B.stroke(20, 100, 380, 100, '#ff0000');
+            return L;
+        };
+        const out = {};
+        // Fade runs a dial DOWN over a count of dabs, Photoshop's way.
+        let L = await line(b => { b.setParam('sizeSrc', 'fade'); b.setParam('sizeMin', 10);
+                                  b.setParam('fadeSteps', 30); });
+        out.fade = [thick(L, 40), thick(L, 360)];
+        // Distance runs it UP over a count of pixels, Krita's way.
+        L = await line(b => { b.setParam('sizeSrc', 'distance'); b.setParam('sizeMin', 10);
+                              b.setParam('distanceLength', 300); });
+        out.dist = [thick(L, 40), thick(L, 360)];
+        // Roundness dynamics squash the tip; ours is the reciprocal, so a
+        // driven aspect has to get FLATTER as the sensor falls, not rounder.
+        L = await line(b => { b.setParam('aspectRatio', 1); b.setParam('aspectRatioSrc', 'fade');
+                              b.setParam('aspectRatioMin', 20); b.setParam('fadeSteps', 30); });
+        out.round = [thick(L, 40), thick(L, 360)];
+        // Spacing dynamics change how many dabs a line is made of, so a
+        // tighter spacing at the end lays down more ink than a flat one.
+        L = await line(b => { b.setParam('spacing', 60); });
+        out.flatInk = ink(L);
+        L = await line(b => { b.setParam('spacing', 60); b.setParam('spacingSrc', 'fade');
+                              b.setParam('spacingMin', 10); b.setParam('fadeSteps', 20); });
+        out.tightInk = ink(L);
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(b3));
+    check('a fading dial starts full and ends at its floor',
+        b3.fade[0] > b3.fade[1] * 2, b3.fade.join(' -> '));
+    check('a distance-driven dial does the opposite',
+        b3.dist[1] > b3.dist[0] * 2, b3.dist.join(' -> '));
+    check('driven roundness flattens the tip rather than rounding it',
+        b3.round[1] < b3.round[0], b3.round.join(' -> '));
+    check('spacing can follow a sensor too',
+        b3.tightInk > b3.flatInk, `${b3.flatInk} then ${b3.tightInk}`);
+
+    /* ── several dabs a stop, and dabs off the line ───────────────────── */
+    console.log('\n== dab count, dab offset, and which way "across" points ==');
+    const b4 = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        const box = (L) => {
+            const d = L.ctx.getImageData(0, 0, 400, 400).data;
+            let x1 = 1e9, x2 = -1, y1 = 1e9, y2 = -1, n = 0;
+            for (let i = 3; i < d.length; i += 4) {
+                if (d[i] <= 20) continue;
+                const px = (i / 4) % 400, py = (i / 4 / 400) | 0;
+                n++;
+                if (px < x1) x1 = px; if (px > x2) x2 = px;
+                if (py < y1) y1 = py; if (py > y2) y2 = py;
+            }
+            return n ? { n: n, w: x2 - x1 + 1, h: y2 - y1 + 1, cy: (y1 + y2) >> 1 } : { n: 0 };
+        };
+        const line = async (set, vertical) => {
+            __B.doc(400, 400);
+            ['colorRate', 'texture', 'opacity', 'flow', 'aspectRatio', 'shape',
+             'tipCells', 'bristleCount', 'sizeSrc', 'sizeMin', 'scatter',
+             'scatterAxis', 'dabCount', 'offsetAlong', 'offsetAcross', 'offsetSrc',
+             'smoothingMode', 'taperStart', 'taperEnd', 'flowSrc', 'angleSrc']
+                .forEach(k => b.setParam(k, b.DEFAULTS[k]));
+            b.setParam('dynamicsMode', 'off');
+            b.setParam('size', 20); b.setParam('hardness', 100);
+            b.setParam('spacing', 40); b.setParam('sizeSrc', 'none');
+            b._setStrokeSeed(4242);
+            set(b);
+            const L = __B.layer();
+            if (vertical) await __B.stroke(200, 40, 200, 360, '#ff0000');
+            else await __B.stroke(40, 200, 360, 200, '#ff0000');
+            return box(L);
+        };
+        const out = {};
+        /* Wide spacing so the dabs are separate blobs -- at a spacing that
+         * overlaps, three extra dabs mostly land on ink that is already
+         * there and the count says almost nothing. */
+        out.one = await line(b => { b.setParam('spacing', 300); b.setParam('scatter', 200);
+                                    b.setParam('dabCount', 1); });
+        out.four = await line(b => { b.setParam('spacing', 300); b.setParam('scatter', 200);
+                                     b.setParam('dabCount', 4); });
+        out.plain = await line(() => {});
+        out.shifted = await line(b => { b.setParam('offsetAcross', 100); });
+        // "Across" a VERTICAL line is sideways. strokeAngle arrives in
+        // degrees, and this used to be fed to cos and sin as if it were
+        // radians, so the one-axis scatter pointed somewhere arbitrary.
+        out.acrossV = await line(b => { b.setParam('scatter', 150);
+                                        b.setParam('scatterAxis', 'across'); }, true);
+        out.alongV = await line(b => { b.setParam('scatter', 150);
+                                       b.setParam('scatterAxis', 'along'); }, true);
+        b._setStrokeSeed(null);
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(b4));
+    check('four dabs a stop lay down four times the ink of one',
+        b4.four.n > b4.one.n * 2.5, `${b4.one.n} then ${b4.four.n}`);
+    check('an offset across the line moves the whole line off it',
+        b4.shifted.cy - b4.plain.cy > 15, `${b4.plain.cy} then ${b4.shifted.cy}`);
+    /* The tip is 20 across. Scattered sideways by 150 per cent of it the
+     * line has to come out about 80 wide; scattered along its own length it
+     * stays exactly as wide as the tip. */
+    check('"across" a vertical stroke spreads it sideways',
+        b4.acrossV.w > 60, JSON.stringify(b4.acrossV));
+    check('...and "along" it leaves the width alone',
+        b4.alongV.w <= 22 && b4.alongV.h > b4.acrossV.h,
+        `${b4.alongV.w} wide against ${b4.acrossV.w}`);
+
+    /* ── how wide a smudge reaches ────────────────────────────────────── */
+    console.log('\n== a smudge can reach past the dab it is making ==');
+    const b5 = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        /* A red field with one thin blue stripe in it. The stroke runs
+         * alongside the stripe, never over it: a brush that samples only the
+         * dab's own radius cannot see the blue, and a brush that reaches
+         * four times as far can. */
+        const run = async (reach) => {
+            __B.doc(400, 200);
+            ['texture', 'opacity', 'flow', 'aspectRatio', 'shape', 'tipCells',
+             'bristleCount', 'scatter', 'dabCount', 'offsetAlong', 'offsetAcross',
+             'sizeSrc', 'smoothingMode', 'taperStart', 'taperEnd', 'flowSrc']
+                .forEach(k => b.setParam(k, b.DEFAULTS[k]));
+            b.setParam('dynamicsMode', 'off');
+            b.setParam('size', 12); b.setParam('hardness', 100);
+            b.setParam('spacing', 20); b.setParam('sizeSrc', 'none');
+            b.setParam('colorRate', 0); b.setParam('smudgeLength', 90);
+            b.setParam('smudgeRadius', reach);
+            const L = __B.layer();
+            L.ctx.fillStyle = '#ff0000'; L.ctx.fillRect(0, 0, 400, 200);
+            L.ctx.fillStyle = '#0000ff'; L.ctx.fillRect(140, 0, 20, 200);
+            await __B.stroke(170, 40, 170, 170, '#ff0000');
+            const d = L.ctx.getImageData(170, 160, 1, 1).data;
+            return [d[0], d[2]];
+        };
+        const out = { near: await run(25), far: await run(400) };
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(b5));
+    check('a narrow smudge never sees the stripe beside it',
+        b5.near[1] < 20, b5.near.join(','));
+    check('...and a wide one picks it up',
+        b5.far[1] > b5.near[1] + 10, `${b5.near.join(',')} against ${b5.far.join(',')}`);
+
+    /* ── a second tip, stamped through the first ──────────────────────── */
+    console.log('\n== a second tip carves the first ==');
+    const b2 = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        /* A black bar on nothing. The loader reads darkness as coverage, so
+         * this is a tip that covers a stripe across the middle and nothing
+         * else -- which is exactly what a carve should leave behind. */
+        const c = document.createElement('canvas');
+        c.width = 64; c.height = 64;
+        const cx = c.getContext('2d');
+        cx.fillStyle = '#000';
+        cx.fillRect(0, 24, 64, 16);
+        const url = c.toDataURL('image/png');
+
+        /* __B.doc loads Round, and loading a preset is what decides which
+         * second tip is in play -- so the tip has to go on AFTER the doc, not
+         * before it. */
+        const run = async (depth, size, tip) => {
+            __B.doc(400, 200);
+            b.loadDualTip(tip || '');
+            if (tip) await new Promise(r => setTimeout(r, 300));
+            ['texture', 'opacity', 'flow', 'aspectRatio', 'shape', 'tipCells',
+             'bristleCount', 'scatter', 'dabCount', 'offsetAlong', 'offsetAcross',
+             'colorRate', 'sizeSrc', 'smoothingMode', 'taperStart', 'taperEnd',
+             'flowSrc', 'sharpness']
+                .forEach(k => b.setParam(k, b.DEFAULTS[k]));
+            b.setParam('dynamicsMode', 'off');
+            b.setParam('size', 60); b.setParam('hardness', 100);
+            b.setParam('spacing', 100); b.setParam('sizeSrc', 'none');
+            b.setParam('tip2Depth', depth); b.setParam('tip2Size', size);
+            b.setParam('tip2Angle', 0);
+            const L = __B.layer();
+            b.beginStroke(200, 100, 1, '#ff0000');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 200));
+            const d = L.ctx.getImageData(0, 0, 400, 200).data;
+            let ink = 0, faint = 0;
+            for (let i = 3; i < d.length; i += 4) {
+                if (d[i] > 200) ink++; else if (d[i] > 20) faint++;
+            }
+            return { ink: ink, faint: faint };
+        };
+        const out = {};
+        out.off = await run(0, 100, url);
+        out.full = await run(100, 100, url);
+        out.half = await run(50, 100, url);
+        out.gone = await run(100, 100, null);
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(b2));
+    check('a second tip at full bite cuts the dab down to where both agree',
+        b2.full.ink > 0 && b2.full.ink < b2.off.ink * 0.5,
+        `${b2.off.ink} then ${b2.full.ink}`);
+    check('...and at half bite it thins the rest instead of cutting it away',
+        b2.half.ink < b2.off.ink && b2.half.faint > b2.full.faint,
+        JSON.stringify([b2.off, b2.half, b2.full]));
+    check('a brush with no second tip is untouched by the setting',
+        b2.gone.ink === b2.off.ink, `${b2.off.ink} against ${b2.gone.ink}`);
+
+    /* A tip's pixels normally never reach the canvas -- it is a cut-out and
+     * only its alpha counts. Krita can also read them as lightness over the
+     * chosen colour, or stamp the picture as it stands. */
+    console.log('\n== a tip can paint with its own pixels ==');
+    const tm = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        /* Half the tip dark, half light, and a transparent margin round the
+         * lot so the picture is read as a picture rather than as a stamp
+         * scanned on white. Coverage is then flat and only the greys can
+         * make the two halves differ. */
+        const c = document.createElement('canvas');
+        c.width = 64; c.height = 64;
+        const cx = c.getContext('2d');
+        cx.fillStyle = '#202020'; cx.fillRect(2, 2, 30, 60);
+        cx.fillStyle = '#e0e0e0'; cx.fillRect(32, 2, 30, 60);
+        const url = c.toDataURL('image/png');
+        const run = async (mode) => {
+            __B.doc(200, 200);
+            b.loadCustomTip(url, null);
+            await new Promise(r => setTimeout(r, 400));
+            ['texture', 'opacity', 'flow', 'scatter', 'colorRate', 'sizeSrc',
+             'taperStart', 'taperEnd', 'tip2Depth'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+            b.setParam('dynamicsMode', 'off');
+            b.setParam('size', 80); b.setParam('hardness', 100);
+            b.setParam('tipMode', mode);
+            const L = __B.layer();
+            b.beginStroke(100, 100, 1, '#808080');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 200));
+            return { left: __B.px(L, 80, 100), right: __B.px(L, 120, 100) };
+        };
+        const out = { alpha: await run('alpha'), light: await run('lightness'),
+                      color: await run('color') };
+        b.forgetSaved(b._currentPreset || 'Round');
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(tm));
+    const redOf = (s) => parseInt(s.split(',')[0], 10);
+    check('a cut-out tip paints the colour it was given, evenly',
+        redOf(tm.alpha.left) === redOf(tm.alpha.right) && Math.abs(redOf(tm.alpha.left) - 128) < 3,
+        JSON.stringify(tm.alpha));
+    check('a lightness-mapped tip darkens under its dark half and lightens under its light one',
+        redOf(tm.light.left) < 100 && redOf(tm.light.right) > 160, JSON.stringify(tm.light));
+    check('a tip that stamps its own picture ignores the colour entirely',
+        redOf(tm.color.left) < 60 && redOf(tm.color.right) > 200, JSON.stringify(tm.color));
+
+    /* Two engines that are not brushes. The experiment brush fills the
+     * outline the stroke draws; the deform brush moves pixels that are
+     * already on the layer and lays no paint of its own. */
+    console.log('\n== an engine that fills what the stroke encloses ==');
+    const shp = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        const L = __B.doc(300, 300);
+        b.setParam('engineKind', 'shape');
+        b.setParam('flow', 100);
+        b.beginStroke(60, 60, 1, '#ff0000');
+        for (const [x, y] of [[240, 60], [240, 240], [60, 240], [60, 60]]) {
+            for (let i = 0; i < 6; i++) b.moveStroke(x, y, 1, '#ff0000');
+        }
+        b.endStroke();
+        await new Promise(r => setTimeout(r, 200));
+        const out = { middle: __B.px(L, 150, 150), corner: __B.px(L, 20, 20),
+                      edge: __B.px(L, 150, 62) };
+        b.setParam('engineKind', 'brush');
+        b.forgetSaved(b._currentPreset || 'Round');
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(shp));
+    check('the inside of the outline is filled', shp.middle === '255,0,0,255', shp.middle);
+    check('...and the outside of it is not', shp.corner === CLEAR, shp.corner);
+
+    console.log('\n== an engine that moves the pixels it finds ==');
+    const dfm = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        const L = __B.doc(300, 300);
+        // A hard red square to push about, and nothing else on the layer.
+        L.ctx.fillStyle = '#ff0000';
+        L.ctx.fillRect(100, 100, 100, 100);
+        const at = (x, y) => __B.px(L, x, y);
+        const before = { inside: at(150, 150), rightOfIt: at(230, 150) };
+        b.setParam('engineKind', 'deform');
+        b.setParam('deformAction', 'move');
+        b.setParam('deformAmount', 100);
+        b.setParam('size', 160);
+        b.setParam('spacing', 15);
+        b.beginStroke(150, 150, 1, '#0000ff');
+        for (let i = 1; i <= 40; i++) {
+            b.moveStroke(150 + i * 2, 150, 1, '#0000ff');
+            if (i % 8 === 0) await new Promise(r => requestAnimationFrame(r));
+        }
+        b.endStroke();
+        await new Promise(r => setTimeout(r, 200));
+        const after = { inside: at(150, 150), rightOfIt: at(230, 150) };
+        b.setParam('engineKind', 'brush');
+        b.forgetSaved(b._currentPreset || 'Round');
+        b.loadPreset('Round');
+        return JSON.stringify({ before, after, steps: PaintApp.state.history.length });
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(dfm));
+    check('the paint it dragged over lands where it was dragged to',
+        dfm.before.rightOfIt === CLEAR && dfm.after.rightOfIt !== CLEAR,
+        JSON.stringify([dfm.before.rightOfIt, dfm.after.rightOfIt]));
+    check('...and it painted none of its own colour doing it',
+        !/^0,0,255/.test(dfm.after.rightOfIt), dfm.after.rightOfIt);
+    check('...and a deform is one undo step like any other stroke',
+        dfm.steps === 2, String(dfm.steps));
+
+    /* Tips are 1024px now rather than 200, and every distinct size, angle
+     * and squash of one is baked and kept. A stroke whose size rides the pen
+     * asks for a different one per pressure step, so unbounded that cache is
+     * a leak t the brush. */
+    console.log('== a big tip does not fill memory with itself ==');
+    const tc = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        __B.doc();
+        const c = document.createElement('canvas'); c.width = c.height = 500;
+        const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, 500, 500);
+        b.loadCustomTip(c.toDataURL('image/png'), null);
+        await new Promise(r => setTimeout(r, 800));
+        const out = { peak: 0, shape: b.getParams().shape };
+        for (let s = 200; s <= 700; s += 10) {
+            b.setParam('size', s);
+            b.beginStroke(40, 40, 0.9, '#000');
+            for (let i = 1; i <= 8; i++) b.moveStroke(40 + i * 16, 40 + i * 16, 0.9, '#000');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 0));
+            out.peak = Math.max(out.peak, b._tipCacheBytes());
+        }
+        out.end = b._tipCacheBytes();
+        /* Settings persist per preset, so a tip loaded onto Round stays on
+         * Round and the next test paints with somebody else's chalk. */
+        b.forgetSaved(b._currentPreset || 'Round');
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(tc));
+    check('baking fifty sizes of a 500px tip stays inside its budget',
+        tc.peak > 0 && tc.peak <= 24 * 1024 * 1024,
+        `${Math.round(tc.peak / 1048576)}MB at its highest`);
 
     /* ── multi-shape tips ─────────────────────────────────────────────── */
     console.log('== a tip with several shapes ==');
@@ -2035,6 +2413,36 @@ await withPage(async (page) => {
         await __B.stroke(20, 100, 380, 100, '#00ff00');
         out.smudgeCarries = __B.px(L4, 240, 100);
 
+        /* Colour variation. Four of the brush formats we read ask for it,
+         * and the engine had none -- so four readers had to report it lost.
+         * The wobble has to be real, and it has to be repeatable: it comes
+         * off the same per-position hash as scatter, so the same stroke with
+         * the same seed has to redraw the same speckle. */
+        function jitterStrip() {
+            __B.doc(400, 200);
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+            b.setParam('size', 10); b.setParam('hardness', 100);
+            b.setParam('spacing', 30);
+            b.setParam('hueJitter', 60); b.setParam('satJitter', 0); b.setParam('valJitter', 0);
+            b._setStrokeSeed(12345);
+            return __B.layer();
+        }
+        const LJ = jitterStrip();
+        await __B.stroke(20, 100, 380, 100, '#808000');
+        out.jitterA = __B.hash(LJ);
+        out.jitterPix = [__B.px(LJ, 60, 100), __B.px(LJ, 200, 100), __B.px(LJ, 340, 100)];
+
+        const LJ2 = jitterStrip();
+        await __B.stroke(20, 100, 380, 100, '#808000');
+        out.jitterB = __B.hash(LJ2);
+
+        const LJ3 = jitterStrip();
+        b.setParam('hueJitter', 0);
+        await __B.stroke(20, 100, 380, 100, '#808000');
+        out.plainPix = [__B.px(LJ3, 60, 100), __B.px(LJ3, 200, 100), __B.px(LJ3, 340, 100)];
+        b._setStrokeSeed(null);
+
         b.loadPreset('Round');
         return JSON.stringify(out);
     })()`));
@@ -2056,6 +2464,12 @@ await withPage(async (page) => {
     check('a smudge brush still picks colour up off the canvas',
         Number(sc.smudgeCarries.split(',')[0]) > 60,
         `carried ${sc.smudgeCarries}`);
+    check('colour jitter really varies the colour along a stroke',
+        new Set(sc.jitterPix).size === 3, sc.jitterPix.join(' | '));
+    check('...and with it off the stroke is one colour',
+        new Set(sc.plainPix).size === 1, sc.plainPix.join(' | '));
+    check('...and the same stroke on the same seed comes out the same',
+        sc.jitterA === sc.jitterB, `${sc.jitterA} vs ${sc.jitterB}`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

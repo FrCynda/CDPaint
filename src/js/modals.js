@@ -7,7 +7,7 @@
 (function () {
     Object.assign(PaintEngine.prototype, {
             initModalInteractions() {
-                const ids = ['modal-resize', 'modal-depth', 'modal-gapstitch', 'modal-export', 'modal-huesat', 'save-reminder-modal', 'close-confirm-modal', 'modal-info', 'modal-colors', 'modal-confirm-reset', 'modal-toolbar', 'modal-tool-customizer'];
+                const ids = ['modal-resize', 'modal-depth', 'modal-gapstitch', 'modal-export', 'modal-huesat', 'save-reminder-modal', 'close-confirm-modal', 'modal-info', 'modal-colors', 'modal-confirm-reset', 'modal-toolbar', 'modal-tool-customizer', 'modal-brush-pack'];
                 ids.forEach(id => {
                     const modal = document.getElementById(id);
                     if (!modal) return;
