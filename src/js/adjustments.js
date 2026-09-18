@@ -1088,7 +1088,7 @@
                     }
 
                     if (mode === 'rgb565' || mode === 'rgb555') {
-                        if (!dither && !grayscale && this.applyWebGLQuantize(mode, this.depthBackup, target)) {
+                        if (!dither && this.applyWebGLQuantize(mode, this.depthBackup, target, grayscale)) {
                             if(this.state.selection) this.renderSelection(); else this.saveState();
                             return;
                         }

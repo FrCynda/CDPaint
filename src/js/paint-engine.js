@@ -975,6 +975,7 @@
                 wandMaskImageData: null,
                 wandJobId: 0,
                 curveUndo: null,
+                activeShapeUndo: null,
                 pencilCtrlAxis: null,
                 selectionOriginalPos: null,
                 selectionRotateSession: null,
@@ -5403,7 +5404,14 @@
             if (this.ui.svgSelRect) {
                 this.ui.svgSelRect.classList.toggle('svg-marquee-invert', isCreating);
                 this.ui.svgSelRect.classList.toggle('marquee-blue', !isCreating);
-                this.ui.svgSelRect.style.strokeWidth = '1';
+                // vector-effect:non-scaling-stroke defeats crisp rendering when combined
+                // with mix-blend-mode:difference (Chromium resamples the stroke's inverse-
+                // transform compensation), so the creating marquee always uses a plain
+                // scaling stroke instead, with the local width pre-divided by zoom below
+                // 100% (z is always an exact power of two there, so this is lossless) to
+                // still land on exactly 1 device pixel after the parent's CSS scale.
+                this.ui.svgSelRect.classList.toggle('svg-marquee-stroke-scale', isCreating);
+                this.ui.svgSelRect.style.strokeWidth = isCreating ? String(z >= 1 ? 1 : 1 / z) : '1';
                 const dashBase = z >= 8 ? 12 : 4;
                 const dash = overlayUnscaled ? dashBase : (dashBase / z);
                 const dashPattern = `${dash} ${dash}`;
@@ -5476,22 +5484,41 @@
             const updateRect = (el, x, y, w, h, show) => {
                 if (!show) { el.style.display = 'none'; return; }
                 el.style.display = 'block';
-                const baseX = x * overlayScale;
-                const baseY = y * overlayScale;
-                const snap = overlayUnscaled ? Math.round : (isCreating ? Math.round : Math.floor);
-                let sx = snap(baseX) + alignOffset;
-                let sy = snap(baseY) + alignOffset;
-                let sw = overlayUnscaled ? Math.round(w * overlayScale) : Math.floor(w * overlayScale);
-                let sh = overlayUnscaled ? Math.round(h * overlayScale) : Math.floor(h * overlayScale);
-                if (sw < 0) { sx += sw; sw = Math.abs(sw); }
-                if (sh < 0) { sy += sh; sh = Math.abs(sh); }
-                if (isCreating && el === this.ui.svgSelRect) {
-                    const inset = 0.5; // Shrink the "creating" marquee by 0.5 screen-px per edge
-                                               // so it sits entirely inside the selection rather than straddling the boundary.
-                    sx += inset;
-                    sy += inset;
-                    sw = Math.max(0, sw - (inset * 2));
-                    sh = Math.max(0, sh - (inset * 2));
+                let sx, sy, sw, sh;
+                if (isCreating && (el === this.ui.svgSelRect || el === this.ui.svgSelRectBack)) {
+                    // Snap all four edges to real device pixels so the marquee is crisp at
+                    // any zoom (the SVG inherits the stage's CSS translate+scale here, so a
+                    // local coordinate of `v` lands at screen pixel `stageOrigin + v*z` — in
+                    // free (unanchored) canvas mode that origin is frequently fractional, from
+                    // panning/zoom-to-cursor deltas that were never rounded to a whole pixel,
+                    // so it has to be folded into the rounding or every edge inherits that same
+                    // fractional offset and blurs). The stroke itself is 1 canvas pixel thick at
+                    // >=100% zoom (it grows with zoom, via the svg-marquee-stroke-scale class
+                    // above) or a constant 1 screen pixel below 100% zoom (via a pre-divided
+                    // local stroke-width, see the classList.toggle('svg-marquee-stroke-scale', ...)
+                    // block above — a scaling stroke throughout, never non-scaling-stroke).
+                    const strokeDev = z >= 1 ? z : 1;
+                    const stageRect = this.bounds || (this.ui.stage ? this.ui.stage.getBoundingClientRect() : { left: 0, top: 0 });
+                    const originX = stageRect.left, originY = stageRect.top;
+                    const leftAbs = Math.round(originX + x * z);
+                    const topAbs = Math.round(originY + y * z);
+                    const rightAbs = Math.round(originX + (x + w) * z);
+                    const bottomAbs = Math.round(originY + (y + h) * z);
+                    const off = (strokeDev / 2) / z;
+                    sx = (leftAbs - originX) / z + off;
+                    sy = (topAbs - originY) / z + off;
+                    sw = Math.max(0, (rightAbs - leftAbs) / z - strokeDev / z);
+                    sh = Math.max(0, (bottomAbs - topAbs) / z - strokeDev / z);
+                } else {
+                    const baseX = x * overlayScale;
+                    const baseY = y * overlayScale;
+                    const snap = overlayUnscaled ? Math.round : Math.floor;
+                    sx = snap(baseX) + alignOffset;
+                    sy = snap(baseY) + alignOffset;
+                    sw = overlayUnscaled ? Math.round(w * overlayScale) : Math.floor(w * overlayScale);
+                    sh = overlayUnscaled ? Math.round(h * overlayScale) : Math.floor(h * overlayScale);
+                    if (sw < 0) { sx += sw; sw = Math.abs(sw); }
+                    if (sh < 0) { sy += sh; sh = Math.abs(sh); }
                 }
                 el.setAttribute('x', sx);
                 el.setAttribute('y', sy);
@@ -6187,6 +6214,7 @@
                 return;
             }
             this.state.activeShape = shape;
+            this.state.activeShapeUndo = null;
             this.state.shapeEditMode = true;
             this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
             this.renderActiveShape();
@@ -6547,7 +6575,10 @@
 
             if(this.config.tool === 'curve') {
                 this.state.curveDrawSlot = e.button === 2 ? 2 : 1;
-                if(this.state.curvePhase===0) this.state.curvePts = [{x:p.x,y:p.y}, {x:p.x,y:p.y}];
+                if(this.state.curvePhase===0) {
+                    this.state.curvePts = [{x:p.x,y:p.y}, {x:p.x,y:p.y}];
+                    this.state.curveUndo = null;
+                }
                 return;
             }
 
@@ -7262,6 +7293,7 @@
             const h = (maxY - minY) || 1;
             const norm = pts.map(pt => ({ x: (pt.x - minX) / w, y: (pt.y - minY) / h }));
             this.state.activeShape = { type: 'poly', x: minX, y: minY, w: w, h: h, c: this.getActiveDrawColor(false), lw: this.config.shapeWidth, points: norm, closed, colorSlot: 1 };
+            this.state.activeShapeUndo = null;
             this.state.shapeEditMode = true;
             this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
             this.state.polyActive = false;
@@ -7456,6 +7488,7 @@
                     const norm = [pts[0], pts[1], pts[2], p2].map(pt => ({ x:(pt.x-minX)/w, y:(pt.y-minY)/h }));
 
                     this.state.activeShape = { type: 'curve', x:minX, y:minY, w:w, h:h, c:color, lw:this.config.shapeWidth, points: norm, colorSlot: this.state.curveDrawSlot || 1 };
+                    this.state.activeShapeUndo = null;
                     this.state.shapeEditMode = true;
                     this.state.curvePhase=0;
                     this.state.curvePreviewPoint = null;
@@ -7490,6 +7523,7 @@
 
                 const color = this.getActiveDrawColor(this.state.freehandPathSlot === 2);
                 this.state.activeShape = { type: 'curve', x:minX, y:minY, w:w, h:h, c:color, lw:this.config.shapeWidth, points: flatPoints, colorSlot: this.state.freehandPathSlot, multiSeg: true };
+                this.state.activeShapeUndo = null;
                 this.state.shapeEditMode = true;
                 this.renderActiveShape();
                 return;
@@ -7538,6 +7572,7 @@
                 }
 
                 this.state.activeShape = { type:this.config.tool, x:drawX, y:drawY, w:w, h:h, c:color, lw:this.config.shapeWidth, colorSlot: (e.button === 2 ? 2 : 1) };
+                this.state.activeShapeUndo = null;
                 this.state.shapeEditMode = true;
                 this.renderActiveShape();
             } else {
@@ -8188,6 +8223,7 @@
             // worst offender: it makes redo() replay another document's curve.
             s.curvePhase = 0; s.curvePts = [];
             s.curveUndo = null;
+            s.activeShapeUndo = null;
             // Freehand / brush gestures
             s.freehandPathActive = false; s.freehandPathPoints = [];
             s.freehandActive = false; s.freehandPoints = [];
@@ -9514,7 +9550,14 @@ void main() {
         }
         applyStageTransform() {
             var off = this.state.canvasOffset || { x: 0, y: 0 };
-            this.ui.stage.style.transform = 'translate(' + off.x + 'px, ' + off.y + 'px) scale(' + this.config.zoom + ')';
+            // A fractional CSS translate puts the stage layer at a sub-pixel screen
+            // position, so the compositor has to resample its whole contents (the
+            // canvas raster and the marquee overlay alike) even when everything drawn
+            // inside is itself pixel-snapped — rounding here, at the one place the
+            // transform is ever written, keeps state.canvasOffset free to stay
+            // fractional (zoom-to-cursor math wants that) while the render is crisp.
+            var x = Math.round(off.x), y = Math.round(off.y);
+            this.ui.stage.style.transform = 'translate(' + x + 'px, ' + y + 'px) scale(' + this.config.zoom + ')';
         }
         _followCanvasWhileShifting() {
             // The transition is 240ms; the margin covers the frame it starts on
@@ -9630,8 +9673,39 @@ void main() {
             this.requestGlobalOverlayUpdate();
         }
         setTool(t) {
-            // Don't commit selection when entering/exiting gradient — it clips the gradient
-            if(this.state.selection && t !== 'gradient' && this.config.tool !== 'gradient' && (t!=='select' || this.config.tool==='select')) this.commitSelection();
+            // A curve gesture that stopped after just the straight line (phase 1)
+            // or after only one bezier control point (phase 2) never reaches the
+            // point where the phase-2 mouseup below turns it into an activeShape,
+            // so switching tools used to discard it outright. Promote it into the
+            // same activeShape a finished curve would produce, so the commit check
+            // right below — which already bakes any pending activeShape when the
+            // tool changes — picks it up exactly like a finished curve.
+            if (this.config.tool === 'curve' && t !== 'curve' && this.state.curvePhase !== 0 &&
+                this.state.curvePts && this.state.curvePts.length >= 2) {
+                const pts = this.state.curvePts;
+                const start = pts[0], end = pts[1];
+                const hasControl = this.state.curvePhase === 2 && pts[2];
+                const ctrl1 = hasControl ? pts[2] : start;
+                const ctrl2 = hasControl ? pts[2] : end;
+                const color = this.getActiveDrawColor(this.state.curveDrawSlot === 2);
+                const _aabb = this.cubicBezierAABB(start, ctrl1, ctrl2, end);
+                const minX = _aabb.minX, maxX = _aabb.maxX, minY = _aabb.minY, maxY = _aabb.maxY;
+                const w = maxX - minX || 1, h = maxY - minY || 1;
+                const norm = [start, end, ctrl1, ctrl2].map(pt => ({ x: (pt.x - minX) / w, y: (pt.y - minY) / h }));
+                this.state.activeShape = { type: 'curve', x: minX, y: minY, w, h, c: color, lw: this.config.shapeWidth, points: norm, colorSlot: this.state.curveDrawSlot || 1 };
+                this.state.activeShapeUndo = null;
+                this.state.shapeEditMode = true;
+                this.state.curvePhase = 0;
+                this.state.curvePts = [];
+                this.state.curvePreviewPoint = null;
+            }
+            // Don't commit selection when entering/exiting gradient — it clips the gradient.
+            // Don't commit it either when switching to any select-family tool (rectangle,
+            // free-form lasso, polygonal lasso — all reached via the same toolbar button,
+            // differing only by config.selectTool/lassoSelectMode): they're all just ways
+            // to keep adjusting the same live selection, not a reason to bake it down.
+            const _enteringSelectFamily = (t === 'select' || t === 'lasso');
+            if(this.state.selection && t !== 'gradient' && this.config.tool !== 'gradient' && !_enteringSelectFamily) this.commitSelection();
             if(this.state.activeShape && t!==this.state.activeShape.type) this.commitActiveShape();
             if(this.state.polyActive && t!=='poly') this.commitPolyline();
             if (this.state.lassoActive && t!=='lasso') {
@@ -9674,7 +9748,13 @@ void main() {
                 // Restore selection handles when leaving gradient tool
                 if (this.state.selection) {
                     this.state.selection.noHandles = false;
-                    this.renderSelection();
+                    // Reselecting a select-family tool (rectangle, free-form or
+                    // polygonal lasso — all reached via the same toolbar button,
+                    // differing only by config.selectTool/lassoSelectMode) keeps
+                    // the selection live and movable; any other tool commits it
+                    // to the canvas, same as leaving the select tool itself does.
+                    if (t === 'select' || t === 'lasso') this.renderSelection();
+                    else this.commitSelection();
                 }
                 _cacheClear();
             }

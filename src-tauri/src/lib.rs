@@ -12,11 +12,6 @@ const MIN_WINDOW_WIDTH: u32 = 400;
 const MIN_WINDOW_HEIGHT: u32 = 400;
 
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-#[tauri::command]
 fn get_app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
@@ -1161,7 +1156,6 @@ pub fn run() {
             });
         }))
         .invoke_handler(tauri::generate_handler![
-            greet,
             get_app_version,
             updater_check,
             updater_download_and_install,
