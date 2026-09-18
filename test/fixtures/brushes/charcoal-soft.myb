@@ -1,6 +1,7 @@
 {
  "version": 3,
- "comment": "Charcoal Soft",
+ "comment": "MyPaint brush file",
+ "description": "Charcoal Soft",
  "group": "",
  "settings": {
   "radius_logarithmic": {

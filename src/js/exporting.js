@@ -299,6 +299,109 @@
                 ctx.putImageData(destData, 0, 0);
                 this.updateExportOutputInfo();
             },
+            /* A PNG of this canvas, palette-encoded when the picture uses 256
+               colours or fewer -- which is most sprite and tile work. The
+               browser's own encoder always writes 32-bit RGBA no matter how few
+               colours are actually on screen, so indexing is the single biggest
+               lossless saving available to us: four times fewer bytes before
+               compression gets a look in, and more again at 4, 2 or 1 bits per
+               pixel. Anything with too many colours to index (a soft-brushed
+               painting) falls back to toBlob, so the caller always gets a PNG.
+
+               This is a repack, not a requantise -- if the colours do not fit in
+               a palette we do not force them into one, and the alpha channel is
+               left exactly as painted. */
+            async pngBlobFromCanvas(canvas) {
+                let indexed = null;
+                try {
+                    indexed = await this.indexedPngFromCanvas(canvas);
+                } catch (e) {
+                    console.warn('Indexed PNG encode failed, falling back to toBlob', e);
+                }
+                if (indexed) return new Blob([indexed], { type: 'image/png' });
+                return new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            },
+            async indexedPngFromCanvas(canvas) {
+                const w = canvas.width, h = canvas.height;
+                if (!w || !h) return null;
+                const d = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+                const seen = new Map();
+                const indices = new Uint8Array(w * h);
+                for (let i = 0, p = 0; p < d.length; p += 4, i++) {
+                    // Packed by hand rather than read through a Uint32Array view so
+                    // the key does not depend on the machine's byte order.
+                    const key = (d[p] | d[p + 1] << 8 | d[p + 2] << 16 | d[p + 3] << 24) >>> 0;
+                    let idx = seen.get(key);
+                    if (idx === undefined) {
+                        if (seen.size === 256) return null;
+                        idx = seen.size;
+                        seen.set(key, idx);
+                    }
+                    indices[i] = idx;
+                }
+                const palette = [...seen.keys()].map(k => ({
+                    r: k & 255, g: (k >>> 8) & 255, b: (k >>> 16) & 255, a: (k >>> 24) & 255
+                }));
+                const bitDepth = seen.size <= 2 ? 1 : seen.size <= 4 ? 2 : seen.size <= 16 ? 4 : 8;
+                return this.generateIndexedPNG(w, h, indices, palette, bitDepth);
+            },
+            /* Choose a row filter per row, the way every other PNG writer does.
+               Deflate only sees repetition, so subtracting each byte from its
+               left or upper neighbour first is usually what makes a picture
+               compress at all -- writing filter 0 everywhere, as this did, cost
+               enough that an indexed PNG could come out bigger than the 32-bit
+               one the browser writes. Picks by the standard minimum-sum-of-
+               absolute-differences heuristic, which is a guess at which filter
+               deflates smallest, not a measurement.
+
+               ponytail: five passes over the pixels, so it scales with canvas
+               area. Only palette pictures come through here and they are small;
+               if that stops being true, try filters on a sample of rows. */
+            filterPngRows(packed, h, rowBytes) {
+                const out = new Uint8Array(h * (rowBytes + 1));
+                const cand = new Uint8Array(rowBytes);
+                for (let y = 0; y < h; y++) {
+                    const cur = y * rowBytes, prev = cur - rowBytes;
+                    const dest = y * (rowBytes + 1);
+                    let bestType = 0, bestScore = Infinity, bestRow = null;
+                    for (let type = 0; type < 5; type++) {
+                        if (type > 1 && y === 0 && type !== 4) {
+                            /* Up and Average against a non-existent row above are
+                               legal but pointless on row 0; Paeth degenerates to
+                               Sub there, which is worth keeping in the running. */
+                            if (type === 2) continue;
+                        }
+                        let score = 0;
+                        for (let x = 0; x < rowBytes; x++) {
+                            const raw = packed[cur + x];
+                            const a = x >= 1 ? packed[cur + x - 1] : 0;
+                            const b = y > 0 ? packed[prev + x] : 0;
+                            const c = (x >= 1 && y > 0) ? packed[prev + x - 1] : 0;
+                            let v;
+                            if (type === 0) v = raw;
+                            else if (type === 1) v = raw - a;
+                            else if (type === 2) v = raw - b;
+                            else if (type === 3) v = raw - ((a + b) >> 1);
+                            else {
+                                const p = a + b - c;
+                                const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+                                v = raw - ((pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c));
+                            }
+                            v &= 0xff;
+                            cand[x] = v;
+                            score += v < 128 ? v : 256 - v;
+                        }
+                        if (score < bestScore) {
+                            bestScore = score;
+                            bestType = type;
+                            bestRow = cand.slice();
+                        }
+                    }
+                    out[dest] = bestType;
+                    out.set(bestRow, dest + 1);
+                }
+                return out;
+            },
             async generateIndexedPNG(w, h, indices, palette, bitDepth, trns) {
                 const ihdr = new Uint8Array(13);
                 const ihdrView = new DataView(ihdr.buffer);
@@ -334,27 +437,26 @@
                 }
 
                 const rowBytes = Math.ceil((w * bitDepth) / 8);
-                const rawData = new Uint8Array(h * (rowBytes + 1));
+                const packed = new Uint8Array(h * rowBytes);
                 for (let y = 0; y < h; y++) {
-                    rawData[y * (rowBytes + 1)] = 0;
-                    const base = y * (rowBytes + 1) + 1;
                     let bitBuffer = 0;
                     let bitsFilled = 0;
-                    let byteIndex = base;
+                    let byteIndex = y * rowBytes;
                     for (let x = 0; x < w; x++) {
                         const idx = indices[y * w + x] & ((1 << bitDepth) - 1);
                         bitBuffer = (bitBuffer << bitDepth) | idx;
                         bitsFilled += bitDepth;
                         while (bitsFilled >= 8) {
                             bitsFilled -= 8;
-                            rawData[byteIndex++] = (bitBuffer >> bitsFilled) & 0xff;
+                            packed[byteIndex++] = (bitBuffer >> bitsFilled) & 0xff;
                         }
                     }
                     if (bitsFilled > 0) {
-                        rawData[byteIndex] = (bitBuffer << (8 - bitsFilled)) & 0xff;
+                        packed[byteIndex] = (bitBuffer << (8 - bitsFilled)) & 0xff;
                     }
                 }
 
+                const rawData = this.filterPngRows(packed, h, rowBytes);
                 const idatData = await CompressionCompat.deflate(rawData);
 
                 const sig = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -757,7 +859,13 @@
                 const finish = () => {
                     const opts = {};
                     if(space === 'p3') opts.colorSpace = 'display-p3';
-                    this.ui.cMain.toBlob(blob => {
+                    // Display-P3 stays on the browser encoder: reading the pixels back
+                    // through getImageData would convert them to sRGB and the export
+                    // would quietly come out in the wrong colours.
+                    const encode = (format !== 'jpeg' && space !== 'p3')
+                        ? this.pngBlobFromCanvas(this.ui.cMain)
+                        : new Promise(resolve => this.ui.cMain.toBlob(resolve, mime, 1.0, opts));
+                    encode.then(blob => {
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = url;
@@ -765,7 +873,7 @@
                         a.click();
                         setTimeout(() => URL.revokeObjectURL(url), 100);
                         this.closeModals();
-                    }, mime, 1.0, opts);
+                    });
                 };
                 finish();
             },

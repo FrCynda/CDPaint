@@ -709,18 +709,6 @@
      * like the pattern itself. Revert by making _applyTextureNoise use
      * `tile` instead of `_invertedTile(tile)` again. */
     var _texInverted = new WeakMap();
-    /* Contrast on the speck values themselves, not a multiplier on top of
-     * them: the destination-out strength below is already clamped at 1 (full
-     * removal at full speck density), so once a brush's own texture dial is
-     * anywhere near 60-100 that multiplier is already saturated and has no
-     * headroom left to push darker/more contrasty -- confirmed directly,
-     * not assumed (two different multiplier values that both landed above
-     * 1 after clamping rendered pixel-identical). Squaring the speck alpha
-     * (gamma 2) spreads the distribution instead: faint paper noise gets
-     * pushed further toward "barely removes anything" while the strong
-     * specks stay close to full strength, so the punched holes read
-     * starker against the untouched ink instead of a uniform light peppering. */
-    var _TEX_CONTRAST_GAMMA = 2.4;
     function _invertedTile(tile) {
         var inv = _texInverted.get(tile);
         if (inv) return inv;
@@ -729,10 +717,7 @@
         ictx.drawImage(tile, 0, 0);
         var id = ictx.getImageData(0, 0, tile.width, tile.height);
         var d = id.data;
-        for (var i = 3; i < d.length; i += 4) {
-            var v = (255 - d[i]) / 255;
-            d[i] = _round(Math.pow(v, _TEX_CONTRAST_GAMMA) * 255);
-        }
+        for (var i = 3; i < d.length; i += 4) d[i] = 255 - d[i];
         ictx.putImageData(id, 0, 0);
         _texInverted.set(tile, inv);
         return inv;
@@ -751,15 +736,6 @@
      * The phase is taken modulo the tile so a dab at x=30000 shifts the
      * pattern by the same sub-tile amount as one at x=30, without handing
      * the rasteriser a huge translate to lose precision in. */
-    /* How coarse the paper reads, on top of what the brush's own dial asks
-     * for. The dial says how many tile-widths fit across the stroke; this says
-     * how big a tile-width actually is, and there is nothing in a .sut that
-     * pins it -- Clip Studio renders its papers against its own canvas
-     * resolution, not ours. So it is a calibration knob, set by eye against
-     * CSP.png and then by the user against real strokes (1.71 -> 2.05, "a bit
-     * too small, maybe 20%"). Turn this, not the dial, when imported grain
-     * comes out the wrong coarseness across the board. */
-    var _TEX_GRAIN_SCALE = 2.05;
     function _applyTextureNoise(ctx, w, h, textureLevel, textureScale, textureType, ox, oy) {
         if (textureLevel <= 0) return;
         var tile = _grainTile(textureType);
@@ -774,7 +750,7 @@
          * tile keeps exactly its old behavior (ratio 1), and a 300px import
          * renders at the same PHYSICAL size the dial intends instead of
          * whatever its source PNG happened to be exported at. */
-        var scale = _max(0.05, (textureScale || 4) * (_TEX_SIZE / tile.width) * _TEX_GRAIN_SCALE);
+        var scale = _max(0.05, (textureScale || 4) * (_TEX_SIZE / tile.width));
         /* Mask-style paper tiles (CSP grain: specks in alpha) remove paint
          * instead of tinting it: destination-out scales the dab's own alpha
          * by (1 - speck * strength), so the paper shows through where the
@@ -824,18 +800,15 @@
      * sliding window — O(rect) with flat buffers, nothing allocated per
      * pixel. Deterministic in its inputs. */
     function _applyWaterEdge(ctx, x, y, w, h, width, density) {
-        /* Floor of 2, down from 8 and then 4: a wider floor did register a
+        /* Floor of 4: narrower than a first pass at 8, which did register a
          * real deficit (measured directly, not assumed) but spread the
          * response over such a wide neighbourhood that the ring read as a
          * broad soft band instead of CSP's thin, crisp line -- reported
-         * directly against a real render, 2026-09-17. An even earlier floor
-         * of 3, tried before this file used a pure alpha boost (see the
-         * ring's own comment above), sat entirely inside this brush's own
-         * boundary ramp and looked unreadably thin next to that older,
-         * weaker RGB-mix recipe -- but a radius this narrow works now that
-         * _EDGE_LIFT (below _WATERCOLOR_WASH) can push a genuinely tight
-         * band all the way to full alpha on its own, so it no longer needs
-         * a wide detector to read as visible. A ring's radius sets both how
+         * directly against a real render, 2026-09-17. 8 came from an even
+         * earlier floor of 3 that sat entirely inside this brush's own
+         * several-pixel boundary ramp and saw no true alpha=0 to register
+         * a deficit against at all; some floor above that ramp is still
+         * required, just not one this wide -- a ring's radius sets both how
          * far it reaches AND how far it blurs, so the width fix belongs
          * here, not in a separate falloff curve on top of a wide detector. */
         var r = _max(2, _round(width));
@@ -891,33 +864,6 @@
                 if (e > 1) e = 1;
                 e *= k;
                 var o = i * 4;
-                /* The rim is MORE OF THE SAME PAINT, not a different colour:
-                 * pigment pools at a drying edge, so that band has simply had
-                 * more pigment left in it. Since watercolour composites with
-                 * multiply, "more of the same paint" is literally one more
-                 * multiply of the colour by itself -- lerp(c, c*c/255, t) is
-                 * that extra layer, faded in by how much of a rim this pixel
-                 * is. That is the same operation restacking performs, so the
-                 * hue it shifts to is the hue the user already gets by
-                 * painting the stroke twice; it cannot invent a colour, and
-                 * it is bounded below by c squared however strong the rim.
-                 *
-                 * This is NOT the RGB mix that was pulled out of here before
-                 * (see the ring's comment above). That one blended toward a
-                 * FIXED deepened colour with an unclamped weight and ran in
-                 * place, so every redraw re-mixed toward the same colour again
-                 * and the band broadened and went muddy. This is bounded, is
-                 * the paint's own colour rather than a chosen one, and runs on
-                 * a fresh copy each flush, so it neither compounds nor drifts.
-                 * Alpha still carries most of the rim; this is what lets it
-                 * keep getting darker once alpha has run out of headroom. */
-                var t = e * _EDGE_DEEPEN;
-                if (t > 1) t = 1;
-                if (t > 0) {
-                    d[o]     = _round(d[o]     * (1 - t + t * d[o]     / 255));
-                    d[o + 1] = _round(d[o + 1] * (1 - t + t * d[o + 1] / 255));
-                    d[o + 2] = _round(d[o + 2] * (1 - t + t * d[o + 2] / 255));
-                }
                 var na = a + e * _EDGE_LIFT;
                 d[o + 3] = _round(_min(1, na) * 255);
             }
@@ -959,48 +905,12 @@
      * Must run on a COPY, never the live flow buffer in place: unlike a
      * clamp, a multiply is not idempotent, so re-scaling on every live
      * flush of one drag would compound (0.35, then 0.35 of that, ...). */
-    /* Reserved headroom, not the hard 255 ceiling: _applyWaterEdge only ever
-     * ADDS on top of whatever alpha is already here, so if wash is strong
-     * enough to push ordinary interior ink to full opacity on its own (and
-     * a wash this dark is), the ring has nowhere left to add to on most of
-     * the stroke -- confirmed directly, not assumed: at the interior's own
-     * saturation point the ring only kept showing in patches where dab
-     * overlap happened to be thinner, everywhere else it had no room. This
-     * caps ordinary wash below full opacity always, however strong `wash`
-     * gets, so the few percent above it stays genuinely free for the ring
-     * to rise into on every pixel, not just the sparse ones.
-     *
-     * The value is also the brush's CALIBRATION POINT, not an arbitrary
-     * margin. Watercolour composites with multiply (see _flushFlowBuffer), and
-     * over white paper multiply resolves to lerp(white, white*src, a) -- so
-     * this plateau sets the per-stroke coverage that decides how fast
-     * restacking darkens. Note "sets", not "is": the flush-time paper grain
-     * runs after the wash and takes roughly a third of the alpha back out, so
-     * the coverage that actually lands is about 0.64 of this number. Turn
-     * this, not the multiplier below, to match a reference: the multiplier
-     * governs how much of the stroke reaches the plateau, this governs what
-     * the plateau is.
-     *
-     * 193 comes from real CSP measurements of the Flat watercolor brush
-     * (2026-09-17), and supersedes an earlier 214 fitted at coverage 0.836.
-     * That earlier fit was DEGENERATE and the number was simply wrong: every
-     * swatch behind it had a channel pinned at 255, and at 255 a multiply is
-     * the identity, so those colours could not constrain the coverage at all.
-     * The measurements that can are grey #808080 stacked over white (189 /
-     * 111 / 26 / 2 at 1 / 3 / 8 / 20 passes, fitting coverage 0.492) and a
-     * blue-over-red overlap reading #854688, whose three channels
-     * independently fit 0.484 / 0.476 / 0.474. Two unrelated tests, same
-     * answer, so coverage is ~0.49 and this is 0.49/0.546 of the old value.
-     * Re-measure with `node scripts/brush-probe.mjs` (probe 7 prints this
-     * ladder next to the CSP targets); do not re-fit against a colour whose
-     * brightest channel is 255. */
-    var _WASH_CEILING = 193;
     function _applyWatercolorWash(ctx, x, y, w, h, wash) {
         var img;
         try { img = ctx.getImageData(x, y, w, h); } catch (e) { return; }
         var d = img.data, f = _clamp(wash, 0, 4);
         for (var i = 3; i < d.length; i += 4) {
-            d[i] = _min(_WASH_CEILING, _round(d[i] * f));
+            d[i] = _round(d[i] * f);
         }
         ctx.putImageData(img, x, y);
     }
@@ -1017,20 +927,7 @@
             _tintColor = colorHex;
         }
 
-        /* Watercolour grains the finished stroke at flush time instead (see
-         * _flushFlowBuffer), so graining per-dab here as well punches the same
-         * paper twice. Both passes are anchored to the DOCUMENT, not to the
-         * dab, so their specks land on the same pixels and compound into
-         * (1 - k*s)^2 -- at this brush's texture 60 that removes up to 84% of
-         * a speck's alpha, which is most of where its opacity was going. The
-         * flush-time pass is the one worth keeping: at a dab every ~1% of the
-         * brush size, per-dab grain is refilled solid by the next barely
-         * shifted dab almost everywhere, so it is the pass that survives to be
-         * seen. Guarded here rather than at the three call sites because all
-         * of them route through this one line. Cost: a watercolour brush loses
-         * pressure-driven texture modulation, since the flush pass reads the
-         * static param -- no watercolour preset in hand uses that. */
-        if (texture > 0 && !getParams().watercolor) {
+        if (texture > 0) {
             _applyTextureNoise(_scratchCtx, mw, mh, texture, textureScale, textureType, ox, oy);
             _tintMask = null;   // the scratch is no longer a plain tint
         }
@@ -1054,19 +951,6 @@
             _scratchCtx.restore();
             _covCtx.save();
             _covCtx.globalCompositeOperation = 'lighter';
-            /* globalAlpha stays at the default 1 here while the dab itself
-             * paints at `alpha` (see the drawImage below), which reads like a
-             * bug -- a pixel is marked fully covered when only part of the ink
-             * landed -- and recording at `_clamp(alpha, 0, 1)` instead was
-             * tried on 2026-09-17. It changes NOTHING observable: the golden
-             * hashes (singleWet, retraceWet, crossWet) and every reading from
-             * scripts/brush-probe.mjs came back byte-identical. The reason is
-             * that `wetBlend` is only ever set by the .sut watercolour
-             * importer, and on those brushes _applyWatercolorWash rescales the
-             * accumulated alpha and clamps it at _WASH_CEILING at flush time,
-             * which saturates -- so whatever this gate lets through is washed
-             * out downstream anyway. Left as it is rather than "fixed" into a
-             * diff nobody can measure. */
             _covCtx.drawImage(_scratchCanvas, 0, 0, mw, mh, ox, oy, mw, mh);
             _covCtx.restore();
             _growCovUsed(ox, oy, mw, mh);
@@ -1594,27 +1478,6 @@
 
     function _wetColor(p, x, y, colorHex, slot, radius, rate) {
         slot = slot || 0;
-        /* A wash never picks colour up off the canvas. Our smudge and Clip
-         * Studio's colour mixing look like the same control and are not:
-         * measured against real Clip Studio, a white stroke laid across an
-         * existing one leaves that stroke exactly as it was, so whatever
-         * mixing does there it does not change the colour a dab deposits --
-         * while ours deposits colorRate% brush plus the rest canvas. With
-         * that mapped across, this brush's mixing of 25 darkened everything a
-         * white stroke crossed and, on a fresh document, drank the white
-         * background into every dab (a fresh CDPaint document is opaque white
-         * PIXELS; in Clip Studio the white is a separate Paper layer the
-         * mixing cannot read). Measured on ten stacked strokes of #87CEEB: it
-         * cost about a fifth of the first stroke's coverage, and a white
-         * stroke over the stack darkened it from (7,53,137) to (8,47,126).
-         *
-         * Here rather than only in the importer (which no longer maps mixing
-         * at all) because presets are already saved to localStorage with the
-         * old value, and those must stop smudging without being re-imported.
-         * Nothing sets `watercolor` but the Clip Studio importer -- there is
-         * no UI control for it -- so this cannot take a smudge away from a
-         * brush anyone deliberately built. */
-        if (p.watercolor) return colorHex;
         if (rate == null) rate = p.colorRate;
         /* How wide a patch the brush picks colour up from. A dab's own
          * radius is the default and was the only option; MyPaint alone spans
@@ -1717,12 +1580,7 @@
          * tip off under light pressure, which is backwards. */
         var asp = p.aspectRatio;
         if (p.aspectRatioSrc && p.aspectRatioSrc !== 'none') {
-            /* Floor of 0.1, not 1: both mask paths already squash the OTHER
-             * axis below 1 (_generateMask, _getCustomTipMask), so a tip
-             * flatter the other way round is a tip they can build -- clamping
-             * here at 1 was the only thing making a sub-1 aspect snap back to
-             * round the moment a sensor drove it. */
-            asp = _clamp(asp / _max(0.01, _dyn(p, 'aspectRatio', 1, sc, 7)), 0.1, 20);
+            asp = _clamp(asp / _max(0.01, _dyn(p, 'aspectRatio', 1, sc, 7)), 1, 20);
         }
         var tex = _clamp(_dyn(p, 'texture', p.texture, sc, 8), 0, 100);
         var scatterAmt = _dyn(p, 'scatter', p.scatter, sc, 5);
@@ -2113,27 +1971,8 @@
      * the ring. The per-pixel clamp in _applyWatercolorWash still caps at
      * 255 regardless, so this cannot blow out the soft taper at a stroke's
      * own ends -- only pixels already near-opaque saturate early. The
-     * importer marks such brushes (watercolor: 1).
-     *
-     * Since watercolour started compositing with multiply (_flushFlowBuffer),
-     * this constant no longer decides how DARK a wash reads -- multiply does,
-     * and _WASH_CEILING sets the coverage it multiplies at. What this still
-     * decides is how much of a stroke reaches that ceiling: a stroke's raw
-     * per-dab alpha is well under 1, so without the boost most of the stroke
-     * would sit far below the plateau and the stroke would read thin and
-     * uneven rather than as a flat wash with a pooled rim. Turn _WASH_CEILING
-     * to match a reference's darkness; turn this to change how much of the
-     * stroke gets there.
-     *
-     * 2.5 is already past the point where raising it does anything, measured
-     * rather than assumed: doubling it to 5 moved the deposited alpha of a
-     * real drag by nothing at all (p25/p50/p75 = 120/137/155 either way),
-     * because at 2.5 the body of the stroke is already clamped at
-     * _WASH_CEILING. So if a wash reads too thin, this is not the knob --
-     * the gap between the 214 plateau and that measured 137 median is the
-     * flush-time paper grain, which at this preset's texture 60 takes about
-     * a third of the alpha back out. */
-    var _WATERCOLOR_WASH = 2.5;
+     * importer marks such brushes (watercolor: 1). */
+    var _WATERCOLOR_WASH = 2.0;
     /* Edge recipe (W2): a pure alpha boost, see _applyWaterEdge -- no RGB
      * tint, so it can't drift hue or muddy the color under repeated passes.
      * An earlier version mixed RGB toward a fixed "deepened" color instead,
@@ -2143,26 +1982,6 @@
      * against a real render, not assumed). Retuned for the new curve: measured
      * pixel-by-pixel across a real drag boundary same as before. */
     var _EDGE_LIFT = 5;
-    /* How STRONG the rim reads, as extra layers of the same paint at its peak
-     * (see the loop at the bottom of _applyWaterEdge). Its own knob because
-     * alpha alone cannot make the rim any darker once it has used up the
-     * headroom _WASH_CEILING reserves: the interior plateaus at 214 and the
-     * rim can only climb to 255, which measured as a 14-point coverage gap --
-     * a real rim, but a fainter one than Clip Studio's.
-     *
-     * How WIDE it reads is NOT a knob here: that is the radius the .sut asks
-     * for (2px on this brush), and it is deliberately independent of brush
-     * size. Clip Studio's rim is a fixed width in canvas pixels, so it looks
-     * oversized on a tiny brush and nearly vanishes on a huge one --
-     * confirmed as the wanted behaviour, not a bug to scale away. */
-    var _EDGE_DEEPEN = 3;
-    /* Squaring the rim's profile off was tried and rejected: gaining the
-     * detected deficit before clamping it made the band flat-topped rather
-     * than a ramp (measured on #00B4FF over white, 193/197 into a 213 interior
-     * became 173/169 into 213, same two pixels wide) and it looked worse on a
-     * real stroke -- reported directly, 2026-09-17. The detector's own falloff
-     * is what the rim should keep; it is the soft inner shoulder that makes it
-     * read as pooled pigment rather than a drawn outline. */
     function _renderBristleDabs(x, y, pressure, colorHex, strokeAngle, tfSize, tfInk) {
         var p = getParams();
         if (tfSize == null) tfSize = 1;
@@ -2387,29 +2206,7 @@
         }
 
         var blend = _blendOp(_p.blendMode);
-        /* Watercolour restacks by multiplying, not by compositing over: laying
-         * the same stroke down repeatedly in CSP walks the colour PAST the
-         * picked swatch toward near-primary saturation, which bounded
-         * alpha-over provably cannot do (it can only converge to the colour
-         * being composited). Multiply reproduces real CSP measurements to
-         * within about two levels out of 255 across repeated strokes, and it
-         * gets the structure right for free rather than by fitting: a channel
-         * already at full strength multiplies as identity so it never moves,
-         * the weaker channels each decay at their own rate -- which is exactly
-         * what makes one swatch drift in hue under restacking while another
-         * with two evenly-matched weak channels does not -- and a first stroke
-         * over white paper is unchanged (white x C = C), so this alters
-         * restacking only, never the initial lay-down. An explicitly chosen
-         * blend mode still wins; only the default is redirected.
-         *
-         * Not on a locked layer: any operator other than source-over routes
-         * into the clip-then-blend branch below, whose alpha result is the
-         * union a_s + a_b(1 - a_s) -- that GROWS alpha on a half-covered
-         * locked edge pixel, which is exactly what alpha lock promises not to
-         * do. Locked strokes keep the source-atop path and deposit without
-         * restack darkening. */
         var locked = _alphaLocked();
-        if (_p.watercolor && !locked && blend === 'source-over') blend = 'multiply';
         /* Watercolour edge on a copy (W2), on the WASHED but still
          * ungrained alpha, before the lock clip: the ring reads its own
          * output, so edging the buffer in place would compound every flush,

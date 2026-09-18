@@ -430,7 +430,7 @@
                 this.updateBusyIndicator();
                 try {
                     const supportsFs = window.showSaveFilePicker && window.showOpenFilePicker;
-                    let blob = await new Promise(resolve => this.ui.cMain.toBlob(resolve, 'image/png'));
+                    let blob = await this.pngBlobFromCanvas(this.ui.cMain);
                     blob = await PngMetadata.inject(blob);
                     if (this.getTauriInvokeFn() && this.state.filePath) {
                         const normalizedPath = this.normalizeIncomingPath(this.state.filePath);
