@@ -383,6 +383,7 @@
                 canvas.height = srcCanvas.height;
                 gl.viewport(0, 0, canvas.width, canvas.height);
                 gl.bindTexture(gl.TEXTURE_2D, tex);
+                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas);
                 gl.uniform1i(uMode, mode === 'rgb565' ? 565 : 555);
                 gl.uniform1i(uGray, grayscale ? 1 : 0);

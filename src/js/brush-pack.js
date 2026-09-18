@@ -3000,8 +3000,25 @@
             var dens = _sutNum(v.TextureDensity, 0);
             if (dens > 0) {
                 out.texture = Math.max(1, Math.min(100, Math.round(dens)));
+                /* TextureScale2 is a PERCENTAGE of the paper's natural size,
+                 * where 100 means "leave it alone" -- checked against Clip
+                 * Studio's own stock tool database rather than guessed: of
+                 * the ~140 stock tools that set it, the large majority sit at
+                 * exactly 100.0, and the ones that move off it are the
+                 * grainy brushes (Flat watercolor brush 28, Pastel 45, Crayon
+                 * 80, Dry ink 112). /12.5 is that percentage rescaled onto
+                 * our 1..16 dial, anchoring 100 at 8.
+                 *
+                 * Deliberately NOT rounded to an integer, and no floor of 1.
+                 * Both were here and both silently mangled real brushes: this
+                 * brush's 28 became 2 instead of 2.24, losing 11% of the
+                 * grain size, and every tool at 10 or 15 (Soft, Pencil, Wet
+                 * wash) was clamped up to 1 from 0.8 and 1.2. The dial takes
+                 * a float -- see _TEX_GRAIN_SCALE in krita-brush-engine.js,
+                 * which multiplies it -- and the slider's step is 0.5, so
+                 * nothing downstream ever wanted an integer. */
                 var ts = _sutNum(v.TextureScale2, 0);
-                if (ts > 0) out.textureScale = Math.max(1, Math.min(16, Math.round(ts / 12.5)));
+                if (ts > 0) out.textureScale = Math.max(0.1, Math.min(16, ts / 12.5));
                 /* The density, scale and paper picture come over; how Clip
                  * Studio blends and distorts that paper has no equivalent
                  * here, so each active modifier is named. */

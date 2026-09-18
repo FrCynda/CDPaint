@@ -225,7 +225,7 @@
                 return this.state.curvePhase > 0 || !!this.state.activeShape || this.state.step > 0 || (typeof FreehandPathEngine !== 'undefined' && FreehandPathEngine.isActive());
             },
             canRedo() {
-                return !!this.state.curveUndo || this.state.step < this.state.history.length - 1;
+                return !!this.state.curveUndo || !!this.state.activeShapeUndo || this.state.step < this.state.history.length - 1;
             },
             getColorCustomizerSnapshot() {
                 return {
@@ -427,6 +427,7 @@
                 }
                 this.cancelPendingStrokes();
                 this.state.curveUndo = null;
+                this.state.activeShapeUndo = null;
                 if (FreehandPathEngine.isActive()) {
                     FreehandPathEngine.cancel();
                     this.state.freehandPathActive = false;
@@ -451,6 +452,7 @@
                 }
                 if(this.state.activeShape) {
                     this.ctxTemp.clearRect(0,0,this.config.width, this.config.height);
+                    this.state.activeShapeUndo = this.state.activeShape;
                     this.state.activeShape = null;
                     this.state.shapeEditMode = false;
                     this.ui.selControls.style.display = 'none';
@@ -481,6 +483,16 @@
                 this.flushDeferredSave();
                 if (this.state.isDrawing && this.config.tool === 'paintbrush') return;
                 this.cancelPendingStrokes();
+                if (this.state.activeShapeUndo) {
+                    const shape = this.state.activeShapeUndo;
+                    this.state.activeShapeUndo = null;
+                    this.state.activeShape = shape;
+                    this.state.shapeEditMode = true;
+                    this.renderActiveShape();
+                    this.state.isDirty = true;
+                    this.updateTitleBarActions();
+                    return;
+                }
                 if (this.state.curveUndo) {
                     const draft = this.state.curveUndo;
                     this.state.curveUndo = null;

@@ -758,8 +758,19 @@
      * resolution, not ours. So it is a calibration knob, set by eye against
      * CSP.png and then by the user against real strokes (1.71 -> 2.05, "a bit
      * too small, maybe 20%"). Turn this, not the dial, when imported grain
-     * comes out the wrong coarseness across the board. */
-    var _TEX_GRAIN_SCALE = 2.05;
+     * comes out the wrong coarseness across the board.
+     *
+     * 2.05 -> 1.83 is NOT a further calibration, it is that same look kept
+     * while a bug underneath it was fixed. The .sut importer used to round
+     * the brush's own scale to an integer, which turned this preset's 2.24
+     * into 2, and most of the "maybe 20%" above was really the user's eye
+     * recovering that 11% by pushing on this constant instead. With the
+     * rounding gone the dial arrives at its true 2.24, so this comes down by
+     * the same ratio (2 * 2.05 = 4.10 = 2.24 * 1.83) and a correctly
+     * re-imported brush renders exactly as it did before. An ALREADY-imported
+     * one does not: presets are saved to localStorage with the old rounded
+     * 2, so those read about 11% finer until re-imported. */
+    var _TEX_GRAIN_SCALE = 1.83;
     function _applyTextureNoise(ctx, w, h, textureLevel, textureScale, textureType, ox, oy) {
         if (textureLevel <= 0) return;
         var tile = _grainTile(textureType);
