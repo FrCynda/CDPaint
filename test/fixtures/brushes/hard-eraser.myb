@@ -1,8 +1,10 @@
 # Written from MyPaint's own line format: name value | input (x,y), (x,y)
 version 2
 radius_logarithmic 1.0 | pressure (0.000, -0.800), (1.000, 0.000)
+radius_by_random 0.35
 hardness 0.90
 opaque 1.00
 dabs_per_actual_radius 2.00
 eraser 1.00
 elliptical_dab_ratio 1.00
+offset_angle_adj 45.0
