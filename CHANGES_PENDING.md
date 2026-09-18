@@ -1,5 +1,6 @@
 ## Changes
-- Reworked the paint engine into modular ES modules (paint-engine, layer-system, gradient-engine, smart-shape, freehand-path-engine)
+- Split the paint engine into per-domain scripts: the core plus layer-system, selection, palette, adjustments, project-assets, transform, theming, brush-engine, exporting, magic-wand, modals, hotkeys, history, file-io, tiles, quantize, gradient-tool, tauri-bridge, viewport and clipboard
+- Removed five unused modules that duplicated code already in the engine
 - Replaced the single-file standalone bundle with a modular src/ layout
 - Rewrote the README and clarified the LICENSE with third-party asset notices
 

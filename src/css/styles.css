@@ -1292,12 +1292,64 @@
             font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase;
             padding: 2px 4px 6px;
         }
-        #pb-brush-grid { display: grid; grid-template-columns: repeat(4, 66px); gap: 5px 3px; margin-bottom: 6px; margin-left: -9px; }
-        .pb-brush-tile { position: relative; aspect-ratio: 1; border: 2px solid transparent; border-radius: 4px; cursor: pointer; overflow: hidden; background: #fff; transition: border-color .15s ease; }
+        /* Two wide swatches per row rather than four squares: a stroke needs
+           length before taper, texture and bristle separation are legible. */
+        /* Wide swatches are twice as tall as the old squares, so the grid is
+           capped and scrolls — otherwise the brush settings below it are
+           pushed off the bottom of the panel. */
+        .pb-curve-row { padding: 2px 0 4px; }
+        /* The global `canvas` rule below is for the document layers: it makes
+           every canvas absolutely positioned and pixelated. A widget canvas in
+           a panel needs neither, and inheriting them left this one stacked at
+           the sidebar's origin with no height of its own. */
+        .pb-curve { display: block; position: static; image-rendering: auto;
+                    width: 132px; height: 66px; margin: 0 auto; flex: 0 0 auto;
+                    border: 1px solid var(--pb-border, #c8ccd2); border-radius: 3px;
+                    background: var(--pb-curve-bg, #fbfcfd); cursor: crosshair;
+                    color: var(--win-blue, #0078d7); touch-action: none; }
+        body.dark-mode .pb-curve { border-color: #4a5058; background: #23262b; }
+        .pb-curve:focus-visible { outline: 2px solid var(--accent, #1a73e8); outline-offset: 1px; }
+        #paintbrush-sidebar.pb-dropping { outline: 2px dashed var(--accent, #0078d7); outline-offset: -4px; }
+        #pb-brush-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 3px; margin-bottom: 6px; margin-left: -9px; max-height: 300px; overflow-y: auto; overflow-x: hidden; }
+
+        /* Family headers span both columns so the grid still reads as two
+           rows of swatches under each one. */
+        .pb-brush-group { grid-column: 1 / -1; font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; opacity: .62; padding: 6px 0 1px 2px; border-bottom: 1px solid var(--pb-border, #c8ccd2); margin-bottom: 2px; }
+        .pb-brush-group:first-child { padding-top: 0; }
+        body.dark-mode .pb-brush-group { border-bottom-color: #4a5058; }
+
+        #pb-search { display: block; width: calc(100% - 6px); box-sizing: border-box; margin: 0 0 5px -9px; padding: 3px 6px; font-size: 11px; border: 1px solid var(--pb-border, #c8ccd2); border-radius: 3px; background: #fff; color: inherit; }
+        body.dark-mode #pb-search { background: #23262b; border-color: #4a5058; }
+
+        /* The star sits on the swatch. It only shows on hover or when it is
+           on, so 75 tiles are not 75 pieces of permanent furniture. */
+        .pb-fav { position: absolute; top: 1px; right: 1px; width: 15px; height: 15px; padding: 0; line-height: 13px; font-size: 11px; border: 0; border-radius: 3px; background: rgba(255,255,255,.72); color: #b9bec6; cursor: pointer; opacity: 0; transition: opacity .12s; }
+        .pb-brush-tile:hover .pb-fav, .pb-fav.on { opacity: 1; }
+        .pb-fav.on { color: #f0a020; }
+        .pb-fav:hover { color: #f0a020; }
+        body.dark-mode .pb-fav { background: rgba(30,33,38,.72); color: #6b727c; }
+
+        /* A saved brush is named by the user, so the tile says which it is. */
+        .pb-tile-name { position: absolute; left: 0; right: 0; bottom: 0; padding: 1px 3px; font-size: 9px; line-height: 11px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: linear-gradient(rgba(255,255,255,0), rgba(255,255,255,.9) 40%); color: #333; pointer-events: none; }
+        body.dark-mode .pb-tile-name { background: linear-gradient(rgba(30,33,38,0), rgba(30,33,38,.9) 40%); color: #cfd4da; }
+
+        #pb-manage { margin: 0 0 8px -9px; }
+        #pb-preset-name { display: block; width: calc(100% - 6px); box-sizing: border-box; margin-bottom: 3px; padding: 3px 6px; font-size: 11px; border: 1px solid var(--pb-border, #c8ccd2); border-radius: 3px; background: #fff; color: inherit; }
+        body.dark-mode #pb-preset-name { background: #23262b; border-color: #4a5058; }
+        #pb-manage-btns { display: flex; flex-wrap: wrap; gap: 3px; }
+        #pb-manage-btns button { flex: 1 1 auto; min-width: 52px; padding: 3px 4px; font-size: 10px; border: 1px solid var(--pb-border, #c8ccd2); border-radius: 3px; background: #f4f5f7; color: inherit; cursor: pointer; }
+        #pb-manage-btns button:hover:not(:disabled) { background: #e6e9ee; }
+        #pb-manage-btns button:disabled { opacity: .45; cursor: default; }
+        #pb-manage-btns button.armed { background: #d94a3d; border-color: #b83c30; color: #fff; }
+        body.dark-mode #pb-manage-btns button { background: #2c3037; border-color: #4a5058; }
+        body.dark-mode #pb-manage-btns button:hover:not(:disabled) { background: #383d45; }
+        .pb-brush-tile { position: relative; aspect-ratio: 134 / 54; border: 2px solid transparent; border-radius: 4px; cursor: pointer; overflow: hidden; background: #fff; transition: border-color .15s ease; }
         .pb-brush-tile:hover { border-color: var(--accent-light, #8ab4f8); }
         .pb-brush-tile.active { border-color: var(--accent, #1a73e8); }
         .pb-brush-tile canvas { width: 100%; height: 100%; display: block; }
         #pb-active-name { text-align: center; font-size: 11px; font-weight: 600; color: var(--app-text-color); padding: 2px 0 6px; }
+        #pb-preset-notes { text-align: center; font-size: 10px; font-style: italic; color: #8a6d1a; padding: 0 6px 6px; }
+        body.dark-mode #pb-preset-notes { color: #d8b93e; }
         #pb-key-settings { margin-bottom: 4px; padding: 0; }
         #pb-more-settings.pb-more-collapsed #pb-more-body { display: none; }
         #pb-more-toggle {
@@ -1507,6 +1559,13 @@
             stroke-dasharray: 4 4;
             vector-effect: non-scaling-stroke;
             shape-rendering: crispEdges;
+        }
+        /* The creating marquee always uses a scaling stroke (never non-scaling-stroke,
+           which renders blurry/grey when combined with mix-blend-mode:difference) —
+           its local stroke-width is set in JS per zoom level so it still lands on
+           exactly 1 canvas pixel at >=100% zoom or 1 device pixel below it. */
+        .svg-marquee-rect.svg-marquee-stroke-scale {
+            vector-effect: none;
         }
         .svg-marquee-rect#svg-ghost-rect {
             stroke: #8a8a8a;
@@ -3505,7 +3564,7 @@
         body.test-mode #modal-info .window,
         body.test-mode #modal-colors .window,
         body.test-mode #modal-confirm-reset .window,
-        body.test-mode #modal-toolbar .window,
+        body.test-mode #modal-toolbar .window,body.test-mode #brush-pack-window .window,
         body.test-mode #modal-wincolor .window,
         body.test-mode #modal-tool-customizer .window,
         body.test-mode .modal-window {
@@ -3524,7 +3583,7 @@
         body.test-mode #modal-info .title-bar,
         body.test-mode #modal-colors .title-bar,
         body.test-mode #modal-confirm-reset .title-bar,
-        body.test-mode #modal-toolbar .title-bar,
+        body.test-mode #modal-toolbar .title-bar,body.test-mode #brush-pack-window .title-bar,
         body.test-mode #modal-wincolor .title-bar,
         body.test-mode #modal-tool-customizer .title-bar {
             background: var(--tm-s4);
@@ -3861,7 +3920,7 @@
         body.dark-refined-mode #modal-info .window,
         body.dark-refined-mode #modal-colors .window,
         body.dark-refined-mode #modal-confirm-reset .window,
-        body.dark-refined-mode #modal-toolbar .window,
+        body.dark-refined-mode #modal-toolbar .window,body.dark-refined-mode #brush-pack-window .window,
         body.dark-refined-mode #modal-wincolor .window,
         body.dark-refined-mode #modal-tool-customizer .window,
         body.dark-refined-mode .modal-window {
@@ -3880,7 +3939,7 @@
         body.dark-refined-mode #modal-info .title-bar,
         body.dark-refined-mode #modal-colors .title-bar,
         body.dark-refined-mode #modal-confirm-reset .title-bar,
-        body.dark-refined-mode #modal-toolbar .title-bar,
+        body.dark-refined-mode #modal-toolbar .title-bar,body.dark-refined-mode #brush-pack-window .title-bar,
         body.dark-refined-mode #modal-wincolor .title-bar,
         body.dark-refined-mode #modal-tool-customizer .title-bar {
             background: var(--dr-s4);
@@ -5324,8 +5383,8 @@ body.primeval-forest-mode .dropdown-item,body.primeval-forest-mode .paint-dropdo
 body.primeval-forest-mode .dropdown-item:hover,body.primeval-forest-mode .paint-dropdown-item:hover{background:var(--pf-s5);}
 body.primeval-forest-mode .dropdown-separator{background:var(--pf-s7);}
 body.primeval-forest-mode .modal-mask{background:rgba(0,0,0,0.6);}
-body.primeval-forest-mode #modal-resize .window,body.primeval-forest-mode #modal-depth .window,body.primeval-forest-mode #modal-export .window,body.primeval-forest-mode #modal-huesat .window,body.primeval-forest-mode #modal-hotkeys .window,body.primeval-forest-mode #modal-info .window,body.primeval-forest-mode #modal-colors .window,body.primeval-forest-mode #modal-confirm-reset .window,body.primeval-forest-mode #modal-toolbar .window,body.primeval-forest-mode #modal-wincolor .window,body.primeval-forest-mode #modal-tool-customizer .window,body.primeval-forest-mode .modal-window{background:var(--pf-s3);border-color:var(--pf-s7);color:var(--pf-t1);box-shadow:0 12px 40px rgba(0,0,0,0.65);}
-body.primeval-forest-mode #modal-resize .title-bar,body.primeval-forest-mode #modal-depth .title-bar,body.primeval-forest-mode #modal-export .title-bar,body.primeval-forest-mode #modal-huesat .title-bar,body.primeval-forest-mode #modal-hotkeys .title-bar,body.primeval-forest-mode #modal-info .title-bar,body.primeval-forest-mode #modal-colors .title-bar,body.primeval-forest-mode #modal-confirm-reset .title-bar,body.primeval-forest-mode #modal-toolbar .title-bar,body.primeval-forest-mode #modal-wincolor .title-bar,body.primeval-forest-mode #modal-tool-customizer .title-bar{background:var(--pf-s4);border-bottom-color:var(--pf-s7);color:var(--pf-t1);}
+body.primeval-forest-mode #modal-resize .window,body.primeval-forest-mode #modal-depth .window,body.primeval-forest-mode #modal-export .window,body.primeval-forest-mode #modal-huesat .window,body.primeval-forest-mode #modal-hotkeys .window,body.primeval-forest-mode #modal-info .window,body.primeval-forest-mode #modal-colors .window,body.primeval-forest-mode #modal-confirm-reset .window,body.primeval-forest-mode #modal-toolbar .window,body.primeval-forest-mode #brush-pack-window .window,body.primeval-forest-mode #modal-wincolor .window,body.primeval-forest-mode #modal-tool-customizer .window,body.primeval-forest-mode .modal-window{background:var(--pf-s3);border-color:var(--pf-s7);color:var(--pf-t1);box-shadow:0 12px 40px rgba(0,0,0,0.65);}
+body.primeval-forest-mode #modal-resize .title-bar,body.primeval-forest-mode #modal-depth .title-bar,body.primeval-forest-mode #modal-export .title-bar,body.primeval-forest-mode #modal-huesat .title-bar,body.primeval-forest-mode #modal-hotkeys .title-bar,body.primeval-forest-mode #modal-info .title-bar,body.primeval-forest-mode #modal-colors .title-bar,body.primeval-forest-mode #modal-confirm-reset .title-bar,body.primeval-forest-mode #modal-toolbar .title-bar,body.primeval-forest-mode #brush-pack-window .title-bar,body.primeval-forest-mode #modal-wincolor .title-bar,body.primeval-forest-mode #modal-tool-customizer .title-bar{background:var(--pf-s4);border-bottom-color:var(--pf-s7);color:var(--pf-t1);}
 body.primeval-forest-mode .close-btn{color:var(--pf-t2);}body.primeval-forest-mode .close-btn:hover{background:#c42b1c;color:#fff;}
 body.primeval-forest-mode #modal-resize .footer,body.primeval-forest-mode #modal-depth .footer,body.primeval-forest-mode #modal-export .footer,body.primeval-forest-mode #modal-huesat .footer,body.primeval-forest-mode #modal-hotkeys .footer,body.primeval-forest-mode #modal-colors .footer{border-top-color:var(--pf-s7);}
 body.primeval-forest-mode .modal-mask .btn,body.primeval-forest-mode .modal-mask button.btn{background:var(--pf-s5);border-color:var(--pf-s8);color:var(--pf-t1);}
@@ -5497,8 +5556,8 @@ body.abyssal-ocean-mode .dropdown-item,body.abyssal-ocean-mode .paint-dropdown-i
 body.abyssal-ocean-mode .dropdown-item:hover,body.abyssal-ocean-mode .paint-dropdown-item:hover{background:var(--ao-s5);}
 body.abyssal-ocean-mode .dropdown-separator{background:var(--ao-s7);}
 body.abyssal-ocean-mode .modal-mask{background:rgba(0,0,0,0.65);}
-body.abyssal-ocean-mode #modal-resize .window,body.abyssal-ocean-mode #modal-depth .window,body.abyssal-ocean-mode #modal-export .window,body.abyssal-ocean-mode #modal-huesat .window,body.abyssal-ocean-mode #modal-hotkeys .window,body.abyssal-ocean-mode #modal-info .window,body.abyssal-ocean-mode #modal-colors .window,body.abyssal-ocean-mode #modal-confirm-reset .window,body.abyssal-ocean-mode #modal-toolbar .window,body.abyssal-ocean-mode #modal-wincolor .window,body.abyssal-ocean-mode #modal-tool-customizer .window,body.abyssal-ocean-mode .modal-window{background:var(--ao-s3);border-color:var(--ao-s7);color:var(--ao-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
-body.abyssal-ocean-mode #modal-resize .title-bar,body.abyssal-ocean-mode #modal-depth .title-bar,body.abyssal-ocean-mode #modal-export .title-bar,body.abyssal-ocean-mode #modal-huesat .title-bar,body.abyssal-ocean-mode #modal-hotkeys .title-bar,body.abyssal-ocean-mode #modal-info .title-bar,body.abyssal-ocean-mode #modal-colors .title-bar,body.abyssal-ocean-mode #modal-confirm-reset .title-bar,body.abyssal-ocean-mode #modal-toolbar .title-bar,body.abyssal-ocean-mode #modal-wincolor .title-bar,body.abyssal-ocean-mode #modal-tool-customizer .title-bar{background:var(--ao-s4);border-bottom-color:var(--ao-s7);color:var(--ao-t1);}
+body.abyssal-ocean-mode #modal-resize .window,body.abyssal-ocean-mode #modal-depth .window,body.abyssal-ocean-mode #modal-export .window,body.abyssal-ocean-mode #modal-huesat .window,body.abyssal-ocean-mode #modal-hotkeys .window,body.abyssal-ocean-mode #modal-info .window,body.abyssal-ocean-mode #modal-colors .window,body.abyssal-ocean-mode #modal-confirm-reset .window,body.abyssal-ocean-mode #modal-toolbar .window,body.abyssal-ocean-mode #brush-pack-window .window,body.abyssal-ocean-mode #modal-wincolor .window,body.abyssal-ocean-mode #modal-tool-customizer .window,body.abyssal-ocean-mode .modal-window{background:var(--ao-s3);border-color:var(--ao-s7);color:var(--ao-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
+body.abyssal-ocean-mode #modal-resize .title-bar,body.abyssal-ocean-mode #modal-depth .title-bar,body.abyssal-ocean-mode #modal-export .title-bar,body.abyssal-ocean-mode #modal-huesat .title-bar,body.abyssal-ocean-mode #modal-hotkeys .title-bar,body.abyssal-ocean-mode #modal-info .title-bar,body.abyssal-ocean-mode #modal-colors .title-bar,body.abyssal-ocean-mode #modal-confirm-reset .title-bar,body.abyssal-ocean-mode #modal-toolbar .title-bar,body.abyssal-ocean-mode #brush-pack-window .title-bar,body.abyssal-ocean-mode #modal-wincolor .title-bar,body.abyssal-ocean-mode #modal-tool-customizer .title-bar{background:var(--ao-s4);border-bottom-color:var(--ao-s7);color:var(--ao-t1);}
 body.abyssal-ocean-mode .close-btn{color:var(--ao-t2);}body.abyssal-ocean-mode .close-btn:hover{background:#c42b1c;color:#fff;}
 body.abyssal-ocean-mode #modal-resize .footer,body.abyssal-ocean-mode #modal-depth .footer,body.abyssal-ocean-mode #modal-export .footer,body.abyssal-ocean-mode #modal-huesat .footer,body.abyssal-ocean-mode #modal-hotkeys .footer,body.abyssal-ocean-mode #modal-colors .footer{border-top-color:var(--ao-s7);}
 body.abyssal-ocean-mode .modal-mask .btn,body.abyssal-ocean-mode .modal-mask button.btn{background:var(--ao-s5);border-color:var(--ao-s8);color:var(--ao-t1);}
@@ -5604,8 +5663,8 @@ body.crimson-dusk-mode .dropdown-item,body.crimson-dusk-mode .paint-dropdown-ite
 body.crimson-dusk-mode .dropdown-item:hover,body.crimson-dusk-mode .paint-dropdown-item:hover{background:var(--cd-s5);}
 body.crimson-dusk-mode .dropdown-separator{background:var(--cd-s7);}
 body.crimson-dusk-mode .modal-mask{background:rgba(0,0,0,0.65);}
-body.crimson-dusk-mode #modal-resize .window,body.crimson-dusk-mode #modal-depth .window,body.crimson-dusk-mode #modal-export .window,body.crimson-dusk-mode #modal-huesat .window,body.crimson-dusk-mode #modal-hotkeys .window,body.crimson-dusk-mode #modal-info .window,body.crimson-dusk-mode #modal-colors .window,body.crimson-dusk-mode #modal-confirm-reset .window,body.crimson-dusk-mode #modal-toolbar .window,body.crimson-dusk-mode #modal-wincolor .window,body.crimson-dusk-mode #modal-tool-customizer .window,body.crimson-dusk-mode .modal-window{background:var(--cd-s3);border-color:var(--cd-s7);color:var(--cd-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
-body.crimson-dusk-mode #modal-resize .title-bar,body.crimson-dusk-mode #modal-depth .title-bar,body.crimson-dusk-mode #modal-export .title-bar,body.crimson-dusk-mode #modal-huesat .title-bar,body.crimson-dusk-mode #modal-hotkeys .title-bar,body.crimson-dusk-mode #modal-info .title-bar,body.crimson-dusk-mode #modal-colors .title-bar,body.crimson-dusk-mode #modal-confirm-reset .title-bar,body.crimson-dusk-mode #modal-toolbar .title-bar,body.crimson-dusk-mode #modal-wincolor .title-bar,body.crimson-dusk-mode #modal-tool-customizer .title-bar{background:var(--cd-s4);border-bottom-color:var(--cd-s7);color:var(--cd-t1);}
+body.crimson-dusk-mode #modal-resize .window,body.crimson-dusk-mode #modal-depth .window,body.crimson-dusk-mode #modal-export .window,body.crimson-dusk-mode #modal-huesat .window,body.crimson-dusk-mode #modal-hotkeys .window,body.crimson-dusk-mode #modal-info .window,body.crimson-dusk-mode #modal-colors .window,body.crimson-dusk-mode #modal-confirm-reset .window,body.crimson-dusk-mode #modal-toolbar .window,body.crimson-dusk-mode #brush-pack-window .window,body.crimson-dusk-mode #modal-wincolor .window,body.crimson-dusk-mode #modal-tool-customizer .window,body.crimson-dusk-mode .modal-window{background:var(--cd-s3);border-color:var(--cd-s7);color:var(--cd-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
+body.crimson-dusk-mode #modal-resize .title-bar,body.crimson-dusk-mode #modal-depth .title-bar,body.crimson-dusk-mode #modal-export .title-bar,body.crimson-dusk-mode #modal-huesat .title-bar,body.crimson-dusk-mode #modal-hotkeys .title-bar,body.crimson-dusk-mode #modal-info .title-bar,body.crimson-dusk-mode #modal-colors .title-bar,body.crimson-dusk-mode #modal-confirm-reset .title-bar,body.crimson-dusk-mode #modal-toolbar .title-bar,body.crimson-dusk-mode #brush-pack-window .title-bar,body.crimson-dusk-mode #modal-wincolor .title-bar,body.crimson-dusk-mode #modal-tool-customizer .title-bar{background:var(--cd-s4);border-bottom-color:var(--cd-s7);color:var(--cd-t1);}
 body.crimson-dusk-mode .close-btn{color:var(--cd-t2);}body.crimson-dusk-mode .close-btn:hover{background:#c42b1c;color:#fff;}
 body.crimson-dusk-mode #modal-resize .footer,body.crimson-dusk-mode #modal-depth .footer,body.crimson-dusk-mode #modal-export .footer,body.crimson-dusk-mode #modal-huesat .footer,body.crimson-dusk-mode #modal-hotkeys .footer,body.crimson-dusk-mode #modal-colors .footer{border-top-color:var(--cd-s7);}
 body.crimson-dusk-mode .modal-mask .btn,body.crimson-dusk-mode .modal-mask button.btn{background:var(--cd-s5);border-color:var(--cd-s8);color:var(--cd-t1);}
@@ -5711,8 +5770,8 @@ body.gilded-obsidian-mode .dropdown-item,body.gilded-obsidian-mode .paint-dropdo
 body.gilded-obsidian-mode .dropdown-item:hover,body.gilded-obsidian-mode .paint-dropdown-item:hover{background:var(--go-s5);}
 body.gilded-obsidian-mode .dropdown-separator{background:var(--go-s7);}
 body.gilded-obsidian-mode .modal-mask{background:rgba(0,0,0,0.65);}
-body.gilded-obsidian-mode #modal-resize .window,body.gilded-obsidian-mode #modal-depth .window,body.gilded-obsidian-mode #modal-export .window,body.gilded-obsidian-mode #modal-huesat .window,body.gilded-obsidian-mode #modal-hotkeys .window,body.gilded-obsidian-mode #modal-info .window,body.gilded-obsidian-mode #modal-colors .window,body.gilded-obsidian-mode #modal-confirm-reset .window,body.gilded-obsidian-mode #modal-toolbar .window,body.gilded-obsidian-mode #modal-wincolor .window,body.gilded-obsidian-mode #modal-tool-customizer .window,body.gilded-obsidian-mode .modal-window{background:var(--go-s3);border-color:var(--go-s7);color:var(--go-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
-body.gilded-obsidian-mode #modal-resize .title-bar,body.gilded-obsidian-mode #modal-depth .title-bar,body.gilded-obsidian-mode #modal-export .title-bar,body.gilded-obsidian-mode #modal-huesat .title-bar,body.gilded-obsidian-mode #modal-hotkeys .title-bar,body.gilded-obsidian-mode #modal-info .title-bar,body.gilded-obsidian-mode #modal-colors .title-bar,body.gilded-obsidian-mode #modal-confirm-reset .title-bar,body.gilded-obsidian-mode #modal-toolbar .title-bar,body.gilded-obsidian-mode #modal-wincolor .title-bar,body.gilded-obsidian-mode #modal-tool-customizer .title-bar{background:var(--go-s4);border-bottom-color:var(--go-s7);color:var(--go-t1);}
+body.gilded-obsidian-mode #modal-resize .window,body.gilded-obsidian-mode #modal-depth .window,body.gilded-obsidian-mode #modal-export .window,body.gilded-obsidian-mode #modal-huesat .window,body.gilded-obsidian-mode #modal-hotkeys .window,body.gilded-obsidian-mode #modal-info .window,body.gilded-obsidian-mode #modal-colors .window,body.gilded-obsidian-mode #modal-confirm-reset .window,body.gilded-obsidian-mode #modal-toolbar .window,body.gilded-obsidian-mode #brush-pack-window .window,body.gilded-obsidian-mode #modal-wincolor .window,body.gilded-obsidian-mode #modal-tool-customizer .window,body.gilded-obsidian-mode .modal-window{background:var(--go-s3);border-color:var(--go-s7);color:var(--go-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
+body.gilded-obsidian-mode #modal-resize .title-bar,body.gilded-obsidian-mode #modal-depth .title-bar,body.gilded-obsidian-mode #modal-export .title-bar,body.gilded-obsidian-mode #modal-huesat .title-bar,body.gilded-obsidian-mode #modal-hotkeys .title-bar,body.gilded-obsidian-mode #modal-info .title-bar,body.gilded-obsidian-mode #modal-colors .title-bar,body.gilded-obsidian-mode #modal-confirm-reset .title-bar,body.gilded-obsidian-mode #modal-toolbar .title-bar,body.gilded-obsidian-mode #brush-pack-window .title-bar,body.gilded-obsidian-mode #modal-wincolor .title-bar,body.gilded-obsidian-mode #modal-tool-customizer .title-bar{background:var(--go-s4);border-bottom-color:var(--go-s7);color:var(--go-t1);}
 body.gilded-obsidian-mode .close-btn{color:var(--go-t2);}body.gilded-obsidian-mode .close-btn:hover{background:#c42b1c;color:#fff;}
 body.gilded-obsidian-mode #modal-resize .footer,body.gilded-obsidian-mode #modal-depth .footer,body.gilded-obsidian-mode #modal-export .footer,body.gilded-obsidian-mode #modal-huesat .footer,body.gilded-obsidian-mode #modal-hotkeys .footer,body.gilded-obsidian-mode #modal-colors .footer{border-top-color:var(--go-s7);}
 body.gilded-obsidian-mode .modal-mask .btn,body.gilded-obsidian-mode .modal-mask button.btn{background:var(--go-s5);border-color:var(--go-s8);color:var(--go-t1);}
@@ -5818,8 +5877,8 @@ body.violet-haze-mode .dropdown-item,body.violet-haze-mode .paint-dropdown-item{
 body.violet-haze-mode .dropdown-item:hover,body.violet-haze-mode .paint-dropdown-item:hover{background:var(--vh-s5);}
 body.violet-haze-mode .dropdown-separator{background:var(--vh-s7);}
 body.violet-haze-mode .modal-mask{background:rgba(0,0,0,0.65);}
-body.violet-haze-mode #modal-resize .window,body.violet-haze-mode #modal-depth .window,body.violet-haze-mode #modal-export .window,body.violet-haze-mode #modal-huesat .window,body.violet-haze-mode #modal-hotkeys .window,body.violet-haze-mode #modal-info .window,body.violet-haze-mode #modal-colors .window,body.violet-haze-mode #modal-confirm-reset .window,body.violet-haze-mode #modal-toolbar .window,body.violet-haze-mode #modal-wincolor .window,body.violet-haze-mode #modal-tool-customizer .window,body.violet-haze-mode .modal-window{background:var(--vh-s3);border-color:var(--vh-s7);color:var(--vh-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
-body.violet-haze-mode #modal-resize .title-bar,body.violet-haze-mode #modal-depth .title-bar,body.violet-haze-mode #modal-export .title-bar,body.violet-haze-mode #modal-huesat .title-bar,body.violet-haze-mode #modal-hotkeys .title-bar,body.violet-haze-mode #modal-info .title-bar,body.violet-haze-mode #modal-colors .title-bar,body.violet-haze-mode #modal-confirm-reset .title-bar,body.violet-haze-mode #modal-toolbar .title-bar,body.violet-haze-mode #modal-wincolor .title-bar,body.violet-haze-mode #modal-tool-customizer .title-bar{background:var(--vh-s4);border-bottom-color:var(--vh-s7);color:var(--vh-t1);}
+body.violet-haze-mode #modal-resize .window,body.violet-haze-mode #modal-depth .window,body.violet-haze-mode #modal-export .window,body.violet-haze-mode #modal-huesat .window,body.violet-haze-mode #modal-hotkeys .window,body.violet-haze-mode #modal-info .window,body.violet-haze-mode #modal-colors .window,body.violet-haze-mode #modal-confirm-reset .window,body.violet-haze-mode #modal-toolbar .window,body.violet-haze-mode #brush-pack-window .window,body.violet-haze-mode #modal-wincolor .window,body.violet-haze-mode #modal-tool-customizer .window,body.violet-haze-mode .modal-window{background:var(--vh-s3);border-color:var(--vh-s7);color:var(--vh-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
+body.violet-haze-mode #modal-resize .title-bar,body.violet-haze-mode #modal-depth .title-bar,body.violet-haze-mode #modal-export .title-bar,body.violet-haze-mode #modal-huesat .title-bar,body.violet-haze-mode #modal-hotkeys .title-bar,body.violet-haze-mode #modal-info .title-bar,body.violet-haze-mode #modal-colors .title-bar,body.violet-haze-mode #modal-confirm-reset .title-bar,body.violet-haze-mode #modal-toolbar .title-bar,body.violet-haze-mode #brush-pack-window .title-bar,body.violet-haze-mode #modal-wincolor .title-bar,body.violet-haze-mode #modal-tool-customizer .title-bar{background:var(--vh-s4);border-bottom-color:var(--vh-s7);color:var(--vh-t1);}
 body.violet-haze-mode .close-btn{color:var(--vh-t2);}body.violet-haze-mode .close-btn:hover{background:#c42b1c;color:#fff;}
 body.violet-haze-mode #modal-resize .footer,body.violet-haze-mode #modal-depth .footer,body.violet-haze-mode #modal-export .footer,body.violet-haze-mode #modal-huesat .footer,body.violet-haze-mode #modal-hotkeys .footer,body.violet-haze-mode #modal-colors .footer{border-top-color:var(--vh-s7);}
 body.violet-haze-mode .modal-mask .btn,body.violet-haze-mode .modal-mask button.btn{background:var(--vh-s5);border-color:var(--vh-s8);color:var(--vh-t1);}
@@ -6076,3 +6135,71 @@ body.violet-haze-mode #swap-colors-btn:hover{background:var(--vh-s5) !important;
 .fs-thumb .fs-thumb-n{position:absolute;left:2px;bottom:1px;font-size:9px;line-height:1;color:#fff;text-shadow:0 0 2px #000;pointer-events:none;}
 .fs-thumb.fs-active{border-color:var(--acc,#2a73d9);box-shadow:0 0 0 1px var(--acc,#2a73d9);}
 .fs-thumb.fs-playing{border-color:#3fbf5f;box-shadow:0 0 0 1px #3fbf5f;}
+/* The pack chooser: what a brush pack holds, before any of it is installed.
+   Two columns of rows rather than a grid of tiles -- the author's icon is
+   small and the NAME is what someone reads when picking. */
+/* Pick-your-brushes modal. Chrome copied from #modal-toolbar -- there is no
+   shared .window rule in this sheet, every modal dresses its own. */
+#brush-pack-window {
+    width: min(620px, 92vw);
+    background-color: #f0f0f0;
+    border: 1px solid #999;
+    box-shadow: 0 0 15px rgba(0,0,0,0.35);
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    font-family: "Segoe UI", "MS Sans Serif", sans-serif;
+    font-size: 11px;
+}
+#brush-pack-window .title-bar {
+    height: 26px;
+    background-color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0 0 8px;
+    font-size: 11px;
+    border-bottom: 1px solid #cfcfcf;
+}
+#brush-pack-window .title-bar span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#brush-pack-window .close-btn {
+    width: 36px;
+    height: 25px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #111;
+}
+#brush-pack-window .close-btn:hover { background-color: #e81123; color: #fff; }
+#brush-pack-window .content { padding: 6px 8px 8px 8px; display: flex; flex-direction: column; }
+#brush-pack-window .footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 8px 10px 10px;
+    border-top: 1px solid #d9d9d9;
+}
+#bp-pack-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; padding-bottom: 6px; }
+#bp-pack-actions { display: flex; gap: 4px; }
+#bp-pack-list {
+    max-height: min(52vh, 420px);
+    overflow-y: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 2px;
+    border: 1px solid rgba(127, 127, 127, .35);
+    background: rgba(127, 127, 127, .08);
+    padding: 4px;
+}
+.bp-pack-row { display: flex; align-items: center; gap: 7px; padding: 3px 5px; border-radius: 3px; cursor: pointer; font-size: 11px; min-width: 0; }
+.bp-pack-row:hover { background: rgba(127, 127, 127, .14); }
+.bp-pack-row input { flex: 0 0 auto; margin: 0; }
+.bp-pack-row img { flex: 0 0 auto; width: 28px; height: 28px; object-fit: cover; border-radius: 3px; background: #d4d4d4; }
+.bp-pack-row .bp-pack-noicon { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 3px; background: rgba(127, 127, 127, .2); }
+.bp-pack-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

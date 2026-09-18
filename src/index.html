@@ -694,6 +694,11 @@
         <span class="wand-menu-icon" aria-hidden="true"><img class="icon-wand-global" src="assets/fluent-emoji/globe_with_meridians_flat.svg" alt=""></span>
         <span>Global Color Wand</span>
     </div>
+    <div class="dd-sep"></div>
+    <div class="dd-item" onclick="PaintApp.toggleSampleAllLayers()" id="item-wand-sample-all">
+        <div class="dd-check"><svg width="12" height="12" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" fill="currentColor"/></svg></div>
+        <span>Sample All Layers</span>
+    </div>
 </div>
 
 <div id="picker-menu" class="dropdown-menu" style="left: 0; top: 0;">
@@ -1289,6 +1294,32 @@
         </div>
     </div>
 </div>
+<!-- Which brushes to take out of a pack. A pack can hold forty; the old
+     Import button installed every one of them into the library whether or
+     not the user wanted them, and taking them back out was forty clicks. -->
+<div id="modal-brush-pack" class="modal-mask">
+    <div class="window" id="brush-pack-window">
+        <div class="title-bar">
+            <span id="bp-pack-title">Choose brushes</span>
+            <div class="close-btn" onclick="PaintApp.closeModals()">&#10005;</div>
+        </div>
+        <div class="content">
+            <div id="bp-pack-head">
+                <span id="bp-pack-count"></span>
+                <span id="bp-pack-actions">
+                    <button type="button" class="btn" id="bp-pack-all">All</button>
+                    <button type="button" class="btn" id="bp-pack-none">None</button>
+                </span>
+            </div>
+            <div id="bp-pack-list"></div>
+        </div>
+        <div class="footer">
+            <button class="btn btn-ok" id="bp-pack-add">Add</button>
+            <button class="btn" onclick="PaintApp.closeModals()">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <div id="modal-confirm-reset" class="modal-mask">
     <div class="window">
         <div class="title-bar">
@@ -2182,14 +2213,28 @@
         <button id="paintbrush-close-btn" class="sb-close-x" title="Close sidebar">&#10005;</button>
     </div>
     <div id="paintbrush-sidebar-body">
+        <input type="search" id="pb-search" placeholder="Search brushes" autocomplete="off" spellcheck="false">
         <div id="pb-brush-grid"></div>
         <div id="pb-active-name">Round</div>
+        <div id="pb-preset-notes" hidden></div>
+        <div id="pb-manage">
+            <input type="text" id="pb-preset-name" placeholder="Brush name" maxlength="40" autocomplete="off" spellcheck="false">
+            <div id="pb-manage-btns">
+                <button type="button" id="pb-save-btn" title="Save the current settings as a brush of your own">Save</button>
+                <button type="button" id="pb-dupe-btn" title="Copy this brush so you can change it">Duplicate</button>
+                <button type="button" id="pb-rename-btn" data-tip-own="Rename this brush">Rename</button>
+                <button type="button" id="pb-delete-btn" data-tip-own="Delete this brush">Delete</button>
+                <button type="button" id="pb-export-btn" title="Save your brushes to a file">Export</button>
+                <button type="button" id="pb-import-btn" title="Load a brush pack, a tip image, or brushes you exported">Import</button>
+                <input type="file" id="pb-import-file" accept=".json,.bundle,.kpp,.gih,.gbr,.vbr,.png,.bmp,.abr,.tpl,.myb,.brush,.brushset,.sut" multiple hidden>
+            </div>
+        </div>
         <div id="pb-key-settings">
             <div class="pb-section">
                 <div class="pb-label">Basic</div>
                 <div class="pb-row" data-setting="size">
                     <div class="pb-slider-wrap">
-                    <input type="range" id="pb-size" min="1" max="200" step="1" value="12">
+                    <input type="range" id="pb-size" min="1" max="1000" step="1" value="12">
                     <span class="pb-label-inner">Size</span>
                     <span class="pb-val" id="pb-size-val">12</span>
                     </div>
@@ -2244,6 +2289,27 @@
                     <span class="pb-val" id="pb-hardness-val">80</span>
                     </div>
                 </div>
+                <div class="pb-row" data-setting="blendMode">
+                    <label>Blend</label>
+                    <select id="pb-blend">
+                        <option value="normal">Normal</option>
+                        <option value="erase">Erase</option>
+                        <option value="multiply">Multiply</option>
+                        <option value="screen">Screen</option>
+                        <option value="overlay">Overlay</option>
+                        <option value="darken">Darken</option>
+                        <option value="lighten">Lighten</option>
+                        <option value="color-dodge">Dodge</option>
+                        <option value="color-burn">Burn</option>
+                        <option value="hard-light">Hard light</option>
+                        <option value="soft-light">Soft light</option>
+                        <option value="difference">Difference</option>
+                        <option value="hue">Hue</option>
+                        <option value="saturation">Saturation</option>
+                        <option value="color">Color</option>
+                        <option value="luminosity">Luminosity</option>
+                    </select>
+                </div>
                 <div class="pb-row" data-setting="shape">
                     <label>Tip</label>
                     <select id="pb-shape">
@@ -2262,22 +2328,281 @@
                     <span class="pb-val" id="pb-angle-val">0</span>
                     </div>
                 </div>
-                <div class="pb-row" data-setting="dynamicsMode">
-                    <label>Dynamics</label>
-                    <select id="pb-dynamics">
-                        <option value="off">Off</option>
-                        <option value="direction">Direction</option>
-                        <option value="angle">Angle</option>
-                        <option value="size">Size</option>
-                        <option value="opacity">Opacity</option>
-                        <option value="flow">Flow</option>
-                    </select>
-                </div>
                 <div class="pb-row" data-setting="aspectRatio">
                     <div class="pb-slider-wrap">
-                    <input type="range" id="pb-aspect" min="1" max="10" step="0.1" value="1">
+                    <input type="range" id="pb-aspect" min="0.1" max="10" step="0.1" value="1">
                     <span class="pb-label-inner">Aspect</span>
                     <span class="pb-val" id="pb-aspect-val">1</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Dynamics</div>
+                <div class="pb-row" data-setting="sizeSrc">
+                    <label>Size</label>
+                    <select id="pb-size-src" data-dyn-src="size">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="wheel">Airbrush wheel</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                        <option value="fade">Fade</option>
+                        <option value="distance">Distance</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="sizeMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-size-min" data-dyn-min="size" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Size floor</span>
+                    <span class="pb-val" id="pb-size-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row pb-curve-row" data-setting="sizeCurve">
+                    <canvas class="pb-curve" id="pb-size-curve" data-dyn-curve="size" width="132" height="66" title="Drag to shape the response. Click empty space to add a point, double-click a point to remove it."></canvas>
+                </div>
+                <div class="pb-row" data-setting="flowSrc">
+                    <label>Flow</label>
+                    <select id="pb-flow-src" data-dyn-src="flow">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="wheel">Airbrush wheel</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                        <option value="fade">Fade</option>
+                        <option value="distance">Distance</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="flowMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-flow-min" data-dyn-min="flow" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Flow floor</span>
+                    <span class="pb-val" id="pb-flow-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row pb-curve-row" data-setting="flowCurve">
+                    <canvas class="pb-curve" id="pb-flow-curve" data-dyn-curve="flow" width="132" height="66" title="Drag to shape the response. Click empty space to add a point, double-click a point to remove it."></canvas>
+                </div>
+                <div class="pb-row" data-setting="hardnessSrc">
+                    <label>Hardness</label>
+                    <select id="pb-hardness-src" data-dyn-src="hardness">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="wheel">Airbrush wheel</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                        <option value="fade">Fade</option>
+                        <option value="distance">Distance</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="hardnessMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-hardness-min" data-dyn-min="hardness" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Hardness floor</span>
+                    <span class="pb-val" id="pb-hardness-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row pb-curve-row" data-setting="hardnessCurve">
+                    <canvas class="pb-curve" id="pb-hardness-curve" data-dyn-curve="hardness" width="132" height="66" title="Drag to shape the response. Click empty space to add a point, double-click a point to remove it."></canvas>
+                </div>
+                <div class="pb-row" data-setting="scatterSrc">
+                    <label>Scatter</label>
+                    <select id="pb-scatter-src" data-dyn-src="scatter">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="wheel">Airbrush wheel</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                        <option value="fade">Fade</option>
+                        <option value="distance">Distance</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="scatterMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-scatter-min" data-dyn-min="scatter" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Scatter floor</span>
+                    <span class="pb-val" id="pb-scatter-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row pb-curve-row" data-setting="scatterCurve">
+                    <canvas class="pb-curve" id="pb-scatter-curve" data-dyn-curve="scatter" width="132" height="66" title="Drag to shape the response. Click empty space to add a point, double-click a point to remove it."></canvas>
+                </div>
+                <div class="pb-row" data-setting="angleSrc">
+                    <label>Angle</label>
+                    <select id="pb-angle-src" data-dyn-src="angle">
+                        <option value="none">None</option>
+                        <option value="direction">Stroke direction</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="wheel">Airbrush wheel</option>
+                        <option value="random">Random</option>
+                        <option value="fade">Fade</option>
+                        <option value="distance">Distance</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="aspectRatioSrc">
+                    <label>Roundness</label>
+                    <select id="pb-aspect-src" data-dyn-src="aspectRatio">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="wheel">Airbrush wheel</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                        <option value="fade">Fade</option>
+                        <option value="distance">Distance</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="aspectRatioMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-aspect-min" data-dyn-min="aspectRatio" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Roundness floor</span>
+                    <span class="pb-val" id="pb-aspect-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row pb-curve-row" data-setting="aspectRatioCurve">
+                    <canvas class="pb-curve" id="pb-aspect-curve" data-dyn-curve="aspectRatio" width="132" height="66" title="Drag to shape the response. Click empty space to add a point, double-click a point to remove it."></canvas>
+                </div>
+                <div class="pb-row" data-setting="textureSrc">
+                    <label>Texture</label>
+                    <select id="pb-texture-src" data-dyn-src="texture">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="wheel">Airbrush wheel</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                        <option value="fade">Fade</option>
+                        <option value="distance">Distance</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="textureMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-texture-min" data-dyn-min="texture" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Texture floor</span>
+                    <span class="pb-val" id="pb-texture-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row pb-curve-row" data-setting="textureCurve">
+                    <canvas class="pb-curve" id="pb-texture-curve" data-dyn-curve="texture" width="132" height="66" title="Drag to shape the response. Click empty space to add a point, double-click a point to remove it."></canvas>
+                </div>
+                <div class="pb-row" data-setting="colorRateSrc">
+                    <label>Mix</label>
+                    <select id="pb-colorRate-src" data-dyn-src="colorRate">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="wheel">Airbrush wheel</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                        <option value="fade">Fade</option>
+                        <option value="distance">Distance</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="colorRateMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-colorRate-min" data-dyn-min="colorRate" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Mix floor</span>
+                    <span class="pb-val" id="pb-colorRate-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row pb-curve-row" data-setting="colorRateCurve">
+                    <canvas class="pb-curve" id="pb-colorRate-curve" data-dyn-curve="colorRate" width="132" height="66" title="Drag to shape the response. Click empty space to add a point, double-click a point to remove it."></canvas>
+                </div>
+                <div class="pb-row" data-setting="spacingSrc">
+                    <label>Spacing</label>
+                    <select id="pb-spacing-src" data-dyn-src="spacing">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="wheel">Airbrush wheel</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                        <option value="fade">Fade</option>
+                        <option value="distance">Distance</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="spacingMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-spacing-min" data-dyn-min="spacing" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Spacing floor</span>
+                    <span class="pb-val" id="pb-spacing-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row pb-curve-row" data-setting="spacingCurve">
+                    <canvas class="pb-curve" id="pb-spacing-curve" data-dyn-curve="spacing" width="132" height="66" title="Drag to shape the response. Click empty space to add a point, double-click a point to remove it."></canvas>
+                </div>
+                <div class="pb-row" data-setting="dabCountSrc">
+                    <label>Dab count</label>
+                    <select id="pb-dabCount-src" data-dyn-src="dabCount">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="wheel">Airbrush wheel</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                        <option value="fade">Fade</option>
+                        <option value="distance">Distance</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="dabCountMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-dabCount-min" data-dyn-min="dabCount" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Dab count floor</span>
+                    <span class="pb-val" id="pb-dabCount-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row pb-curve-row" data-setting="dabCountCurve">
+                    <canvas class="pb-curve" id="pb-dabCount-curve" data-dyn-curve="dabCount" width="132" height="66" title="Drag to shape the response. Click empty space to add a point, double-click a point to remove it."></canvas>
+                </div>
+                <div class="pb-row" data-setting="offsetSrc">
+                    <label>Offset</label>
+                    <select id="pb-offset-src" data-dyn-src="offset">
+                        <option value="none">None</option>
+                        <option value="pressure">Pressure</option>
+                        <option value="tilt">Tilt</option>
+                        <option value="twist">Pen rotation</option>
+                        <option value="wheel">Airbrush wheel</option>
+                        <option value="speed">Speed</option>
+                        <option value="random">Random</option>
+                        <option value="fade">Fade</option>
+                        <option value="distance">Distance</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="offsetMin">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-offset-min" data-dyn-min="offset" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Offset floor</span>
+                    <span class="pb-val" id="pb-offset-min-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row pb-curve-row" data-setting="offsetCurve">
+                    <canvas class="pb-curve" id="pb-offset-curve" data-dyn-curve="offset" width="132" height="66" title="Drag to shape the response. Click empty space to add a point, double-click a point to remove it."></canvas>
+                </div>
+                <div class="pb-row" data-setting="fadeSteps">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-fadeSteps" min="1" max="200" step="1" value="25">
+                    <span class="pb-label-inner">Fade over</span>
+                    <span class="pb-val" id="pb-fadeSteps-val">25</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="distanceLength">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-distanceLength" min="1" max="500" step="1" value="30">
+                    <span class="pb-label-inner">Distance over</span>
+                    <span class="pb-val" id="pb-distanceLength-val">30</span>
                     </div>
                 </div>
             </div>
@@ -2288,6 +2613,20 @@
                     <input type="range" id="pb-colorRate" min="0" max="100" step="1" value="100">
                     <span class="pb-label-inner">Mix</span>
                     <span class="pb-val" id="pb-colorRate-val">100</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="smudgeRadius">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-smudgeRadius" min="25" max="400" step="5" value="100">
+                    <span class="pb-label-inner">Reach</span>
+                    <span class="pb-val" id="pb-smudgeRadius-val">100</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="smudgeLength">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-smudgeLength" min="0" max="100" step="1" value="50">
+                    <span class="pb-label-inner">Carry</span>
+                    <span class="pb-val" id="pb-smudgeLength-val">50</span>
                     </div>
                 </div>
             </div>
@@ -2323,9 +2662,9 @@
                 </div>
                 <div class="pb-row" data-setting="bristleWidth">
                     <div class="pb-slider-wrap">
-                    <input type="range" id="pb-bristleWidth" min="1" max="10" step="0.5" value="2">
+                    <input type="range" id="pb-bristleWidth" min="0.5" max="8" step="0.5" value="3">
                     <span class="pb-label-inner">Width</span>
-                    <span class="pb-val" id="pb-bristleWidth-val">2</span>
+                    <span class="pb-val" id="pb-bristleWidth-val">3</span>
                     </div>
                 </div>
                 <div class="pb-row" data-setting="bristleSpread">
@@ -2341,6 +2680,58 @@
                     <span class="pb-label-inner">Scatter</span>
                     <span class="pb-val" id="pb-scatter-val">0</span>
                     </div>
+                </div>
+                <div class="pb-row" data-setting="dabCount">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-dabCount" min="1" max="16" step="1" value="1">
+                    <span class="pb-label-inner">Dabs a stop</span>
+                    <span class="pb-val" id="pb-dabCount-val">1</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="offsetAlong">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-offsetAlong" min="-200" max="200" step="1" value="0">
+                    <span class="pb-label-inner">Offset along</span>
+                    <span class="pb-val" id="pb-offsetAlong-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="offsetAcross">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-offsetAcross" min="-200" max="200" step="1" value="0">
+                    <span class="pb-label-inner">Offset across</span>
+                    <span class="pb-val" id="pb-offsetAcross-val">0</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Colour Wander</div>
+                <div class="pb-row" data-setting="hueJitter">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-hueJitter" min="0" max="180" step="1" value="0">
+                    <span class="pb-label-inner">Hue wander</span>
+                    <span class="pb-val" id="pb-hueJitter-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="satJitter">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-satJitter" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Saturation wander</span>
+                    <span class="pb-val" id="pb-satJitter-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="valJitter">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-valJitter" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Brightness wander</span>
+                    <span class="pb-val" id="pb-valJitter-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="colorJitterPer">
+                    <label>Changes</label>
+                    <select id="pb-colorJitterPer">
+                        <option value="dab">Every dab</option>
+                        <option value="stroke">Every stroke</option>
+                    </select>
                 </div>
             </div>
             <div class="pb-section">
@@ -2359,6 +2750,21 @@
                     <span class="pb-val" id="pb-taperEnd-val">0</span>
                     </div>
                 </div>
+                <div class="pb-row" data-setting="taperTarget">
+                    <label>Affects</label>
+                    <select id="pb-taperTarget">
+                        <option value="size">Width</option>
+                        <option value="opacity">Opacity</option>
+                        <option value="both">Both</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="taperUnit">
+                    <label>Measure</label>
+                    <select id="pb-taperUnit">
+                        <option value="brush">By brush size</option>
+                        <option value="stroke">By stroke length</option>
+                    </select>
+                </div>
             </div>
             <div class="pb-section">
                 <div class="pb-label">Texture</div>
@@ -2371,9 +2777,85 @@
                 </div>
                 <div class="pb-row" data-setting="textureScale">
                     <div class="pb-slider-wrap">
-                    <input type="range" id="pb-textureScale" min="1" max="10" step="0.5" value="4">
+                    <input type="range" id="pb-textureScale" min="0.5" max="10" step="0.5" value="4">
                     <span class="pb-label-inner">Tex Scale</span>
                     <span class="pb-val" id="pb-textureScale-val">4</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Watercolor</div>
+                <div class="pb-row" data-setting="edgeWidth">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-edgeWidth" min="0" max="10" step="0.5" value="0">
+                    <span class="pb-label-inner">Edge Width</span>
+                    <span class="pb-val" id="pb-edgeWidth-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="edgeDensity">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-edgeDensity" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Edge Density</span>
+                    <span class="pb-val" id="pb-edgeDensity-val">0</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Second Tip</div>
+                <div class="pb-row" data-setting="tip2Depth">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-tip2Depth" min="0" max="100" step="1" value="0">
+                    <span class="pb-label-inner">Bite</span>
+                    <span class="pb-val" id="pb-tip2Depth-val">0</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="tip2Size">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-tip2Size" min="1" max="2000" step="1" value="100">
+                    <span class="pb-label-inner">Size</span>
+                    <span class="pb-val" id="pb-tip2Size-val">100</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="tip2Spacing">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-tip2Spacing" min="10" max="400" step="1" value="100">
+                    <span class="pb-label-inner">Gap</span>
+                    <span class="pb-val" id="pb-tip2Spacing-val">100</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="tip2Angle">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-tip2Angle" min="0" max="360" step="1" value="0">
+                    <span class="pb-label-inner">Angle</span>
+                    <span class="pb-val" id="pb-tip2Angle-val">0</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pb-section">
+                <div class="pb-label">Surface</div>
+                <div class="pb-row" data-setting="dualTip">
+                    <label>Type</label>
+                    <select id="pb-dualTip">
+                        <option value="none">None</option>
+                        <option value="grain">Grain</option>
+                        <option value="chalk">Chalk</option>
+                        <option value="canvas">Canvas</option>
+                        <option value="spray">Spray</option>
+                        <option value="hatch">Hatch</option>
+                    </select>
+                </div>
+                <div class="pb-row" data-setting="dualScale">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-dualScale" min="1" max="12" step="1" value="3">
+                    <span class="pb-label-inner">Grain Size</span>
+                    <span class="pb-val" id="pb-dualScale-val">3</span>
+                    </div>
+                </div>
+                <div class="pb-row" data-setting="dualDepth">
+                    <div class="pb-slider-wrap">
+                    <input type="range" id="pb-dualDepth" min="0" max="100" step="1" value="70">
+                    <span class="pb-label-inner">Bite</span>
+                    <span class="pb-val" id="pb-dualDepth-val">70</span>
                     </div>
                 </div>
             </div>
@@ -2528,6 +3010,27 @@
 <script type="module">import * as __tiledAsset from './js/tiled-asset.js'; window.TiledAsset = __tiledAsset;</script>
 <script type="module">import * as __retile from './js/retile.js'; window.Retile = __retile;</script>
 <script defer src="js/paint-engine.js"></script>
+<script defer src="js/hotkeys.js"></script>
+<script defer src="js/tauri-bridge.js"></script>
+<script defer src="js/quantize.js"></script>
+<script defer src="js/gradient-tool.js"></script>
+<script defer src="js/adjustments.js"></script>
+<script defer src="js/transform.js"></script>
+<script defer src="js/magic-wand.js"></script>
+<script defer src="js/palette.js"></script>
+<script defer src="js/exporting.js"></script>
+<script defer src="js/project-assets.js"></script>
+<script defer src="js/modals.js"></script>
+<script defer src="js/brush-engine.js"></script>
+<script defer src="js/tiles.js"></script>
+<script defer src="js/history.js"></script>
+<script defer src="js/selection.js"></script>
+<script defer src="js/theming.js"></script>
+<script defer src="js/clipboard.js"></script>
+<script defer src="js/viewport.js"></script>
+<script defer src="js/file-io.js"></script>
+<script defer src="js/boot.js"></script>
+<script defer src="js/layer-system.js"></script>
 <script defer src="js/tab-system.js"></script>
 <script defer src="js/project-browser.js"></script>
 <script defer src="js/palette-panel.js"></script>
@@ -2535,6 +3038,7 @@
 <script defer src="js/battle-preview.js"></script>
 <script defer src="js/tiled-screen.js"></script>
 <script defer src="js/frame-strip.js"></script>
+<script defer src="js/brush-pack.js"></script>
 <script defer src="js/krita-brush-engine.js"></script>
 <script defer src="freehand-path-engine.js"></script>
 <script defer src="js/perfect-freehand-bundle.js"></script>

@@ -1,7 +1,7 @@
 /* Nothing that only a hidden panel needs may be fetched during boot.
  *
  * The paint brush sidebar's preset grid used to be built on DOMContentLoaded.
- * Building it fetches every preset's custom tip PNG — ~570kB across a dozen
+ * Building it fetches every preset's custom tip PNG — ~1.3MB across a dozen
  * files — decodes each one, and runs a full-resolution luminance-to-alpha pass
  * over it, all to draw 66px thumbnails into a panel parked at left:-296px
  * until someone picks the Paint Brush tool. That landed squarely on the main
@@ -47,15 +47,55 @@ await withPage(async (page) => {
 
     /* Picking the tool slides the sidebar to left:0, which is what the
      * observer is watching for. */
-    await page.run(`PaintApp.setTool('paintbrush'); return 1;`);
-    await new Promise(r => setTimeout(r, 2000));
+    /* Sixteen tiles fall inside the observer's margin and a swatch is a real
+     * brush stroke — up to 73ms for a bristle mixer. Drawn in one go that is
+     * a third of a second of frozen panel at the moment it appears, so they
+     * go out a slice at a time and the longest frame stays short. */
+    const worstFrame = await page.run(`
+        const gaps = [];
+        let prev = performance.now();
+        PaintApp.setTool('paintbrush');
+        for (let i = 0; i < 90; i++) {
+            await new Promise(r => requestAnimationFrame(r));
+            const now = performance.now();
+            gaps.push(now - prev);
+            prev = now;
+        }
+        return Math.round(Math.max.apply(null, gaps));
+    `);
+    check('opening the panel never freezes for a noticeable moment',
+        worstFrame < 60, `longest frame while opening was ${worstFrame}ms`);
+    await new Promise(r => setTimeout(r, 1500));
 
     const open = await page.run(PROBE);
     check('opening the panel builds the grid', open.tiles > 0, `${open.tiles} tiles`);
-    check('every tile gets a rendered preview', open.canvases === open.tiles,
+    /* A tile draws itself when it scrolls into view, so opening the panel
+     * must produce swatches — but only for the handful on screen, and only
+     * the tip PNGs those need. Deferring is only correct if the work still
+     * happens when it is actually needed, so both halves are checked. */
+    check('the visible tiles get a rendered preview', open.canvases > 0,
         `${open.canvases} canvases for ${open.tiles} tiles`);
-    check('and the tip images load then', open.count > 0,
-        `${open.count} requests, ${open.kb}kB`);
+    check('...and the ones nobody can see do not', open.canvases < open.tiles / 2,
+        `${open.canvases} of ${open.tiles} drawn on open`);
+    /* Only the tips those drawn tiles need, not the whole library — which is
+     * 14 files and about 490kB. The bound is a share of that rather than a
+     * round number: a strip tip holds several shapes and so weighs several
+     * times what a single-shape tip did, and holding the old absolute figure
+     * would only mean deleting brushes to satisfy the test. */
+    check('opening the panel no longer pulls every tip image',
+        open.count <= 8 && open.kb < 400, `${open.count} requests, ${open.kb}kB`);
+
+    /* Scroll to the bottom: the tiles down there draw, and their tips load. */
+    await page.run(`
+        const g = document.getElementById('pb-brush-grid');
+        g.scrollTop = g.scrollHeight; return 1;`);
+    await new Promise(r => setTimeout(r, 1200));
+    const low = await page.run(PROBE);
+    check('scrolling draws the tiles you scroll to', low.canvases > open.canvases,
+        `${open.canvases} then ${low.canvases}`);
+    check('and their tip images load then', low.count > 0,
+        `${low.count} requests, ${low.kb}kB`);
+    await page.run(`document.getElementById('pb-brush-grid').scrollTop = 0; return 1;`);
 
     /* Re-entering the tool must not rebuild — the observer disconnects on the
      * first hit, so the tile count stays put rather than doubling. */

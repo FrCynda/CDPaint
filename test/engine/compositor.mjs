@@ -7,7 +7,7 @@
 import { readFileSync } from 'fs';
 import vm from 'vm';
 
-const SRC = process.argv[2] || 'src/js/paint-engine.js';
+const SRC = process.argv[2] || 'src/js/layer-system.js';
 const lines = readFileSync(SRC, 'utf8').split(/\r?\n/);
 
 let pass = 0, fail = 0;
@@ -49,26 +49,32 @@ function fakeCanvas(tag) {
 }
 
 const harness = `
+let _tempDrawn = false;
 ${extractFn('_buildTree')}
 ${extractFn('_blendOf')}
 ${extractFn('_isPassThrough')}
 ${extractFn('_getScratch')}
 ${extractFn('_releaseScratch')}
 ${extractFn('_nodeContent')}
+${extractFn('_drawTemp')}
+${extractFn('_isActiveLayer')}
 ${extractFn('_renderList')}
-globalThis.__api = { _buildTree, _renderList, _nodeContent };
+globalThis.__api = { _buildTree, _renderList, _nodeContent, _drawTemp,
+    resetTemp: () => { _tempDrawn = false; },
+    tempDrawn: () => _tempDrawn };
 `;
 
-const mgr = { layers: [] };
+const mgr = { layers: [], activeIdx: -1 };
+const cTemp = fakeCanvas('TEMP');
 const sandbox = {
     console, mgr,
-    app: { disableSmoothing() {}, config: { width: 4, height: 4 } },
+    app: { disableSmoothing() {}, config: { width: 4, height: 4 }, ui: { cTemp } },
     document: { createElement: () => fakeCanvas() },
     _scratchPool: []
 };
 vm.createContext(sandbox);
 vm.runInContext(harness, sandbox);
-const { _buildTree, _renderList } = sandbox.__api;
+const { _buildTree, _renderList, resetTemp, tempDrawn } = sandbox.__api;
 console.log(`extracted compositor from ${SRC}\n`);
 
 let nid = 0;
@@ -82,6 +88,7 @@ function layer(tag, extra) {
 function render() {
     const out = fakeCanvas('OUT');
     const { roots, kids } = _buildTree();
+    resetTemp();
     _renderList(roots, kids, out.getContext(), 4, 4);
     return out.ops.filter(o => o !== 'save' && o !== 'restore' && o !== 'clear');
 }
@@ -266,6 +273,43 @@ console.log('\n== 13. a clipped layer with nothing under it still draws ==');
     const ops = render();
     check('it is drawn as an ordinary layer rather than vanishing',
         ops.some(o => o.startsWith('FIRST@')), ops.join(' | '));
+}
+
+console.log("");
+console.log("== 14. the temp canvas sits at the active layer's depth ==");
+{
+    const a = layer('A'), b = layer('B'), c = layer('C');
+    mgr.layers = [a, b, c];
+
+    mgr.activeIdx = 1;
+    let ops = render();
+    check('drawn straight after the layer being edited',
+        ops.join(' | ') === 'A@source-overx1 | B@source-overx1 | TEMP@source-overx1 | C@source-overx1',
+        ops.join(' | '));
+    check('the walk marks it drawn, so the fallback stays out of the way', tempDrawn());
+
+    mgr.activeIdx = 2;
+    ops = render();
+    check('editing the top layer puts it last',
+        ops.join(' | ') === 'A@source-overx1 | B@source-overx1 | C@source-overx1 | TEMP@source-overx1',
+        ops.join(' | '));
+
+    mgr.activeIdx = 0;
+    ops = render();
+    check('editing the bottom layer puts it under everything above',
+        ops.join(' | ') === 'A@source-overx1 | TEMP@source-overx1 | B@source-overx1 | C@source-overx1',
+        ops.join(' | '));
+
+    // A hidden active layer is skipped by the walk, so nothing draws the temp
+    // canvas; _render's fallback is what keeps a floating selection visible.
+    mgr.activeIdx = 1;
+    b.visible = false;
+    ops = render();
+    check('a hidden active layer leaves it for the fallback',
+        !tempDrawn() && ops.join(' | ') === 'A@source-overx1 | C@source-overx1',
+        ops.join(' | '));
+    b.visible = true;
+    mgr.activeIdx = -1;
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
