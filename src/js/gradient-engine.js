@@ -22,7 +22,6 @@
     // ─────────────────────────────────────────────────────────────────────────────
 
     const GRAD_HANDLE_RADIUS = 8;
-    function _gradientDrawVector(ctx, g, zoom) { /* superseded by SVG overlay */ }
 
     // ─── Module-scope constants ───────────────────────────────────────────────────
 

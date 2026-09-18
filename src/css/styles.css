@@ -1560,6 +1560,13 @@
             vector-effect: non-scaling-stroke;
             shape-rendering: crispEdges;
         }
+        /* The creating marquee always uses a scaling stroke (never non-scaling-stroke,
+           which renders blurry/grey when combined with mix-blend-mode:difference) —
+           its local stroke-width is set in JS per zoom level so it still lands on
+           exactly 1 canvas pixel at >=100% zoom or 1 device pixel below it. */
+        .svg-marquee-rect.svg-marquee-stroke-scale {
+            vector-effect: none;
+        }
         .svg-marquee-rect#svg-ghost-rect {
             stroke: #8a8a8a;
             stroke-dasharray: 2 2;

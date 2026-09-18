@@ -11,27 +11,47 @@
                 if (!_g.active) return;
                 const _dist = Math.hypot(_g.endX - _g.startX, _g.endY - _g.startY);
                 if (_dist > 2) {
-                    this.ctx.save();
-                    _gradientRender(this.ctx, _g, this.config.width, this.config.height, this.config.c1, this.config.c2);
                     if (this.state.selection) {
+                        // The selection carries its own floating pixel copy (s.canvas)
+                        // that travels when it's dragged and is what gets stamped back
+                        // down on commit. Paint the gradient into that copy only — not
+                        // into the base layer too, or the gradient ends up baked onto
+                        // the canvas underneath as well as living in the selection.
                         const s = this.state.selection;
+                        const selCtx = s.canvas.getContext('2d');
+                        const rot = this.getSelectionRotationDegrees(s) * Math.PI / 180;
+                        selCtx.save();
+                        selCtx.translate(s.canvas.width / 2, s.canvas.height / 2);
+                        selCtx.rotate(-rot);
+                        selCtx.scale(s.canvas.width / (s.w || 1), s.canvas.height / (s.h || 1));
+                        selCtx.translate(-(s.x + s.w / 2), -(s.y + s.h / 2));
+                        _gradientRender(selCtx, _g, this.config.width, this.config.height, this.config.c1, this.config.c2);
+                        selCtx.restore();
                         if (s.mask) {
-                            this.ctx.globalCompositeOperation = 'destination-in';
-                            this.ctx.drawImage(s.mask, s.x, s.y, s.w, s.h);
-                        } else {
-                            const _nr = this.getNormalizedRect(s);
-                            this.ctx.beginPath();
-                            this.ctx.rect(_nr.x, _nr.y, _nr.w, _nr.h);
-                            this.ctx.clip();
+                            selCtx.save();
+                            selCtx.globalCompositeOperation = 'destination-in';
+                            selCtx.drawImage(s.mask, 0, 0, s.canvas.width, s.canvas.height);
+                            selCtx.restore();
                         }
+                        s._cache = null;
+                        s._glTexDirty = true;
+                        s._contentDirty = true;
+                    } else {
+                        this.ctx.save();
+                        _gradientRender(this.ctx, _g, this.config.width, this.config.height, this.config.c1, this.config.c2);
+                        this.ctx.restore();
                     }
-                    this.ctx.restore();
+
                     this.saveState();
                 }
                 _g.active = false;
                 _g.isPlacing = false;
                 _g.draggingHandle = null;
                 this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+                // The live preview lived on ctxTemp and just got wiped above — repaint
+                // the selection (now holding the applied gradient in s.canvas) so it
+                // doesn't visually vanish until something else happens to redraw it.
+                if (this.state.selection) this.renderSelection();
                 this._gradientClearVectorSVG();
                 this._gradientUpdateApplyCard(false);
                 this.ui.stage.style.cursor = '';

@@ -49,6 +49,7 @@
                 this.state.resizePreviewActive = false;
                 this.state.resizePreviewRect = null;
                 this.state.resizePreviewGhost = null;
+                this.requestGlobalOverlayUpdate();
                 if (!resizeDocked) {
                     const m = document.getElementById('modal-resize');
                     if (m) m.style.display = 'none';

@@ -1278,7 +1278,7 @@
                 const metrics = this.getSelectionDrawMetrics(s, renderC, true);
 
                 this.disableSmoothing(this.ctx);
-                if (isDeferred && !changed) {
+                if (isDeferred && !changed && !s._contentDirty) {
                     // Pure selection lifecycle (no move/transform): keep history and redo chain intact.
                     // If we cleared the layer canvas as a cut preview, restore it since nothing moved.
                     if (s._cutSavedData && s._cutSavedRect) {
