@@ -27,3 +27,4 @@ serde_json = "1"
 tauri-plugin-single-instance = "2.4.2"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+oxipng = { version = "9", default-features = false, features = ["parallel"] }

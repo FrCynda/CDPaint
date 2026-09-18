@@ -1,0 +1,75 @@
+{
+ "version": 3,
+ "comment": "MyPaint brush file",
+ "description": "Charcoal Soft",
+ "group": "",
+ "settings": {
+  "radius_logarithmic": {
+   "base_value": 2.3,
+   "inputs": {
+    "pressure": [
+     [
+      0.0,
+      -1.2
+     ],
+     [
+      0.5,
+      -0.3
+     ],
+     [
+      1.0,
+      0.0
+     ]
+    ]
+   }
+  },
+  "hardness": {
+   "base_value": 0.35,
+   "inputs": {}
+  },
+  "opaque": {
+   "base_value": 0.9,
+   "inputs": {
+    "pressure": [
+     [
+      0.0,
+      -0.9
+     ],
+     [
+      1.0,
+      0.0
+     ]
+    ]
+   }
+  },
+  "dabs_per_actual_radius": {
+   "base_value": 5.0,
+   "inputs": {}
+  },
+  "offset_by_random": {
+   "base_value": 0.4,
+   "inputs": {}
+  },
+  "elliptical_dab_ratio": {
+   "base_value": 2.5,
+   "inputs": {}
+  },
+  "elliptical_dab_angle": {
+   "base_value": 30.0,
+   "inputs": {}
+  },
+  "eraser": {
+   "base_value": 0.0,
+   "inputs": {}
+  },
+  "offset_by_speed": {
+   "base_value": 1.5,
+   "inputs": {}
+  },
+  "gridmap_scale": {
+   "base_value": 2.0,
+   "inputs": {}
+  }
+ },
+ "switches": {}
+}

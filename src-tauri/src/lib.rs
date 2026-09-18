@@ -12,11 +12,6 @@ const MIN_WINDOW_WIDTH: u32 = 400;
 const MIN_WINDOW_HEIGHT: u32 = 400;
 
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-#[tauri::command]
 fn get_app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
@@ -483,6 +478,35 @@ fn read_image_file(path: String) -> Result<Vec<u8>, String> {
     std::fs::read(&p).map_err(|e| format!("read failed: {}", e))
 }
 
+/// Repack a PNG smaller without changing a single visible pixel.
+///
+/// Everything oxipng does at its defaults is a lossless re-encode: it drops to
+/// a palette or a lower bit depth only when the colours actually fit, tries all
+/// the row filters instead of one, and deflates harder. Decode the result and
+/// you get the same pixels back.
+///
+/// The two settings that would *not* be safe here stay off, and both are off by
+/// default -- chunk stripping (a Display-P3 export needs its colour profile, and
+/// CDPaint injects its own pHYs/sRGB chunks on save) and alpha optimization (it
+/// rewrites the colour hidden underneath fully transparent pixels, which is
+/// invisible now but gone if that file is ever reopened and erased into).
+///
+/// Anything that is not a PNG, and any PNG oxipng cannot improve, passes
+/// through untouched.
+fn shrink_png(data: Vec<u8>) -> Vec<u8> {
+    const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    if !data.starts_with(&PNG_MAGIC) {
+        return data;
+    }
+    // ponytail: preset 4 keeps a save under a second or so on a big canvas.
+    // The `zopfli` feature squeezes another 5-10% but can take minutes, so it
+    // belongs behind an explicit "optimize hard" export option, not on Ctrl+S.
+    match oxipng::optimize_from_memory(&data, &oxipng::Options::from_preset(4)) {
+        Ok(smaller) if smaller.len() < data.len() => smaller,
+        _ => data,
+    }
+}
+
 #[tauri::command]
 fn write_allowed_file(path: String, data: Vec<u8>) -> Result<(), String> {
     let p = normalize_to_absolute_path(&path)?;
@@ -496,7 +520,7 @@ fn write_allowed_file(path: String, data: Vec<u8>) -> Result<(), String> {
     } else {
         return Err("invalid target path".into());
     }
-    std::fs::write(&p, data).map_err(|e| format!("write failed: {}", e))
+    std::fs::write(&p, shrink_png(data)).map_err(|e| format!("write failed: {}", e))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -854,7 +878,7 @@ fn write_export_files_to_directory(dir: &Path, files: Vec<ExportFilePayload>) ->
         if !is_allowed_write_extension(out.extension().and_then(|e| e.to_str())) {
             return Err(format!("file extension not allowed: {}", name));
         }
-        std::fs::write(&out, file.data).map_err(|e| format!("write failed ({}): {}", name, e))?;
+        std::fs::write(&out, shrink_png(file.data)).map_err(|e| format!("write failed ({}): {}", name, e))?;
     }
     Ok(())
 }
@@ -975,7 +999,7 @@ async fn write_export_file_with_save_dialog(
         return Err("file extension not allowed".into());
     }
 
-    std::fs::write(&save_path, file.data).map_err(|e| format!("write failed: {}", e))?;
+    std::fs::write(&save_path, shrink_png(file.data)).map_err(|e| format!("write failed: {}", e))?;
     Ok(Some(normalize_device_path(&parent.to_string_lossy())))
 }
 
@@ -1132,7 +1156,6 @@ pub fn run() {
             });
         }))
         .invoke_handler(tauri::generate_handler![
-            greet,
             get_app_version,
             updater_check,
             updater_download_and_install,
@@ -1197,5 +1220,105 @@ mod tests {
         let p = normalize_to_absolute_path(r"C:\Users\me\Pictures\..\..\evil.png")
             .expect("should normalize");
         assert_eq!(p, Path::new(r"C:\Users\evil.png"));
+    }
+}
+
+#[cfg(test)]
+mod shrink_png_tests {
+    use super::shrink_png;
+    use oxipng::internal_tests::PngData;
+    use oxipng::{BitDepth, ColorType, Options, RawImage};
+
+    const W: u32 = 16;
+    const H: u32 = 16;
+
+    /// Four colours over 256 pixels, one of them fully transparent -- the shape
+    /// of a sprite this app exports.
+    fn sample_pixels() -> Vec<[u8; 4]> {
+        let palette = [
+            [255, 0, 0, 255],
+            [0, 128, 255, 255],
+            [0, 0, 0, 0],
+            [32, 32, 32, 255],
+        ];
+        (0..(W * H) as usize)
+            .map(|i| palette[(i / 7 + i % 5) % 4])
+            .collect()
+    }
+
+    /// The fat 32-bit PNG a browser canvas hands us, carrying the pHYs and sRGB
+    /// chunks CDPaint injects on save.
+    fn browser_style_png(pixels: &[[u8; 4]]) -> Vec<u8> {
+        let data: Vec<u8> = pixels.iter().flatten().copied().collect();
+        let mut img = RawImage::new(W, H, ColorType::RGBA, BitDepth::Eight, data).unwrap();
+        img.add_png_chunk(*b"pHYs", vec![0, 0, 0x0E, 0xC3, 0, 0, 0x0E, 0xC3, 1]);
+        img.add_png_chunk(*b"sRGB", vec![0]);
+        let mut opts = Options::from_preset(0);
+        opts.color_type_reduction = false;
+        opts.palette_reduction = false;
+        opts.bit_depth_reduction = false;
+        opts.grayscale_reduction = false;
+        img.create_optimized_png(&opts).unwrap()
+    }
+
+    fn decode(png: &[u8]) -> Vec<[u8; 4]> {
+        let data = PngData::from_slice(png, &Options::from_preset(0)).unwrap();
+        let ihdr = &data.raw.ihdr;
+        let depth = ihdr.bit_depth as usize;
+        let channels = match ihdr.color_type {
+            ColorType::Indexed { .. } => 1,
+            ColorType::RGBA => 4,
+            ref other => panic!("unexpected colour type in test: {}", other),
+        };
+        let row_bytes = (depth * channels * ihdr.width as usize).div_ceil(8);
+        let mut out = Vec::with_capacity((ihdr.width * ihdr.height) as usize);
+        for y in 0..ihdr.height as usize {
+            let row = &data.raw.data[y * row_bytes..(y + 1) * row_bytes];
+            for x in 0..ihdr.width as usize {
+                out.push(match &ihdr.color_type {
+                    ColorType::Indexed { palette } => {
+                        let per_byte = 8 / depth;
+                        let shift = 8 - depth * (x % per_byte + 1);
+                        let idx = (row[x / per_byte] >> shift) as usize & ((1 << depth) - 1);
+                        let c = palette[idx];
+                        [c.r, c.g, c.b, c.a]
+                    }
+                    _ => {
+                        let p = &row[x * 4..x * 4 + 4];
+                        [p[0], p[1], p[2], p[3]]
+                    }
+                });
+            }
+        }
+        let chunks = data
+            .aux_chunks
+            .iter()
+            .map(|c| c.name)
+            .collect::<Vec<_>>();
+        assert!(chunks.contains(b"pHYs"), "pHYs chunk was dropped");
+        assert!(chunks.contains(b"sRGB"), "sRGB chunk was dropped");
+        out
+    }
+
+    #[test]
+    fn shrinks_a_png_without_changing_a_pixel() {
+        let pixels = sample_pixels();
+        let fat = browser_style_png(&pixels);
+        assert_eq!(decode(&fat), pixels, "fixture is not the picture we meant");
+
+        let small = shrink_png(fat.clone());
+        assert!(
+            small.len() < fat.len(),
+            "no saving: {} -> {} bytes",
+            fat.len(),
+            small.len()
+        );
+        assert_eq!(decode(&small), pixels, "pixels changed -- not lossless");
+    }
+
+    #[test]
+    fn leaves_non_pngs_alone() {
+        let junk = b"PK\x03\x04 not a png".to_vec();
+        assert_eq!(shrink_png(junk.clone()), junk);
     }
 }
