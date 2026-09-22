@@ -384,6 +384,8 @@
                 if (global) global.classList.toggle('checked', this.config.wandMode === 'global');
                 const sampleAll = document.getElementById('item-wand-sample-all');
                 if (sampleAll) sampleAll.classList.toggle('checked', !!this.config.sampleAllLayers);
+                const thresholdTitle = document.getElementById('wand-threshold-title');
+                if (thresholdTitle) thresholdTitle.textContent = this.config.tool === 'smart-brush' ? 'Edge Sensitivity' : 'Wand';
                 const wandBtn = document.getElementById('wand-tool-btn');
                 if (wandBtn) {
                     const iconContig = wandBtn.querySelector('.wand-icon-contig');
@@ -391,16 +393,33 @@
                     if (iconContig) iconContig.classList.toggle('show', this.config.wandMode === 'contiguous');
                     if (iconGlobal) iconGlobal.classList.toggle('show', this.config.wandMode === 'global');
                 }
+                // Each flavor's slot shows ITS OWN remembered mode, not the
+                // single shared `wandMode` — a plain-wand slot always reflects
+                // wandModeNormal, a Palette Wand slot always reflects
+                // wandModePalette, regardless of which one is currently active.
                 document.querySelectorAll('.tool-grid-slot[data-tool-id="wand"]').forEach(slot => {
                     const iconContig = slot.querySelector('.wand-icon-contig');
                     const iconGlobal = slot.querySelector('.wand-icon-global');
-                    if (iconContig) iconContig.classList.toggle('show', this.config.wandMode === 'contiguous');
-                    if (iconGlobal) iconGlobal.classList.toggle('show', this.config.wandMode === 'global');
+                    if (iconContig) iconContig.classList.toggle('show', this.config.wandModeNormal === 'contiguous');
+                    if (iconGlobal) iconGlobal.classList.toggle('show', this.config.wandModeNormal === 'global');
+                });
+                document.querySelectorAll('.tool-grid-slot[data-tool-id="wand-palette"]').forEach(slot => {
+                    const iconContig = slot.querySelector('.wand-icon-contig');
+                    const iconGlobal = slot.querySelector('.wand-icon-global');
+                    if (iconContig) iconContig.classList.toggle('show', this.config.wandModePalette === 'contiguous');
+                    if (iconGlobal) iconGlobal.classList.toggle('show', this.config.wandModePalette === 'global');
                 });
             },
-            setWandMode(mode) {
-                this.config.wandMode = mode === 'global' ? 'global' : 'contiguous';
-                this.lsSet('paint.wandMode', this.config.wandMode);
+            setWandMode(mode, flavor = 'normal') {
+                const normalized = mode === 'global' ? mode : 'contiguous';
+                this.config.wandMode = normalized;
+                if (flavor === 'palette') {
+                    this.config.wandModePalette = normalized;
+                    this.lsSet('paint.wandModePalette', normalized);
+                } else {
+                    this.config.wandModeNormal = normalized;
+                    this.lsSet('paint.wandMode', normalized);
+                }
                 this.syncWandMenu();
                 this.closeMenus();
             },
@@ -471,7 +490,10 @@
                     originalX: snap.x, originalY: snap.y,
                     palette: null,
                     mask: maskC,
-                    source: 'wand',
+                    // Older snapshots (saved before wandSelSnap carried its own
+                    // source) predate the Palette Wand, so 'wand' is the right
+                    // fallback for them.
+                    source: snap.source || 'wand',
                     noHandles: true,
                     _maskOutline: null, _maskOutlinePath: null, _maskOutlineData: null,
                     _maskVisiblePathCacheKey: '', _maskVisiblePathCacheValue: '',
@@ -484,6 +506,9 @@
                 this.renderSelection();
                 this.requestGlobalOverlayUpdate();
             },
+
+            // Smart Select Brush's own stroke-painting/seeding/mask logic lives in
+            // smart-select-brush.js, isolated from the plain click wand below.
 
             magicWandSelect(startX, startY, tolerance = 0, op = 'replace', baseImageData = null, commit = true) {
                 const width = this.config.width;
@@ -579,7 +604,7 @@
                     }
                 }
                 mctx.putImageData(mimg, 0, 0);
-                this.applyMaskSelection(mask, op, imageData, commit, { source: 'wand' });
+                this.applyMaskSelection(mask, op, imageData, commit, { source: this.config.wandFlavor === 'palette' ? 'wand-palette' : 'wand', baseSelection: this.state.wandOpBaseSelection || null, baseLayerSnapshot: this.state.wandOpBaseLayerSnapshot || null });
             },
             calculateWandMaskFast(startX, startY, tolerance, w, h) {
                 const diff = this.state.wandDiff;
@@ -910,7 +935,7 @@
                 }
                 if (this.state.wandJobId !== jobId) return;
                 mctx.putImageData(mimg, 0, 0);
-                this.applyMaskSelection(mask, op, imageData, false, { source: 'wand' });
+                this.applyMaskSelection(mask, op, imageData, false, { source: this.config.wandFlavor === 'palette' ? 'wand-palette' : 'wand', baseSelection: this.state.wandOpBaseSelection || null, baseLayerSnapshot: this.state.wandOpBaseLayerSnapshot || null });
             }
     });
 })();

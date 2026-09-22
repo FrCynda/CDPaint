@@ -94,6 +94,8 @@
                     'crimson-dusk-mode',
                     'gilded-obsidian-mode',
                     'violet-haze-mode',
+                    'steel-tide-mode',
+                    'dappled-grove-mode',
                 ];
                 const stored = this.lsGet('paint.themeMode') || 'light';
                 this.themeChrome = {
@@ -138,6 +140,8 @@
                     'crimson-dusk-mode',
                     'gilded-obsidian-mode',
                     'violet-haze-mode',
+                    'steel-tide-mode',
+                    'dappled-grove-mode',
                 ];
                 const isCustom = CUSTOM_THEMES.includes(mode);
                 // Check if already active
@@ -166,6 +170,8 @@
                     'crimson-dusk-mode',
                     'gilded-obsidian-mode',
                     'violet-haze-mode',
+                    'steel-tide-mode',
+                    'dappled-grove-mode',
                 ];
                 // Remove any previously applied custom theme classes
                 CUSTOM_THEMES.forEach(cls => document.body.classList.remove(cls));
@@ -225,6 +231,8 @@
                     'crimson-dusk-mode',
                     'gilded-obsidian-mode',
                     'violet-haze-mode',
+                    'steel-tide-mode',
+                    'dappled-grove-mode',
                 ];
                 const activeCustom = CUSTOM_THEMES.find(c => document.body.classList.contains(c)) || null;
                 const lightBtn = document.getElementById('theme-btn-light');
@@ -244,6 +252,8 @@
                     'crimson-dusk-mode',
                     'gilded-obsidian-mode',
                     'violet-haze-mode',
+                    'steel-tide-mode',
+                    'dappled-grove-mode',
                 ];
                 const isCustom = CUSTOM_THEMES.some(c => document.body.classList.contains(c));
                 // Custom themes define their own titlebar/tab-row colors via CSS variables.

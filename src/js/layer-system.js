@@ -63,7 +63,7 @@
                     // "something is about to change" and schedule a repaint.
                     // Layers are off-screen now — without this, strokes would
                     // land correctly but never appear.
-                    _invalidate();
+                    _invalidateFromCtxAccess();
                     // Editing a mask redirects every tool onto the mask canvas,
                     // so painting reveals and erasing hides, without ever
                     // touching the artwork underneath.
@@ -91,7 +91,7 @@
          * exactly the trick the ctx redirect above uses. */
         try {
             Object.defineProperty(app, 'ctxTemp', {
-                get() { _invalidate(); return _tempHolder.ctxTemp; },
+                get() { _invalidateFromCtxAccess(); return _tempHolder.ctxTemp; },
                 set(v) { _tempHolder.ctxTemp = v; },
                 configurable: true,
                 enumerable:   true
@@ -849,9 +849,20 @@
             }
         }
 
-        /* Composite the whole tree into the display canvas (cMain). */
+        /* Composite the whole tree into the display canvas (cMain).
+         *
+         * `rect`, when given, bounds the clear + clip to that region instead
+         * of the whole document — a full recomposite of a 13000x13000 canvas
+         * cost 250-400ms per frame with nothing but a single extra layer,
+         * measured directly against this code, and that tax was paid on
+         * EVERY animation frame a brush stroke invalidated. The clip makes
+         * the browser's own canvas rasterizer skip compositing work outside
+         * it for the plain per-layer drawImage calls below (_renderList's
+         * common, ungrouped/unclipped case); a clipped layer run's internal
+         * scratch-canvas compositing (_getScratch) is not clipped and stays
+         * full-document cost — a known remaining ceiling, not this bug. */
         let _renderRaf = null, _renderDirty = false;
-        function _render() {
+        function _render(rect) {
             _renderDirty = false;
             if (!mgr.active || !mgr.layers.length) return;
             const w = app.config.width, h = app.config.height;
@@ -861,7 +872,19 @@
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.globalAlpha = 1;
             ctx.globalCompositeOperation = 'source-over';
-            ctx.clearRect(0, 0, w, h);
+            if (rect) {
+                const rx = Math.max(0, Math.floor(rect.x1));
+                const ry = Math.max(0, Math.floor(rect.y1));
+                const rw = Math.min(w, Math.ceil(rect.x2)) - rx;
+                const rh = Math.min(h, Math.ceil(rect.y2)) - ry;
+                if (rw <= 0 || rh <= 0) { ctx.restore(); return; }
+                ctx.clearRect(rx, ry, rw, rh);
+                ctx.beginPath();
+                ctx.rect(rx, ry, rw, rh);
+                ctx.clip();
+            } else {
+                ctx.clearRect(0, 0, w, h);
+            }
             app.disableSmoothing(ctx);
             const { roots, kids } = _buildTree();
             _tempDrawn = false;
@@ -871,18 +894,62 @@
         }
         mgr.render = _render;
 
-        /* Coalesce repaints to one per animation frame. */
-        function _invalidate() {
+        function _unionRect(a, b) {
+            return {
+                x1: Math.min(a.x1, b.x1), y1: Math.min(a.y1, b.y1),
+                x2: Math.max(a.x2, b.x2), y2: Math.max(a.y2, b.y2)
+            };
+        }
+
+        /* Coalesce repaints to one per animation frame. `rect` narrows what
+         * that repaint needs to cover; leaving it out (every existing call
+         * site in this file: visibility, opacity, reorder, mask edits...)
+         * means "I changed something and don't know its bounds", so it
+         * always widens the pending repaint back to the whole canvas — the
+         * same behaviour this function had before rect existed. */
+        let _pendingRect = null;
+        function _invalidate(rect) {
             if (!mgr.active) return;
             _renderDirty = true;
+            _pendingRect = rect
+                ? (_pendingRect ? _unionRect(_pendingRect, rect) : rect)
+                : null;
             if (_renderRaf == null) {
                 _renderRaf = requestAnimationFrame(() => {
                     _renderRaf = null;
-                    if (_renderDirty) _render();
+                    if (_renderDirty) {
+                        const r = _pendingRect;
+                        _pendingRect = null;
+                        _render(r);
+                    }
                 });
             }
         }
         mgr.invalidate = _invalidate;
+
+        /* Set by a tool that knows exactly what it's about to draw (currently
+         * only the brush engine's flush), consumed once by the very next
+         * app.ctx / app.ctxTemp access and then cleared — so it narrows only
+         * the access it was set for, and can never leak into some later,
+         * unrelated tool's ctx access that never called this and needs the
+         * safe full-repaint default.
+         *
+         * This ALSO means calling app.ctx / app.ctxTemp more than once for
+         * the same drawing operation (a couple of call sites in
+         * krita-brush-engine.js do) must fetch it once and reuse the
+         * reference, or the second access would see the hint already
+         * cleared by the first and fall back to a full repaint. */
+        let _hintRect = null;
+        mgr.markDirty = function (x, y, w, h) {
+            if (!(w > 0 && h > 0)) return;
+            const add = { x1: x, y1: y, x2: x + w, y2: y + h };
+            _hintRect = _hintRect ? _unionRect(_hintRect, add) : add;
+        };
+        function _invalidateFromCtxAccess() {
+            const r = _hintRect;
+            _hintRect = null;
+            _invalidate(r);
+        }
 
         /* The live view is a stack of DOM canvases, so visibility / opacity /
          * blend mode are CSS on each canvas — nothing composites them in JS
@@ -1866,6 +1933,19 @@
             this.state.history.push(entry);
             this.state.step++;
             this.attachProjectStep(entry);
+            // Same wand-selection snapshot as the single-layer saveState path (see
+            // paint-engine.js), so step-by-step undo/redo can restore the exact
+            // selection state on a multi-layer document too, not just its pixels.
+            if (this.state.selection && (this.state.selection.source === 'wand' || this.state.selection.source === 'wand-palette' || this.state.selection.source === 'smart-brush')) {
+                const _ws = this.state.selection;
+                const _wsc = document.createElement('canvas');
+                _wsc.width = _ws.canvas.width; _wsc.height = _ws.canvas.height;
+                _wsc.getContext('2d').drawImage(_ws.canvas, 0, 0);
+                const _wsm = document.createElement('canvas');
+                _wsm.width = _ws.mask.width; _wsm.height = _ws.mask.height;
+                _wsm.getContext('2d').drawImage(_ws.mask, 0, 0);
+                entry.wandSelSnap = { x: _ws.x, y: _ws.y, w: _ws.w, h: _ws.h, canvas: _wsc, mask: _wsm, source: _ws.source };
+            }
             this.enforceHistoryLimit();
             this.state.isDirty = true;
             this.deferColorCounts();

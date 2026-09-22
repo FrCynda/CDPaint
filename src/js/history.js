@@ -419,7 +419,7 @@
                 // peels back one wand click and the wandSelSnap stored in the history entry
                 // restores the previous accumulated selection state.
                 if (this.state.selection) {
-                    if (this.state.selection.source === 'wand') {
+                    if (this.state.selection.source === 'wand' || this.state.selection.source === 'wand-palette' || this.state.selection.source === 'smart-brush') {
                         this._clearWandSelectionSilent();
                     } else {
                         this.commitSelection();

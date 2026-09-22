@@ -707,8 +707,12 @@
                 this.ui.cTemp.style.transform = `translate(${previewShiftX}px, ${previewShiftY}px)`;
                 if (!this.config.anchorCanvas) {
                     const off = this.state.canvasOffsetStart;
-                    const ox = this.state.rDir.includes('l') ? (dx * zoom) : 0;
-                    const oy = this.state.rDir.includes('t') ? (dy * zoom) : 0;
+                    // Use the already pixel-snapped shift (same value the width/height and
+                    // the content translate use) instead of the raw sub-pixel dx/dy — otherwise
+                    // the stage position follows the mouse smoothly while its size jumps in
+                    // whole-pixel steps, so the left/top handles look like they don't snap.
+                    const ox = this.state.rDir.includes('l') ? (-previewShiftX * zoom) : 0;
+                    const oy = this.state.rDir.includes('t') ? (-previewShiftY * zoom) : 0;
                     this.state.canvasOffset = this.clampCanvasOffset({ x: off.x + ox, y: off.y + oy });
                     this.applyStageTransform();
                 }

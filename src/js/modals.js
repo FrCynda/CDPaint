@@ -7,7 +7,7 @@
 (function () {
     Object.assign(PaintEngine.prototype, {
             initModalInteractions() {
-                const ids = ['modal-resize', 'modal-depth', 'modal-gapstitch', 'modal-export', 'modal-huesat', 'save-reminder-modal', 'close-confirm-modal', 'modal-info', 'modal-colors', 'modal-confirm-reset', 'modal-toolbar', 'modal-tool-customizer', 'modal-brush-pack'];
+                const ids = ['modal-resize', 'modal-depth', 'modal-gapstitch', 'modal-export', 'modal-huesat', 'save-reminder-modal', 'close-confirm-modal', 'modal-info', 'modal-colors', 'modal-confirm-reset', 'modal-toolbar', 'modal-tool-customizer', 'modal-brush-pack', 'modal-new'];
                 ids.forEach(id => {
                     const modal = document.getElementById(id);
                     if (!modal) return;
@@ -559,6 +559,7 @@
                 }
                 if (id === 'new') this.resetNewModal();
                 document.getElementById('modal-'+id).style.display='flex';
+                if (id === 'new') this.centerModal('modal-new');
                 if (id === 'resize') { this.positionResizeModal(); this.updateResizePreview(); }
                 if (id === 'depth') { this.centerModal('modal-'+id); setTimeout(()=>{const b=document.getElementById('depth-apply-btn');if(b)b.focus();},0); }
                 if (id === 'huesat') this.centerModal('modal-'+id);

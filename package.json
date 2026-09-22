@@ -16,11 +16,9 @@
     "test:wand": "node test/wand-algorithms.test.mjs"
   },
   "private": true,
-  "dependencies": {
-    "canvas": "^3.2.3",
-    "perfect-freehand": "^1.2.3"
-  },
   "devDependencies": {
-    "esbuild": "^0.28.1"
+    "@huggingface/transformers": "^4.3.0",
+    "esbuild": "^0.28.1",
+    "perfect-freehand": "^1.2.3"
   }
 }

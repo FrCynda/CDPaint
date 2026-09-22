@@ -125,9 +125,6 @@
                 const currentZoom = this.config.zoom;
                 let focus = null;
                 const vpRect = this.ui.viewport ? this.ui.viewport.getBoundingClientRect() : null;
-                const prevStageRect = (!this.config.anchorCanvas && this.ui.stage && vpRect)
-                    ? this.ui.stage.getBoundingClientRect()
-                    : null;
                 const stageRect = (this.ui.stage) ? this.ui.stage.getBoundingClientRect() : null;
                 const useMouseFocus = focusEvent && this.ui.viewport && stageRect
                     && (!this.config.anchorCanvas || this.config.tool === 'zoom');
@@ -196,22 +193,26 @@
                 }
                 this.updateViewportScrollability();
                 this.clampViewportScroll();
-                if (prevStageRect && vpRect && this.rectsIntersect(prevStageRect, vpRect)) {
-                    this.ensureCanvasVisible(vpRect);
-                }
+                this.updateCanvasVisibilityButton();
                 if(this.state.selection) this.renderSelection();
                 if(this.state.activeShape) this.renderActiveShape();
                 // Redraw gradient handles at new zoom — they must stay fixed screen-pixel size
                 if (this.config.tool === 'gradient' && this.config.gradient.active) this._gradientDrawVectorSVG();
-                this.requestGlobalOverlayUpdate();
+                // Zoom can fire (mouse wheel) without a mousemove in between, so it must
+                // re-supply the in-progress marquee's rect rather than clearing it — the
+                // canvas-space rect is unaffected by zoom, only its screen mapping is.
+                this.requestGlobalOverlayUpdate(this._lastCreatingOverlayRect || null);
                 this.updateBounds();
                 this.updateGridOverlay();
+                this.refreshEraserGhost();
+                this.refreshBrushCursorRing();
             },
             _updateSidebarViewportShift(smoothHandles) {
                 const anyOpen = (document.getElementById('unified-sidebar')?.classList.contains('hidden') === false) ||
                     document.getElementById('freehand-sidebar')?.classList.contains('open') ||
                     document.getElementById('paintbrush-sidebar')?.classList.contains('open') ||
                     document.getElementById('gradient-sidebar')?.classList.contains('open') ||
+                    document.getElementById('smart-brush-sidebar')?.classList.contains('open') ||
                     document.getElementById('project-panel')?.classList.contains('open');
                 const shift = this.config.anchorCanvas && anyOpen ? 290 : 0;
                 // Lets the collapsed panels' edge tabs step aside for whichever

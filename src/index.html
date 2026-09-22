@@ -7,7 +7,7 @@
     <!-- Catch a paste before the engine exists.
 
          PaintEngine installs its own paste handler part-way through init(),
-         which cannot run until paint-engine.js (712kB minified) has been
+         which cannot run until paint-engine.js (about 300kB minified) has been
          fetched, compiled and executed. A Ctrl+V before that lands on no
          listener at all, and a clipboard event does not queue or replay — the
          paste is simply gone, with nothing on screen to say so. Catching it
@@ -81,6 +81,7 @@
     <div class="tab active" id="tab-home" onclick="PaintApp.setActiveTab('home')">Home</div>
     <div class="tab" id="tab-view" onclick="PaintApp.setActiveTab('view')">Misc</div>
     <div class="tab" id="tab-themes" onclick="PaintApp.setActiveTab('themes')">Themes</div>
+    <div class="tab" id="tab-themes2" onclick="PaintApp.setActiveTab('themes2')">Themes 2</div>
     <div class="tab" id="tab-debug" onclick="PaintApp.setActiveTab('debug')">Debug</div>
 </div>
 
@@ -255,7 +256,7 @@
             <span class="pb-label-inner">Threshold</span>
             <span class="pb-val" id="wand-threshold-val">0</span>
         </div>
-        <div class="section-title">Wand</div>
+        <div class="section-title" id="wand-threshold-title">Wand</div>
     </div>
 
     <div class="section colors-section">
@@ -633,11 +634,26 @@
     </div>
 </div>
 
+<div id="ribbon-themes2" class="ribbon" style="display:none">
+        <div class="section">
+            <button class="btn-large theme-mode-btn" id="theme-btn-steel-tide-mode" onclick="PaintApp.toggleThemeMode('steel-tide-mode')">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 15c1.8-2.5 3.6-3.7 5.4-3.7s2.7 1.2 4.5 1.2 3-1.2 4.5-1.2S19.2 12.5 21 15" stroke="#39d0cb" stroke-width="2" stroke-linecap="round"/><path d="M3 9c1.8 1.5 3.6 2.2 5.4 2.2s2.7-1.2 4.5-1.2 3 1.2 4.5 1.2S19.2 10.5 21 9" stroke="#39d0cb" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/></svg>
+                Steel Tide
+            </button>
+            <button class="btn-large theme-mode-btn" id="theme-btn-dappled-grove-mode" onclick="PaintApp.toggleThemeMode('dappled-grove-mode')">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="17" cy="7" r="3" fill="#f4c95d"/><path d="M4 19c2-6 5-9 9-9s5 3 7 3" stroke="#6fae4a" stroke-width="2" stroke-linecap="round"/><path d="M5 15c2.5-1 5-1 7 1s4 2 6 0" stroke="#3f7d3a" stroke-width="1.6" stroke-linecap="round" opacity="0.6"/></svg>
+                Dappled Grove
+            </button>
+            <div class="section-title">Theme</div>
+        </div>
+</div>
+
 <div id="ribbon-debug" class="ribbon" style="display:none">
     <div class="section">
         <div class="btn-grid">
             <div class="btn" onclick="PaintApp.toggleBusyIndicatorTest()">Spinner</div>
             <div class="btn" onclick="PaintApp.toggleAnchorCanvas()">Toggle Anchor</div>
+            <label class="compact-toggle"><input type="checkbox" id="debug-crisp-icons-toggle" onchange="PaintApp.toggleCrispIcons(this.checked)"> Crisp icons</label>
         </div>
         <div class="section-title">Debug</div>
     </div>
@@ -681,6 +697,15 @@
         </div>
         <div class="section-title">Toggles</div>
     </div>
+</div>
+
+<div id="smart-brush-debug-panel" style="display:none; position:fixed; right:12px; bottom:12px; z-index:500; background:#222; border:1px solid #555; border-radius:6px; padding:6px; box-shadow:0 4px 16px rgba(0,0,0,0.4);">
+    <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+        <span style="color:#ddd; font-size:12px; flex:1;" id="smart-brush-debug-title">Smart Select Debug — Clusters</span>
+        <div class="btn" style="padding:2px 8px; font-size:11px;" onclick="PaintApp.cycleSmartBrushDebugMode()">Mode</div>
+        <div class="btn" style="padding:2px 8px; font-size:11px;" onclick="PaintApp.toggleSmartBrushDebugView()">Close</div>
+    </div>
+    <canvas id="smart-brush-debug-canvas" style="display:block; position:static; max-width:320px; max-height:320px; image-rendering:pixelated; border:1px solid #444;"></canvas>
 </div>
 
 <div id="wand-menu" class="dropdown-menu" style="left: 0; top: 0;">
@@ -765,6 +790,7 @@
 </div>
 
 <div id="eraser-ghost"></div>
+<canvas id="brush-cursor-ring"></canvas>
 
 <svg id="tile-overlay" aria-hidden="true">
     <defs>
@@ -816,6 +842,20 @@
              tool preview so it can never be painted on or saved. -->
         <canvas id="frame-onion" width="800" height="600" style="display:none" aria-hidden="true"></canvas>
         <canvas id="layer-temp" width="800" height="600"></canvas>
+        <!-- Palette Wand's swatch canvas. A plain sibling canvas inside the
+             same stage, so it inherits the stage's pan/zoom transform exactly
+             like layer-main does — anchored 100px past the artwork's right
+             edge via CSS (see #swatch-canvas), not tracked in JS. Never a
+             pointer target and never gets selection handles; that absence is
+             the only thing that should visually set it apart from the real
+             canvas. -->
+        <canvas id="swatch-canvas" width="800" height="600" aria-hidden="true"></canvas>
+        <!-- Sits directly above the swatch canvas, inside the same stage so it
+             pans/zooms in lockstep with it instead of needing JS to track it. -->
+        <div id="swatch-panel" title="Palette Wand output — each cut is flattened to one colour and placed here at its original position">
+            <span id="swatch-panel-header">Palette Wand Canvas</span>
+            <button type="button" class="btn btn-text" id="swatch-copy-btn" onclick="PaintApp.copySwatchCanvas()">Copy</button>
+        </div>
         <svg id="global-overlay-svg">
             <defs>
                 <clipPath id="ants-clip" clipPathUnits="userSpaceOnUse">
@@ -857,6 +897,15 @@
         <div class="resizer r-tr free-only" onmousedown="PaintApp.startCanvasResize(event, 'rt')"></div>
         <div class="resizer r-bl free-only" onmousedown="PaintApp.startCanvasResize(event, 'lb')"></div>
     </div>
+    <!-- Free-pan mode has no bound on how far the canvas can be scrolled
+         away from — shown only when neither the canvas nor (while the
+         Palette Wand is active) its swatch canvas is on screen anymore. -->
+    <button type="button" id="recenter-canvas-btn" title="Return to Canvas" onclick="PaintApp.centerCanvas()" style="display:none">
+        <svg id="recenter-canvas-arrow" width="20" height="20" viewBox="0 0 24 24">
+            <path d="M12 2 L5 16 L19 16 Z" fill="var(--view-center-icon-color)"/>
+        </svg>
+        <svg width="28" height="28" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" fill="none" stroke="var(--view-center-icon-color)" stroke-width="2"/><circle cx="12" cy="12" r="2" fill="var(--view-center-icon-color)"/></svg>
+    </button>
 </div>
 
 <!-- Conformance, when it goes red. The status line is a glance; this is the
@@ -1003,6 +1052,16 @@
                     <li>The tolerance slider steps in 0.5 increments.</li>
                     <li>Contiguous selects only connected pixels; Global selects matching pixels everywhere.</li>
                     <li>Wand also supports Shift add, Ctrl subtract, Alt intersect.</li>
+                </ul>
+            </div>
+            <div class="info-section">
+                <div class="info-title">Smart Select Brush</div>
+                <ul class="info-list">
+                    <li>Paint a rough stroke over an object — the stroke is treated as intent, not a silhouette. Recognition runs once you release the mouse, not live while dragging.</li>
+                    <li>Uses an on-device AI segmentation model (SlimSAM) to figure out the complete object you meant, snapping to its real boundary even through hair, fur, soft anti-aliased edges, and gradients. The model downloads once (~14MB) on first use and is cached by the browser afterward.</li>
+                    <li>Shift-drag to add a missed area, Ctrl-drag to subtract an unwanted one — each stroke refines the same object using everything painted so far, without recomputing from scratch. A plain drag starts a new object.</li>
+                    <li>Uses the current brush size for the stroke width.</li>
+                    <li>If the AI model can't load (offline, unsupported browser), it automatically falls back to the classical edge-aware selection the tool used before.</li>
                 </ul>
             </div>
             <div class="info-section">
@@ -1171,7 +1230,7 @@
             <div class="info-section">
                 <div class="info-title">Themes</div>
                 <ul class="info-list">
-                    <li>8 themes: Light (default), Test Mode (dark), Dark Refined, Primeval Forest, Abyssal Ocean, Crimson Dusk, Gilded Obsidian, Violet Haze.</li>
+                    <li>9 themes: Light (default), Test Mode (dark), Dark Refined, Primeval Forest, Abyssal Ocean, Crimson Dusk, Gilded Obsidian, Violet Haze. Plus Steel Tide and Dappled Grove in the new Themes 2 tab.</li>
                     <li>Full UI color token editor with search, presets, randomize, HSL/RGB/A sliders, export/import of theme configurations.</li>
                 </ul>
             </div>
@@ -1470,6 +1529,7 @@
                     <label class="control-item" id="lblDither"><input type="checkbox" id="chk-dither"> Use Floyd-Steinberg dithering for max. 256 colors</label>
                     <label class="control-item" id="lblQuality"><input type="checkbox" id="chk-quality" checked disabled onchange="PaintApp.updateDepthUI()"> Use Wu palette quantization</label>
                     <label class="control-item"><input type="checkbox" id="chk-gray"> Make grayscale image</label>
+                    <label class="control-item" title="Reduces the color count in small steps instead of one big jump — each step re-clusters the previous step's already-reduced image, so real edges and shapes survive the descent much better than going straight from the original to the target count. Slower than a direct reduction, especially at low target counts."><input type="checkbox" id="chk-progressive"> Reduce gradually (better edge retention, slower)</label>
                 </div>
             </div>
 
@@ -1676,12 +1736,12 @@
 </div>
 
 <div id="modal-new" class="modal-mask">
-    <div class="modal-window" id="new-window">
-        <div class="modal-header">
-            <span class="modal-title">New Image</span>
-            <div class="close-btn" onclick="PaintApp.closeModals()"><span>&#10005;</span></div>
+    <div class="window" id="new-window">
+        <div class="title-bar">
+            <span>New Image</span>
+            <div class="close-btn" onclick="PaintApp.closeModals()">&#10005;</div>
         </div>
-        <div class="modal-body">
+        <div class="content">
             <div class="form-group">
                 <label for="new-preset">Template:</label>
                 <select id="new-preset" onchange="PaintApp.applyNewPreset()">
@@ -1694,8 +1754,18 @@
                     <option value="icon-256">Icon 256 &#215; 256</option>
                     <option value="gba-sprite">Pok&#233;mon GBA Sprite (64&#215;64, 4bpp)</option>
                     <option value="gba-tile">GBA Tile (8&#215;8, 4bpp)</option>
+                    <option value="gba-screen">GBA Screen (240&#215;160, 4bpp)</option>
                     <option value="gb">Game Boy (160&#215;144, 2bpp)</option>
+                    <option value="uhd-4k">4K UHD 3840 &#215; 2160</option>
+                    <option value="banner">Social Banner 1500 &#215; 500</option>
+                    <option value="a4-print">A4 Print 2480 &#215; 3508 (300dpi)</option>
                 </select>
+            </div>
+            <div class="form-group">
+                <button class="btn new-paste-clipboard-btn" type="button" onclick="PaintApp.pasteNewFromClipboard()">
+                    <img class="ribbon-icon" src="assets/ribbon-icons/clipboard.png" alt="">
+                    <span>Paste Size from Clipboard</span>
+                </button>
             </div>
             <div class="new-size-row">
                 <div class="form-group">
@@ -1725,6 +1795,8 @@
                 <select id="new-bg" onchange="PaintApp.onNewBgChange()">
                     <option value="white">White</option>
                     <option value="transparent">Transparent</option>
+                    <option value="fg">Foreground color (Color 1)</option>
+                    <option value="bg2">Background color (Color 2)</option>
                     <option value="custom">Custom color&#8230;</option>
                 </select>
             </div>
@@ -1733,7 +1805,7 @@
                 <input type="color" id="new-bg-color" value="#ffffff">
             </div>
         </div>
-        <div class="modal-btns">
+        <div class="footer">
             <button class="btn btn-ok" type="button" onclick="PaintApp.createNewCanvas()">Create</button>
             <button class="btn" type="button" onclick="PaintApp.closeModals()">Cancel</button>
         </div>
@@ -2984,6 +3056,96 @@
 </div>
 <button id="gradient-reopen-btn" title="Open gradient settings"><svg viewBox="0 0 16 16" width="7" height="7"><path d="M4 2 L12 8 L4 14 Z" fill="#000000"/></svg></button>
 
+<div id="smart-brush-sidebar">
+    <div id="smart-brush-sidebar-header">
+        <span>Smart Select Brush</span>
+        <button id="smart-brush-collapse-btn" title="Collapse sidebar"><svg viewBox="0 0 16 16" width="11" height="11"><path d="M8 14 L2 8 L14 8 Z" fill="#000000"/></svg></button>
+        <button id="smart-brush-close-btn" class="sb-close-x" title="Close sidebar">&#10005;</button>
+    </div>
+    <div id="smart-brush-sidebar-body">
+        <div class="fh-section">
+            <div class="fh-label">Growth</div>
+            <div class="fh-row" title="How much a pixel's color is allowed to differ from the growing region's running average before it's rejected. Higher picks up more of a gradient or noisy area; lower stays tighter to the exact seeded color and stops sooner at a real edge.">
+                <div class="pb-slider-wrap">
+                <input type="range" id="sb-tolerance" min="1" max="60" step="0.5" value="8">
+                <span class="pb-label-inner">Sensitivity</span>
+                <span class="pb-val">8</span>
+                </div>
+            </div>
+            <div class="fh-row" title="Caps how far the TOTAL color drift from where you first brushed is allowed to go, even if each individual step along the way looked acceptable. Prevents a long gradual gradient from being walked, pixel by pixel, into an unrelated color. Set as a multiple of Sensitivity.">
+                <div class="pb-slider-wrap">
+                <input type="range" id="sb-driftMult" min="2" max="16" step="0.5" value="6">
+                <span class="pb-label-inner">Drift Cap</span>
+                <span class="pb-val">6</span>
+                </div>
+            </div>
+            <div class="fh-row" title="Converts color distance into the Sensitivity/Drift Cap units. Higher makes the same visual color difference count as a bigger jump, so growth becomes stricter overall without changing the other sliders; lower makes it more permissive.">
+                <div class="pb-slider-wrap">
+                <input type="range" id="sb-colorScale" min="60" max="300" step="5" value="160">
+                <span class="pb-label-inner">Color Scale</span>
+                <span class="pb-val">160</span>
+                </div>
+            </div>
+            <div class="fh-row" title="Averages the colors of all the pixels you brushed over and drops any that are way off from the rest (like an accidental dab onto an outline) before picking the region's start color. Gives a more accurate anchor color when your stroke wasn't perfectly clean.">
+                <label>Trim Outlier Seeds</label>
+                <input type="checkbox" id="sb-trimSeeds">
+            </div>
+            <div class="fh-row" title="Lets the selection push further across an antialiased/blended edge (multiplies Sensitivity there) without fully opening up Sensitivity everywhere. Stops itself once a pixel is actually core color of a distinctly different region, so it eats soft fringes but not real neighboring shapes. 1 = off.">
+                <div class="pb-slider-wrap">
+                <input type="range" id="sb-aaTolerance" min="1" max="5" step="0.1" value="1">
+                <span class="pb-label-inner">AA Tolerance</span>
+                <span class="pb-val">1</span>
+                </div>
+            </div>
+        </div>
+        <div class="fh-section">
+            <div class="fh-label">Edges</div>
+            <div class="fh-row" title="Smooths the final selection's outline to round off pixel-staircase jaggies, while still letting genuinely sharp spikes and corners survive. The committed selection stays fully solid/binary either way — this only reshapes its edge. 0 = off.">
+                <div class="pb-slider-wrap">
+                <input type="range" id="sb-feather" min="0" max="6" step="1" value="0">
+                <span class="pb-label-inner">Edge Smoothing</span>
+                <span class="pb-val">0</span>
+                </div>
+            </div>
+        </div>
+        <div class="fh-section">
+            <div class="fh-label">Palette</div>
+            <div class="fh-row" title="How many distinct flat colors the debug 'Clusters' view tries to group the image into. Purely informational — it does not affect what gets selected, only what the debug view and this count show. 0 lets the tool pick a count automatically.">
+                <div class="pb-slider-wrap">
+                <input type="range" id="sb-k" min="0" max="20" step="1" value="0">
+                <span class="pb-label-inner">Clusters</span>
+                <span class="pb-val" id="sb-k-val">Auto</span>
+                </div>
+            </div>
+        </div>
+        <div class="fh-section">
+            <div class="fh-label">Reach</div>
+            <div class="fh-row" title="How far, in multiples of the brush radius, the selection is allowed to grow away from the stroke. Raise it for a small brush stroke over a large flat region; lower it to keep a rough stroke from accidentally growing further than intended.">
+                <div class="pb-slider-wrap">
+                <input type="range" id="sb-reachMult" min="2" max="16" step="0.5" value="6">
+                <span class="pb-label-inner">Reach</span>
+                <span class="pb-val">6</span>
+                </div>
+            </div>
+        </div>
+        <div class="fh-section">
+            <div class="fh-label">Debug</div>
+            <div class="fh-row" title="Opens a floating panel showing what the tool is 'seeing': the discovered color clusters, local edge evidence, or the last selection as a pure binary mask, depending on Mode below.">
+                <label>Debug View</label>
+                <input type="checkbox" id="sb-debugView">
+            </div>
+            <div class="pb-row" style="gap:6px;">
+                <button class="btn btn-small" id="sb-debug-mode-btn" style="flex:1;" title="Switch the debug panel between Clusters, Boundary Evidence, and Final Mask views.">Cycle Mode</button>
+                <button class="btn btn-small" id="sb-debug-save-btn" style="flex:1;" title="Save the debug panel's current view as a PNG file.">Save PNG</button>
+            </div>
+        </div>
+        <div class="fh-reset-row">
+            <button id="sb-reset-btn" title="Restore Sensitivity, Drift Cap, Color Scale, Trim Outlier Seeds, AA Tolerance, Edge Smoothing, Clusters, and Reach to their defaults.">Reset to Defaults</button>
+        </div>
+    </div>
+</div>
+<button id="smart-brush-reopen-btn" title="Open Smart Select Brush settings"><svg viewBox="0 0 16 16" width="7" height="7"><path d="M4 2 L12 8 L4 14 Z" fill="#000000"/></svg></button>
+
 <div id="toast-container"></div>
 <div id="unified-sidebar" class="hidden">
     <div class="sidebar-title">
@@ -3004,6 +3166,7 @@
 <script defer src="tauri-shim.js"></script>
 <script defer src="js/gradient-engine.js"></script>
 <script type="module">import * as __wandAlgorithms from './js/wand-algorithms.js'; window.__wandAlgorithms = __wandAlgorithms;</script>
+<script type="module">import * as __smartSelectAnalysis from './js/smart-select-analysis.js'; window.__smartSelectAnalysis = __smartSelectAnalysis;</script>
 <script type="module">import * as __projectModel from './js/project-model.js'; window.ProjectModel = __projectModel;</script>
 <script type="module">import * as __spriteCoords from './js/sprite-coords.js'; window.SpriteCoords = __spriteCoords;</script>
 <script type="module">import * as __battleScene from './js/battle-scene.js'; window.BattleScene = __battleScene;</script>
@@ -3017,6 +3180,7 @@
 <script defer src="js/adjustments.js"></script>
 <script defer src="js/transform.js"></script>
 <script defer src="js/magic-wand.js"></script>
+<script defer src="js/smart-select-brush.js"></script>
 <script defer src="js/palette.js"></script>
 <script defer src="js/exporting.js"></script>
 <script defer src="js/project-assets.js"></script>

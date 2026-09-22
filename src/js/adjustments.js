@@ -1117,6 +1117,8 @@
                             { r: 0, g: 0, b: 0, a: 255 },
                             { r: 255, g: 255, b: 255, a: 255 }
                         ];
+                    } else if (document.getElementById('chk-progressive').checked) {
+                        palette = this.buildProgressivePalette(imgData, w, h, K);
                     } else {
                         palette = this.buildWuPalette(imgData, w, h, K);
                     }

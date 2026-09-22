@@ -23,8 +23,9 @@ The demo runs best in Chromium-based browsers. Gecko-based browsers
   palette. Every stroke is quantized to the active mode, and you can switch
   modes live to convert existing artwork.
 - **GBA export tools** - Drag-and-drop palette index reordering (so
-  transparency lands on the right slot), automatic splitting of 64x128 /
-  128x64 canvases into 64x64 front/back sprites, JASC-PAL import/export for
+  transparency lands on the right slot), automatic splitting of 128x64
+  canvases into 64x64 front/back sprites (a 64x128 canvas is treated as a single
+  animation sheet), JASC-PAL import/export for
   decomp projects and Porymap, and a hardware preview of how the image will
   look on 15-bit output.
 - **Image adjustments** - Channel-based HSL tuning (Master, R, Y, G, C, B, M)
@@ -46,7 +47,9 @@ The demo runs best in Chromium-based browsers. Gecko-based browsers
 - Vanilla JavaScript (no frameworks), Canvas 2D with WebGL fragment shaders
   for strokes, transforms, and quantization
 - Web Workers for heavy tasks (color clustering, HSL adjustments)
-- Tauri 2 for the desktop shell (Rust backend for OS integration only)
+- Tauri 2 for the desktop shell. The Rust backend handles OS integration, file
+  access, project scanning, guarded patching of decomp C source, and lossless
+  PNG optimization; all painting stays in the frontend
 
 ## Project layout
 
@@ -54,8 +57,7 @@ The demo runs best in Chromium-based browsers. Gecko-based browsers
 src/          Frontend (HTML, CSS, JS modules)
 src-tauri/    Tauri/Rust shell, config, icons
 scripts/      Dev server, build, bundle and smoke-test tooling
-tools/        Brush/palette helper scripts
-test/         Algorithm tests (wand, reference implementations)
+test/         Engine, unit and live-browser suites (see test/README.md)
 ```
 
 ## Building and running
@@ -67,7 +69,7 @@ Tools with "Desktop development with C++".
 npm install
 npm run dev          # dev server at http://localhost:1420
 npm run tauri:build  # desktop installer (NSIS/MSI, DMG, or AppImage/deb/rpm)
-npm test             # smoke tests
+npm test             # syntax, engine, unit and (if Chromium is found) browser suites
 ```
 
 Installers land in `src-tauri/target/release/bundle/`.

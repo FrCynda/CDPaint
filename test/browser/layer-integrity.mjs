@@ -100,6 +100,14 @@ await withPage(async (page) => {
         `${o1.before.join('/')} -> ${o1.undone.join('/')}`);
 
     /* ── 2. wand + cut on a middle layer ──────────────────────────────── */
+    // A wand selection already lifted the red square off the layer before the
+    // cut ever ran, so "undo the cut" doesn't land back on the untouched
+    // pre-selection layer in one step — it lands back on "selection active",
+    // which still shows the lifted hole (covered by the floating selection,
+    // not by real pixels). That's deliberate: it's what lets one more undo
+    // (or just continuing to work) get the selection back instead of losing
+    // it. A SECOND undo is what fully restores the pristine, pre-selection
+    // layer.
     console.log('\n== wand-select and delete on a middle layer ==');
     const r2 = await page.eval(`(async () => {
         __L.stack();
@@ -109,8 +117,11 @@ await withPage(async (page) => {
         PaintApp.deleteSelection();
         const after = __L.all();
         PaintApp.undo();
-        const undone = __L.all();
-        return JSON.stringify({ before, after, undone });
+        const undoneOnce = __L.all();
+        const selectionBack = !!PaintApp.state.selection;
+        PaintApp.undo();
+        const undoneTwice = __L.all();
+        return JSON.stringify({ before, after, undoneOnce, undoneTwice, selectionBack });
     })()`, { awaitPromise: true });
     const o2 = JSON.parse(r2);
     check('the cut layer changed', o2.before[1] !== o2.after[1]);
@@ -118,9 +129,11 @@ await withPage(async (page) => {
         'a cut on layer 1 also altered layer 0');
     check('the layer above survived the cut', o2.before[2] === o2.after[2],
         'a cut on layer 1 also altered layer 2');
-    check('undo restores every layer after a wand cut',
-        JSON.stringify(o2.undone) === JSON.stringify(o2.before),
-        `${o2.before.join('/')} -> ${o2.undone.join('/')}`);
+    check('one undo after a wand cut brings the selection back',
+        o2.selectionBack, 'state.selection was null after undoing a cut');
+    check('a second undo restores every layer to before the selection',
+        JSON.stringify(o2.undoneTwice) === JSON.stringify(o2.before),
+        `${o2.before.join('/')} -> ${o2.undoneTwice.join('/')}`);
 
     /* ── 3. undo after switching layers ───────────────────────────────── */
     console.log('\n== undo after switching layers ==');

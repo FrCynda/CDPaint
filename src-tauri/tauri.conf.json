@@ -33,7 +33,7 @@
   "bundle": {
     "active": true,
     "category": "DeveloperTool",
-    "copyright": "",
+    "copyright": "Copyright (c) 2026 FrCynda",
     "externalBin": [],
     "icon": [
       "icons/32x32.png",
@@ -42,7 +42,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "longDescription": "",
+    "longDescription": "A painting app for pixel artists and retro game developers, with bit-depth locked painting, palette tools and export helpers for Game Boy Advance development.",
     "macOS": {
       "entitlements": null,
       "exceptionDomain": "",
@@ -51,7 +51,7 @@
       "signingIdentity": null
     },
     "resources": [],
-    "shortDescription": "",
+    "shortDescription": "Pixel art editor and GBA asset suite",
     "targets": "all",
     "windows": {
       "certificateThumbprint": null,

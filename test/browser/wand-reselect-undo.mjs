@@ -1,16 +1,23 @@
-/* Two wand selections in a row, then one undo.
+/* Two wand selections in a row, then undo twice.
  *
  * Repro: on a transparent layer, fill white, draw a black circle, wand-select
- * the circle, then wand-select the white area instead. One undo should put the
- * document back the way it was — instead the circle is gone, and it takes a
- * SECOND undo to bring it back.
+ * the circle, then wand-select the white area instead. Each wand click is a
+ * distinct, visible action the user chose to make, so each one must be its
+ * own undo step: ONE undo should bring back the circle selection (not jump
+ * straight past it to the pre-selection document), and a SECOND undo should
+ * then restore the document to before any selection was made.
  *
- * A wand selection lifts the matched pixels off the canvas, leaving a hole, and
- * records that as a history entry (state.selectionCutStep). Committing the
- * selection is supposed to collapse that entry away again, so the lift and the
- * put-back are one step rather than two. When a second wand selection replaces
- * the first, the first one's cut step has to be collapsed too — otherwise undo
- * lands on the intermediate "circle lifted, hole left behind" state.
+ * (An earlier version of this test asserted the opposite — that one undo
+ * should collapse both selections into a single step. That was itself a fix
+ * for a different complaint, but it meant re-selecting repeatedly made undo
+ * skip over every earlier selection at once instead of stepping back through
+ * them one click at a time, which is the bug this version guards against.)
+ *
+ * A wand selection lifts the matched pixels off the canvas, leaving a hole,
+ * and records that as a history entry (state.selectionCutStep). Only when a
+ * selection is actually FINALIZED unchanged (e.g. commitSelection() with no
+ * edits) should its scaffolding cut-step collapse into one net undo step —
+ * replacing it with a brand new selection must not.
  */
 import { withPage } from '../browser.mjs';
 
@@ -65,7 +72,7 @@ await withPage(async (page) => {
         return true;
     `);
 
-    console.log('== wand, re-wand, undo ==');
+    console.log('== wand, re-wand, undo x2 ==');
     const r = await page.eval(`(() => {
         __q.setup();
         const out = {};
@@ -74,19 +81,18 @@ await withPage(async (page) => {
         const clean = __q.hash();
 
         __q.wand(100, 100);                 // select the black circle
-        out.cutStepAfterFirst = PaintApp.state.selectionCutStep;
-        out.stepAfterFirst    = PaintApp.state.step;
+        out.stepAfterFirst = PaintApp.state.step;
+        const afterFirstSelect = __q.hash();
 
         __q.wand(20, 20);                   // now select the white area instead
-        out.cutStepAfterSecond = PaintApp.state.selectionCutStep;
-        out.stepAfterSecond    = PaintApp.state.step;
+        out.stepAfterSecond = PaintApp.state.step;
 
+        // First undo: should land back on "circle selected", not skip past it.
         PaintApp.undo();
-        PaintApp.commitSelection && PaintApp.commitSelection();
-        out.circleAfter1Undo = __q.px(100, 100);
-        out.fillAfter1Undo   = __q.px(20, 20);
-        out.restoredIn1      = __q.hash() === clean;
+        out.stepAfter1Undo = PaintApp.state.step;
+        out.restoredFirstSelectIn1Undo = __q.hash() === afterFirstSelect;
 
+        // Second undo: NOW it should restore the pre-selection document.
         PaintApp.undo();
         PaintApp.commitSelection && PaintApp.commitSelection();
         out.circleAfter2Undo = __q.px(100, 100);
@@ -99,13 +105,13 @@ await withPage(async (page) => {
 
     check('starts with a black circle', o.circleBefore === BLACK, o.circleBefore);
     check('starts with a white fill', o.fillBefore === WHITE, o.fillBefore);
-    check('the first wand cut step is collapsed when the second selection replaces it',
-        o.cutStepAfterSecond === null || o.cutStepAfterSecond === o.stepAfterSecond,
-        `cutStep ${o.cutStepAfterSecond}, step ${o.stepAfterSecond}`);
-    check('ONE undo brings the circle back', o.circleAfter1Undo === BLACK,
-        `got ${o.circleAfter1Undo} — the circle was left lifted`);
-    check('ONE undo restores the whole document', o.restoredIn1,
-        'needed a second undo');
+    check('each wand click is its own history step',
+        o.stepAfterSecond === o.stepAfterFirst + 1, `first ${o.stepAfterFirst}, second ${o.stepAfterSecond}`);
+    check('ONE undo restores the first (circle) selection, not the pre-selection document',
+        o.stepAfter1Undo === o.stepAfterFirst && o.restoredFirstSelectIn1Undo,
+        `step ${o.stepAfter1Undo} (expected ${o.stepAfterFirst}), matched=${o.restoredFirstSelectIn1Undo}`);
+    check('a SECOND undo restores the pre-selection document', o.restoredIn2,
+        'document was not fully restored after the second undo');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

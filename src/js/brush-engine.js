@@ -408,7 +408,11 @@
                 else if (p === 'icon-256') set(256, 256, 24);
                 else if (p === 'gba-sprite') set(64, 64, 4);
                 else if (p === 'gba-tile') set(8, 8, 4);
+                else if (p === 'gba-screen') set(240, 160, 4);
                 else if (p === 'gb') set(160, 144, 2);
+                else if (p === 'uhd-4k') set(3840, 2160, 24);
+                else if (p === 'banner') set(1500, 500, 24);
+                else if (p === 'a4-print') set(2480, 3508, 24);
             },
 
             getFreehandOptions(isComplete = false) {

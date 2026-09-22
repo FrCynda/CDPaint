@@ -490,29 +490,51 @@
                 // k-means++ init: first centroid random, each subsequent one chosen with probability
                 // proportional to squared OKLab distance from its nearest existing centroid.
                 // This is the core seeding strategy behind libimagequant's palette quality.
+                // Costs O(K^2 * samples), so a warm-started re-clustering pass (opts.fastInit,
+                // used by buildProgressivePalette) skips it for an even-stride seed instead —
+                // Lloyd iterations below correct it just as well when K is already close to
+                // the previous pass's centroid count.
                 const centroids = [];
-                centroids.push({ ...pixels[Math.floor(rng.next() * pixels.length)] });
-                for (let k = 1; k < K; k++) {
-                    const dists = new Float64Array(pixels.length);
-                    let totalDist = 0;
-                    for (let i = 0; i < pixels.length; i++) {
-                        const p = pixels[i];
-                        let minD = Infinity;
-                        for (let c = 0; c < centroids.length; c++) {
-                            const d = this.distOklab(p, centroids[c]);
-                            if (d < minD) minD = d;
+                if (opts.fastInit) {
+                    // Stride over the raw (spatially-ordered) sample list would
+                    // repeatedly land inside the same large same-color region
+                    // after a few reduction passes and seed duplicate/collapsed
+                    // centroids — dedupe first so every seed starts distinct.
+                    const uniqueMap = new Map();
+                    for (const p of pixels) {
+                        const key = p.L + '_' + p.a + '_' + p.b;
+                        if (!uniqueMap.has(key)) uniqueMap.set(key, p);
+                    }
+                    const unique = [...uniqueMap.values()];
+                    const stride = Math.max(1, Math.floor(unique.length / K));
+                    for (let k = 0; k < K; k++) {
+                        const src = unique[Math.min(unique.length - 1, k * stride)];
+                        centroids.push({ ...(src || unique[k % unique.length]) });
+                    }
+                } else {
+                    centroids.push({ ...pixels[Math.floor(rng.next() * pixels.length)] });
+                    for (let k = 1; k < K; k++) {
+                        const dists = new Float64Array(pixels.length);
+                        let totalDist = 0;
+                        for (let i = 0; i < pixels.length; i++) {
+                            const p = pixels[i];
+                            let minD = Infinity;
+                            for (let c = 0; c < centroids.length; c++) {
+                                const d = this.distOklab(p, centroids[c]);
+                                if (d < minD) minD = d;
+                            }
+                            const wd = minD * weights[i];
+                            dists[i] = wd;
+                            totalDist += wd;
                         }
-                        const wd = minD * weights[i];
-                        dists[i] = wd;
-                        totalDist += wd;
+                        let threshold = rng.next() * totalDist;
+                        let chosen = pixels.length - 1;
+                        for (let i = 0; i < pixels.length; i++) {
+                            threshold -= dists[i];
+                            if (threshold <= 0) { chosen = i; break; }
+                        }
+                        centroids.push({ ...pixels[chosen] });
                     }
-                    let threshold = rng.next() * totalDist;
-                    let chosen = pixels.length - 1;
-                    for (let i = 0; i < pixels.length; i++) {
-                        threshold -= dists[i];
-                        if (threshold <= 0) { chosen = i; break; }
-                    }
-                    centroids.push({ ...pixels[chosen] });
                 }
                 // k-means iteration with worst-error re-seeding for empty clusters:
                 // instead of a random pixel, re-seed from the pixel furthest from any centroid.
@@ -545,6 +567,75 @@
                 }
                 const rgbCentroids = centroids.map(c => this.oklabToRgb(c.L, c.a, c.b));
                 const palette = rgbCentroids.map(c => ({ r: c[0], g: c[1], b: c[2], a: 255 }));
+                return palette;
+            },
+
+            // A single k-means (or Wu) pass straight from thousands of source
+            // colors down to a small target has to choose every merge at
+            // once, which can blur or misplace a boundary a human reads as
+            // meaningful. Reducing in small geometric steps instead — each
+            // pass re-clustering the PREVIOUS pass's already-reduced image
+            // rather than the original — only ever merges nearby colors, so
+            // real edges survive far more of the descent. Ratio is 10% per
+            // step above 150 colors, 5% below it, matching how much finer
+            // the low end needs to be to still land on the exact target.
+            buildProgressiveDepthSteps(startK, targetK) {
+                const steps = [];
+                let k = Math.max(targetK, Math.round(startK));
+                while (k > targetK) {
+                    steps.push(k);
+                    const ratio = k > 150 ? 0.9 : 0.95;
+                    let next = Math.floor(k * ratio);
+                    if (next >= k) next = k - 1;
+                    if (next < targetK) next = targetK;
+                    k = next;
+                }
+                steps.push(targetK);
+                return steps;
+            },
+            buildProgressivePalette(imgData, w, h, targetK, opts = {}) {
+                const total = w * h;
+                const d = imgData.data;
+                // ponytail: caps the descent's starting point at 200. The
+                // k-means++ seeding buildKmeansPalette uses costs O(K^2 * N)
+                // to place K centroids, so a much higher starting K would
+                // make the very first step take seconds instead of a blink;
+                // 200 already gives the low targets this tool is for (tens
+                // to a couple hundred colors) several real steps to descend
+                // through. Raise it (and buildKmeansPalette's own seeding)
+                // together if a real need for a higher starting count shows up.
+                const START_CAP = 200;
+                const distinct = new Set();
+                for (let i = 0; i < total && distinct.size < START_CAP; i++) {
+                    const p = i * 4;
+                    if (d[p + 3] === 0) continue;
+                    distinct.add((d[p] << 16) | (d[p + 1] << 8) | d[p + 2]);
+                }
+                const startK = Math.max(targetK, Math.min(START_CAP, distinct.size));
+                const steps = this.buildProgressiveDepthSteps(startK, targetK);
+
+                // Each pass quantizes this working copy and writes the
+                // result back into it, so the next pass clusters an
+                // already-reduced image instead of the original.
+                const work = new Uint8ClampedArray(d);
+                const workImgData = { data: work };
+                let palette = null;
+                for (let i = 0; i < steps.length; i++) {
+                    const K = steps[i];
+                    // Every step but the last is a warm-started merge of an
+                    // already-close previous step, so a fast even-stride seed
+                    // is plenty — only the final palette pays for true
+                    // k-means++ seeding.
+                    const fastInit = i < steps.length - 1;
+                    palette = this.buildKmeansPalette(workImgData, w, h, K, { seed: opts.seed || 1337, maxSamples: 20000, iterations: 5, fastInit });
+                    const lookup = this.buildPaletteLookup(palette);
+                    for (let i = 0; i < total; i++) {
+                        const p = i * 4;
+                        if (work[p + 3] === 0) continue;
+                        const q = this.quantizeRgbWithLookup(work[p], work[p + 1], work[p + 2], lookup);
+                        work[p] = q.r; work[p + 1] = q.g; work[p + 2] = q.b;
+                    }
+                }
                 return palette;
             },
 

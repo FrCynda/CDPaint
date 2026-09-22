@@ -324,20 +324,18 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 14px;
+            width: 15px;
             height: 100%;
-            margin-left: 12px;
+            margin-left: 2px;
             border: 0;
             background: transparent;
             color: var(--titlebar-filename);
-            font-size: 14px;
-            font-weight: 400;
-            line-height: 1;
+            opacity: 0.42;
             cursor: pointer;
-            opacity: 0.32;
-            transition: opacity .1s ease;
+            transition: opacity .1s ease, color .1s ease;
         }
-        #title-bar .doc-tab-add:hover { opacity: 0.75; }
+        #title-bar .doc-tab-add-icon { display: block; }
+        #title-bar .doc-tab-add:hover { opacity: 1; color: var(--toggle-icon-color); }
         #tab-close-confirm-modal { display: none; }
         #title-bar .title-btn {
             width: 46px;
@@ -851,6 +849,9 @@
         [data-tool-id="picker"] img.toolbar-icon { transform: translate(1px, 1px); }
         #wand-tool-btn .wand-icon-contig img.toolbar-icon,
         [data-tool-id="wand"] .wand-icon-contig img.toolbar-icon { transform: translateX(2px); }
+        /* Palette Wand reuses the plain wand icon, hue-shifted so it reads as a
+           distinct tool at a glance. */
+        img.icon-hue-shift { filter: hue-rotate(180deg) saturate(1.6); }
         .btn-icon .pencil-icon {
             width: 100%;
             height: 100%;
@@ -1108,7 +1109,7 @@
 
         /* Shared panel: acrylic-tinted background, flat square edge,
            Windows 10-style flyout — no rounding, no drop shadow. */
-        #freehand-sidebar, #paintbrush-sidebar, #gradient-sidebar, #project-panel {
+        #freehand-sidebar, #paintbrush-sidebar, #gradient-sidebar, #smart-brush-sidebar, #project-panel {
             position: fixed; top: 145px; bottom: 24px; left: -296px;
             width: 280px; z-index: 9988;
             background: #f5f6f7;
@@ -1118,10 +1119,10 @@
             transition: left .24s cubic-bezier(.16,1,.3,1);
             pointer-events: auto;
         }
-        #freehand-sidebar *, #paintbrush-sidebar *, #gradient-sidebar *, #project-panel * { pointer-events: auto; }
-        #freehand-sidebar.open, #paintbrush-sidebar.open, #gradient-sidebar.open, #project-panel.open { left: 0; }
+        #freehand-sidebar *, #paintbrush-sidebar *, #gradient-sidebar *, #smart-brush-sidebar *, #project-panel * { pointer-events: auto; }
+        #freehand-sidebar.open, #paintbrush-sidebar.open, #gradient-sidebar.open, #smart-brush-sidebar.open, #project-panel.open { left: 0; }
 
-        #freehand-sidebar-header, #paintbrush-sidebar-header, #gradient-sidebar-header, #project-header {
+        #freehand-sidebar-header, #paintbrush-sidebar-header, #gradient-sidebar-header, #smart-brush-sidebar-header, #project-header {
             display: flex; align-items: center; justify-content: space-between;
             padding: 6px 6px 6px 10px;
             font-size: 12px; font-weight: 600;
@@ -1129,8 +1130,8 @@
             border-bottom: 1px solid color-mix(in srgb, var(--section-divider, #e0e0e0) 80%, transparent);
             flex-shrink: 0;
         }
-        #freehand-sidebar-header > span, #paintbrush-sidebar-header > span, #gradient-sidebar-header > span, #project-header > span { flex: 1; }
-        #freehand-collapse-btn, #paintbrush-collapse-btn, #gradient-collapse-btn, #project-collapse {
+        #freehand-sidebar-header > span, #paintbrush-sidebar-header > span, #gradient-sidebar-header > span, #smart-brush-sidebar-header > span, #project-header > span { flex: 1; }
+        #freehand-collapse-btn, #paintbrush-collapse-btn, #gradient-collapse-btn, #smart-brush-collapse-btn, #project-collapse {
             background: none; border: none; cursor: pointer; font-size: 11px;
             color: var(--section-title-color); padding: 0; line-height: 1;
             width: 24px; height: 24px; border-radius: 2px;
@@ -1138,21 +1139,21 @@
             margin-left: auto;
             transition: transform .15s cubic-bezier(.16,1,.3,1), background .12s ease;
         }
-        #freehand-collapse-btn:hover, #paintbrush-collapse-btn:hover, #gradient-collapse-btn:hover, #project-collapse:hover {
+        #freehand-collapse-btn:hover, #paintbrush-collapse-btn:hover, #gradient-collapse-btn:hover, #smart-brush-collapse-btn:hover, #project-collapse:hover {
             background: color-mix(in srgb, var(--app-text-color, #111) 8%, transparent);
         }
-        #freehand-collapse-btn:active, #paintbrush-collapse-btn:active, #gradient-collapse-btn:active, #project-collapse:active {
+        #freehand-collapse-btn:active, #paintbrush-collapse-btn:active, #gradient-collapse-btn:active, #smart-brush-collapse-btn:active, #project-collapse:active {
             background: color-mix(in srgb, var(--app-text-color, #111) 14%, transparent);
         }
-        #freehand-collapse-btn.collapsed, #paintbrush-collapse-btn.collapsed, #gradient-collapse-btn.collapsed { transform: rotate(-90deg); }
-        #freehand-collapse-btn svg, #paintbrush-collapse-btn svg, #gradient-collapse-btn svg, #project-collapse svg { width: 11px; height: 11px; flex: none; }
+        #freehand-collapse-btn.collapsed, #paintbrush-collapse-btn.collapsed, #gradient-collapse-btn.collapsed, #smart-brush-collapse-btn.collapsed { transform: rotate(-90deg); }
+        #freehand-collapse-btn svg, #paintbrush-collapse-btn svg, #gradient-collapse-btn svg, #smart-brush-collapse-btn svg, #project-collapse svg { width: 11px; height: 11px; flex: none; }
 
-        #freehand-sidebar-body, #paintbrush-sidebar-body, #gradient-sidebar-body {
+        #freehand-sidebar-body, #paintbrush-sidebar-body, #gradient-sidebar-body, #smart-brush-sidebar-body {
             flex: 1; overflow-y: auto; padding: 10px 12px 6px;
             min-height: 0;
             scrollbar-width: none;
         }
-        #freehand-sidebar-body::-webkit-scrollbar, #paintbrush-sidebar-body::-webkit-scrollbar, #gradient-sidebar-body::-webkit-scrollbar { width: 0; display: none; }
+        #freehand-sidebar-body::-webkit-scrollbar, #paintbrush-sidebar-body::-webkit-scrollbar, #gradient-sidebar-body::-webkit-scrollbar, #smart-brush-sidebar-body::-webkit-scrollbar { width: 0; display: none; }
         #gradient-options { padding-top: 8px; }
 
         .fh-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--threshold-label-color); padding: 0; margin-bottom: 2px; }
@@ -1198,7 +1199,7 @@
         .fh-hidden { visibility: hidden; pointer-events: none; }
         #fh-capStart-row, #fh-easingStart-row, #fh-capEnd-row, #fh-easingEnd-row { min-height: 22px; }
 
-        #freehand-reopen-btn, #pb-reopen-btn, #gradient-reopen-btn, #project-expand {
+        #freehand-reopen-btn, #pb-reopen-btn, #gradient-reopen-btn, #smart-brush-reopen-btn, #project-expand {
             position: fixed; left: 0; top: 145px;
             z-index: 10000; width: 24px; height: 24px; padding: 0;
             background: #f5f6f7;
@@ -1208,8 +1209,8 @@
             font-size: 10px; color: var(--section-title-color);
             transition: color .12s ease;
         }
-        #freehand-reopen-btn:hover, #pb-reopen-btn:hover, #gradient-reopen-btn:hover, #project-expand:hover { color: var(--win-blue); }
-        #freehand-reopen-btn.show, #pb-reopen-btn.show, #gradient-reopen-btn.show, #project-expand.show { display: flex; }
+        #freehand-reopen-btn:hover, #pb-reopen-btn:hover, #gradient-reopen-btn:hover, #smart-brush-reopen-btn:hover, #project-expand:hover { color: var(--win-blue); }
+        #freehand-reopen-btn.show, #pb-reopen-btn.show, #gradient-reopen-btn.show, #smart-brush-reopen-btn.show, #project-expand.show { display: flex; }
         /* An edge tab and an open flyout both want the left edge — one panel can
            be open while a different one is collapsed. Tuck the tab against the
            open panel's outer edge (280px + its 1px border) instead of letting it
@@ -1217,6 +1218,7 @@
         body.left-flyout-open #freehand-reopen-btn,
         body.left-flyout-open #pb-reopen-btn,
         body.left-flyout-open #gradient-reopen-btn,
+        body.left-flyout-open #smart-brush-reopen-btn,
         body.left-flyout-open #project-expand { left: 281px; }
 
         .sb-close-x {
@@ -1230,18 +1232,18 @@
         .sb-close-x:active { background: #c20b1c; color: #fff; }
 
         .fh-reset-row, .pb-reset-row { display: flex; justify-content: center; padding: 10px 4px 6px; }
-        #fh-reset-btn, #pb-reset-btn {
+        #fh-reset-btn, #pb-reset-btn, #sb-reset-btn {
             font-size: 11px; padding: 5px 16px; cursor: pointer;
             border: 1px solid color-mix(in srgb, var(--btn-small-border, #ccc) 75%, transparent);
             background: var(--btn-small-bg, #f9f9f9);
             border-radius: 3px; color: var(--app-text-color);
             transition: background .12s ease, border-color .12s ease, box-shadow .12s ease;
         }
-        #fh-reset-btn:hover, #pb-reset-btn:hover {
+        #fh-reset-btn:hover, #pb-reset-btn:hover, #sb-reset-btn:hover {
             background: color-mix(in srgb, var(--win-blue) 10%, var(--btn-hover-bg, #eaf4ff));
             border-color: var(--win-blue);
         }
-        #fh-reset-btn:active, #pb-reset-btn:active { box-shadow: 0 0 0 3px color-mix(in srgb, var(--win-blue) 22%, transparent); }
+        #fh-reset-btn:active, #pb-reset-btn:active, #sb-reset-btn:active { box-shadow: 0 0 0 3px color-mix(in srgb, var(--win-blue) 22%, transparent); }
 
         .pb-section {
             background: color-mix(in srgb, var(--app-text-color, #111) 3%, transparent);
@@ -1517,6 +1519,29 @@
         #viewport.no-pad-transition { transition: none !important; }
 
         #canvas-stage { position: relative; margin: 0; box-shadow: 3px 3px 5px rgba(0,0,0,0.2); background: white; cursor: crosshair; transform-origin: 0 0; flex-shrink: 0; image-rendering: pixelated; }
+
+        #recenter-canvas-btn {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 20; width: 72px; height: 72px; padding: 0;
+            border: none; background: none; cursor: pointer;
+        }
+        #recenter-canvas-btn svg:last-child {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        }
+        #recenter-canvas-btn:hover { filter: brightness(1.15); }
+        #recenter-canvas-arrow {
+            position: absolute; top: 50%; left: 50%;
+            /* Base is just centering — updateCanvasVisibilityButton() appends
+               rotate(...) translateY(-R) to swing it out to whichever side
+               is nearest the canvas, pivoting around the icon's center. */
+            transform: translate(-50%, -50%);
+            transition: transform .15s ease;
+            animation: recenter-arrow-glow 1.6s ease-in-out infinite;
+        }
+        @keyframes recenter-arrow-glow {
+            0%, 100% { opacity: .5; }
+            50% { opacity: 1; }
+        }
         #canvas-stage.drop-highlight {
             outline: 2px dashed #2a73d9;
             outline-offset: 4px;
@@ -1525,6 +1550,32 @@
 
         /* Hide default cursor when eraser is active so we only see the ghost */
         #canvas-stage.eraser-active { cursor: none !important; }
+        #canvas-stage.paintbrush-active { cursor: none !important; }
+
+        /* Palette Wand's swatch canvas lives inside #canvas-stage (see index.html)
+           so it inherits the exact same pan/zoom transform as the real canvas —
+           1:1, in lockstep, with no JS position-syncing needed. `left: 100%` is
+           relative to the stage (which is exactly the artwork's width), and the
+           100px margin is the anchor gap. Everything else mirrors #canvas-stage's
+           own look so the only visible difference is the missing resize handles. */
+        /* Hidden unless the Palette Wand is the active tool (see setTool()) —
+           it's only relevant while that tool is in use. */
+        #swatch-canvas {
+            display: none;
+            left: 100%;
+            margin-left: 100px;
+            background: white;
+            box-shadow: 3px 3px 5px rgba(0,0,0,0.2);
+            pointer-events: none;
+        }
+        #swatch-canvas.show { display: block; }
+        /* Sits directly above the swatch canvas, sharing its left offset so it
+           lines up with it and pans/zooms in lockstep (both live in
+           #canvas-stage). Positioned by its own bottom edge rather than the
+           canvas's top so it doesn't need to know the canvas's height. */
+        #swatch-panel { display: none; position: absolute; left: 100%; margin-left: 100px; bottom: 100%; margin-bottom: 6px; z-index: 5; align-items: center; gap: 6px; background: var(--panel-bg, rgba(255,255,255,.85)); padding: 3px 8px; border-radius: 4px; white-space: nowrap; }
+        #swatch-panel.show { display: flex; }
+        #swatch-panel-header { font-size: 11px; color: var(--app-text-color); opacity: .7; }
 
         canvas { display: block; position: absolute; top: 0; left: 0; image-rendering: pixelated; }
         #grad-bar { position: static; }
@@ -1606,6 +1657,21 @@
             outline: 1px solid black;
             border: none;
             background-color: white;
+            transform: none;
+        }
+        /* BRUSH CURSOR RING — the tip's own silhouette traced down to a crisp
+           1px rim, colour-inverted against the canvas below it, CSP-style.
+           A <canvas>, not a div: its pixel content IS the outline (see
+           _buildCursorOutline in krita-brush-engine.js), drawn once per
+           size/angle/zoom change and just repositioned on every mouse move --
+           so no CSS shape or transform here, left/top are set in device
+           pixels directly to keep that 1px rim from blurring across two. */
+        #brush-cursor-ring {
+            position: fixed;
+            pointer-events: none;
+            z-index: 9999;
+            display: none;
+            mix-blend-mode: difference;
             transform: none;
         }
         #save-indicator {
@@ -3567,6 +3633,7 @@
         body.test-mode #modal-toolbar .window,body.test-mode #brush-pack-window .window,
         body.test-mode #modal-wincolor .window,
         body.test-mode #modal-tool-customizer .window,
+        body.test-mode #modal-new .window,
         body.test-mode .modal-window {
             background: var(--tm-s3);
             border-color: var(--tm-s7);
@@ -3585,7 +3652,8 @@
         body.test-mode #modal-confirm-reset .title-bar,
         body.test-mode #modal-toolbar .title-bar,body.test-mode #brush-pack-window .title-bar,
         body.test-mode #modal-wincolor .title-bar,
-        body.test-mode #modal-tool-customizer .title-bar {
+        body.test-mode #modal-tool-customizer .title-bar,
+        body.test-mode #modal-new .title-bar {
             background: var(--tm-s4);
             border-bottom-color: var(--tm-s7);
             color: var(--tm-t1);
@@ -3923,6 +3991,7 @@
         body.dark-refined-mode #modal-toolbar .window,body.dark-refined-mode #brush-pack-window .window,
         body.dark-refined-mode #modal-wincolor .window,
         body.dark-refined-mode #modal-tool-customizer .window,
+        body.dark-refined-mode #modal-new .window,
         body.dark-refined-mode .modal-window {
             background: var(--dr-s3);
             border-color: var(--dr-s7);
@@ -3941,7 +4010,8 @@
         body.dark-refined-mode #modal-confirm-reset .title-bar,
         body.dark-refined-mode #modal-toolbar .title-bar,body.dark-refined-mode #brush-pack-window .title-bar,
         body.dark-refined-mode #modal-wincolor .title-bar,
-        body.dark-refined-mode #modal-tool-customizer .title-bar {
+        body.dark-refined-mode #modal-tool-customizer .title-bar,
+        body.dark-refined-mode #modal-new .title-bar {
             background: var(--dr-s4);
             border-bottom-color: var(--dr-s7);
             color: var(--dr-t1);
@@ -5068,28 +5138,58 @@
         .form-group label { display: block; font-weight: bold; margin-bottom: 4px; }
         .form-group select, .form-group input { width: 100%; padding: 4px; }
 
-        /* New Image dialog (matches the .window/.title-bar modal style of other dialogs) */
-        #modal-new .modal-window { width: 420px; }
-        #modal-new .modal-header {
-            display: flex; align-items: center; justify-content: space-between;
-            background: var(--win-blue, #0078d7); color: #fff;
-            margin: -15px -15px 12px -15px; padding: 8px 10px;
-            border-top-left-radius: 2px; border-top-right-radius: 2px;
+        /* New Image dialog (Win32 style, matches #modal-resize/#modal-props) */
+        #modal-new .window {
+            width: 420px;
+            background-color: #f0f0f0;
+            box-shadow: 0 0 15px rgba(0,0,0,0.4);
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #999;
         }
-        #modal-new .modal-title { font-weight: 600; font-size: 13px; }
-        #modal-new .modal-header .close-btn { position: static; color: #fff; border: none; background: transparent; }
-        #modal-new .modal-header .close-btn:hover { background: rgba(255,255,255,0.18); }
-        #modal-new .modal-body { display: flex; flex-direction: column; }
+        #modal-new .title-bar {
+            background-color: white;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            padding-left: 8px;
+            font-size: 11px;
+        }
+        #modal-new .close-btn {
+            width: 40px; height: 28px;
+            display: flex; justify-content: center; align-items: center;
+            cursor: pointer; font-size: 13px; color: #111;
+            margin-left: auto;
+        }
+        #modal-new .close-btn:hover { background-color: #e81123; color: white; }
+        #modal-new .content { padding: 10px 12px 4px 12px; display: flex; flex-direction: column; }
         #modal-new .new-size-row { display: flex; align-items: flex-end; gap: 8px; }
         #modal-new .new-size-row .form-group { flex: 1; }
-        #modal-new .new-swap { height: 28px; margin-bottom: 10px; }
-        #modal-new .modal-btns { border-top: 1px solid rgba(128,128,128,0.25); padding-top: 12px; margin-top: 4px; }
-        body.dark-refined-mode #modal-new .modal-header { background: var(--dr-a2); }
-        body.primeval-forest-mode #modal-new .modal-header { background: var(--pf-a2); }
-        body.abyssal-ocean-mode #modal-new .modal-header { background: var(--ao-a2); }
-        body.crimson-dusk-mode #modal-new .modal-header { background: var(--cd-a2); }
-        body.gilded-obsidian-mode #modal-new .modal-header { background: var(--go-a2); }
-        body.test-mode #modal-new .modal-header { background: var(--tm-a1); color: var(--tm-t1); }
+        #modal-new .btn {
+            background-color: #ffffff; border: 1px solid #adadad;
+            font-family: inherit; font-size: 11px; cursor: pointer; border-radius: 3px; outline: none;
+        }
+        #modal-new .btn:hover { background-color: #e5f1fb; border-color: #0078d7; }
+        /* Dimension swap: small square icon button */
+        #modal-new .new-swap { width: 28px; height: 28px; flex-shrink: 0; padding: 0; font-size: 13px; margin-bottom: 10px; }
+        /* Paste-from-clipboard: full-width, icon + label, matches the ribbon's Paste button */
+        #modal-new .new-paste-clipboard-btn {
+            width: 100%; height: 36px;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            font-size: 12px; font-weight: 600;
+        }
+        #modal-new .new-paste-clipboard-btn .ribbon-icon {
+            width: 20px; height: 20px; image-rendering: pixelated; image-rendering: crisp-edges;
+        }
+        #modal-new .footer {
+            background-color: #f0f0f0;
+            padding: 8px 10px 10px 10px;
+            display: flex; justify-content: flex-end; gap: 6px;
+            border-top: 1px solid rgba(128,128,128,0.25);
+        }
+        #modal-new .footer .btn { height: 24px; padding: 0 14px; }
+        #modal-new .btn-ok { background-color: #ffffff; border: 2px solid #0078d7; font-weight: 600; }
         .ribbon-card {
             display: flex;
             flex-direction: column;
@@ -5251,6 +5351,8 @@
         #pb-reopen-btn svg path,
         #gradient-collapse-btn svg path,
         #gradient-reopen-btn svg path,
+        #smart-brush-collapse-btn svg path,
+        #smart-brush-reopen-btn svg path,
         #project-collapse svg path,
         #project-expand svg path,
         #pb-more-toggle .pb-arrow path { fill: #000000; }
@@ -5383,8 +5485,8 @@ body.primeval-forest-mode .dropdown-item,body.primeval-forest-mode .paint-dropdo
 body.primeval-forest-mode .dropdown-item:hover,body.primeval-forest-mode .paint-dropdown-item:hover{background:var(--pf-s5);}
 body.primeval-forest-mode .dropdown-separator{background:var(--pf-s7);}
 body.primeval-forest-mode .modal-mask{background:rgba(0,0,0,0.6);}
-body.primeval-forest-mode #modal-resize .window,body.primeval-forest-mode #modal-depth .window,body.primeval-forest-mode #modal-export .window,body.primeval-forest-mode #modal-huesat .window,body.primeval-forest-mode #modal-hotkeys .window,body.primeval-forest-mode #modal-info .window,body.primeval-forest-mode #modal-colors .window,body.primeval-forest-mode #modal-confirm-reset .window,body.primeval-forest-mode #modal-toolbar .window,body.primeval-forest-mode #brush-pack-window .window,body.primeval-forest-mode #modal-wincolor .window,body.primeval-forest-mode #modal-tool-customizer .window,body.primeval-forest-mode .modal-window{background:var(--pf-s3);border-color:var(--pf-s7);color:var(--pf-t1);box-shadow:0 12px 40px rgba(0,0,0,0.65);}
-body.primeval-forest-mode #modal-resize .title-bar,body.primeval-forest-mode #modal-depth .title-bar,body.primeval-forest-mode #modal-export .title-bar,body.primeval-forest-mode #modal-huesat .title-bar,body.primeval-forest-mode #modal-hotkeys .title-bar,body.primeval-forest-mode #modal-info .title-bar,body.primeval-forest-mode #modal-colors .title-bar,body.primeval-forest-mode #modal-confirm-reset .title-bar,body.primeval-forest-mode #modal-toolbar .title-bar,body.primeval-forest-mode #brush-pack-window .title-bar,body.primeval-forest-mode #modal-wincolor .title-bar,body.primeval-forest-mode #modal-tool-customizer .title-bar{background:var(--pf-s4);border-bottom-color:var(--pf-s7);color:var(--pf-t1);}
+body.primeval-forest-mode #modal-resize .window,body.primeval-forest-mode #modal-depth .window,body.primeval-forest-mode #modal-export .window,body.primeval-forest-mode #modal-huesat .window,body.primeval-forest-mode #modal-hotkeys .window,body.primeval-forest-mode #modal-info .window,body.primeval-forest-mode #modal-colors .window,body.primeval-forest-mode #modal-confirm-reset .window,body.primeval-forest-mode #modal-toolbar .window,body.primeval-forest-mode #brush-pack-window .window,body.primeval-forest-mode #modal-wincolor .window,body.primeval-forest-mode #modal-tool-customizer .window,body.primeval-forest-mode #modal-new .window,body.primeval-forest-mode .modal-window{background:var(--pf-s3);border-color:var(--pf-s7);color:var(--pf-t1);box-shadow:0 12px 40px rgba(0,0,0,0.65);}
+body.primeval-forest-mode #modal-resize .title-bar,body.primeval-forest-mode #modal-depth .title-bar,body.primeval-forest-mode #modal-export .title-bar,body.primeval-forest-mode #modal-huesat .title-bar,body.primeval-forest-mode #modal-hotkeys .title-bar,body.primeval-forest-mode #modal-info .title-bar,body.primeval-forest-mode #modal-colors .title-bar,body.primeval-forest-mode #modal-confirm-reset .title-bar,body.primeval-forest-mode #modal-toolbar .title-bar,body.primeval-forest-mode #brush-pack-window .title-bar,body.primeval-forest-mode #modal-wincolor .title-bar,body.primeval-forest-mode #modal-tool-customizer .title-bar,body.primeval-forest-mode #modal-new .title-bar{background:var(--pf-s4);border-bottom-color:var(--pf-s7);color:var(--pf-t1);}
 body.primeval-forest-mode .close-btn{color:var(--pf-t2);}body.primeval-forest-mode .close-btn:hover{background:#c42b1c;color:#fff;}
 body.primeval-forest-mode #modal-resize .footer,body.primeval-forest-mode #modal-depth .footer,body.primeval-forest-mode #modal-export .footer,body.primeval-forest-mode #modal-huesat .footer,body.primeval-forest-mode #modal-hotkeys .footer,body.primeval-forest-mode #modal-colors .footer{border-top-color:var(--pf-s7);}
 body.primeval-forest-mode .modal-mask .btn,body.primeval-forest-mode .modal-mask button.btn{background:var(--pf-s5);border-color:var(--pf-s8);color:var(--pf-t1);}
@@ -5556,8 +5658,8 @@ body.abyssal-ocean-mode .dropdown-item,body.abyssal-ocean-mode .paint-dropdown-i
 body.abyssal-ocean-mode .dropdown-item:hover,body.abyssal-ocean-mode .paint-dropdown-item:hover{background:var(--ao-s5);}
 body.abyssal-ocean-mode .dropdown-separator{background:var(--ao-s7);}
 body.abyssal-ocean-mode .modal-mask{background:rgba(0,0,0,0.65);}
-body.abyssal-ocean-mode #modal-resize .window,body.abyssal-ocean-mode #modal-depth .window,body.abyssal-ocean-mode #modal-export .window,body.abyssal-ocean-mode #modal-huesat .window,body.abyssal-ocean-mode #modal-hotkeys .window,body.abyssal-ocean-mode #modal-info .window,body.abyssal-ocean-mode #modal-colors .window,body.abyssal-ocean-mode #modal-confirm-reset .window,body.abyssal-ocean-mode #modal-toolbar .window,body.abyssal-ocean-mode #brush-pack-window .window,body.abyssal-ocean-mode #modal-wincolor .window,body.abyssal-ocean-mode #modal-tool-customizer .window,body.abyssal-ocean-mode .modal-window{background:var(--ao-s3);border-color:var(--ao-s7);color:var(--ao-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
-body.abyssal-ocean-mode #modal-resize .title-bar,body.abyssal-ocean-mode #modal-depth .title-bar,body.abyssal-ocean-mode #modal-export .title-bar,body.abyssal-ocean-mode #modal-huesat .title-bar,body.abyssal-ocean-mode #modal-hotkeys .title-bar,body.abyssal-ocean-mode #modal-info .title-bar,body.abyssal-ocean-mode #modal-colors .title-bar,body.abyssal-ocean-mode #modal-confirm-reset .title-bar,body.abyssal-ocean-mode #modal-toolbar .title-bar,body.abyssal-ocean-mode #brush-pack-window .title-bar,body.abyssal-ocean-mode #modal-wincolor .title-bar,body.abyssal-ocean-mode #modal-tool-customizer .title-bar{background:var(--ao-s4);border-bottom-color:var(--ao-s7);color:var(--ao-t1);}
+body.abyssal-ocean-mode #modal-resize .window,body.abyssal-ocean-mode #modal-depth .window,body.abyssal-ocean-mode #modal-export .window,body.abyssal-ocean-mode #modal-huesat .window,body.abyssal-ocean-mode #modal-hotkeys .window,body.abyssal-ocean-mode #modal-info .window,body.abyssal-ocean-mode #modal-colors .window,body.abyssal-ocean-mode #modal-confirm-reset .window,body.abyssal-ocean-mode #modal-toolbar .window,body.abyssal-ocean-mode #brush-pack-window .window,body.abyssal-ocean-mode #modal-wincolor .window,body.abyssal-ocean-mode #modal-tool-customizer .window,body.abyssal-ocean-mode #modal-new .window,body.abyssal-ocean-mode .modal-window{background:var(--ao-s3);border-color:var(--ao-s7);color:var(--ao-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
+body.abyssal-ocean-mode #modal-resize .title-bar,body.abyssal-ocean-mode #modal-depth .title-bar,body.abyssal-ocean-mode #modal-export .title-bar,body.abyssal-ocean-mode #modal-huesat .title-bar,body.abyssal-ocean-mode #modal-hotkeys .title-bar,body.abyssal-ocean-mode #modal-info .title-bar,body.abyssal-ocean-mode #modal-colors .title-bar,body.abyssal-ocean-mode #modal-confirm-reset .title-bar,body.abyssal-ocean-mode #modal-toolbar .title-bar,body.abyssal-ocean-mode #brush-pack-window .title-bar,body.abyssal-ocean-mode #modal-wincolor .title-bar,body.abyssal-ocean-mode #modal-tool-customizer .title-bar,body.abyssal-ocean-mode #modal-new .title-bar{background:var(--ao-s4);border-bottom-color:var(--ao-s7);color:var(--ao-t1);}
 body.abyssal-ocean-mode .close-btn{color:var(--ao-t2);}body.abyssal-ocean-mode .close-btn:hover{background:#c42b1c;color:#fff;}
 body.abyssal-ocean-mode #modal-resize .footer,body.abyssal-ocean-mode #modal-depth .footer,body.abyssal-ocean-mode #modal-export .footer,body.abyssal-ocean-mode #modal-huesat .footer,body.abyssal-ocean-mode #modal-hotkeys .footer,body.abyssal-ocean-mode #modal-colors .footer{border-top-color:var(--ao-s7);}
 body.abyssal-ocean-mode .modal-mask .btn,body.abyssal-ocean-mode .modal-mask button.btn{background:var(--ao-s5);border-color:var(--ao-s8);color:var(--ao-t1);}
@@ -5663,8 +5765,8 @@ body.crimson-dusk-mode .dropdown-item,body.crimson-dusk-mode .paint-dropdown-ite
 body.crimson-dusk-mode .dropdown-item:hover,body.crimson-dusk-mode .paint-dropdown-item:hover{background:var(--cd-s5);}
 body.crimson-dusk-mode .dropdown-separator{background:var(--cd-s7);}
 body.crimson-dusk-mode .modal-mask{background:rgba(0,0,0,0.65);}
-body.crimson-dusk-mode #modal-resize .window,body.crimson-dusk-mode #modal-depth .window,body.crimson-dusk-mode #modal-export .window,body.crimson-dusk-mode #modal-huesat .window,body.crimson-dusk-mode #modal-hotkeys .window,body.crimson-dusk-mode #modal-info .window,body.crimson-dusk-mode #modal-colors .window,body.crimson-dusk-mode #modal-confirm-reset .window,body.crimson-dusk-mode #modal-toolbar .window,body.crimson-dusk-mode #brush-pack-window .window,body.crimson-dusk-mode #modal-wincolor .window,body.crimson-dusk-mode #modal-tool-customizer .window,body.crimson-dusk-mode .modal-window{background:var(--cd-s3);border-color:var(--cd-s7);color:var(--cd-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
-body.crimson-dusk-mode #modal-resize .title-bar,body.crimson-dusk-mode #modal-depth .title-bar,body.crimson-dusk-mode #modal-export .title-bar,body.crimson-dusk-mode #modal-huesat .title-bar,body.crimson-dusk-mode #modal-hotkeys .title-bar,body.crimson-dusk-mode #modal-info .title-bar,body.crimson-dusk-mode #modal-colors .title-bar,body.crimson-dusk-mode #modal-confirm-reset .title-bar,body.crimson-dusk-mode #modal-toolbar .title-bar,body.crimson-dusk-mode #brush-pack-window .title-bar,body.crimson-dusk-mode #modal-wincolor .title-bar,body.crimson-dusk-mode #modal-tool-customizer .title-bar{background:var(--cd-s4);border-bottom-color:var(--cd-s7);color:var(--cd-t1);}
+body.crimson-dusk-mode #modal-resize .window,body.crimson-dusk-mode #modal-depth .window,body.crimson-dusk-mode #modal-export .window,body.crimson-dusk-mode #modal-huesat .window,body.crimson-dusk-mode #modal-hotkeys .window,body.crimson-dusk-mode #modal-info .window,body.crimson-dusk-mode #modal-colors .window,body.crimson-dusk-mode #modal-confirm-reset .window,body.crimson-dusk-mode #modal-toolbar .window,body.crimson-dusk-mode #brush-pack-window .window,body.crimson-dusk-mode #modal-wincolor .window,body.crimson-dusk-mode #modal-tool-customizer .window,body.crimson-dusk-mode #modal-new .window,body.crimson-dusk-mode .modal-window{background:var(--cd-s3);border-color:var(--cd-s7);color:var(--cd-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
+body.crimson-dusk-mode #modal-resize .title-bar,body.crimson-dusk-mode #modal-depth .title-bar,body.crimson-dusk-mode #modal-export .title-bar,body.crimson-dusk-mode #modal-huesat .title-bar,body.crimson-dusk-mode #modal-hotkeys .title-bar,body.crimson-dusk-mode #modal-info .title-bar,body.crimson-dusk-mode #modal-colors .title-bar,body.crimson-dusk-mode #modal-confirm-reset .title-bar,body.crimson-dusk-mode #modal-toolbar .title-bar,body.crimson-dusk-mode #brush-pack-window .title-bar,body.crimson-dusk-mode #modal-wincolor .title-bar,body.crimson-dusk-mode #modal-tool-customizer .title-bar,body.crimson-dusk-mode #modal-new .title-bar{background:var(--cd-s4);border-bottom-color:var(--cd-s7);color:var(--cd-t1);}
 body.crimson-dusk-mode .close-btn{color:var(--cd-t2);}body.crimson-dusk-mode .close-btn:hover{background:#c42b1c;color:#fff;}
 body.crimson-dusk-mode #modal-resize .footer,body.crimson-dusk-mode #modal-depth .footer,body.crimson-dusk-mode #modal-export .footer,body.crimson-dusk-mode #modal-huesat .footer,body.crimson-dusk-mode #modal-hotkeys .footer,body.crimson-dusk-mode #modal-colors .footer{border-top-color:var(--cd-s7);}
 body.crimson-dusk-mode .modal-mask .btn,body.crimson-dusk-mode .modal-mask button.btn{background:var(--cd-s5);border-color:var(--cd-s8);color:var(--cd-t1);}
@@ -5770,8 +5872,8 @@ body.gilded-obsidian-mode .dropdown-item,body.gilded-obsidian-mode .paint-dropdo
 body.gilded-obsidian-mode .dropdown-item:hover,body.gilded-obsidian-mode .paint-dropdown-item:hover{background:var(--go-s5);}
 body.gilded-obsidian-mode .dropdown-separator{background:var(--go-s7);}
 body.gilded-obsidian-mode .modal-mask{background:rgba(0,0,0,0.65);}
-body.gilded-obsidian-mode #modal-resize .window,body.gilded-obsidian-mode #modal-depth .window,body.gilded-obsidian-mode #modal-export .window,body.gilded-obsidian-mode #modal-huesat .window,body.gilded-obsidian-mode #modal-hotkeys .window,body.gilded-obsidian-mode #modal-info .window,body.gilded-obsidian-mode #modal-colors .window,body.gilded-obsidian-mode #modal-confirm-reset .window,body.gilded-obsidian-mode #modal-toolbar .window,body.gilded-obsidian-mode #brush-pack-window .window,body.gilded-obsidian-mode #modal-wincolor .window,body.gilded-obsidian-mode #modal-tool-customizer .window,body.gilded-obsidian-mode .modal-window{background:var(--go-s3);border-color:var(--go-s7);color:var(--go-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
-body.gilded-obsidian-mode #modal-resize .title-bar,body.gilded-obsidian-mode #modal-depth .title-bar,body.gilded-obsidian-mode #modal-export .title-bar,body.gilded-obsidian-mode #modal-huesat .title-bar,body.gilded-obsidian-mode #modal-hotkeys .title-bar,body.gilded-obsidian-mode #modal-info .title-bar,body.gilded-obsidian-mode #modal-colors .title-bar,body.gilded-obsidian-mode #modal-confirm-reset .title-bar,body.gilded-obsidian-mode #modal-toolbar .title-bar,body.gilded-obsidian-mode #brush-pack-window .title-bar,body.gilded-obsidian-mode #modal-wincolor .title-bar,body.gilded-obsidian-mode #modal-tool-customizer .title-bar{background:var(--go-s4);border-bottom-color:var(--go-s7);color:var(--go-t1);}
+body.gilded-obsidian-mode #modal-resize .window,body.gilded-obsidian-mode #modal-depth .window,body.gilded-obsidian-mode #modal-export .window,body.gilded-obsidian-mode #modal-huesat .window,body.gilded-obsidian-mode #modal-hotkeys .window,body.gilded-obsidian-mode #modal-info .window,body.gilded-obsidian-mode #modal-colors .window,body.gilded-obsidian-mode #modal-confirm-reset .window,body.gilded-obsidian-mode #modal-toolbar .window,body.gilded-obsidian-mode #brush-pack-window .window,body.gilded-obsidian-mode #modal-wincolor .window,body.gilded-obsidian-mode #modal-tool-customizer .window,body.gilded-obsidian-mode #modal-new .window,body.gilded-obsidian-mode .modal-window{background:var(--go-s3);border-color:var(--go-s7);color:var(--go-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
+body.gilded-obsidian-mode #modal-resize .title-bar,body.gilded-obsidian-mode #modal-depth .title-bar,body.gilded-obsidian-mode #modal-export .title-bar,body.gilded-obsidian-mode #modal-huesat .title-bar,body.gilded-obsidian-mode #modal-hotkeys .title-bar,body.gilded-obsidian-mode #modal-info .title-bar,body.gilded-obsidian-mode #modal-colors .title-bar,body.gilded-obsidian-mode #modal-confirm-reset .title-bar,body.gilded-obsidian-mode #modal-toolbar .title-bar,body.gilded-obsidian-mode #brush-pack-window .title-bar,body.gilded-obsidian-mode #modal-wincolor .title-bar,body.gilded-obsidian-mode #modal-tool-customizer .title-bar,body.gilded-obsidian-mode #modal-new .title-bar{background:var(--go-s4);border-bottom-color:var(--go-s7);color:var(--go-t1);}
 body.gilded-obsidian-mode .close-btn{color:var(--go-t2);}body.gilded-obsidian-mode .close-btn:hover{background:#c42b1c;color:#fff;}
 body.gilded-obsidian-mode #modal-resize .footer,body.gilded-obsidian-mode #modal-depth .footer,body.gilded-obsidian-mode #modal-export .footer,body.gilded-obsidian-mode #modal-huesat .footer,body.gilded-obsidian-mode #modal-hotkeys .footer,body.gilded-obsidian-mode #modal-colors .footer{border-top-color:var(--go-s7);}
 body.gilded-obsidian-mode .modal-mask .btn,body.gilded-obsidian-mode .modal-mask button.btn{background:var(--go-s5);border-color:var(--go-s8);color:var(--go-t1);}
@@ -5877,8 +5979,8 @@ body.violet-haze-mode .dropdown-item,body.violet-haze-mode .paint-dropdown-item{
 body.violet-haze-mode .dropdown-item:hover,body.violet-haze-mode .paint-dropdown-item:hover{background:var(--vh-s5);}
 body.violet-haze-mode .dropdown-separator{background:var(--vh-s7);}
 body.violet-haze-mode .modal-mask{background:rgba(0,0,0,0.65);}
-body.violet-haze-mode #modal-resize .window,body.violet-haze-mode #modal-depth .window,body.violet-haze-mode #modal-export .window,body.violet-haze-mode #modal-huesat .window,body.violet-haze-mode #modal-hotkeys .window,body.violet-haze-mode #modal-info .window,body.violet-haze-mode #modal-colors .window,body.violet-haze-mode #modal-confirm-reset .window,body.violet-haze-mode #modal-toolbar .window,body.violet-haze-mode #brush-pack-window .window,body.violet-haze-mode #modal-wincolor .window,body.violet-haze-mode #modal-tool-customizer .window,body.violet-haze-mode .modal-window{background:var(--vh-s3);border-color:var(--vh-s7);color:var(--vh-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
-body.violet-haze-mode #modal-resize .title-bar,body.violet-haze-mode #modal-depth .title-bar,body.violet-haze-mode #modal-export .title-bar,body.violet-haze-mode #modal-huesat .title-bar,body.violet-haze-mode #modal-hotkeys .title-bar,body.violet-haze-mode #modal-info .title-bar,body.violet-haze-mode #modal-colors .title-bar,body.violet-haze-mode #modal-confirm-reset .title-bar,body.violet-haze-mode #modal-toolbar .title-bar,body.violet-haze-mode #brush-pack-window .title-bar,body.violet-haze-mode #modal-wincolor .title-bar,body.violet-haze-mode #modal-tool-customizer .title-bar{background:var(--vh-s4);border-bottom-color:var(--vh-s7);color:var(--vh-t1);}
+body.violet-haze-mode #modal-resize .window,body.violet-haze-mode #modal-depth .window,body.violet-haze-mode #modal-export .window,body.violet-haze-mode #modal-huesat .window,body.violet-haze-mode #modal-hotkeys .window,body.violet-haze-mode #modal-info .window,body.violet-haze-mode #modal-colors .window,body.violet-haze-mode #modal-confirm-reset .window,body.violet-haze-mode #modal-toolbar .window,body.violet-haze-mode #brush-pack-window .window,body.violet-haze-mode #modal-wincolor .window,body.violet-haze-mode #modal-tool-customizer .window,body.violet-haze-mode #modal-new .window,body.violet-haze-mode .modal-window{background:var(--vh-s3);border-color:var(--vh-s7);color:var(--vh-t1);box-shadow:0 12px 40px rgba(0,0,0,0.7);}
+body.violet-haze-mode #modal-resize .title-bar,body.violet-haze-mode #modal-depth .title-bar,body.violet-haze-mode #modal-export .title-bar,body.violet-haze-mode #modal-huesat .title-bar,body.violet-haze-mode #modal-hotkeys .title-bar,body.violet-haze-mode #modal-info .title-bar,body.violet-haze-mode #modal-colors .title-bar,body.violet-haze-mode #modal-confirm-reset .title-bar,body.violet-haze-mode #modal-toolbar .title-bar,body.violet-haze-mode #brush-pack-window .title-bar,body.violet-haze-mode #modal-wincolor .title-bar,body.violet-haze-mode #modal-tool-customizer .title-bar,body.violet-haze-mode #modal-new .title-bar{background:var(--vh-s4);border-bottom-color:var(--vh-s7);color:var(--vh-t1);}
 body.violet-haze-mode .close-btn{color:var(--vh-t2);}body.violet-haze-mode .close-btn:hover{background:#c42b1c;color:#fff;}
 body.violet-haze-mode #modal-resize .footer,body.violet-haze-mode #modal-depth .footer,body.violet-haze-mode #modal-export .footer,body.violet-haze-mode #modal-huesat .footer,body.violet-haze-mode #modal-hotkeys .footer,body.violet-haze-mode #modal-colors .footer{border-top-color:var(--vh-s7);}
 body.violet-haze-mode .modal-mask .btn,body.violet-haze-mode .modal-mask button.btn{background:var(--vh-s5);border-color:var(--vh-s8);color:var(--vh-t1);}
@@ -5929,6 +6031,439 @@ body.violet-haze-mode .mini-swatch.empty{box-shadow:none;}
 body.violet-haze-mode #modal-wincolor .tab-btn{background:var(--vh-s5);border-color:var(--vh-s7);color:var(--vh-t1);}body.violet-haze-mode #modal-wincolor .tab-btn.active{background:var(--vh-a2);color:#fff;}
 body.violet-haze-mode #swap-colors-btn{background:var(--vh-s4) !important;border-color:var(--vh-s7) !important;color:var(--vh-t1);}
 body.violet-haze-mode #swap-colors-btn:hover{background:var(--vh-s5) !important;border-color:var(--vh-s8) !important;}
+
+/* ════════════════════════════════════════════════════════════════
+ * THEMES 2 — built only on the shared :root variable contract above
+ * (the same one Light and Dark mode already use), never on the
+ * per-selector override blocks the five themes above hand-roll.
+ * Every component that reads var(--app-bg) / var(--titlebar-bg) / etc.
+ * picks these up automatically through the cascade, so no selector
+ * duplication is needed here.
+ * ════════════════════════════════════════════════════════════════ */
+
+/* STEEL TIDE — cool graphite-slate, hue drifting from steel-blue
+ * toward teal as it lightens, with a teal-cyan accent and a warm
+ * gold secondary highlight for contrast. */
+body.steel-tide-mode {
+    --bg-ribbon:#212a31;--border-ribbon:#57747a;--win-blue:#39d0cb;--app-text-color:#ebeef0;--app-bg:#101419;
+    --titlebar-bg:#161c22;--titlebar-action-icon:#a0abb1;--titlebar-save-icon:#39d0cb;
+    --titlebar-save-pixel-primary:#39d0cb;--titlebar-save-pixel-shadow:#455c63;--titlebar-save-pixel-sheet:#ebeef0;
+    --titlebar-save-pixel-sheet-shadow:#384a51;--titlebar-save-pixel-white:#ffffff;--titlebar-save-pixel-accent:#285171;
+    --titlebar-save-pixel-accent-soft:#57747a;--titlebar-save-pixel-mid:#a0abb1;
+    --titlebar-undo-redo-enabled:#39d0cb;--titlebar-action-outline-hover:#57747a;--titlebar-action-hover-bg:#384a51;
+    --titlebar-separator:#57747a;--titlebar-filename:#ebeef0;--titlebar-control-icon:#ebeef0;
+    --tab-row-bg:#161c22;--section-divider:#57747a;--section-title-color:#a0abb1;
+    --btn-hover-bg:rgba(57,208,203,0.12);--btn-hover-border:rgba(57,208,203,0.35);--btn-hover-shadow:rgba(57,208,203,0.18);
+    --btn-active-bg:rgba(57,208,203,0.18);--btn-active-border:rgba(57,208,203,0.5);--btn-active-shadow:rgba(57,208,203,0.3);
+    --dropdown-bg:#2c383f;--dropdown-border:#6b9094;--dropdown-shadow:rgba(0,0,0,0.5);--dropdown-item-hover-bg:#384a51;
+    --dropdown-arrow-color:#a0abb1;--dropdown-separator:#57747a;--btn-small-bg:#2c383f;--btn-small-border:#57747a;
+    --threshold-label-color:#a0abb1;--threshold-values-color:#ebeef0;--toggle-icon-color:#39d0cb;--toggle-status-color:#a0abb1;
+    --hotkeys-icon-color:#39d0cb;--anchor-toggle-icon-color:#39d0cb;--theme-mode-toggle-icon-color:#39d0cb;
+    --toggle-icon-color-dark:#39d0cb;--hotkeys-icon-color-dark:#39d0cb;--anchor-toggle-icon-color-dark:#39d0cb;--theme-mode-toggle-icon-color-dark:#39d0cb;
+    --select-menu-header-color:#a0abb1;--select-menu-header-bg:#2c383f;--select-menu-icon-all-fill:rgba(57,208,203,0.16);
+    --select-menu-icon-all-fill-disabled:#384a51;--select-menu-icon-disabled-stroke:#6b7980;
+    --theme-colors-window-bg:#212a31;--theme-colors-titlebar-bg-start:#2c383f;--theme-colors-titlebar-bg-end:#212a31;
+    --theme-colors-titlebar-border:#57747a;--theme-colors-top-note-color:#a0abb1;--theme-colors-result-count-color:#a0abb1;
+    --theme-colors-list-bg:#212a31;--theme-colors-editor-panel-bg-start:#2c383f;--theme-colors-editor-panel-bg-end:#212a31;
+    --theme-colors-editor-panel-border:#57747a;--theme-colors-editor-title-color:#ebeef0;--theme-colors-editor-key-color:#ebeef0;
+    --theme-colors-editor-input-bg:#384a51;--theme-colors-editor-input-border:#6b9094;--theme-colors-editor-swatch-border:#6b9094;
+    --theme-colors-editor-hint-color:#6b7980;--theme-colors-mini-toggle-color:#ebeef0;
+    --palette-mini-swatch-border:#0a0c10;--palette-mini-swatch-inner:#ffffff;
+    --palette-mini-swatch-hover-border:#39d0cb;--palette-mini-swatch-hover-inner:rgba(57,208,203,0.25);
+    --view-center-icon-color:#39d0cb;--view-edgeclean-icon-color:#39d0cb;--view-theme-icon-color:#39d0cb;
+    --select-icon-free-color:#39d0cb;--select-icon-poly-main-color:#39d0cb;--select-icon-poly-accent-color:#d3ac69;
+    --bg-hover:rgba(57,208,203,0.12);--border-hover:rgba(57,208,203,0.35);--bg-selected:rgba(57,208,203,0.18);--border-selected:rgba(57,208,203,0.5);
+    --bg-canvas:#2d3a43;--shape-icon-color:#ebeef0;
+    /* The PokéProject panel and the floating palette/sprite/battle panels key off these
+     * generic --s3.._s7/--t1/--t2/--a1 surface vars with light fallbacks (var(--s3,#f3f3f3)
+     * etc.) that no theme had ever supplied, so they always rendered in the light palette
+     * regardless of the active theme. */
+    --s3:#212a31;--s4:#2c383f;--s5:#384a51;--s6:#57747a;--s7:#6b9094;
+    --t1:#ebeef0;--t2:#a0abb1;--a1:#39d0cb;
+}
+body.steel-tide-mode #status-bar,body.steel-tide-mode .status-bar{background:#161c22;border-top-color:#57747a;color:#ebeef0;}
+
+/* Steel Tide — modal chrome, the select-menu dropdown, and stray form fields
+ * the app never wired into the shared variable contract. These use !important
+ * because the base rules key off #modal-<id> (an ID beats any number of
+ * classes), so a plain class selector here would silently lose. */
+body.steel-tide-mode .modal-mask .window,
+body.steel-tide-mode .modal-window{background:#212a31 !important;color:#ebeef0 !important;}
+body.steel-tide-mode .modal-mask .title-bar,
+body.steel-tide-mode .modal-header{background:#161c22 !important;color:#ebeef0 !important;border-color:#57747a !important;}
+body.steel-tide-mode .modal-mask .window input[type="text"],
+body.steel-tide-mode .modal-mask .window input[type="number"],
+body.steel-tide-mode .modal-mask .window select,
+body.steel-tide-mode .modal-mask .window textarea{background:#384a51 !important;color:#ebeef0 !important;border-color:#6b9094 !important;}
+body.steel-tide-mode .modal-mask .window .btn,
+body.steel-tide-mode .modal-mask .window button{background:#2c383f !important;color:#ebeef0 !important;border-color:#57747a !important;}
+body.steel-tide-mode .modal-mask .window .btn-ok,
+body.steel-tide-mode .modal-mask .window .btn-primary{background:#285171 !important;border-color:#39d0cb !important;}
+body.steel-tide-mode .modal-mask .window fieldset{border-color:#57747a !important;}
+body.steel-tide-mode .modal-mask .window legend,
+body.steel-tide-mode .modal-mask .window label{color:#a0abb1 !important;}
+body.steel-tide-mode .modal-mask .close-btn{color:#a0abb1 !important;}
+body.steel-tide-mode .modal-mask .close-btn:hover{background:#384a51 !important;color:#ebeef0 !important;}
+
+body.steel-tide-mode #select-menu{--bg-color:#2c383f;--border-outer:#6b9094;--header-text:#ebeef0;--text-color:#ebeef0;--disabled-text:#6b7980;--separator:#57747a;--item-hover-bg:#384a51;--item-hover-border:#6b9094;--item-select-bg:rgba(57,208,203,0.18);--item-select-border:#39d0cb;--icon-stroke:#39d0cb;box-shadow:2px 2px 8px rgba(0,0,0,0.5);}
+
+body.steel-tide-mode #pen-size-input{background:#384a51;border-bottom-color:#6b9094;color:#ebeef0;}
+body.steel-tide-mode #pen-size-input:focus{border-bottom-color:#39d0cb;}
+body.steel-tide-mode .active-color-col.selected{background:rgba(57,208,203,0.18);border-color:#39d0cb;}
+body.steel-tide-mode .active-color-col:not(.selected):hover{background:rgba(57,208,203,0.1);border-color:#6b9094;box-shadow:none;}
+
+/* Several modals (depth, huesat, wincolor, export, gapstitch) key their own
+ * internals off a small set of locally-scoped custom properties declared on
+ * the modal root, instead of the shared :root contract — override those. */
+body.steel-tide-mode #modal-depth{--win-bg:#212a31;--win-text:#ebeef0;--win-border-light:#384a51;--win-border-dark:#57747a;--win-highlight:#39d0cb;--border-outer:#57747a;--input-border:#6b9094;--input-focus:#39d0cb;--btn-hover:#384a51;--btn-border:#57747a;}
+body.steel-tide-mode #modal-huesat{--win-bg:#212a31;--win-text:#ebeef0;--input-border:#6b9094;--input-focus:#39d0cb;--btn-border:#57747a;--btn-hover:#384a51;}
+body.steel-tide-mode #modal-wincolor{--win-bg:#212a31;--win-text:#ebeef0;--win-border-light:#384a51;--win-border-dark:#57747a;--win-border-darker:#161c22;--win-btn-hover:#384a51;--win-btn-active:#455c63;--win-highlight:#39d0cb;--input-border:#6b9094;--input-border-focus:#39d0cb;}
+body.steel-tide-mode #modal-export{--win-bg:#212a31;--win-text:#ebeef0;--input-border:#6b9094;--input-focus:#39d0cb;--btn-border:#57747a;--btn-hover:#384a51;}
+body.steel-tide-mode #modal-gapstitch{--gs-win-bg:#212a31;--gs-text:#ebeef0;--gs-input-border:#6b9094;--gs-focus:#39d0cb;--gs-btn-border:#57747a;--gs-btn-hover:#384a51;}
+
+/* modal-huesat's channel picker and master button are hardcoded outside its
+ * local-var contract. */
+body.steel-tide-mode #modal-huesat .channel-area{background:#2c383f;border-color:#57747a;}
+body.steel-tide-mode #modal-huesat .channel-label{color:#a0abb1;}
+body.steel-tide-mode #modal-huesat .master-btn{background:#384a51;color:#ebeef0;border-color:#6b9094;}
+body.steel-tide-mode #modal-huesat .master-btn:hover{background:#455c63;border-color:#a0abb1;}
+body.steel-tide-mode #modal-huesat .master-btn.active{background:#285171;border-color:#39d0cb;color:#ebeef0;}
+body.steel-tide-mode #modal-huesat .sub-row label{color:#a0abb1;}
+
+/* modal-props has no local-var contract — its inner cards are hardcoded. */
+body.steel-tide-mode #modal-props .props-edit-panel,
+body.steel-tide-mode #modal-props .props-card{background:#2c383f !important;border-color:#57747a !important;}
+body.steel-tide-mode #modal-props .props-edit-grid label,
+body.steel-tide-mode #modal-props .props-card h4,
+body.steel-tide-mode #modal-props .props-k{color:#a0abb1 !important;}
+body.steel-tide-mode #modal-props .props-v{color:#ebeef0 !important;}
+body.steel-tide-mode #modal-props .props-edit-grid input{background:#384a51 !important;border-color:#6b9094 !important;color:#ebeef0 !important;}
+body.steel-tide-mode #modal-props .props-note{color:#6b7980 !important;}
+body.steel-tide-mode #modal-props .footer .btn{background:#2c383f !important;border-color:#57747a !important;color:#ebeef0 !important;}
+body.steel-tide-mode #modal-props .footer .btn-ok{background:#285171 !important;border-color:#39d0cb !important;}
+
+/* Every modal's footer bar is its own hardcoded rule, id-scoped like the
+ * window/title-bar above, so it needs the same blanket catch. */
+body.steel-tide-mode .modal-mask .window .footer{background:#161c22 !important;border-color:#57747a !important;}
+
+body.steel-tide-mode #modal-toolbar .toolbar-subtitle,
+body.steel-tide-mode #modal-toolbar .toolbar-empty{color:#a0abb1 !important;}
+body.steel-tide-mode #modal-toolbar .toolbar-list{background:#2c383f !important;border-color:#57747a !important;}
+body.steel-tide-mode #modal-toolbar .toolbar-header{color:#ebeef0 !important;border-bottom-color:#57747a !important;}
+
+body.steel-tide-mode #modal-update .update-status,
+body.steel-tide-mode #modal-update .update-card,
+body.steel-tide-mode #modal-update .update-notes-wrap{background:#2c383f !important;border-color:#57747a !important;color:#ebeef0 !important;}
+body.steel-tide-mode #modal-update .update-status.is-checking{background:#3a3423 !important;border-color:#8a7a3a !important;}
+body.steel-tide-mode #modal-update .update-status.is-available{background:#22362a !important;border-color:#4a8a5c !important;}
+body.steel-tide-mode #modal-update .update-status.is-ok{background:#22303f !important;border-color:#4a72a8 !important;}
+body.steel-tide-mode #modal-update .update-status.is-warn{background:#3a3020 !important;border-color:#8a723a !important;}
+body.steel-tide-mode #modal-update .update-status.is-error{background:#3a2424 !important;border-color:#8a4a4a !important;}
+body.steel-tide-mode #modal-update .update-card-k,
+body.steel-tide-mode #modal-update .update-notes-title,
+body.steel-tide-mode #modal-update .update-notes .empty{color:#a0abb1 !important;}
+body.steel-tide-mode #modal-update .update-card-v,
+body.steel-tide-mode #modal-update .update-notes,
+body.steel-tide-mode #modal-update .update-notes h1,
+body.steel-tide-mode #modal-update .update-notes h2,
+body.steel-tide-mode #modal-update .update-notes h3,
+body.steel-tide-mode #modal-update .update-notes h4{color:#ebeef0 !important;}
+body.steel-tide-mode #modal-update .update-notes code,
+body.steel-tide-mode #modal-update .update-notes pre{background:#161c22 !important;border-color:#57747a !important;}
+body.steel-tide-mode #modal-update .update-progress{background:#384a51 !important;}
+
+/* modal-info isn't wrapped in .modal-mask, so the universal rule above never
+ * reaches it — it needs its own selectors entirely. */
+body.steel-tide-mode #modal-info .window{background:#212a31 !important;color:#ebeef0 !important;}
+body.steel-tide-mode #modal-info .title-bar{background:#161c22 !important;color:#ebeef0 !important;border-color:#57747a !important;}
+body.steel-tide-mode #modal-info .info-section{background:#2c383f !important;border-color:#57747a !important;}
+body.steel-tide-mode #modal-info .info-title{color:#39d0cb !important;}
+body.steel-tide-mode #modal-info .link-btn{color:#39d0cb !important;}
+body.steel-tide-mode #modal-info .content{color:#ebeef0 !important;}
+
+/* The left flyout sidebars (freehand/paintbrush/gradient brush settings) and the
+ * PokéProject panel share a hardcoded light background instead of reading the
+ * shared --bg-ribbon/--border-ribbon contract, so they stayed a light box in
+ * every dark theme. Their collapsed-state reopen tabs have the same problem. */
+body.steel-tide-mode #freehand-sidebar,
+body.steel-tide-mode #paintbrush-sidebar,
+body.steel-tide-mode #gradient-sidebar,
+body.steel-tide-mode #smart-brush-sidebar,
+body.steel-tide-mode #project-panel{background:#212a31 !important;}
+body.steel-tide-mode #freehand-reopen-btn,
+body.steel-tide-mode #pb-reopen-btn,
+body.steel-tide-mode #gradient-reopen-btn,
+body.steel-tide-mode #smart-brush-reopen-btn,
+body.steel-tide-mode #project-expand{background:#212a31 !important;}
+
+/* Every triangular caret/chevron/arrow in the app (dropdown carets, sidebar
+ * collapse/expand chevrons, the "Advanced" arrow) is an inline SVG with a
+ * hardcoded black fill attribute rather than a CSS color — an attribute
+ * selector catches all of them in one rule. */
+body.steel-tide-mode svg rect[fill="#000000"],
+body.steel-tide-mode svg rect[fill="#000"],
+body.steel-tide-mode svg path[fill="#000000"],
+body.steel-tide-mode svg path[fill="#000"]{fill:#ebeef0;}
+
+/* The line-width preset dropdown has its own hardcoded white panel instead
+ * of reading the shared --dropdown-* contract. */
+body.steel-tide-mode #line-width-menu.line-width-menu{background-color:#2c383f !important;border-color:#6b9094 !important;}
+body.steel-tide-mode #line-width-menu .line-width-item.selected{background-color:rgba(57,208,203,0.18) !important;border-color:#39d0cb !important;}
+body.steel-tide-mode #line-width-menu .line-width-item:hover{background-color:#384a51 !important;border-color:#6b9094 !important;}
+
+/* Ribbon cards (the boxed groups of controls inside a ribbon section) and
+ * their labels/compact inputs are hardcoded light-grey. */
+body.steel-tide-mode .ribbon-card{background:#212a31;border-color:#57747a;}
+body.steel-tide-mode .ribbon-card .card-label{color:#ebeef0;}
+body.steel-tide-mode .ribbon-card .mini-label{color:#a0abb1;}
+body.steel-tide-mode .ribbon-card .compact-input{background:#384a51;border-bottom-color:#6b9094;color:#ebeef0;}
+body.steel-tide-mode .ribbon-card .compact-input:focus{border-bottom-color:#39d0cb;}
+
+/* #swap-colors-btn and the "Width" label carry inline styles, so their base
+ * (non-hover) state needs !important to win. */
+body.steel-tide-mode #swap-colors-btn{background:#2c383f !important;border-color:#57747a !important;}
+body.steel-tide-mode label[for="pen-size-input"]{color:#a0abb1 !important;}
+
+/* The highlighted/open state of the Rotate and Size split-buttons (and the
+ * Select tool's split button) reuses the same hardcoded baby-blue as the
+ * color-column selection highlight. */
+body.steel-tide-mode .split-btn-container.select-split.selection-highlight{border-color:#39d0cb;}
+body.steel-tide-mode .split-btn-container.select-split.selection-highlight .split-btn-top,
+body.steel-tide-mode .split-btn-container.select-split.selection-highlight .split-btn-bottom.select-dropdown{background:rgba(57,208,203,0.18);}
+body.steel-tide-mode .split-btn-container.select-split .split-btn-bottom.select-dropdown.selection-highlight{border-top-color:#39d0cb;}
+
+/* The save-reminder text in the status bar is a dark red tuned for a white
+ * status bar — too dark to read on Steel Tide's now-dark one. */
+body.steel-tide-mode #status-reminder{color:#e8785a;}
+
+/* modal-wincolor's Spectrum/Sliders tab buttons. */
+body.steel-tide-mode #modal-wincolor .tab-btn{background:#2c383f;border-color:#57747a;color:#ebeef0;}
+body.steel-tide-mode #modal-wincolor .tab-btn.active{background:#384a51;border-color:#39d0cb;box-shadow:inset 0 0 0 1px #39d0cb;}
+
+/* modal-colors reads most of its chrome from the shared --theme-colors-*
+ * contract already set above, but its list/input/button internals are
+ * hardcoded outside that contract. */
+body.steel-tide-mode #modal-colors .select-hint,
+body.steel-tide-mode #modal-colors .color-element-label{color:#a0abb1 !important;}
+body.steel-tide-mode #modal-colors .color-label{color:#ebeef0 !important;}
+body.steel-tide-mode #modal-colors .preset-select,
+body.steel-tide-mode #modal-colors .preset-input,
+body.steel-tide-mode #modal-colors .search-input,
+body.steel-tide-mode #modal-colors .color-input{background:#384a51 !important;border-color:#6b9094 !important;color:#ebeef0 !important;}
+body.steel-tide-mode #modal-colors .color-input.invalid{background:#3a2424 !important;border-color:#a85a5a !important;}
+body.steel-tide-mode #modal-colors .color-item:hover{background:#2c383f !important;border-color:#57747a !important;}
+body.steel-tide-mode #modal-colors .color-item.is-active{background:rgba(57,208,203,0.15) !important;border-color:#39d0cb !important;}
+body.steel-tide-mode #modal-colors .color-swatch{border-color:#a0abb1 !important;}
+body.steel-tide-mode #modal-colors .btn{background:#2c383f !important;border-color:#57747a !important;color:#ebeef0 !important;}
+body.steel-tide-mode #modal-colors .btn:hover{background:#384a51 !important;border-color:#39d0cb !important;}
+body.steel-tide-mode #modal-colors .close-btn{color:#a0abb1 !important;}
+
+/* Native checkboxes only get an accent-color for their checked fill — an
+ * unchecked one still renders with the browser's default solid white box,
+ * which reads as a stray white tile on a dark theme. Take over the whole
+ * appearance so unchecked is just an outline. */
+body.steel-tide-mode svg [fill="#0078d7"]{fill:#39d0cb;}
+body.steel-tide-mode svg [stroke="#0078d7"]{stroke:#39d0cb;}
+body.steel-tide-mode input[type="checkbox"]{
+    appearance:none;-webkit-appearance:none;
+    width:13px;height:13px;box-sizing:border-box;
+    background:transparent;border:1px solid #6b9094;border-radius:2px;
+    position:relative;margin:0;
+}
+body.steel-tide-mode input[type="checkbox"]:hover{border-color:#39d0cb;}
+body.steel-tide-mode input[type="checkbox"]:checked{background:#39d0cb;border-color:#39d0cb;}
+body.steel-tide-mode input[type="checkbox"]:checked::after{
+    content:"";position:absolute;left:29%;top:12%;width:28%;height:52%;
+    border:solid #101419;border-width:0 2px 2px 0;transform:rotate(45deg);
+}
+
+/* DAPPLED GROVE — an actual aurora: a single signature 4-stop gradient
+ * (emerald green -> teal -> blue -> violet, no yellow) that hue-shifts
+ * across every large chrome surface — the app titlebar, every modal
+ * titlebar, the primary button, the checked checkbox, the progress bar —
+ * plus the same gradient used as a literal outline (via border-image) on
+ * cards, modal windows, the select-menu, and selection rings, per request.
+ * Content areas (window bodies, inputs) stay a calm dark navy so the
+ * gradient chrome has something quiet to pop against. Same structure as
+ * Steel Tide above, just this palette/gradient on the same hooks. */
+body.dappled-grove-mode {
+    --bg-ribbon:linear-gradient(180deg,#101f29 0%,#0b1620 100%);--border-ribbon:#22d3ee;--win-blue:#22d3ee;--app-text-color:#eef6ff;--app-bg:linear-gradient(160deg,#070c14 0%,#0d1a22 100%);
+    --titlebar-bg:linear-gradient(90deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%);--titlebar-action-icon:#08131b;--titlebar-save-icon:#08131b;
+    --titlebar-save-pixel-primary:#08131b;--titlebar-save-pixel-shadow:#3b82f6;--titlebar-save-pixel-sheet:#eef6ff;
+    --titlebar-save-pixel-sheet-shadow:#22d3ee;--titlebar-save-pixel-white:#ffffff;--titlebar-save-pixel-accent:#a855f7;
+    --titlebar-save-pixel-accent-soft:#34d399;--titlebar-save-pixel-mid:#08131b;
+    --titlebar-undo-redo-enabled:#08131b;--titlebar-action-outline-hover:#08131b;--titlebar-action-hover-bg:rgba(8,19,27,0.18);
+    --titlebar-separator:rgba(8,19,27,0.35);--titlebar-filename:#08131b;--titlebar-control-icon:#08131b;
+    --tab-row-bg:linear-gradient(90deg,#0b1620 0%,#101f29 100%);--section-divider:#22d3ee;--section-title-color:#a9c4d6;
+    --btn-hover-bg:rgba(34,211,238,0.16);--btn-hover-border:rgba(34,211,238,0.5);--btn-hover-shadow:rgba(34,211,238,0.3);
+    --btn-active-bg:rgba(168,85,247,0.22);--btn-active-border:rgba(168,85,247,0.6);--btn-active-shadow:rgba(168,85,247,0.35);
+    --dropdown-bg:linear-gradient(160deg,#17293a 0%,#0b1620 100%);--dropdown-border:#22d3ee;--dropdown-shadow:rgba(0,0,0,0.55);--dropdown-item-hover-bg:#17293a;
+    --dropdown-arrow-color:#a9c4d6;--dropdown-separator:#22d3ee;--btn-small-bg:linear-gradient(160deg,#17293a 0%,#0b1620 100%);--btn-small-border:#22d3ee;
+    --threshold-label-color:#a9c4d6;--threshold-values-color:#eef6ff;--toggle-icon-color:#22d3ee;--toggle-status-color:#a9c4d6;
+    --hotkeys-icon-color:#22d3ee;--anchor-toggle-icon-color:#22d3ee;--theme-mode-toggle-icon-color:#22d3ee;
+    --toggle-icon-color-dark:#22d3ee;--hotkeys-icon-color-dark:#22d3ee;--anchor-toggle-icon-color-dark:#22d3ee;--theme-mode-toggle-icon-color-dark:#22d3ee;
+    --select-menu-header-color:#a9c4d6;--select-menu-header-bg:#17293a;--select-menu-icon-all-fill:rgba(34,211,238,0.2);
+    --select-menu-icon-all-fill-disabled:#17293a;--select-menu-icon-disabled-stroke:#4a6a7c;
+    --theme-colors-window-bg:#101f29;--theme-colors-titlebar-bg-start:#22d3ee;--theme-colors-titlebar-bg-end:#a855f7;
+    --theme-colors-titlebar-border:#22d3ee;--theme-colors-top-note-color:#a9c4d6;--theme-colors-result-count-color:#a9c4d6;
+    --theme-colors-list-bg:#101f29;--theme-colors-editor-panel-bg-start:#34d399;--theme-colors-editor-panel-bg-end:#3b82f6;
+    --theme-colors-editor-panel-border:#22d3ee;--theme-colors-editor-title-color:#eef6ff;--theme-colors-editor-key-color:#eef6ff;
+    --theme-colors-editor-input-bg:#0b1620;--theme-colors-editor-input-border:#22d3ee;--theme-colors-editor-swatch-border:#22d3ee;
+    --theme-colors-editor-hint-color:#6f8a9c;--theme-colors-mini-toggle-color:#eef6ff;
+    --palette-mini-swatch-border:#040a10;--palette-mini-swatch-inner:#ffffff;
+    --palette-mini-swatch-hover-border:#22d3ee;--palette-mini-swatch-hover-inner:rgba(34,211,238,0.3);
+    --view-center-icon-color:#22d3ee;--view-edgeclean-icon-color:#22d3ee;--view-theme-icon-color:#22d3ee;
+    --select-icon-free-color:#22d3ee;--select-icon-poly-main-color:#22d3ee;--select-icon-poly-accent-color:#a855f7;
+    --bg-hover:rgba(34,211,238,0.16);--border-hover:rgba(34,211,238,0.5);--bg-selected:rgba(168,85,247,0.22);--border-selected:rgba(168,85,247,0.6);
+    --bg-canvas:linear-gradient(160deg,#0d1a22 0%,#17293a 100%);--shape-icon-color:#eef6ff;
+}
+body.dappled-grove-mode #status-bar,body.dappled-grove-mode .status-bar{background:linear-gradient(90deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%);border-top-color:#22d3ee;color:#08131b;}
+body.dappled-grove-mode #status-bar *,body.dappled-grove-mode .status-bar *{color:#08131b;}
+
+body.dappled-grove-mode .modal-mask .window,
+body.dappled-grove-mode .modal-window{background:#101f29 !important;color:#eef6ff !important;border:2px solid transparent !important;border-image:linear-gradient(135deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%) 1 !important;}
+body.dappled-grove-mode .modal-mask .title-bar,
+body.dappled-grove-mode .modal-header{background:linear-gradient(90deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%) !important;color:#08131b !important;border-color:#22d3ee !important;}
+body.dappled-grove-mode .modal-mask .title-bar *,
+body.dappled-grove-mode .modal-header *{color:#08131b !important;}
+body.dappled-grove-mode .modal-mask .window input[type="text"],
+body.dappled-grove-mode .modal-mask .window input[type="number"],
+body.dappled-grove-mode .modal-mask .window select,
+body.dappled-grove-mode .modal-mask .window textarea{background:#0b1620 !important;color:#eef6ff !important;border-color:#22d3ee !important;}
+body.dappled-grove-mode .modal-mask .window .btn,
+body.dappled-grove-mode .modal-mask .window button{background:#17293a !important;color:#eef6ff !important;border-color:#22d3ee !important;}
+body.dappled-grove-mode .modal-mask .window .btn-ok,
+body.dappled-grove-mode .modal-mask .window .btn-primary{background:linear-gradient(90deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%) !important;border-color:transparent !important;color:#08131b !important;font-weight:600;}
+body.dappled-grove-mode .modal-mask .window fieldset{border-color:#22d3ee !important;}
+body.dappled-grove-mode .modal-mask .window legend,
+body.dappled-grove-mode .modal-mask .window label{color:#a9c4d6 !important;}
+body.dappled-grove-mode .modal-mask .close-btn{color:#08131b !important;}
+body.dappled-grove-mode .modal-mask .close-btn:hover{background:rgba(8,19,27,0.2) !important;color:#08131b !important;}
+
+body.dappled-grove-mode #select-menu{--bg-color:#101f29;--border-outer:#22d3ee;--header-text:#eef6ff;--text-color:#eef6ff;--disabled-text:#4a6a7c;--separator:#22d3ee;--item-hover-bg:#17293a;--item-hover-border:#22d3ee;--item-select-bg:rgba(168,85,247,0.24);--item-select-border:#a855f7;--icon-stroke:#22d3ee;background:#101f29 !important;border:2px solid transparent !important;border-image:linear-gradient(135deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%) 1 !important;box-shadow:2px 2px 12px rgba(0,0,0,0.6);}
+
+body.dappled-grove-mode #pen-size-input{background:#0b1620;border-bottom-color:#22d3ee;color:#eef6ff;}
+body.dappled-grove-mode #pen-size-input:focus{border-bottom-color:#a855f7;}
+body.dappled-grove-mode .active-color-col.selected{background:#101f29;border:2px solid transparent;border-image:linear-gradient(135deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%) 1;}
+body.dappled-grove-mode .active-color-col:not(.selected):hover{background:rgba(34,211,238,0.14);border-color:#22d3ee;box-shadow:none;}
+
+body.dappled-grove-mode #modal-depth{--win-bg:#101f29;--win-text:#eef6ff;--win-border-light:#17293a;--win-border-dark:#22d3ee;--win-highlight:#a855f7;--border-outer:#22d3ee;--input-border:#22d3ee;--input-focus:#a855f7;--btn-hover:#17293a;--btn-border:#22d3ee;}
+body.dappled-grove-mode #modal-huesat{--win-bg:#101f29;--win-text:#eef6ff;--input-border:#22d3ee;--input-focus:#a855f7;--btn-border:#22d3ee;--btn-hover:#17293a;}
+body.dappled-grove-mode #modal-wincolor{--win-bg:#101f29;--win-text:#eef6ff;--win-border-light:#17293a;--win-border-dark:#22d3ee;--win-border-darker:#0b1620;--win-btn-hover:#17293a;--win-btn-active:#a855f7;--win-highlight:#22d3ee;--input-border:#22d3ee;--input-border-focus:#a855f7;}
+body.dappled-grove-mode #modal-export{--win-bg:#101f29;--win-text:#eef6ff;--input-border:#22d3ee;--input-focus:#a855f7;--btn-border:#22d3ee;--btn-hover:#17293a;}
+body.dappled-grove-mode #modal-gapstitch{--gs-win-bg:#101f29;--gs-text:#eef6ff;--gs-input-border:#22d3ee;--gs-focus:#a855f7;--gs-btn-border:#22d3ee;--gs-btn-hover:#17293a;}
+
+body.dappled-grove-mode #modal-huesat .channel-area{background:#17293a;border-color:#22d3ee;}
+body.dappled-grove-mode #modal-huesat .channel-label{color:#a9c4d6;}
+body.dappled-grove-mode #modal-huesat .master-btn{background:#17293a;color:#eef6ff;border-color:#22d3ee;}
+body.dappled-grove-mode #modal-huesat .master-btn:hover{background:#1f3d54;border-color:#a9c4d6;}
+body.dappled-grove-mode #modal-huesat .master-btn.active{background:linear-gradient(90deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%);border-color:transparent;color:#08131b;}
+body.dappled-grove-mode #modal-huesat .sub-row label{color:#a9c4d6;}
+
+body.dappled-grove-mode #modal-props .props-edit-panel,
+body.dappled-grove-mode #modal-props .props-card{background:#17293a !important;border-color:#22d3ee !important;}
+body.dappled-grove-mode #modal-props .props-edit-grid label,
+body.dappled-grove-mode #modal-props .props-card h4,
+body.dappled-grove-mode #modal-props .props-k{color:#a9c4d6 !important;}
+body.dappled-grove-mode #modal-props .props-v{color:#eef6ff !important;}
+body.dappled-grove-mode #modal-props .props-edit-grid input{background:#0b1620 !important;border-color:#22d3ee !important;color:#eef6ff !important;}
+body.dappled-grove-mode #modal-props .props-note{color:#6f8a9c !important;}
+body.dappled-grove-mode #modal-props .footer .btn{background:#17293a !important;border-color:#22d3ee !important;color:#eef6ff !important;}
+body.dappled-grove-mode #modal-props .footer .btn-ok{background:linear-gradient(90deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%) !important;border-color:transparent !important;color:#08131b !important;font-weight:600;}
+
+body.dappled-grove-mode .modal-mask .window .footer{background:#0b1620 !important;border-color:#22d3ee !important;}
+
+body.dappled-grove-mode #modal-toolbar .toolbar-subtitle,
+body.dappled-grove-mode #modal-toolbar .toolbar-empty{color:#a9c4d6 !important;}
+body.dappled-grove-mode #modal-toolbar .toolbar-list{background:#17293a !important;border-color:#22d3ee !important;}
+body.dappled-grove-mode #modal-toolbar .toolbar-header{color:#eef6ff !important;border-bottom-color:#22d3ee !important;}
+
+body.dappled-grove-mode #modal-update .update-status,
+body.dappled-grove-mode #modal-update .update-card,
+body.dappled-grove-mode #modal-update .update-notes-wrap{background:#17293a !important;border-color:#22d3ee !important;color:#eef6ff !important;}
+body.dappled-grove-mode #modal-update .update-status.is-checking{background:#142a45 !important;border-color:#3b82f6 !important;}
+body.dappled-grove-mode #modal-update .update-status.is-available{background:#123a2c !important;border-color:#34d399 !important;}
+body.dappled-grove-mode #modal-update .update-status.is-ok{background:#1c1440 !important;border-color:#a855f7 !important;}
+body.dappled-grove-mode #modal-update .update-status.is-warn{background:#3a2410 !important;border-color:#e8823f !important;}
+body.dappled-grove-mode #modal-update .update-status.is-error{background:#3a1a20 !important;border-color:#e0526a !important;}
+body.dappled-grove-mode #modal-update .update-card-k,
+body.dappled-grove-mode #modal-update .update-notes-title,
+body.dappled-grove-mode #modal-update .update-notes .empty{color:#a9c4d6 !important;}
+body.dappled-grove-mode #modal-update .update-card-v,
+body.dappled-grove-mode #modal-update .update-notes,
+body.dappled-grove-mode #modal-update .update-notes h1,
+body.dappled-grove-mode #modal-update .update-notes h2,
+body.dappled-grove-mode #modal-update .update-notes h3,
+body.dappled-grove-mode #modal-update .update-notes h4{color:#eef6ff !important;}
+body.dappled-grove-mode #modal-update .update-notes code,
+body.dappled-grove-mode #modal-update .update-notes pre{background:#0b1620 !important;border-color:#22d3ee !important;}
+body.dappled-grove-mode #modal-update .update-progress{background:linear-gradient(90deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%) !important;}
+
+body.dappled-grove-mode #modal-info .window{background:#101f29 !important;color:#eef6ff !important;border:2px solid transparent !important;border-image:linear-gradient(135deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%) 1 !important;}
+body.dappled-grove-mode #modal-info .title-bar{background:linear-gradient(90deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%) !important;color:#08131b !important;border-color:#22d3ee !important;}
+body.dappled-grove-mode #modal-info .title-bar *{color:#08131b !important;}
+body.dappled-grove-mode #modal-info .info-section{background:#17293a !important;border-color:#22d3ee !important;}
+body.dappled-grove-mode #modal-info .info-title{color:#22d3ee !important;}
+body.dappled-grove-mode #modal-info .link-btn{color:#22d3ee !important;}
+body.dappled-grove-mode #modal-info .content{color:#eef6ff !important;}
+
+body.dappled-grove-mode svg rect[fill="#000000"],
+body.dappled-grove-mode svg rect[fill="#000"],
+body.dappled-grove-mode svg path[fill="#000000"],
+body.dappled-grove-mode svg path[fill="#000"]{fill:#eef6ff;}
+
+body.dappled-grove-mode #line-width-menu.line-width-menu{background-color:#101f29 !important;border-color:#22d3ee !important;}
+body.dappled-grove-mode #line-width-menu .line-width-item.selected{background-color:rgba(168,85,247,0.24) !important;border-color:#a855f7 !important;}
+body.dappled-grove-mode #line-width-menu .line-width-item:hover{background-color:#17293a !important;border-color:#22d3ee !important;}
+
+body.dappled-grove-mode .ribbon-card{background:#101f29;border:1px solid transparent;border-image:linear-gradient(135deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%) 1;}
+body.dappled-grove-mode .ribbon-card .card-label{color:#eef6ff;}
+body.dappled-grove-mode .ribbon-card .mini-label{color:#a9c4d6;}
+body.dappled-grove-mode .ribbon-card .compact-input{background:#0b1620;border-bottom-color:#22d3ee;color:#eef6ff;}
+body.dappled-grove-mode .ribbon-card .compact-input:focus{border-bottom-color:#a855f7;}
+
+body.dappled-grove-mode #swap-colors-btn{background:#17293a !important;border-color:#22d3ee !important;}
+body.dappled-grove-mode label[for="pen-size-input"]{color:#a9c4d6 !important;}
+
+body.dappled-grove-mode .split-btn-container.select-split.selection-highlight{border-color:#a855f7;}
+body.dappled-grove-mode .split-btn-container.select-split.selection-highlight .split-btn-top,
+body.dappled-grove-mode .split-btn-container.select-split.selection-highlight .split-btn-bottom.select-dropdown{background:rgba(168,85,247,0.24);}
+body.dappled-grove-mode .split-btn-container.select-split .split-btn-bottom.select-dropdown.selection-highlight{border-top-color:#a855f7;}
+
+body.dappled-grove-mode #status-reminder{color:#ff7a5c;}
+
+body.dappled-grove-mode #modal-wincolor .tab-btn{background:#17293a;border-color:#22d3ee;color:#eef6ff;}
+body.dappled-grove-mode #modal-wincolor .tab-btn.active{background:linear-gradient(90deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%);border-color:transparent;color:#08131b;box-shadow:inset 0 0 0 1px #22d3ee;}
+
+body.dappled-grove-mode #modal-colors .select-hint,
+body.dappled-grove-mode #modal-colors .color-element-label{color:#a9c4d6 !important;}
+body.dappled-grove-mode #modal-colors .color-label{color:#eef6ff !important;}
+body.dappled-grove-mode #modal-colors .preset-select,
+body.dappled-grove-mode #modal-colors .preset-input,
+body.dappled-grove-mode #modal-colors .search-input,
+body.dappled-grove-mode #modal-colors .color-input{background:#0b1620 !important;border-color:#22d3ee !important;color:#eef6ff !important;}
+body.dappled-grove-mode #modal-colors .color-input.invalid{background:#3a1a20 !important;border-color:#e0526a !important;}
+body.dappled-grove-mode #modal-colors .color-item:hover{background:#17293a !important;border-color:#22d3ee !important;}
+body.dappled-grove-mode #modal-colors .color-item.is-active{background:rgba(168,85,247,0.2) !important;border-color:#a855f7 !important;}
+body.dappled-grove-mode #modal-colors .color-swatch{border-color:#a9c4d6 !important;}
+body.dappled-grove-mode #modal-colors .btn{background:#17293a !important;border-color:#22d3ee !important;color:#eef6ff !important;}
+body.dappled-grove-mode #modal-colors .btn:hover{background:#1f3d54 !important;border-color:#a855f7 !important;}
+body.dappled-grove-mode #modal-colors .close-btn{color:#a9c4d6 !important;}
+
+body.dappled-grove-mode svg [fill="#0078d7"]{fill:#22d3ee;}
+body.dappled-grove-mode svg [stroke="#0078d7"]{stroke:#22d3ee;}
+body.dappled-grove-mode input[type="checkbox"]{
+    appearance:none;-webkit-appearance:none;
+    width:13px;height:13px;box-sizing:border-box;
+    background:transparent;border:1px solid #22d3ee;border-radius:2px;
+    position:relative;margin:0;
+}
+body.dappled-grove-mode input[type="checkbox"]:hover{border-color:#a855f7;box-shadow:0 0 4px rgba(168,85,247,0.6);}
+body.dappled-grove-mode input[type="checkbox"]:checked{background:linear-gradient(135deg,#34d399 0%,#22d3ee 33%,#3b82f6 66%,#a855f7 100%);border-color:transparent;box-shadow:0 0 6px rgba(168,85,247,0.5);}
+body.dappled-grove-mode input[type="checkbox"]:checked::after{
+    content:"";position:absolute;left:29%;top:12%;width:28%;height:52%;
+    border:solid #08131b;border-width:0 2px 2px 0;transform:rotate(45deg);
+}
 
 #toast-container{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:99999;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
 .toast{padding:8px 16px;border-radius:4px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,0.2);animation:toast-in 0.2s ease-out;pointer-events:auto;max-width:420px;text-align:center;line-height:1.4;}
@@ -6203,3 +6738,28 @@ body.violet-haze-mode #swap-colors-btn:hover{background:var(--vh-s5) !important;
 .bp-pack-row img { flex: 0 0 auto; width: 28px; height: 28px; object-fit: cover; border-radius: 3px; background: #d4d4d4; }
 .bp-pack-row .bp-pack-noicon { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 3px; background: rgba(127, 127, 127, .2); }
 .bp-pack-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* DEBUG TOGGLE: force feature-icon SVGs (ribbon cards, big toolbar buttons) to a single
+   flat color with no soft/partial-opacity strokes, for previewing a crisp icon style.
+   Scoped to .card-icon/.btn-large since those are the decorative multi-tone icons —
+   small chrome controls (collapse arrows, checkmarks, resize handles) live elsewhere
+   and are already crisp single-color shapes, so they're untouched. */
+body.debug-crisp-icons {
+    --debug-crisp-icon-color: #202020;
+}
+body.debug-crisp-icons .card-icon svg,
+body.debug-crisp-icons .btn-large svg {
+    shape-rendering: crispEdges;
+}
+body.debug-crisp-icons .card-icon svg [fill]:not([fill="none"]),
+body.debug-crisp-icons .btn-large svg [fill]:not([fill="none"]) {
+    fill: var(--debug-crisp-icon-color) !important;
+}
+body.debug-crisp-icons .card-icon svg [stroke],
+body.debug-crisp-icons .btn-large svg [stroke] {
+    stroke: var(--debug-crisp-icon-color) !important;
+}
+body.debug-crisp-icons .card-icon svg [opacity],
+body.debug-crisp-icons .btn-large svg [opacity] {
+    opacity: 1 !important;
+}

@@ -212,6 +212,7 @@
         if (app.updateBounds) app.updateBounds();
         if (app.updateGridOverlay) app.updateGridOverlay();
         if (app.requestGlobalOverlayUpdate) app.requestGlobalOverlayUpdate();
+        if (app.updateCanvasVisibilityButton) app.updateCanvasVisibilityButton();
     }
 
     function freeRec(rec) {
@@ -607,7 +608,7 @@
         addBtn = document.createElement('div');
         addBtn.id = 'doc-tab-add';
         addBtn.className = 'doc-tab-add';
-        addBtn.textContent = '+';
+        addBtn.innerHTML = '<svg class="doc-tab-add-icon" viewBox="0 0 12 12" width="11" height="11" shape-rendering="crispEdges" aria-hidden="true"><rect x="5" y="1" width="2" height="10" fill="currentColor"/><rect x="1" y="5" width="10" height="2" fill="currentColor"/></svg>';
         addBtn.title = 'New tab (Ctrl+T)';
         addBtn.setAttribute('aria-label', 'New tab');
         addBtn.setAttribute('data-tauri-drag-region', 'false');

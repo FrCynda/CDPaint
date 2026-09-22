@@ -4,6 +4,9 @@
     const buildSortedDiffIndex = _wandMod.buildSortedDiffIndex;
     const applyToleranceIncremental = _wandMod.applyToleranceIncremental;
     const buildPriorityFlood = _wandMod.buildPriorityFlood;
+    const buildPriorityFloodMultiSeed = _wandMod.buildPriorityFloodMultiSeed;
+    const buildEdgeMagnitude = _wandMod.buildEdgeMagnitude;
+    const buildSeedReachMask = _wandMod.buildSeedReachMask;
 
     // Minimal seeded LCG (linear congruential generator) used for repeatable brush jitter and noise patterns.
     // Not cryptographically secure — only used for visual randomness.
@@ -892,6 +895,9 @@
                 { id:'fill',           toolId:'fill',       label:'Fill',               iconSrc:'assets/toolbar-icons/fill.png',         defaultSection:'tools' },
                 { id:'wand',           toolId:'wand',       label:'Magic Wand (Contiguous)', iconSrc:'assets/toolbar-icons/wand-contig.png',defaultSection:'tools' },
                 { id:'wand-global',    toolId:'wand',       label:'Magic Wand (Global)', iconSrc:'assets/toolbar-icons/wand-global.png',  defaultSection:'tools', mode:{wandMode:'global'} },
+                { id:'wand-palette',   toolId:'wand',       label:'Palette Wand — cut flattens the selection to one colour on the swatch canvas', iconSrc:'assets/toolbar-icons/wand-contig.png', iconClass:'icon-hue-shift', defaultSection:'tools', mode:{wandFlavor:'palette'} },
+                { id:'wand-palette-global', toolId:'wand',  label:'Palette Wand (Global) — cut flattens the selection to one colour on the swatch canvas', iconSrc:'assets/toolbar-icons/wand-global.png', iconClass:'icon-hue-shift', defaultSection:'tools', mode:{wandFlavor:'palette', wandMode:'global'} },
+                { id:'wand-brush',     toolId:'smart-brush', label:'Smart Select Brush', iconSvg:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#0078d7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="11" r="6" stroke-dasharray="2 2"/><path d="M13 3 L15 6 M15 3 L13 6" stroke-width="1.2"/><circle cx="14" cy="4.5" r="2.3" fill="none"/></svg>', defaultSection:'tools' },
                 { id:'eraser',         toolId:'eraser',     label:'Eraser',             iconSrc:'assets/toolbar-icons/eraser.png',       defaultSection:'tools' },
                 { id:'picker',         toolId:'picker',     label:'Color Picker',       iconSrc:'assets/toolbar-icons/picker.png',       defaultSection:'tools' },
                 { id:'zoom',           toolId:'zoom',       label:'Zoom',               iconSrc:'assets/toolbar-icons/zoom.png',         defaultSection:'tools' },
@@ -926,6 +932,14 @@
                 transAutoPaste: false,
                 anchorCanvas: true,
                 wandMode: 'contiguous',
+                // Independent per-flavor memory of contiguous/global — the plain
+                // wand and the Palette Wand each remember their own mode, so
+                // switching one's mode doesn't drag the other's along with it.
+                // `wandMode` above is just the effective value the selection
+                // algorithms read, synced from these when the flavor changes.
+                wandModeNormal: 'contiguous',
+                wandModePalette: 'contiguous',
+                wandFlavor: 'normal',
                 wandTolerance: 0,
                 // Off = the wand reads the layer you have selected, as Krita and
                 // CSP do by default. On = it reads the composited picture.
@@ -969,8 +983,13 @@
                 polyActive: false, polyPoints: [],
                 lassoActive: false, lassoMode: null, lassoPoints: [], lassoIsDown: false, lassoStart: null,
                 wandActive: false, wandStart: null, wandStartScreen: null, wandTol: 0, wandBase: null,
+                wandOpBaseSelection: null, wandOpBaseLayerSnapshot: null,
                 wandDiff: null,
                 wandVisited: null,
+                smartBrushActive: false, smartBrushBase: null, smartBrushOp: 'replace',
+                smartBrushLastPoint: null, smartBrushEdgeMap: null, smartBrushJobId: 0,
+                smartBrushPosSeeds: null, smartBrushNegSeeds: null, smartBrushAnalysis: null,
+                smartBrushDebugView: false, smartBrushDebugMode: 'clusters',
                 wandMaskCanvas: null,
                 wandMaskImageData: null,
                 wandJobId: 0,
@@ -1222,6 +1241,7 @@
                 svgAntsPathBack: document.getElementById('svg-ants-path-back'),
                 svgAntsClipRect: document.getElementById('ants-clip-rect'),
                 eraserGhost: document.getElementById('eraser-ghost'),
+                brushCursorRing: document.getElementById('brush-cursor-ring'),
                 statusColors: document.getElementById('status-colors'),
                 statusSelColors: document.getElementById('status-sel-colors'),
                 statusReminder: document.getElementById('status-reminder'),
@@ -1234,6 +1254,8 @@
                 tileShadeWrap: document.getElementById('tile-shade-wrap'),
                 tileClipRect: document.getElementById('tile-clip-rect'),
                 gridlineColorSwatch: document.getElementById('gridline-color-swatch'),
+                swatchCanvas: /** @type {HTMLCanvasElement} */ (document.getElementById('swatch-canvas')),
+                swatchCopyBtn: document.getElementById('swatch-copy-btn'),
                 hoverPreview: null,
                 pencilIcon: document.getElementById('pencil-cursor-icon'),
                 pencilSmartIcon: document.getElementById('pencil-smart-cursor-icon'),
@@ -1336,6 +1358,7 @@
             this._freehandStrokePoints = null;
             this._fhPreviewing = false;
             this._loadFreehandConfig();
+            this._loadSmartBrushConfig();
             this.init();
         }
 
@@ -1638,18 +1661,8 @@
 
             this.ui.viewport.addEventListener('pointerdown', e => {
                 if(e.button === 1) {
-                    if (this.config.anchorCanvas) {
-                        e.preventDefault();
-                        this.updateBounds();
-                        this.state.isPanning = true;
-                        this.state.panStart = { x: e.clientX, y: e.clientY };
-                        this.state.scrollStart = { x: this.ui.viewport.scrollLeft, y: this.ui.viewport.scrollTop };
-                    } else {
-                        e.preventDefault();
-                        this.state.isCanvasDragging = true;
-                        this.state.canvasDragStart = { x: e.clientX, y: e.clientY };
-                        this.state.canvasOffsetStart = { x: this.state.canvasOffset.x, y: this.state.canvasOffset.y };
-                    }
+                    e.preventDefault();
+                    this.startMiddlePan(e);
                 }
                 // When gradient tool is active, forward left-click to onMouseDown
                 // so handles outside the canvas bounds remain clickable.
@@ -1782,6 +1795,11 @@
             const storedWandMode = this.lsGet('paint.wandMode');
             if (storedWandMode === 'global' || storedWandMode === 'contiguous') {
                 this.config.wandMode = storedWandMode;
+                this.config.wandModeNormal = storedWandMode;
+            }
+            const storedWandModePalette = this.lsGet('paint.wandModePalette');
+            if (storedWandModePalette === 'global' || storedWandModePalette === 'contiguous') {
+                this.config.wandModePalette = storedWandModePalette;
             }
             this.config.sampleAllLayers = this.lsGet('paint.sampleAllLayers') === '1';
             this.syncWandMenu();
@@ -2473,12 +2491,15 @@
                     const inUi = e.target.closest('#ribbon') || e.target.closest('.tab-row') || e.target.closest('#title-bar') || e.target.closest('.dropdown-menu') || e.target.closest('.modal-mask') || e.target.closest('#lsys-panel') || e.target.closest('#lsys-ctx');
                     if (!inCanvas && !inUi) this.commitSelection();
                 }
+            });
+
+            window.addEventListener('mousedown', e => {
                 if(!e.target.closest('.dropdown-menu') && !e.target.closest('.tab') && !e.target.closest('.split-btn-bottom')) document.querySelectorAll('.dropdown-menu').forEach(m=>m.style.display='none');
             });
 
             this.ui.viewport.addEventListener('scroll', () => {
                 this.clampViewportScroll();
-                this.requestGlobalOverlayUpdate();
+                this.requestGlobalOverlayUpdate(this._lastCreatingOverlayRect || null);
                 this.requestBoundsUpdate();
                 this.requestGridOverlayUpdate();
             });
@@ -2526,6 +2547,7 @@
             this._applyMemoryBudget();
             this.initTitleBarControls();
             this.bindFreehandSettings();
+            this.bindSmartBrushSidebar();
             // Mark app as ready — fades out the startup loading bar
             document.body.classList.add('app-ready');
             this.revealStartupWindow();
@@ -2577,63 +2599,24 @@
             const hot = document.getElementById('tab-hotkeys');
             const view = document.getElementById('tab-view');
             const themes = document.getElementById('tab-themes');
+            const themes2 = document.getElementById('tab-themes2');
             const debug = document.getElementById('tab-debug');
             const homeRibbon = document.getElementById('ribbon');
             const viewRibbon = document.getElementById('ribbon-view');
             const themesRibbon = document.getElementById('ribbon-themes');
+            const themes2Ribbon = document.getElementById('ribbon-themes2');
             const debugRibbon = document.getElementById('ribbon-debug');
             if (tab === 'hotkeys') {
                 this.openHotkeys();
                 return;
             }
-            if (tab === 'view') {
-                if (hot) hot.classList.remove('active');
-                if (home) home.classList.remove('active');
-                if (themes) themes.classList.remove('active');
-                if (debug) debug.classList.remove('active');
-                if (view) view.classList.add('active');
-                if (homeRibbon) homeRibbon.style.display = 'none';
-                if (viewRibbon) viewRibbon.style.display = '';
-                if (themesRibbon) themesRibbon.style.display = 'none';
-                if (debugRibbon) debugRibbon.style.display = 'none';
-                this.closeHotkeys(true);
-                return;
-            }
-            if (tab === 'themes') {
-                if (hot) hot.classList.remove('active');
-                if (home) home.classList.remove('active');
-                if (view) view.classList.remove('active');
-                if (debug) debug.classList.remove('active');
-                if (themes) themes.classList.add('active');
-                if (homeRibbon) homeRibbon.style.display = 'none';
-                if (viewRibbon) viewRibbon.style.display = 'none';
-                if (themesRibbon) themesRibbon.style.display = '';
-                if (debugRibbon) debugRibbon.style.display = 'none';
-                this.closeHotkeys(true);
-                return;
-            }
-            if (tab === 'debug') {
-                if (hot) hot.classList.remove('active');
-                if (home) home.classList.remove('active');
-                if (view) view.classList.remove('active');
-                if (themes) themes.classList.remove('active');
-                if (debug) debug.classList.add('active');
-                if (homeRibbon) homeRibbon.style.display = 'none';
-                if (viewRibbon) viewRibbon.style.display = 'none';
-                if (themesRibbon) themesRibbon.style.display = 'none';
-                if (debugRibbon) debugRibbon.style.display = '';
-                this.closeHotkeys(true);
-                return;
-            }
-            if (hot) hot.classList.remove('active');
-            if (view) view.classList.remove('active');
-            if (themes) themes.classList.remove('active');
-            if (debug) debug.classList.remove('active');
-            if (home) home.classList.add('active');
-            if (homeRibbon) homeRibbon.style.display = '';
-            if (viewRibbon) viewRibbon.style.display = 'none';
-            if (themesRibbon) themesRibbon.style.display = 'none';
-            if (debugRibbon) debugRibbon.style.display = 'none';
+            const tabs = { home, view, themes, themes2, debug };
+            const ribbons = { home: homeRibbon, view: viewRibbon, themes: themesRibbon, themes2: themes2Ribbon, debug: debugRibbon };
+            const active = tabs[tab] ? tab : 'home';
+            Object.keys(tabs).forEach(key => {
+                if (tabs[key]) tabs[key].classList.toggle('active', key === active);
+                if (ribbons[key]) ribbons[key].style.display = key === active ? '' : 'none';
+            });
             this.closeHotkeys(true);
         }
         updateToolHoverTitles() {
@@ -3187,7 +3170,7 @@
             // Mutual exclusivity: turn off other themes when enabling this one
             if (on) {
                 if (this.darkRefinedMode) { this.darkRefinedMode = false; this.lsSet('paint.darkRefinedMode', 'false'); this.applyDarkRefinedMode(false); }
-                const CUSTOM_THEMES = ['primeval-forest-mode','abyssal-ocean-mode','crimson-dusk-mode','gilded-obsidian-mode','violet-haze-mode'];
+                const CUSTOM_THEMES = ['primeval-forest-mode','abyssal-ocean-mode','crimson-dusk-mode','gilded-obsidian-mode','violet-haze-mode','steel-tide-mode','dappled-grove-mode'];
                 const wasCustom = CUSTOM_THEMES.some(c => document.body.classList.contains(c));
                 if (this.themeMode === 'dark' || wasCustom) { this.setThemeMode('light', { save: true }); }
             }
@@ -3202,7 +3185,7 @@
             // Apply chrome styles for the tab row / titlebar
             const chrome = this.themeChrome;
             if (!chrome) return;
-            const CUSTOM_THEMES_TM = ['primeval-forest-mode','abyssal-ocean-mode','crimson-dusk-mode','gilded-obsidian-mode','violet-haze-mode'];
+            const CUSTOM_THEMES_TM = ['primeval-forest-mode','abyssal-ocean-mode','crimson-dusk-mode','gilded-obsidian-mode','violet-haze-mode','steel-tide-mode','dappled-grove-mode'];
             const isCustomTM = CUSTOM_THEMES_TM.some(c => document.body.classList.contains(c));
             if (chrome.titleBar) {
                 chrome.titleBar.style.backgroundColor = on ? '#1c1c1c' : (isCustomTM ? '' : (this.themeMode === 'dark' ? '#1b1b1d' : ''));
@@ -3225,7 +3208,7 @@
             // Mutual exclusivity: turn off other themes when enabling this one
             if (on) {
                 if (this.testMode) { this.testMode = false; this.lsSet('paint.testMode', 'false'); this.applyTestMode(false); }
-                const CUSTOM_THEMES = ['primeval-forest-mode','abyssal-ocean-mode','crimson-dusk-mode','gilded-obsidian-mode','violet-haze-mode'];
+                const CUSTOM_THEMES = ['primeval-forest-mode','abyssal-ocean-mode','crimson-dusk-mode','gilded-obsidian-mode','violet-haze-mode','steel-tide-mode','dappled-grove-mode'];
                 const wasCustom = CUSTOM_THEMES.some(c => document.body.classList.contains(c));
                 if (this.themeMode === 'dark' || wasCustom) { this.setThemeMode('light', { save: true }); }
             }
@@ -3240,7 +3223,7 @@
             // Apply chrome styles for the tab row / titlebar
             const chrome = this.themeChrome;
             if (!chrome) return;
-            const CUSTOM_THEMES_DR = ['primeval-forest-mode','abyssal-ocean-mode','crimson-dusk-mode','gilded-obsidian-mode','violet-haze-mode'];
+            const CUSTOM_THEMES_DR = ['primeval-forest-mode','abyssal-ocean-mode','crimson-dusk-mode','gilded-obsidian-mode','violet-haze-mode','steel-tide-mode','dappled-grove-mode'];
             const isCustomDR = CUSTOM_THEMES_DR.some(c => document.body.classList.contains(c));
             if (chrome.titleBar) {
                 chrome.titleBar.style.backgroundColor = on ? '#1F1F22' : (isCustomDR ? '' : (this.themeMode === 'dark' ? '#1b1b1d' : ''));
@@ -4835,7 +4818,7 @@
         _makeEmptyRow() { return new Array(20).fill(null); }
         getDefaultToolGrid() {
             const t = [
-                ['pencil','fill','wand','paintbrush'],
+                ['pencil','fill','wand','wand-brush','wand-palette','paintbrush'],
                 ['eraser','picker','zoom','layers-toggle'],
                 ['gradient','anchor-toggle','freehand','pokeproject']
             ].map(arr => { const r = this._makeEmptyRow(); arr.forEach((v,i) => r[i]=v); return r; });
@@ -4851,12 +4834,57 @@
             if (raw) {
                 try {
                     const p = JSON.parse(raw);
-                    if (this.validateToolGridLayout(p)) return p;
+                    if (this.validateToolGridLayout(p)) return this._addWandPaletteToSavedLayoutOnce(this._addWandBrushToSavedLayoutOnce(p));
                 } catch (e) { /* fall through */ }
             }
             const def = this.getDefaultToolGrid();
             this.saveToolGridLayout(def);
             return def;
+        }
+        // wand-brush was added to the manifest after some users already had a
+        // customized grid saved, so it would otherwise never appear for them. Add
+        // it next to the wand tool exactly once (tracked by its own flag) — never
+        // generically, and never again after this, so deliberately removing it
+        // later behaves like removing any other tool.
+        _addWandBrushToSavedLayoutOnce(layout) {
+            if (this.lsGet('paint.toolGridWandBrushAdded')) return layout;
+            this.lsSet('paint.toolGridWandBrushAdded', '1');
+            const tools = layout.tools;
+            if (!tools || tools.some(row => row.includes('wand-brush'))) return layout;
+            let placed = false;
+            for (const row of tools) {
+                const wandIdx = row.indexOf('wand');
+                if (wandIdx !== -1 && row[wandIdx + 1] === null) { row[wandIdx + 1] = 'wand-brush'; placed = true; break; }
+            }
+            if (!placed) {
+                for (const row of tools) {
+                    const emptyIdx = row.indexOf(null);
+                    if (emptyIdx !== -1) { row[emptyIdx] = 'wand-brush'; placed = true; break; }
+                }
+            }
+            if (placed) this.saveToolGridLayout(layout);
+            return layout;
+        }
+        // Same one-time retrofit as _addWandBrushToSavedLayoutOnce, for the Palette
+        // Wand added after it.
+        _addWandPaletteToSavedLayoutOnce(layout) {
+            if (this.lsGet('paint.toolGridWandPaletteAdded')) return layout;
+            this.lsSet('paint.toolGridWandPaletteAdded', '1');
+            const tools = layout.tools;
+            if (!tools || tools.some(row => row.includes('wand-palette'))) return layout;
+            let placed = false;
+            for (const row of tools) {
+                const wandIdx = row.indexOf('wand');
+                if (wandIdx !== -1 && row[wandIdx + 1] === null) { row[wandIdx + 1] = 'wand-palette'; placed = true; break; }
+            }
+            if (!placed) {
+                for (const row of tools) {
+                    const emptyIdx = row.indexOf(null);
+                    if (emptyIdx !== -1) { row[emptyIdx] = 'wand-palette'; placed = true; break; }
+                }
+            }
+            if (placed) this.saveToolGridLayout(layout);
+            return layout;
         }
         saveToolGridLayout(layout) {
             this.lsSet('paint.toolGridLayout', JSON.stringify(layout));
@@ -4889,11 +4917,17 @@
                 const img = document.createElement('img'); img.className = 'toolbar-icon'; img.alt = ''; img.src = 'assets/toolbar-icons/pencil-smart.png';
                 slot.appendChild(img);
             } else if (id === 'wand') {
-                const isContig = this.config.wandMode === 'contiguous';
+                const isContig = this.config.wandModeNormal === 'contiguous';
                 slot.innerHTML = '<span class="wand-icon wand-icon-contig' + (isContig ? ' show' : '') + '"><img class="toolbar-icon" alt="" src="assets/toolbar-icons/wand-contig.png"></span><span class="wand-icon wand-icon-global' + (isContig ? '' : ' show') + '"><img class="toolbar-icon icon-wand-global" src="assets/toolbar-icons/wand-global.png"></span>';
             } else if (id === 'wand-global') {
                 const img = document.createElement('img'); img.className = 'toolbar-icon icon-wand-global'; img.alt = ''; img.src = 'assets/toolbar-icons/wand-global.png';
                 slot.appendChild(img);
+            } else if (id === 'wand-palette') {
+                // Same dual-icon/right-click-cycle pattern as the plain wand slot
+                // above, just hue-shifted — one combined button switchable between
+                // contiguous and global mode instead of two separate buttons.
+                const isContig = this.config.wandModePalette === 'contiguous';
+                slot.innerHTML = '<span class="wand-icon wand-icon-contig' + (isContig ? ' show' : '') + '"><img class="toolbar-icon icon-hue-shift" alt="" src="assets/toolbar-icons/wand-contig.png"></span><span class="wand-icon wand-icon-global' + (isContig ? '' : ' show') + '"><img class="toolbar-icon icon-wand-global" src="assets/toolbar-icons/wand-global-palette.png"></span>';
             } else if (id === 'anchor-toggle') {
                 if (this.config.anchorCanvas) slot.classList.add('is-on');
                 slot.innerHTML = '<span class="toggle-icons"><img class="icon-off toolbar-icon" src="assets/anchor.png"><img class="icon-on toolbar-icon" src="assets/Free.png"></span>';
@@ -4908,6 +4942,7 @@
             } else if (item.iconSrc) {
                 const img = document.createElement('img');
                 img.className = 'toolbar-icon pixel-perfect';
+                if (item.iconClass) img.classList.add(item.iconClass);
                 img.src = item.iconSrc;
                 img.alt = '';
                 slot.appendChild(img);
@@ -4934,11 +4969,15 @@
                 slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); this.setPencilMode('smart'); this.setTool('pencil'); });
             }
             if (id === 'wand') {
-                slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); const n = this.config.wandMode === 'global' ? 'contiguous' : 'global'; this.setWandMode(n); this.setTool('wand'); });
+                slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); const n = this.config.wandModeNormal === 'global' ? 'contiguous' : 'global'; this.setWandMode(n, 'normal'); this.setTool('wand'); });
                 slot.title += '\nRight-click: switch wand mode';
             }
             if (id === 'wand-global') {
-                slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); this.setWandMode('global'); this.setTool('wand'); });
+                slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); this.setWandMode('global', 'normal'); this.setTool('wand'); });
+            }
+            if (id === 'wand-palette') {
+                slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); const n = this.config.wandModePalette === 'global' ? 'contiguous' : 'global'; this.setWandMode(n, 'palette'); this.setTool('wand', { wandFlavor: 'palette' }); });
+                slot.title += '\nRight-click: switch wand mode';
             }
             if (id === 'picker') {
                 slot.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); this.openPickerMenu(e); });
@@ -4999,7 +5038,34 @@
         syncToolGridActive() {
             const t = this.config.tool;
             const selTool = this.config.selectTool;
-            document.querySelectorAll('.tool-grid-slot.btn-icon').forEach(b => {
+            // A mode object can carry several independent dimensions (which select
+            // tool, which pencil mode, which wand mode, which wand flavor...) — a
+            // slot "matches" only when every dimension IT declares agrees with the
+            // live config. A slot that leaves a dimension undeclared doesn't care
+            // about it at all (e.g. wand-palette only declares wandFlavor, so it
+            // matches in both contiguous and global wandMode) — it's a "no mode"
+            // match vacuously.
+            const modeMatches = (mode) => {
+                if (!mode) return true;
+                const checks = [];
+                if (mode.selectTool !== undefined) checks.push(mode.selectTool === selTool);
+                if (mode.pencilMode !== undefined) checks.push(mode.pencilMode === this.config.pencilMode);
+                if (mode.wandMode !== undefined) checks.push(mode.wandMode === this.config.wandMode);
+                if (mode.wandFlavor !== undefined) checks.push(mode.wandFlavor === this.config.wandFlavor);
+                return checks.every(Boolean);
+            };
+            const modeDims = (mode) => mode ? Object.keys(mode) : [];
+            // A sibling only outranks this slot if it declares a strict superset of
+            // this slot's dimensions (so it's strictly more specific) — otherwise
+            // two siblings that each declare a dimension the other doesn't (e.g.
+            // wand-palette vs. a hypothetical wand-brush) would each suppress the
+            // other and neither would ever light up.
+            const isMoreSpecific = (otherMode, mode) => {
+                const otherDims = modeDims(otherMode), dims = modeDims(mode);
+                return dims.every(d => otherDims.includes(d)) && otherDims.length > dims.length;
+            };
+            const allSlots = [...document.querySelectorAll('.tool-grid-slot.btn-icon')];
+            allSlots.forEach(b => {
                 b.classList.remove('active');
                 const id = b.dataset.toolId;
                 if (!id) return;
@@ -5010,35 +5076,39 @@
                     return;
                 }
                 if (item.toolId === t) {
-                    let matched = false;
-                    if (item.mode && item.mode.selectTool && selTool) {
-                        if (item.mode.selectTool === selTool) { b.classList.add('active'); matched = true; }
-                    } else if (item.mode && item.mode.pencilMode) {
-                        if (item.mode.pencilMode === this.config.pencilMode) { b.classList.add('active'); matched = true; }
-                    } else if (item.mode && item.mode.wandMode) {
-                        if (item.mode.wandMode === this.config.wandMode) { b.classList.add('active'); matched = true; }
-                    }
-                    if (!matched) {
-                        const hasModeSpecific = [...document.querySelectorAll('.tool-grid-slot.btn-icon')].some(el => {
-                            const eid = el.dataset.toolId;
-                            if (!eid || eid === id) return false;
-                            const ei = this.getToolManifestItem(eid);
-                            return ei && ei.toolId === t && ei.mode;
-                        });
-                        if (!hasModeSpecific) b.classList.add('active');
-                    }
+                    if (!modeMatches(item.mode)) return;
+                    // Light up only if no more specific sibling also currently
+                    // matches — that sibling is the one that should win instead.
+                    const outrankedBy = allSlots.some(el => {
+                        const eid = el.dataset.toolId;
+                        if (!eid || eid === id) return false;
+                        const ei = this.getToolManifestItem(eid);
+                        return ei && ei.toolId === t && isMoreSpecific(ei.mode, item.mode) && modeMatches(ei.mode);
+                    });
+                    if (!outrankedBy) b.classList.add('active');
                 }
             });
         }
         _activateToolFromGrid(item) {
             if (item.mode) {
                 if (item.mode.pencilMode) this.setPencilMode(item.mode.pencilMode);
-                if (item.mode.wandMode) this.setWandMode(item.mode.wandMode);
+            }
+            if (item.toolId === 'wand') {
+                // Each flavor (normal / palette) remembers its own mode
+                // independently. A slot that forces a specific mode (e.g.
+                // wand-global, wand-palette-global) uses that; a plain
+                // left-click slot (wand, wand-palette) restores whatever
+                // that flavor's own mode was last left at.
+                const flavor = (item.mode && item.mode.wandFlavor === 'palette') ? 'palette' : 'normal';
+                const mode = (item.mode && item.mode.wandMode)
+                    || (flavor === 'palette' ? this.config.wandModePalette : this.config.wandModeNormal);
+                this.setWandMode(mode, flavor);
             }
             if (item.toolId) {
                 const _togg = item.toolId === 'freehand' || item.toolId === 'paintbrush' || item.toolId === 'gradient';
+                const toolOpts = item.toolId === 'wand' ? { wandFlavor: item.mode && item.mode.wandFlavor } : {};
                 if (_togg && this.config.tool === item.toolId) this.setTool('pencil');
-                else this.setTool(item.toolId);
+                else this.setTool(item.toolId, toolOpts);
             }
         }
         initToolGrid() {
@@ -5089,6 +5159,7 @@
                             } else if (item.iconSrc) {
                                 const img = document.createElement('img');
                                 img.className = 'toolbar-icon pixel-perfect';
+                                if (item.iconClass) img.classList.add(item.iconClass);
                                 img.src = item.iconSrc;
                                 img.alt = '';
                                 slot.appendChild(img);
@@ -5131,6 +5202,7 @@
                 } else if (item.iconSrc) {
                     const img = document.createElement('img');
                     img.className = 'toolbar-icon pixel-perfect';
+                    if (item.iconClass) img.classList.add(item.iconClass);
                     img.src = item.iconSrc;
                     img.alt = '';
                     el.appendChild(img);
@@ -5711,6 +5783,127 @@
             });
         }
 
+        updateBrushCursorRing(e) {
+            if (this.config.tool !== 'paintbrush') {
+                this.ui.stage.classList.remove('paintbrush-active');
+                this.ui.brushCursorRing.style.display = 'none';
+                return;
+            }
+            if (!e.target.closest('#canvas-stage')) {
+                this.ui.stage.classList.remove('paintbrush-active');
+                this.ui.brushCursorRing.style.display = 'none';
+                return;
+            }
+            const rect = this.bounds;
+            if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+                this.ui.stage.classList.remove('paintbrush-active');
+                this.ui.brushCursorRing.style.display = 'none';
+                return;
+            }
+
+            const p = this.getMousePrecise(e);
+            const last = this.state._cursorRingLast;
+            this.state._cursorRingLast = p;
+
+            /* Same EMA the real stroke-segment loop uses (krita-brush-engine.js)
+             * runs during hover too now, not just mid-drag -- a static
+             * dead zone (segLen > 0.001) already keeps near-zero jitter from
+             * ever computing a raw angle at all, and the EMA itself damps
+             * what's left, so letting hover feed it doesn't reintroduce the
+             * old axis-snap. The one place hover and drawing still differ is
+             * a brand new stroke: a real first dab with no antecedent motion
+             * paints at the tip's plain base angle (_dynAngle only takes the
+             * direction branch once strokeAngle is non-null), so the smooth
+             * angle is seeded fresh -- not reset to null -- right as a click
+             * begins, letting any direction already dialled in from hovering
+             * carry over exactly like a real drag's second dab would.
+             */
+            if (last) {
+                const ddx = p.x - last.x, ddy = p.y - last.y;
+                const segLen = Math.hypot(ddx, ddy);
+                if (segLen > 0.001) {
+                    const rawAngle = Math.atan2(ddy, ddx) * 180 / Math.PI;
+                    const sz = this.getToolWidth('paintbrush') || 1;
+                    const normLen = Math.min(2, segLen / Math.max(1, sz));
+                    const blend = Math.min(0.8, Math.max(0.2, 0.2 + normLen * 0.3));
+                    let smooth = this.state._cursorRingSmoothAngle;
+                    if (smooth == null) {
+                        smooth = rawAngle;
+                    } else {
+                        let diff = rawAngle - smooth;
+                        if (diff > 180) diff -= 360;
+                        if (diff < -180) diff += 360;
+                        smooth += diff * blend;
+                    }
+                    this.state._cursorRingSmoothAngle = smooth;
+                }
+            }
+            const strokeAngle = this.state._cursorRingSmoothAngle;
+            // Same fallback beginStroke/moveStroke use for a device that
+            // reports no pressure -- 0 is "no sensor", not "no force".
+            const pressure = e.pressure || 0.5;
+
+            const outline = this.brush && this.brush.getCursorOutline
+                ? this.brush.getCursorOutline(this.config.zoom, p.x, p.y, strokeAngle, pressure) : null;
+            const ring = this.ui.brushCursorRing;
+            if (!outline) {
+                this.ui.stage.classList.remove('paintbrush-active');
+                ring.style.display = 'none';
+                return;
+            }
+
+            this.ui.stage.classList.add('paintbrush-active');
+            ring.style.display = 'block';
+
+            if (ring.dataset.outlineKey !== outline.key) {
+                ring.dataset.outlineKey = outline.key;
+                ring.width = outline.w;
+                ring.height = outline.h;
+                ring.style.width = outline.w + 'px';
+                ring.style.height = outline.h + 'px';
+                ring.getContext('2d').drawImage(outline.canvas, 0, 0);
+            }
+            // Rounded, not centred with a CSS transform: a fractional
+            // left/top would blur the outline's 1px rim across two screen
+            // pixels instead of one. offX/offY carry however far
+            // offset/scatter placed the dab away from the raw cursor.
+            ring.style.left = Math.round(e.clientX + outline.offX - outline.w / 2) + 'px';
+            ring.style.top = Math.round(e.clientY + outline.offY - outline.h / 2) + 'px';
+            // Rotation is applied here, not baked into the raster: the mask
+            // is always built at angle 0 (see _buildCursorOutline) so a
+            // direction-driven brush spinning every frame just turns this
+            // free GPU transform instead of re-running the erosion pass.
+            ring.style.transform = 'rotate(' + (outline.angleDeg || 0) + 'deg)';
+        }
+        // Pointermove can fire far faster than the screen redraws (a high
+        // polling-rate mouse/tablet, or several getCoalescedEvents samples
+        // per call) -- coalescing to one update per animation frame is what
+        // "chattier than GIMP" was actually reporting, since every extra
+        // call in between repaints was wasted work the eye never got to see
+        // separately anyway. A plain object, not the event itself: some
+        // coalesced-event objects are only valid for the duration of the
+        // dispatch that produced them.
+        _scheduleBrushCursorRingUpdate(e) {
+            this._pendingCursorRingEvent = {
+                clientX: e.clientX, clientY: e.clientY,
+                pressure: e.pressure, target: e.target
+            };
+            if (this._cursorRingRaf) return;
+            this._cursorRingRaf = requestAnimationFrame(() => {
+                this._cursorRingRaf = null;
+                if (this._pendingCursorRingEvent) this.updateBrushCursorRing(this._pendingCursorRingEvent);
+            });
+        }
+        refreshBrushCursorRing() {
+            if (this.config.tool !== 'paintbrush') return;
+            if (!this.state.lastMouse) return;
+            this.updateBrushCursorRing({
+                clientX: this.state.lastMouse.clientX,
+                clientY: this.state.lastMouse.clientY,
+                target: this.ui.stage
+            });
+        }
+
         renderRecent() {
             this.ui.palRec.innerHTML = '';
             this.recentColors.forEach(c => this.addSwatch(this.ui.palRec, c));
@@ -6281,6 +6474,18 @@
             return null;
         }
 
+        startMiddlePan(e) {
+            if (this.config.anchorCanvas) {
+                this.updateBounds();
+                this.state.isPanning = true;
+                this.state.panStart = { x: e.clientX, y: e.clientY };
+                this.state.scrollStart = { x: this.ui.viewport.scrollLeft, y: this.ui.viewport.scrollTop };
+            } else {
+                this.state.isCanvasDragging = true;
+                this.state.canvasDragStart = { x: e.clientX, y: e.clientY };
+                this.state.canvasOffsetStart = { x: this.state.canvasOffset.x, y: this.state.canvasOffset.y };
+            }
+        }
         onMouseDown(e) {
             this._lastPointerActivityAt = performance.now();
             this._lastDrawMoveAt = this._lastPointerActivityAt;
@@ -6303,6 +6508,23 @@
             }
             const p = this.getMouse(e);
             const pp = this.getMousePrecise(e);
+            if (this.config.tool === 'smart-brush') {
+                const freshObject = this.getSelectionOp(e) === 'replace';
+                if (freshObject) {
+                    if (this.state.selection) this.commitSelection();
+                    this._smartBrushResetSession();
+                }
+                this.state.smartBrushActive = true;
+                this.state.smartBrushOp = this.getSelectionOp(e);
+                this.state.smartBrushBase = this.getSampleImageData();
+                if (!this.state.smartBrushEdgeMap) {
+                    this.state.smartBrushEdgeMap = buildEdgeMagnitude(this.state.smartBrushBase.data, this.config.width, this.config.height);
+                }
+                this.state.smartBrushLastPoint = null;
+                this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+                this._paintSmartBrushSeeds(p.x, p.y);
+                return;
+            }
             if (this.config.tool === 'wand') {
                 if (this.state.selection && this.getSelectionOp(e) === 'replace') {
                     this.commitSelection();
@@ -6343,6 +6565,18 @@
                 // through as a C2-coloured blob until pointer-up rebuilds
                 // everything from wandBase. The commit happens in onMouseUp.
                 this.state.wandOp = this.getSelectionOp(e);
+                // Freeze the pre-drag selection as the union anchor for this whole
+                // add/subtract/intersect gesture (see applyMaskSelection's
+                // baseSelection comment) — otherwise dragging back toward a lower
+                // threshold can't shrink the added region, since each preview
+                // frame's grown result would become the next frame's baseline.
+                this.state.wandOpBaseSelection = this.state.wandOp !== 'replace' ? this.state.selection : null;
+                // Same idea, for pixel content rather than the selection mask:
+                // a snapshot of this layer's own canvas taken once, before this
+                // gesture's preview frames start mutating it (see
+                // applyMaskSelection's baseLayerSnapshot comment).
+                this.state.wandOpBaseLayerSnapshot = this.state.wandOp !== 'replace'
+                    ? this.ctx.getImageData(0, 0, this.config.width, this.config.height) : null;
                 this._scheduleWandFrame();
                 return;
             }
@@ -6712,12 +6946,40 @@
             }
         }
 
+        // Recomputes the in-progress rectangle-select marquee from the current mouse
+        // position, same formula as the plain-drag path — used while panning so the
+        // marquee keeps tracking the cursor instead of staying frozen at its pre-pan size.
+        refreshCreatingSelectionOverlay(e) {
+            if (this.config.tool === 'select' && this.state.isDrawing && !this.state.selection) {
+                const p = this.getMouse(e);
+                const sp = this.clampPointToCanvasPixel(this.state.startPos);
+                const cp = this.clampPointToCanvasPixel(p);
+                const rect = this.getInclusiveRectFromPoints(sp, cp);
+                this.updateSelectionUI(rect.x, rect.y, rect.w, rect.h);
+            } else {
+                this.requestGlobalOverlayUpdate();
+            }
+        }
+
         onMouseMove(e) {
             this._lastMouseMoveAt = performance.now();
             this._lastPointerActivityAt = this._lastMouseMoveAt;
             const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
             const lastEvent = (coalesced && coalesced.length) ? coalesced[coalesced.length - 1] : e;
             this.state.lastMouse = { clientX: lastEvent.clientX, clientY: lastEvent.clientY };
+            // A mouse pressing an additional button while one is already held down
+            // (e.g. middle-click to pan mid-drag while creating a selection) fires
+            // pointermove, not pointerdown/pointerup — the pointer itself never went
+            // from up to down or vice versa, only its `buttons` bitmask changed. So
+            // panning has to be started/stopped from that bitmask here too, not just
+            // from the pointerdown/up handlers, which only see the single-button case.
+            const midHeld = !!(lastEvent.buttons & 4);
+            if (midHeld && !this.state.isPanning && !this.state.isCanvasDragging) {
+                this.startMiddlePan(lastEvent);
+            } else if (!midHeld) {
+                if (this.state.isPanning) this.state.isPanning = false;
+                if (this.state.isCanvasDragging) this.state.isCanvasDragging = false;
+            }
             if (this.config.tool === 'picker' && this.state.pickerArmed) {
                 const p = this.getMouse(lastEvent);
                 this.setCoordsStatus(p.x, p.y);
@@ -6735,6 +6997,7 @@
                 return;
             }
             this.updateEraserGhost(e);
+            this._scheduleBrushCursorRingUpdate(e);
             this._lastPointerEvent = lastEvent;
             if (this.ui.pickerDot) {
                 if (this.config.tool === 'picker') {
@@ -6752,7 +7015,19 @@
                 const dy = e.clientY - this.state.panStart.y;
                 this.ui.viewport.scrollLeft = this.state.scrollStart.x - dx;
                 this.ui.viewport.scrollTop = this.state.scrollStart.y - dy;
-                this.requestGlobalOverlayUpdate();
+                // Panning moves the stage on screen without moving the mouse, so the
+                // marquee's screen position (baked into selControls.style.left/top and
+                // the SVG rect by updateSelectionUI, both against a cached this.bounds)
+                // goes stale unless bounds is refreshed here. Pan can run mid-drag while
+                // a selection is being created (see startMiddlePan / the onMouseMove
+                // chorded-button check above), so this is the case that must not be
+                // skipped. The rect itself is recomputed live from the current mouse
+                // position (not frozen) so it keeps tracking the cursor exactly like a
+                // plain drag would — freezing it here caused a visible snap/collapse the
+                // instant panning ended, since a stationary cursor ends up over a very
+                // different canvas point once the view has scrolled underneath it.
+                this.updateBounds();
+                this.refreshCreatingSelectionOverlay(e);
                 return;
             }
             if (this.state.isCanvasDragging) {
@@ -6765,8 +7040,9 @@
                 });
                 this.applyStageTransform();
                 this.updateBounds();
-                this.requestGlobalOverlayUpdate();
+                this.refreshCreatingSelectionOverlay(e);
                 this.requestGridOverlayUpdate();
+                this.updateCanvasVisibilityButton();
                 return;
             }
 
@@ -6788,6 +7064,11 @@
                     }
                 }
                 this.renderLassoPreview(p);
+                this.updateHoverPreview(p.x, p.y);
+                return;
+            }
+            if (this.state.smartBrushActive) {
+                this._paintSmartBrushSeeds(p.x, p.y);
                 this.updateHoverPreview(p.x, p.y);
                 return;
             }
@@ -7383,6 +7664,18 @@
                 this.state.shapeDragBase = null;
                 return;
             }
+            if (this.state.smartBrushActive) {
+                this.state.smartBrushActive = false;
+                this.state.smartBrushLastPoint = null;
+                this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
+                // The session (accumulated points, cached embedding, edge map)
+                // deliberately survives past this stroke — Add/Subtract/Refine
+                // strokes reuse it. It's only reset on a fresh-object stroke
+                // (onMouseDown) or when the tool is switched away (setTool).
+                const jobId = ++this.state.smartBrushJobId;
+                this._finalizeSmartBrush(jobId);
+                return;
+            }
             if (this.state.wandActive) {
                 const wandBase   = this.state.wandBase;
                 const wandStart  = this.state.wandStart;
@@ -7403,6 +7696,8 @@
                     this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
                     this.magicWandSelect(wandStart.x, wandStart.y, wandTol, selOp, wandBase, true);
                 }
+                this.state.wandOpBaseSelection = null;
+                this.state.wandOpBaseLayerSnapshot = null;
                 this.updateWandThreshold(this.config.wandTolerance, { applySelection: false, setConfig: false });
                 return;
             }
@@ -9590,23 +9885,65 @@ void main() {
         rectsIntersect(a, b) {
             return a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
         }
-        ensureCanvasVisible(vpRect) {
-            if (!this.ui.stage || this.config.anchorCanvas) return;
-            const rect = this.ui.stage.getBoundingClientRect();
-            const pad = 20;
-            let dx = 0;
-            let dy = 0;
-            if (rect.right < vpRect.left + pad) dx = (vpRect.left + pad) - rect.right;
-            else if (rect.left > vpRect.right - pad) dx = (vpRect.right - pad) - rect.left;
-            if (rect.bottom < vpRect.top + pad) dy = (vpRect.top + pad) - rect.bottom;
-            else if (rect.top > vpRect.bottom - pad) dy = (vpRect.bottom - pad) - rect.top;
-            if (dx || dy) {
-                this.state.canvasOffset = {
-                    x: (this.state.canvasOffset?.x || 0) + dx,
-                    y: (this.state.canvasOffset?.y || 0) + dy
-                };
-                this.applyStageTransform();
+        // Free mode has no bound on how far the canvas can be panned/zoomed
+        // away from — instead of auto-snapping it back on screen (which is
+        // exactly the "tugged to the edge" behavior this replaced), a
+        // "Return to Canvas" button appears once neither the canvas nor (if
+        // the Palette Wand is active) its swatch canvas is on screen anymore.
+        updateCanvasVisibilityButton() {
+            const btn = document.getElementById('recenter-canvas-btn');
+            if (!btn) return;
+            if (this.config.anchorCanvas || !this.ui.stage || !this.ui.viewport) {
+                btn.style.display = 'none';
+                return;
             }
+            const vpRect = this.ui.viewport.getBoundingClientRect();
+            const stageRect = this.ui.stage.getBoundingClientRect();
+            let visible = this.rectsIntersect(stageRect, vpRect);
+            const candidates = [stageRect];
+            if (this.config.tool === 'wand' && this.config.wandFlavor === 'palette') {
+                const swatch = document.getElementById('swatch-canvas');
+                if (swatch && swatch.classList.contains('show')) {
+                    const swatchRect = swatch.getBoundingClientRect();
+                    if (!visible) visible = this.rectsIntersect(swatchRect, vpRect);
+                    candidates.push(swatchRect);
+                }
+            }
+            btn.style.display = visible ? 'none' : 'block';
+            if (!visible) {
+                const vpCx = vpRect.left + vpRect.width / 2;
+                const vpCy = vpRect.top + vpRect.height / 2;
+                // Point the arrow at whichever candidate (canvas or, if
+                // relevant, the swatch canvas) is closer to the viewport
+                // center — that's the one worth returning to first.
+                let best = null, bestDist = Infinity;
+                for (const r of candidates) {
+                    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+                    const dist = Math.hypot(cx - vpCx, cy - vpCy);
+                    if (dist < bestDist) { bestDist = dist; best = { cx, cy }; }
+                }
+                const arrow = document.getElementById('recenter-canvas-arrow');
+                if (arrow && best) {
+                    const rawAngle = Math.atan2(best.cx - vpCx, -(best.cy - vpCy)) * 180 / Math.PI;
+                    // atan2 wraps to (-180, 180], so a target crossing that
+                    // seam (e.g. -170deg -> 170deg) is only a 20deg turn but
+                    // gets read as a 340deg jump — the CSS transition then
+                    // spins the long way around. Unwrap against the last
+                    // angle actually applied so it always takes the short path.
+                    const prevAngle = this._recenterArrowAngle || 0;
+                    let delta = rawAngle - (prevAngle % 360);
+                    delta -= Math.round(delta / 360) * 360;
+                    const angle = prevAngle + delta;
+                    this._recenterArrowAngle = angle;
+                    // translateY(-26px) after the rotate pushes the arrow out
+                    // along the rotated direction, landing it just past the
+                    // icon's edge on whichever side is nearest the canvas.
+                    arrow.style.transform = `translate(-50%, -50%) rotate(${angle}deg) translateY(-26px)`;
+                }
+            }
+        }
+        toggleCrispIcons(on) {
+            document.body.classList.toggle('debug-crisp-icons', !!on);
         }
         toggleAnchorCanvas(isAnchored) {
             const next = isAnchored === undefined ? !this.config.anchorCanvas : !!isAnchored;
@@ -9637,6 +9974,7 @@ void main() {
             if (!this.config.anchorCanvas) {
                 requestAnimationFrame(() => this.centerCanvas());
             }
+            this.updateCanvasVisibilityButton();
         }
         updateAnchorStatus() {
             const btn = document.getElementById('anchor-toggle-btn');
@@ -9671,8 +10009,14 @@ void main() {
                 this.updateBounds();
             }
             this.requestGlobalOverlayUpdate();
+            this.updateCanvasVisibilityButton();
         }
-        setTool(t) {
+        setTool(t, opts = {}) {
+            // Any route into the wand tool other than the Palette Wand button
+            // resets it back to a normal wand — the flavor is a per-activation
+            // choice, not a sticky mode (keyboard shortcut 'W', right-click
+            // mode-switch, etc. all go through here).
+            if (t === 'wand') this.config.wandFlavor = (opts.wandFlavor === 'palette') ? 'palette' : 'normal';
             // A curve gesture that stopped after just the straight line (phase 1)
             // or after only one bezier control point (phase 2) never reaches the
             // point where the phase-2 mouseup below turns it into an activeShape,
@@ -9728,6 +10072,14 @@ void main() {
                 this._wandPreviewBuffer = null;
                 this._wandStack = null;
                 this._clearWandSvgPreview();
+            }
+            if (t !== 'smart-brush' && (this.state.smartBrushActive || this.state.smartBrushPosSeeds)) {
+                this.state.smartBrushActive = false;
+                this.state.smartBrushJobId++;
+                this.state.smartBrushBase = null;
+                this.state.smartBrushLastPoint = null;
+                this._smartBrushResetSession();
+                this.ctxTemp.clearRect(0, 0, this.config.width, this.config.height);
             }
             if (this.state.smartPencilActive && t !== 'pencil') {
                 this.finishSmartPencilStroke();
@@ -9789,6 +10141,16 @@ void main() {
             if (_gradPanel) _gradPanel.classList.toggle('section-hidden', t !== 'gradient');
             const _wandSection = document.getElementById('wand-threshold-section');
             if (_wandSection) _wandSection.classList.toggle('section-hidden', t !== 'wand');
+            if (t === 'wand') this.updateWandThreshold(this.config.wandTolerance || 0, { applySelection: false });
+            // The swatch canvas is only relevant while the Palette Wand itself is
+            // the active tool — hidden the rest of the time so it doesn't sit
+            // there as visual clutter for a tool that isn't in use.
+            const _showSwatch = t === 'wand' && this.config.wandFlavor === 'palette';
+            if (this.ui.swatchCanvas) this.ui.swatchCanvas.classList.toggle('show', _showSwatch);
+            const _swatchPanel = document.getElementById('swatch-panel');
+            if (_swatchPanel) _swatchPanel.classList.toggle('show', _showSwatch);
+            this.syncWandMenu();
+            this.updateCanvasVisibilityButton();
             const _freehandSidebar = document.getElementById('freehand-sidebar');
             if (_freehandSidebar) {
                 _freehandSidebar.classList.toggle('open', t === 'freehand');
@@ -9810,6 +10172,15 @@ void main() {
             if (_gradSidebar && t === 'gradient' && this._renderGradBar) {
                 this._renderGradBar();
             }
+            const _sbSidebar = document.getElementById('smart-brush-sidebar');
+            if (_sbSidebar) {
+                _sbSidebar.classList.toggle('open', t === 'smart-brush');
+            }
+            const _sbReopen = document.getElementById('smart-brush-reopen-btn');
+            if (_sbReopen) _sbReopen.classList.remove('show');
+            if (_sbSidebar && t === 'smart-brush' && this.updateSmartBrushPanel) {
+                this.updateSmartBrushPanel();
+            }
             this._updateSidebarViewportShift(true);
             document.querySelectorAll('.btn, .btn-icon, .split-btn-container').forEach(b=>b.classList.remove('active'));
             const b = document.querySelector(`[data-tool="${t}"]`);
@@ -9828,6 +10199,12 @@ void main() {
             } else {
                 this.ui.stage.classList.remove('eraser-active');
                 this.ui.eraserGhost.style.display = 'none';
+            }
+            if (t === 'paintbrush') {
+                this.refreshBrushCursorRing();
+            } else {
+                this.ui.stage.classList.remove('paintbrush-active');
+                this.ui.brushCursorRing.style.display = 'none';
             }
             const rectIcon = document.getElementById('select-icon-rect');
             const freeIcon = document.getElementById('select-icon-free');
@@ -9978,7 +10355,8 @@ void main() {
                 'modal-confirm-reset',
                 'modal-toolbar',
                 'modal-wincolor',
-                'modal-brush-pack'
+                'modal-brush-pack',
+                'modal-new'
             ];
             ids.forEach((id) => {
                 const modal = document.getElementById(id);
@@ -10635,7 +11013,7 @@ void main() {
                 this.ui.stage.style.cursor = `url("${selCursor}") 10 10, crosshair`;
                 return;
             }
-            if (['rect','ellipse','tri','line','curve','poly','roundrect','select','lasso','wand'].includes(t)) {
+            if (['rect','ellipse','tri','line','curve','poly','roundrect','select','lasso','wand','smart-brush'].includes(t)) {
                 const selCursor = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABUAAAAVCAYAAACpF6WWAAABhGlDQ1BJQ0MgcHJvZmlsZQAAKJF9kb1Lw1AUxU/TlopUHOwg4pChOtlFRRxLLRbBQmkrtOpg8tIvaNKQpLg4Cq4FBz8Wqw4uzro6uAqC4AeIf4A4KbpIifclhRYxPri8H+e9c7jvPkBo15lqBuKAqllGNpUQC8VVMfQKAUGEqAISM/V0bjEPz/V1Dx/f72I8y/ven2tIKZkM8InEcaYbFvEG8dympXPeJ46wqqQQnxNPGdQg8SPXZZffOFccFnhmxMhnF4gjxGKlj+U+ZlVDJZ4ljiqqRvlCwWWF8xZntd5k3T75C8MlbSXHdapxpLCENDIQIaOJGuqwEKNdI8VEls4THv4xx58hl0yuGhg5kmhAheT4wf/g92zN8sy0mxROAMEX2/6YAEK7QKdl29/Htt05AfzPwJXW8zfawPwn6a2eFj0ChreBi+ueJu8BlzvA6JMuGZIj+amEchl4P6NvKgIjt8Dgmju37jlOH4A8zWr5Bjg4BCYrlL3u8e6B/rn9e6c7vx/8SnJ3TRqVAAAAAAZiS0dEAAAAAAAA+UO7fwAAAAlwSFlzAAAuIwAALiMBeKU/dgAAAAd0SU1FB+oCBQcGMEPZsLkAAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAAAeklEQVQ4y+2UQQ6AIAwE2+pT4KT/f4kn3gKsB6JBE7QxqSaGvUHKhG03JVIIAJybAACaeiEDdejH0Jx0dayJk/fzfg5hIRHmxzZyLvms71R5RUMpHoE1aAO3NNbW7loAAMzF+uU7i5+a9PT96Z+3VIoGW0qGvlB+BV0Bely/RqNtJIAAAAAASUVORK5CYII=';
                 this.ui.stage.style.cursor = `url("${selCursor}") 10 10, crosshair`;
                 return;
@@ -10649,11 +11027,10 @@ void main() {
                 return;
             }
             if (t === 'paintbrush') {
-                if (this.brush && this.brush.updateCursor) {
-                    this.brush.updateCursor();
-                } else {
-                    this.ui.stage.style.cursor = 'crosshair';
-                }
+                // Ring overlay (#brush-cursor-ring) is the visible cursor now;
+                // .paintbrush-active forces cursor:none so this is just the fallback
+                // for before the ring shows (e.g. mouse outside the canvas).
+                this.ui.stage.style.cursor = 'crosshair';
                 return;
             }
             this.ui.stage.style.cursor = 'crosshair';
@@ -10949,6 +11326,7 @@ void main() {
             this.ui.sizeInput.value = this.getToolWidth(this.config.tool);
             this.brushCache = null; this._brushLRU = [];
             this.refreshEraserGhost();
+            this.refreshBrushCursorRing();
         }
         changeSize(d) {
             let current = this.getToolWidth(this.config.tool);
@@ -10961,6 +11339,7 @@ void main() {
             this.ui.sizeInput.value = n;
             this.brushCache = null; this._brushLRU = [];
             this.refreshEraserGhost();
+            this.refreshBrushCursorRing();
         }
         setSize(w,h) {
             // Resizing clears the canvas; no prior knowledge survives it.
@@ -10992,6 +11371,7 @@ void main() {
             this.disableSmoothing(this.ctxTemp);
             this.ui.stage.style.width=w+'px';
             this.ui.stage.style.height=h+'px';
+            this._syncSwatchCanvasSize();
             this.updateBounds();
             this.ui.statusDims.textContent = `${Math.floor(w)} x ${Math.floor(h)}px`;
             this.deferColorCounts();
@@ -11424,7 +11804,7 @@ void main() {
             // step-by-step undo/redo can restore the exact selection state after each
             // individual Magic Wand click rather than clearing the whole selection at once.
             const _wandEntry = this.state.history[this.state.step];
-            if (_wandEntry && this.state.selection && this.state.selection.source === 'wand') {
+            if (_wandEntry && this.state.selection && (this.state.selection.source === 'wand' || this.state.selection.source === 'wand-palette' || this.state.selection.source === 'smart-brush')) {
                 const _ws = this.state.selection;
                 const _wsc = document.createElement('canvas');
                 _wsc.width = _ws.canvas.width; _wsc.height = _ws.canvas.height;
@@ -11432,7 +11812,7 @@ void main() {
                 const _wsm = document.createElement('canvas');
                 _wsm.width = _ws.mask.width; _wsm.height = _ws.mask.height;
                 _wsm.getContext('2d').drawImage(_ws.mask, 0, 0);
-                _wandEntry.wandSelSnap = { x: _ws.x, y: _ws.y, w: _ws.w, h: _ws.h, canvas: _wsc, mask: _wsm };
+                _wandEntry.wandSelSnap = { x: _ws.x, y: _ws.y, w: _ws.w, h: _ws.h, canvas: _wsc, mask: _wsm, source: _ws.source };
             }
             // Free the brush engine's full-canvas offscreen buffers (flow/scratch/bg) once a
             // committed state no longer needs them. They are recreated lazily on the next
@@ -12325,7 +12705,10 @@ self.onmessage = function(e) {
                 if (bg === 'transparent') {
                     showToast('Transparent background is only available at 24bpp; using white.', 'info');
                 }
-                this.ctx.fillStyle = (bg === 'custom') ? document.getElementById('new-bg-color').value : '#ffffff';
+                this.ctx.fillStyle = (bg === 'custom') ? document.getElementById('new-bg-color').value
+                    : (bg === 'fg') ? this.config.c1
+                    : (bg === 'bg2') ? this.config.c2
+                    : '#ffffff';
                 this.ctx.fillRect(0, 0, w, h);
             }
             this.palette = [];
@@ -12367,6 +12750,30 @@ self.onmessage = function(e) {
         onNewBgChange() {
             const bg = document.getElementById('new-bg').value;
             document.getElementById('new-bg-custom-group').style.display = (bg === 'custom') ? '' : 'none';
+        }
+
+        async pasteNewFromClipboard() {
+            if (!navigator.clipboard || !navigator.clipboard.read) {
+                showToast('Clipboard access is not available in this browser.', 'warning');
+                return;
+            }
+            try {
+                const items = await navigator.clipboard.read();
+                for (const item of items) {
+                    const type = item.types.find(t => t.startsWith('image/'));
+                    if (!type) continue;
+                    const blob = await item.getType(type);
+                    const bitmap = await createImageBitmap(blob);
+                    document.getElementById('new-w').value = bitmap.width;
+                    document.getElementById('new-h').value = bitmap.height;
+                    document.getElementById('new-preset').value = 'custom';
+                    bitmap.close();
+                    return;
+                }
+                showToast('No image on clipboard', 'warning');
+            } catch (e) {
+                showToast('Clipboard read failed or denied: ' + e, 'error');
+            }
         }
 
         async readPalNodeText(node) {

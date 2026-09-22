@@ -352,8 +352,8 @@
                 this.renderSelection();
             },
 
-            getRenderedSelectionCanvas() {
-                const s = this.state.selection;
+            getRenderedSelectionCanvas(sel) {
+                const s = sel || this.state.selection;
                 if (!s) return null;
                 let dw = Math.floor(s.w);
                 let dh = Math.floor(s.h);
@@ -1244,8 +1244,10 @@
                 }
 
                 if (isCreating) {
-                    this.requestGlobalOverlayUpdate({x:lx, y:ly, w:lw, h:lh});
+                    this._lastCreatingOverlayRect = {x:lx, y:ly, w:lw, h:lh};
+                    this.requestGlobalOverlayUpdate(this._lastCreatingOverlayRect);
                 } else {
+                    this._lastCreatingOverlayRect = null;
                     this.requestGlobalOverlayUpdate();
                 }
                 this.requestPathHandlesUpdate();
@@ -1260,7 +1262,7 @@
                 s._forceOpaque = false;
                 const isDeferred = !!(s._deferredCut && s._cutRect);
                 const changed = this.selectionChangedFromBase(s);
-                const isUnmovedMaskSel = (s.source === 'wand' || s.source === 'lasso') && !changed && !isDeferred;
+                const isUnmovedMaskSel = (s.source === 'wand' || s.source === 'wand-palette' || s.source === 'lasso' || s.source === 'smart-brush') && !changed && !isDeferred;
                 if (isUnmovedMaskSel) {
                     this._freeSelectionGlTex(this.state.selection); this.state.selection = null;
                     this.state.selectionOriginalPos = null;
@@ -1506,10 +1508,66 @@
                 }
             },
 
+            // Keeps the swatch canvas's backing size identical to the main
+            // canvas's at all times (not just when a cut happens to land on it),
+            // since it's meant to look exactly like the real canvas, 1:1. Called
+            // from setSize() as well as from the paste path itself.
+            _syncSwatchCanvasSize() {
+                const sw = this.ui.swatchCanvas;
+                if (!sw || (sw.width === this.config.width && sw.height === this.config.height)) return;
+                const prev = document.createElement('canvas');
+                prev.width = sw.width; prev.height = sw.height;
+                prev.getContext('2d').drawImage(sw, 0, 0);
+                sw.width = this.config.width; sw.height = this.config.height;
+                sw.getContext('2d').drawImage(prev, 0, 0);
+            },
+
+            // Palette Wand support: flatten a cut selection to its average colour
+            // (keeping the selection's own shape, via its mask) and stamp it onto
+            // the swatch canvas at the same x/y it occupied on the main canvas.
+            _pasteToSwatchCanvas(s) {
+                const sw = this.ui.swatchCanvas;
+                if (!sw) return;
+                this._syncSwatchCanvasSize();
+                const w = s.canvas.width, h = s.canvas.height;
+                const srcData = s.canvas.getContext('2d').getImageData(0, 0, w, h).data;
+                const maskData = s.mask.getContext('2d').getImageData(0, 0, w, h).data;
+                let rSum = 0, gSum = 0, bSum = 0, count = 0;
+                for (let i = 0; i < maskData.length; i += 4) {
+                    if (maskData[i + 3] === 0) continue;
+                    rSum += srcData[i]; gSum += srcData[i + 1]; bSum += srcData[i + 2];
+                    count++;
+                }
+                if (!count) return;
+                const r = Math.round(rSum / count), g = Math.round(gSum / count), b = Math.round(bSum / count);
+                const flat = document.createElement('canvas');
+                flat.width = w; flat.height = h;
+                const flatImg = flat.getContext('2d').createImageData(w, h);
+                const fd = flatImg.data;
+                for (let i = 0; i < maskData.length; i += 4) {
+                    if (maskData[i + 3] === 0) continue;
+                    fd[i] = r; fd[i + 1] = g; fd[i + 2] = b; fd[i + 3] = maskData[i + 3];
+                }
+                flat.getContext('2d').putImageData(flatImg, 0, 0);
+                sw.getContext('2d').drawImage(flat, s.x, s.y);
+            },
+
+            copySwatchCanvas() {
+                const sw = this.ui.swatchCanvas;
+                if (!sw) return;
+                sw.toBlob(blob => {
+                    if (!blob) return;
+                    navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+                        .then(() => showToast('Swatch canvas copied', 'success'))
+                        .catch(e => showToast('Copy failed: ' + e, 'error'));
+                });
+            },
+
             deleteSelection() {
                 if(this.state.selection) {
                     this._clearSelAnchorMode();
                     const s = this.state.selection;
+                    if (s.source === 'wand-palette') this._pasteToSwatchCanvas(s);
                     const isDeferred = !!(s._deferredCut && s._cutRect);
                     if (isDeferred) {
                         const cut = s._cutRect;
@@ -1533,7 +1591,12 @@
                     this.stopOutlineAnimation();
                     this.requestGlobalOverlayUpdate();
                     this.saveState();
-                    this.collapseSelectionCutStep();
+                    // Deliberately NOT calling collapseSelectionCutStep() here: for a
+                    // wand/lasso/smart-brush selection, that earlier entry is the one
+                    // carrying the wandSelSnap that lets undo bring the selection back
+                    // (not just the pixels) after a Cut/Delete. Collapsing it would
+                    // erase that and make undo skip straight past "selection active"
+                    // to the state from before the selection even existed.
                 }
             },
 
@@ -1614,10 +1677,11 @@
                 ctx.fill();
                 return c;
             },
-            buildMaskFromSelection() {
-                if (!this.state.selection) return null;
-                const nr = this.getNormalizedRect(this.state.selection);
-                const rc = this.getRenderedSelectionCanvas();
+            buildMaskFromSelection(sel) {
+                sel = sel || this.state.selection;
+                if (!sel) return null;
+                const nr = this.getNormalizedRect(sel);
+                const rc = this.getRenderedSelectionCanvas(sel);
                 const mw = this.config.width, mh = this.config.height;
                 const mask = document.createElement('canvas');
                 mask.width = mw; mask.height = mh;
@@ -1644,10 +1708,28 @@
                 // caller's sample buffer. The wand may have built its mask from
                 // the composited picture ("sample all layers"), and writing
                 // that back here would stamp every upper layer into this one.
-                const base = this.ctx.getImageData(0, 0, w, h);
+                //
+                // opts.baseLayerSnapshot is the one exception, and it's still
+                // this same layer's own pixels — just captured once, before an
+                // in-progress add/subtract/intersect drag started mutating this.ctx
+                // on every preview frame. Re-reading the live (already-mutated)
+                // canvas here would mean a pixel that briefly fell inside a
+                // larger-threshold preview and then dropped back out has no
+                // record of its true original colour left anywhere — it would
+                // stay a stray hole instead of being restored.
+                const base = opts.baseLayerSnapshot || this.ctx.getImageData(0, 0, w, h);
                 const baseData = base.data; // read-only reference — never mutated, no copy needed
                 const canvasData = new Uint8ClampedArray(base.data);
-                let selMask = this.buildMaskFromSelection();
+                // For an in-progress add/subtract/intersect drag (dragging back and
+                // forth to change the threshold), the "previous selection" side of
+                // the union must stay pinned to whatever was already committed
+                // *before this drag started* — opts.baseSelection carries that
+                // frozen snapshot. Falling back to the live this.state.selection
+                // would re-read last frame's own (already-grown) output as this
+                // frame's baseline, so the combined region could only ever grow,
+                // never shrink back down as the threshold drops.
+                const baseSel = opts.baseSelection || this.state.selection;
+                let selMask = this.buildMaskFromSelection(baseSel);
                 if (!selMask && op !== 'replace') op = 'replace';
 
                 let selImg = null;
@@ -1657,9 +1739,9 @@
                     selFull.width = w; selFull.height = h;
                     const sctx = selFull.getContext('2d', { willReadFrequently: true });
                     sctx.clearRect(0,0,w,h);
-                    if (this.state.selection) {
-                        const nr = this.getNormalizedRect(this.state.selection);
-                        const rc = this.getRenderedSelectionCanvas();
+                    if (baseSel) {
+                        const nr = this.getNormalizedRect(baseSel);
+                        const rc = this.getRenderedSelectionCanvas(baseSel);
                         sctx.drawImage(rc, nr.x, nr.y);
                     }
                     selImg = sctx.getImageData(0, 0, w, h).data;
@@ -1733,20 +1815,23 @@
                 const outImg = this.ctx.createImageData(w, h);
                 outImg.data.set(canvasData);
                 this.ctx.putImageData(outImg, 0, 0);
-                if (commit) {
-                    this.saveState();
-                    // A previous mask selection may still have its own cut step pending.
-                    // The entry we just saved already has those pixels put back (the
-                    // s && !c restore loop above), so the old "pixels lifted, hole left
-                    // behind" entry is dead scaffolding. Left in place it becomes the
-                    // state the first undo lands on, which looks like the earlier
-                    // selection vanishing. Collapse it before claiming the new one.
-                    this.collapseSelectionCutStep();
-                }
+                // Deliberately NOT calling collapseSelectionCutStep() here: the
+                // previous selection's own cut step is a real, distinct action
+                // (a wand click the user made on purpose) and must stay its own
+                // undo stop. Collapsing it here made undo jump back past every
+                // earlier selection in one step instead of one click at a time.
+                //
+                // saveState() itself is deferred to AFTER state.selection below is
+                // finalized (rather than called here) — it snapshots whatever
+                // state.selection currently holds onto the history entry it
+                // creates, so calling it before the new selection exists would tag
+                // the entry with the OLD (just-replaced) selection instead.
 
                 if (maxX < minX || maxY < minY) {
                     this._freeSelectionGlTex(this.state.selection); this.state.selection = null;
                     this.state.selectionOriginalPos = null;
+                    this.state.selectionCutStep = null;
+                    if (commit) this.saveState();
                     this.renderSelection();
                     return;
                 }
@@ -1789,14 +1874,18 @@
                 selCtx.putImageData(selImgOut, 0, 0);
                 maskCtx.putImageData(maskImg, 0, 0);
                 const source = opts && opts.source ? opts.source : null;
-                this.state.selectionCutStep = this.state.step;
-                this.state.selection = { x: minX, y: minY, w: selW, h: selH, rotation: 0, canvas: selC, originalX: minX, originalY: minY, palette: null, mask: maskSel, source: source, noHandles: source === 'wand', _maskOutline: null, _maskOutlinePath: null, _maskOutlineData: null, _maskVisiblePathCacheKey: '', _maskVisiblePathCacheValue: '', _maskAnts: null, _maskOutlineScreen: null, _maskAntsScreen: null, _glTex: null, _glTexDirty: true };
+                this.state.selection = { x: minX, y: minY, w: selW, h: selH, rotation: 0, canvas: selC, originalX: minX, originalY: minY, palette: null, mask: maskSel, source: source, noHandles: source === 'wand' || source === 'wand-palette' || source === 'smart-brush', _maskOutline: null, _maskOutlinePath: null, _maskOutlineData: null, _maskVisiblePathCacheKey: '', _maskVisiblePathCacheValue: '', _maskAnts: null, _maskOutlineScreen: null, _maskAntsScreen: null, _glTex: null, _glTexDirty: true };
                 this.state.selectionOriginalPos = { x: minX, y: minY, w: selW, h: selH, rotation: 0 };
                 // Defer palette extraction to avoid blocking the main thread on large selections.
                 this.deferSelectionPalette(selCtx, selW, selH, this.state.selection);
-                if (source === 'wand' || source === 'lasso') {
+                if (source === 'wand' || source === 'wand-palette' || source === 'lasso' || source === 'smart-brush') {
                     this.state.selectionJustCreated = true;
                 }
+                // Saved now that state.selection is this NEW selection, so the
+                // wand snapshot saveState() attaches to the history entry it
+                // creates matches what's actually on screen at this step.
+                if (commit) this.saveState();
+                this.state.selectionCutStep = this.state.step;
                 this.renderSelection();
             },
             resetLassoState() {

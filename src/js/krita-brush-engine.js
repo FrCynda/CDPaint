@@ -1323,6 +1323,192 @@
     }
 
     /* ------------------------------------------------------------------ */
+    /*  Cursor outline — CSP-style: the tip's own silhouette, eroded down   */
+    /*  to a single SCREEN pixel of rim, rather than a fixed circle         */
+    /* ------------------------------------------------------------------ */
+
+    /* _maskFor already builds exactly the alpha footprint a dab would
+     * stamp -- custom tip bitmap, aspect, angle, hardness falloff, sharpness
+     * -- centred in its own canvas at native document-pixel size. Reusing it
+     * here means the cursor can never show a shape the brush cannot actually
+     * paint, and never drifts from it when a preset changes any of those.
+     *
+     * The mask is native-resolution, so a naive 1-mask-pixel erosion would
+     * come out `zoom` screen pixels wide once scaled up for display -- wrong
+     * at anything but zoom 1. Scaling to actual screen size FIRST and then
+     * eroding by one pixel of that scaled raster is what keeps the rim a
+     * true single screen pixel at any zoom level.
+     *
+     * ponytail: a bristle fan's real hairs are still not previewed -- the
+     * fan is built by a whole separate layout pass (_fanFor/_renderBristleDabs)
+     * this just falls back to the base tip for. Everything else the real
+     * per-dab path does -- direction-driven angle, size/hardness/aspect
+     * dynamics at the input pressure, offsetAlong/Across, scatter, and which
+     * cell of a multi-cell tip lands next -- IS replicated below, from the
+     * same formulas _renderDab uses, so the outline is what would actually
+     * get stamped, not a static rest-shape approximation. */
+
+    /* Mirrors _pickTipCell's OWN pick, but reads instead of setting _tipCell
+     * -- _pickTipCell's 'cycle' mode advances a shared counter every call,
+     * so having the cursor call it on every mousemove would burn through
+     * cycle slots a real dab was never stamped for, throwing off which cell
+     * paints next once the user actually drags. 'random' has no such state
+     * to disturb: it is the same position hash a real dab at this same spot
+     * would get, so it can be read here directly. */
+    function _previewTipCellFor(p, x, y) {
+        var c = _tipCells();
+        var n = c ? c.length : 1;
+        if (n < 2) return 0;
+        return (p.tipPick === 'cycle')
+            ? (_tipCycle % n)
+            : _min(n - 1, _floor(_dabRand(x, y, 23) * n));
+    }
+
+    /* Small LRU, not one slot: a jittering/scattering multi-cell tip can
+     * hash to a different cell every pixel of movement, which would thrash
+     * a single cached result every mousemove -- the exact cost profile that
+     * made the previous (position-blind) version tank performance while
+     * drawing. A handful of slots lets it cycle among a brush's actual few
+     * cells/angle-buckets without re-eroding a mask it already built this
+     * hover. */
+    var _outlineLRU = [];
+    var OUTLINE_LRU_MAX = 12;
+    function _outlineFromLRU(key) {
+        for (var i = 0; i < _outlineLRU.length; i++) {
+            if (_outlineLRU[i].key === key) {
+                var hit = _outlineLRU[i];
+                if (i > 0) { _outlineLRU.splice(i, 1); _outlineLRU.unshift(hit); }
+                return hit;
+            }
+        }
+        return null;
+    }
+    function _outlineToLRU(entry) {
+        _outlineLRU.unshift(entry);
+        if (_outlineLRU.length > OUTLINE_LRU_MAX) _outlineLRU.length = OUTLINE_LRU_MAX;
+    }
+
+    var _cursorScratch = { x: 0, y: 0, pressure: 0.5, strokeAngle: 0 };
+    /* x, y: document-space cursor position (needed for scatter/offset/tip-cell
+     * hashes, all seeded by position). strokeAngle: degrees, atan2 of the
+     * caller's own recent movement -- the same "direction" a real stroke
+     * would be turning at if a drag started here right now. pressure:
+     * defaults to 0.5 same as a mouse's first dab (see paint-engine.js). */
+    function _buildCursorOutline(zoom, x, y, strokeAngle, pressure) {
+        var p = getParams();
+        var sc = _cursorScratch;
+        sc.x = x || 0; sc.y = y || 0;
+        sc.pressure = pressure != null ? pressure : 0.5;
+        /* null, not 0 -- see _dynAngle: it only takes the direction branch
+         * when strokeAngle is non-null, same as a real dab with no drag
+         * behind it yet. Squashing that to 0 here would make the direction
+         * dynamic think "pointing right" instead of "no direction", which is
+         * exactly the axis-snap the caller (paint-engine.js) is working
+         * around by passing null while merely hovering. */
+        sc.strokeAngle = (strokeAngle == null) ? null : strokeAngle;
+
+        var effAngle = _dynAngle(p, p.angle, sc);
+        var sz = _dyn(p, 'size', p.size, sc, 1);
+        if (!(sz > 2)) return null;
+
+        var hard = _clamp(_dyn(p, 'hardness', p.hardness, sc, 6), 0, 100);
+        var asp = p.aspectRatio;
+        if (p.aspectRatioSrc && p.aspectRatioSrc !== 'none') {
+            asp = _clamp(asp / _max(0.01, _dyn(p, 'aspectRatio', 1, sc, 7)), 0.1, 20);
+        }
+        var scatterAmt = _dyn(p, 'scatter', p.scatter, sc, 5);
+        // Offset/scatter-axis math wants SOME direction even with none yet,
+        // same as a real dab's own (strokeAngle||0) -- only the angle
+        // dynamic itself cares about the null/real-zero distinction above.
+        var dir = (sc.strokeAngle || 0) * _PI / 180;
+        var dx = sc.x, dy = sc.y;
+
+        if (p.offsetAlong || p.offsetAcross) {
+            var om = _dyn(p, 'offset', 1, sc, 13);
+            var oa = (p.offsetAlong / 100) * sz * om;
+            var oc = (p.offsetAcross / 100) * sz * om;
+            dx += _cos(dir) * oa - _sin(dir) * oc;
+            dy += _sin(dir) * oa + _cos(dir) * oc;
+        }
+        if (scatterAmt > 0) {
+            var scatterDist = (scatterAmt / 100) * sz * (_dabRand(sc.x, sc.y, 2) * 2 - 1);
+            var ax = p.scatterAxis;
+            var scatterAngle = (ax === 'along' || ax === 'across')
+                ? dir + (ax === 'across' ? _PI / 2 : 0)
+                : _dabRand(sc.x, sc.y, 3) * _PI * 2;
+            dx += _cos(scatterAngle) * scatterDist;
+            dy += _sin(scatterAngle) * scatterDist;
+        }
+
+        var previewCell = (p.shape === 'custom') ? _previewTipCellFor(p, dx, dy) : 0;
+        var _savedTipCell = _tipCell;
+        _tipCell = previewCell;
+        var mask;
+        try {
+            // Angle pinned to 0 here on purpose: rotating the finished rim
+            // via CSS transform (paint-engine.js) is exactly equivalent to
+            // eroding a pre-rotated mask for every shape _maskFor makes
+            // (built-in shapes and custom tips both just ctx.rotate() the
+            // same unrotated drawing), and it's the difference between
+            // recomputing the expensive getImageData/erosion pass on nearly
+            // every frame of a direction-driven brush versus never.
+            mask = _maskFor(p.shape, sz, hard, 0, asp);
+        } finally {
+            _tipCell = _savedTipCell;
+        }
+        if (!mask || !mask.width || !mask.height) return null;
+
+        var z = zoom || 1;
+        // offX/offY: how far the dab's own centre sits from the raw cursor,
+        // in SCREEN px -- offset/scatter move the ink without moving the
+        // pointer, so the ring must shift the same way to stay honest.
+        var offX = (dx - sc.x) * z, offY = (dy - sc.y) * z;
+        var key = p.shape + '|' + _round(sz) + '|' + _round(hard) + '|' +
+            asp.toFixed(2) + '|' + z.toFixed(3) + '|' +
+            (p.sharpness || 0) + '|' + (mask._tipId || '') + '|' + previewCell;
+
+        var hit = _outlineFromLRU(key);
+        if (hit) return { canvas: hit.canvas, w: hit.w, h: hit.h, key: key, offX: offX, offY: offY, angleDeg: effAngle };
+
+        var sw = _max(1, _round(mask.width * z));
+        var sh = _max(1, _round(mask.height * z));
+        var scaled = document.createElement('canvas');
+        scaled.width = sw;
+        scaled.height = sh;
+        var sctx = scaled.getContext('2d');
+        sctx.imageSmoothingEnabled = true;
+        sctx.drawImage(mask, 0, 0, sw, sh);
+
+        var img = sctx.getImageData(0, 0, sw, sh);
+        var d = img.data;
+        var n = sw * sh;
+        var bin = new Uint8Array(n);
+        for (var i = 0; i < n; i++) bin[i] = d[i * 4 + 3] > 96 ? 1 : 0;
+
+        var out = new Uint8ClampedArray(n * 4);
+        for (var yy = 0; yy < sh; yy++) {
+            for (var xx = 0; xx < sw; xx++) {
+                var idx = yy * sw + xx;
+                if (!bin[idx]) continue;
+                var l = xx > 0 ? bin[idx - 1] : 0;
+                var r = xx < sw - 1 ? bin[idx + 1] : 0;
+                var u = yy > 0 ? bin[idx - sw] : 0;
+                var dn = yy < sh - 1 ? bin[idx + sw] : 0;
+                var interior = l && r && u && dn;
+                if (interior) continue;
+                var o = idx * 4;
+                out[o] = out[o + 1] = out[o + 2] = 255;
+                out[o + 3] = 255;
+            }
+        }
+        sctx.putImageData(new ImageData(out, sw, sh), 0, 0);
+
+        var entry = { key: key, canvas: scaled, w: sw, h: sh };
+        _outlineToLRU(entry);
+        return { canvas: scaled, w: sw, h: sh, key: key, offX: offX, offY: offY, angleDeg: effAngle };
+    }
+
+    /* ------------------------------------------------------------------ */
     /*  Rope overlay — SVG catenary between cursor and brush               */
     /* ------------------------------------------------------------------ */
 
@@ -2298,7 +2484,34 @@
         luminosity:  'luminosity'
     };
     function _blendOp(mode) { return _BLEND_OPS[mode] || 'source-over'; }
-    function _flushFlowBuffer(mainCtx, clearFlow) {
+    /* The layer compositor's _render() repaints the whole document on every
+     * app.ctx access unless hinted otherwise (layer-system.js markDirty) --
+     * on a large canvas that dwarfs the actual brush work every single live
+     * frame. _dirtyRect/_clearBounds already know exactly what this flush is
+     * about to touch, so hand that to the compositor right before the
+     * _outCtx() call that triggers it. Mirrors _flushFlowBuffer's own bound
+     * computation; called separately because the getter fires before this
+     * function's body runs. */
+    function _hintFlushRect(isFinal) {
+        if (!_dirtyRect || !app.layerMgr || !app.layerMgr.markDirty) return;
+        var x1 = _dirtyRect.x1, y1 = _dirtyRect.y1, x2 = _dirtyRect.x2, y2 = _dirtyRect.y2;
+        /* Mirror _flushFlowBuffer's own widening exactly: only the final/
+         * replay pass needs the whole stroke's accumulated bounds (a taper
+         * can shrink the final result below what live passes already drew).
+         * A live pass only just painted _dirtyRect, so widening it to
+         * _clearBounds here would recomposite the ENTIRE stroke-so-far on
+         * every frame of a long stroke -- measured to grow from ~500px to
+         * over 6000px wide across one 15-frame stroke, each frame paying
+         * for the whole span instead of just its own new ink. */
+        if (isFinal && _clearBounds) {
+            if (_clearBounds.x1 < x1) x1 = _clearBounds.x1;
+            if (_clearBounds.y1 < y1) y1 = _clearBounds.y1;
+            if (_clearBounds.x2 > x2) x2 = _clearBounds.x2;
+            if (_clearBounds.y2 > y2) y2 = _clearBounds.y2;
+        }
+        app.layerMgr.markDirty(_floor(x1) - 1, _floor(y1) - 1, _ceil(x2 - x1) + 2, _ceil(y2 - y1) + 2);
+    }
+    function _flushFlowBuffer(mainCtx, clearFlow, isFinal) {
         if (!_dirtyRect || !_flowCanvas) return;
         var dr = _dirtyRect;
         var x = _floor(dr.x1);
@@ -2310,8 +2523,12 @@
          * an end taper thins the tail, so the final stroke stops short of the
          * blunt one the user watched being drawn. Restoring only the final
          * pass's own rect leaves that blunt end behind, welded to the layer.
-         * So the final composite covers everything this stroke ever touched. */
-        if (!clearFlow && _clearBounds) {
+         * So the final composite covers everything this stroke ever touched.
+         * Live passes have no such retroactive shrink to undo, and
+         * _clearBounds is never narrowed mid-stroke -- widening every live
+         * flush to it recomposited the whole stroke-so-far on every frame of
+         * a long stroke, not just this frame's own ink. */
+        if (!clearFlow && isFinal && _clearBounds) {
             if (_clearBounds.x1 < x) x = _floor(_clearBounds.x1);
             if (_clearBounds.y1 < y) y = _floor(_clearBounds.y1);
             if (_clearBounds.x2 > x2) x2 = _ceil(_clearBounds.x2);
@@ -2441,8 +2658,23 @@
          * (Item 5: no live reads below here). */
         if ((_p.edgeWidth || 0) > 0 && (_p.edgeDensity || 0) > 0 && _flowCanvas) {
             _ensureEdgeCanvas(_flowCanvas.width, _flowCanvas.height);
-            _edgeCtx.clearRect(x, y, w, h);
-            _edgeCtx.drawImage(src, x, y, w, h, x, y, w, h);
+            /* _applyWaterEdge box-blurs a margin of _p.edgeWidth pixels PAST
+             * x,y,w,h to detect where alpha falls off (see its own comment).
+             * That margin must be copied from src here too, or the blur reads
+             * whatever this scratch canvas last held out there -- stale ink
+             * from a previous flush's rect, or nothing -- as if it were this
+             * stroke's real alpha, registers a false cliff exactly on the
+             * rect's own border, and stamps a rim there: a rectangular seam
+             * around every flush instead of a rim around the actual stroke. */
+            var _eR = _max(2, _round(_p.edgeWidth));
+            var _eBw = _flowCanvas.width, _eBh = _flowCanvas.height;
+            var _eX = _max(0, x - _eR), _eY = _max(0, y - _eR);
+            var _eX2 = _min(_eBw, x + w + _eR), _eY2 = _min(_eBh, y + h + _eR);
+            var _eW = _eX2 - _eX, _eH = _eY2 - _eY;
+            if (_eW > 0 && _eH > 0) {
+                _edgeCtx.clearRect(_eX, _eY, _eW, _eH);
+                _edgeCtx.drawImage(src, _eX, _eY, _eW, _eH, _eX, _eY, _eW, _eH);
+            }
             _applyWaterEdge(_edgeCtx, x, y, w, h, _p.edgeWidth, _p.edgeDensity);
             src = _edgeCanvas;
         }
@@ -2550,8 +2782,10 @@
             if (!_state.isDrawing || !_airbrushLastPos) return;
             var pressure = 0.3 + Math.random() * 0.4;
             _renderDab(_airbrushLastPos.x, _airbrushLastPos.y, pressure, _airbrushLastColor);
-            if (_outCtx()) {
-                _flushFlowBuffer(_outCtx());
+            _hintFlushRect();
+            var _airOc = _outCtx();
+            if (_airOc) {
+                _flushFlowBuffer(_airOc);
             }
         }, interval);
     }
@@ -4029,7 +4263,9 @@
             var sp = _state.strokePoints;
             if (sp.length < 1 || !_state.lastColor) return;
             _paintShapeStroke(sp, _state.lastColor);
-            if (_outCtx()) _flushFlowBuffer(_outCtx());
+            _hintFlushRect();
+            var _shapeOc = _outCtx();
+            if (_shapeOc) _flushFlowBuffer(_shapeOc);
             return;
         }
 
@@ -4091,8 +4327,12 @@
                 _processSegment(pts, startIdx, pts.length - 1, _state.lastColor, 0, resume || null);
             }
         }
-        if (_outCtx()) {
-            _flushFlowBuffer(_outCtx());
+        if (_dirtyRect) {
+            _hintFlushRect(final);
+            var _pendOc = _outCtx();
+            if (_pendOc) {
+                _flushFlowBuffer(_pendOc, false, final);
+            }
         }
     }
 
@@ -4124,10 +4364,19 @@
                     _state.lastProcessedIdx = endIdx;
                 }
                 _state.started = true;
-                if (_outCtx()) {
-                    // Union rect via _dirtyRect: everything painted so far,
-                    // suspended or not — never a partial composite.
-                    _flushFlowBuffer(_outCtx());
+                /* A pass can legitimately place zero dabs (remaining < step
+                 * this frame) while points are still queued. _dirtyRect is
+                 * only set once a dab actually lands, so this also skips
+                 * touching app.ctx at all on such a frame — which otherwise
+                 * forced a full-canvas recomposite for nothing. */
+                if (_dirtyRect) {
+                    _hintFlushRect();
+                    var _liveOc = _outCtx();
+                    if (_liveOc) {
+                        // Union rect via _dirtyRect: everything painted so
+                        // far, suspended or not — never a partial composite.
+                        _flushFlowBuffer(_liveOc);
+                    }
                 }
                 // More to paint: next frame. paintRaf is null here, so this
                 // re-arms instead of hitting the coalescing guard above.
@@ -6897,6 +7146,7 @@
     };
 
     engine.updateCursor = _updateBrushCursor;
+    engine.getCursorOutline = _buildCursorOutline;
     engine.releaseOffscreenBuffers = _releaseOffscreenBuffers;
 
     if (document.readyState === 'loading') {
