@@ -391,7 +391,9 @@
             : _bool(flag) && (useCurve === undefined || _bool(useCurve));
         if (!on) return null;
         var raw = params[opt + 'Sensor'] || '';
-        var m = /<params\s+id="([^"]+)"/.exec(raw);
+        /* id need not come first: drawing angle writes its fan settings
+         * before it, and missing it here read the tip's turn as pressure. */
+        var m = /<params\b[^>]*?\bid="([^"]+)"/.exec(raw);
         var id = m ? m[1].toLowerCase() : 'pressure';
         /* "sensorslist" is several inputs multiplied together. We drive one
          * parameter from one input, so take the first we understand rather
@@ -618,7 +620,28 @@
             if (patName) {
                 out.texturePatternFile = patName;
                 out.texture = Math.round(_num(P['Texture/Strength/Value'], 1) * 100);
-                out.textureScale = Math.max(1, _num(P['Texture/Pattern/Scale'], 1));
+                /* Krita's own maths, not our grain: measured against Krita,
+                 * Chalk Soft's texture removed no ink at all through the
+                 * grey-tint path. Modes past subtract paint colour or use
+                 * blend maths we do not carry; they fall back to multiply. */
+                var tm = Math.round(_num(P['Texture/Pattern/TexturingMode'], 0));
+                if (tm > 1) warn.push('texture mode ' + tm + ' painted as multiply');
+                out.textureMode = tm === 1 ? 'subtract' : 'multiply';
+                out.textureScale = _num(P['Texture/Pattern/Scale'], 1);
+                out.textureBrightness = _num(P['Texture/Pattern/Brightness'], 0);
+                out.textureContrast = _num(P['Texture/Pattern/Contrast'], 1);
+                out.textureInvert = _bool(P['Texture/Pattern/Invert']);
+                out.textureSoft = _bool(P['Texture/Pattern/UseSoftTexturing']);
+                if (_num(P['Texture/Pattern/NeutralPoint'], 0.5) !== 0.5 ||
+                    _num(P['Texture/Pattern/CutoffPolicy'], 0) !== 0)
+                    warn.push('texture neutral point / cutoff not carried');
+                var ts = _sensorFor(P, 'Texture/Strength/');
+                if (ts && ts.src) {
+                    out.textureSrc = ts.src;
+                    out.textureMin = 0;
+                    _kritaReach(out, ts);
+                    if (ts.curve) out.textureCurve = ts.curve;
+                }
             } else {
                 warn.push('dropped: a canvas texture pattern');
             }

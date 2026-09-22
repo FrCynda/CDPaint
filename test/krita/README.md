@@ -100,5 +100,19 @@ two renders of the same job are byte-identical.
   0.60 → 0.96. Airbrush went from 2.77× to 1.92×, and Marker Chisel from
   1.93× to 1.27×.
 - With `o` = 1, alpha darken *is* source-over, so flow-driven brushes were
-  already right on blending. Pencil-4 and Chalk are still about 1.6× too dark;
-  the cause is elsewhere, probably the tip image or the texture.
+  already right on blending.
+- Textures. Our grey-tint grain removed no ink from an opaque pattern, which
+  is every Krita pattern. Krita imports now use Krita's own maths
+  (`_applyKritaTexture`, from `KisTextureMaskInfo.cpp` and
+  `KisMaskingBrushCompositeOp.h`). Brightness and contrast are applied to the
+  pattern, then:
+  - multiply: `a·m·s`;
+  - subtract: `a − (m + 1 − s)`;
+  - soft variants are handled too;
+  - the strength `s` follows the preset's own sensor.
+
+  Chalk Soft went from 1.6× to 1.03×.
+- Sensor ids. `<params fanCornersStep=… id="drawingangle">` puts the id after
+  other attributes, and the reader missed it and defaulted to pressure. So
+  Pencil-4's tip turned with pressure instead of with the stroke. It went
+  from 1.62× to 0.90×, and Basic-6 from 0.78× to 0.88×.

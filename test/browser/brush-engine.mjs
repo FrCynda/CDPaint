@@ -510,6 +510,34 @@ await withPage(async (page) => {
     check("Krita's elevation is full upright and nothing at 60 degrees", d.elevationIsKritasWayUp);
     check("Krita's dab opacity is a ceiling the stroke builds to, not past",
         Math.abs(d.dabOpacityCapsAt - 128) <= 8, 'max alpha ' + d.dabOpacityCapsAt);
+    /* Krita's texture removes ink (subtract: a - (m + 1 - s)); our grey-tint
+     * grain on an opaque pattern removed none, so Chalk Soft came out 1.6x
+     * too dark against real Krita. A flat mid-grey pattern at strength 1
+     * must take a solid dab to half. */
+    const kt = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        const c = document.createElement('canvas'); c.width = c.height = 8;
+        const x = c.getContext('2d'); x.fillStyle = '#808080'; x.fillRect(0, 0, 8, 8);
+        const url = c.toDataURL();
+        const run = (mode) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            b.setParam('size', 20); b.setParam('spacing', 12); b.setParam('hardness', 100);
+            b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
+            b.setParam('texture', 100); b.setParam('textureMode', mode);
+            b.loadTexturePattern(url);
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(20, 100, 1, '#000000');
+            b.endStroke();   // one dab: overlapping dabs stack back toward solid, in Krita too
+            return __B.layer().ctx.getImageData(20, 100, 1, 1).data[3];
+        };
+        run('subtract');
+        await new Promise(r => setTimeout(r, 300));   // the pattern decodes async
+        return JSON.stringify({ sub: run('subtract'), mul: run('multiply') });
+    })()`, { awaitPromise: true }));
+    check("Krita's subtract texture takes ink away, not just tints it",
+        Math.abs(kt.sub - 128) <= 6, 'alpha ' + kt.sub);
+    check("...and multiply scales it by the pattern",
+        Math.abs(kt.mul - 128) <= 6, 'alpha ' + kt.mul);
     check('pen rotation turns the tip', d.twistRotatesTip);
     check('hardness can be driven, which it never could', d.hardnessDrivable);
     check('scatter can be driven, which it never could', d.scatterDrivable);

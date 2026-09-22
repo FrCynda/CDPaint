@@ -645,11 +645,8 @@
      * biggest reason his pack did not come across. A pattern lands here as a
      * tile in exactly the shape `_texTile` produces (opaque grey, dark means
      * more bite) so everything downstream is indifferent to where its grain
-     * came from.
-     *
-     * ponytail: Krita also offers brightness/contrast/invert on the pattern.
-     * Revoy's presets leave them at -0.1/1/false, near enough to neutral to
-     * ignore; add them as params if a pack ever turns them up. */
+     * came from. A Krita import (textureMode set) reads the same tile
+     * through _kritaTexMask instead, brightness/contrast/invert included. */
     var _patTiles = {};
     var _patWanted = null;
     /* Which imported pattern tiles are removal masks (sparse specks living
@@ -702,6 +699,62 @@
             done();
         };
         img.src = url;
+    }
+
+    /* Krita's Texture option, to the letter (KisTextureMaskInfo::
+     * recalculateMask and KisMaskingBrushCompositeOp.h). The pattern becomes
+     * a mask m: grey (r*11 + g*16 + b*5)/32 over white where transparent,
+     * minus brightness, contrast about 0.5, then inverted if asked. With
+     * strength s it then cuts the dab's alpha a:
+     *   multiply   a*m*s             soft: a*(m + (1-s)(1-m))
+     *   subtract   a - (m + 1 - s)   soft: a - m*s
+     * Anchored to the canvas, so the grain stays put under the stroke.
+     * Returns false when the pattern has not arrived yet.
+     *
+     * ponytail: CPU per dab (one getImageData each); a GPU pass would be
+     * the upgrade if huge textured brushes get slow. Neutral point, cutoff
+     * and pattern offsets are not modelled; the importer warns about them. */
+    var _ktMask = null;
+    function _kritaTexMask(p) {
+        var tile = _patWanted && _patTiles[_patWanted];
+        if (!tile) return null;
+        var sc = p.textureScale || 1;
+        var key = _patWanted + '|' + sc + '|' + p.textureBrightness + '|' + p.textureContrast + '|' + !!p.textureInvert;
+        if (_ktMask && _ktMask.key === key) return _ktMask;
+        var w = _max(2, _round(tile.width * sc)), h = _max(2, _round(tile.height * sc));
+        var c = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true });
+        c.imageSmoothingQuality = 'high';
+        c.drawImage(tile, 0, 0, w, h);
+        var d = c.getImageData(0, 0, w, h).data, m = new Uint8Array(w * h);
+        var br = p.textureBrightness || 0, ct = p.textureContrast == null ? 1 : p.textureContrast;
+        for (var i = 0; i < m.length; i++) {
+            var a = d[i * 4 + 3] / 255;
+            var g = ((d[i * 4] * 11 + d[i * 4 + 1] * 16 + d[i * 4 + 2] * 5) >> 5) / 255;
+            var v = _clamp(((g * a + 1 - a) - br - 0.5) * ct + 0.5, 0, 1);
+            m[i] = _round((p.textureInvert ? 1 - v : v) * 255);
+        }
+        _ktMask = { key: key, w: w, h: h, m: m };
+        return _ktMask;
+    }
+    function _applyKritaTexture(ctx, w, h, ox, oy, s, p) {
+        var t = _kritaTexMask(p);
+        if (!t) return false;
+        s = _clamp(s, 0, 1);
+        var img = ctx.getImageData(0, 0, w, h), d = img.data;
+        var x0 = _round(ox), y0 = _round(oy), sub = p.textureMode === 'subtract', soft = !!p.textureSoft;
+        for (var j = 0; j < h; j++) {
+            var row = (((y0 + j) % t.h) + t.h) % t.h * t.w;
+            for (var i = 0; i < w; i++) {
+                var k = (j * w + i) * 4 + 3, a = d[k];
+                if (!a) continue;
+                var m = t.m[row + (((x0 + i) % t.w) + t.w) % t.w] / 255;
+                if (sub) a = soft ? a - m * s * 255 : a - (m + 1 - s) * 255;
+                else a = soft ? a * (m + (1 - s) * (1 - m)) : a * m * s;
+                d[k] = a < 0 ? 0 : a;
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+        return true;
     }
 
     function _texTile(type) {
@@ -1128,7 +1181,10 @@
          * of them route through this one line. Cost: a watercolour brush loses
          * pressure-driven texture modulation, since the flush pass reads the
          * static param -- no watercolour preset in hand uses that. */
-        if (texture > 0 && !getParams().watercolor) {
+        var _tp = getParams();
+        if (_tp.textureMode && _applyKritaTexture(_scratchCtx, mw, mh, ox, oy, texture / 100, _tp)) {
+            _tintMask = null;
+        } else if (texture > 0 && !_tp.watercolor) {
             _applyTextureNoise(_scratchCtx, mw, mh, texture, textureScale, textureType, ox, oy);
             _tintMask = null;   // the scratch is no longer a plain tint
         }
@@ -3591,6 +3647,10 @@
         /* Krita's per-dab opacity: the level a stroke's ink stops building
          * at, not how much each dab adds. See _alphaDarken. */
         dabOpacitySrc: 'none',   dabOpacityMin: 0, dabOpacityCurve: 1,
+        /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
+         * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
+        textureMode: '', textureBrightness: 0, textureContrast: 1,
+        textureInvert: false, textureSoft: false,
         hardnessSrc: 'none',     hardnessMin: 0,   hardnessCurve: 1,
         scatterSrc: 'none',      scatterMin: 0,    scatterCurve: 1,
         angleSrc: 'none',        angleRange: 180,

@@ -56,7 +56,14 @@
      110,
      1
     ]
-   ]
+   ],
+   "expect": {
+    "inkRatio": [
+     0.82,
+     1
+    ],
+    "iouMin": 0.85
+   }
   },
   {
    "name": "airbrush-soft",
@@ -127,7 +134,13 @@
      110,
      1
     ]
-   ]
+   ],
+   "expect": {
+    "inkRatio": [
+     0.8,
+     1.05
+    ]
+   }
   },
   {
    "name": "ink-1-precision",
@@ -194,7 +207,14 @@
      110,
      1
     ]
-   ]
+   ],
+   "expect": {
+    "inkRatio": [
+     0.9,
+     1.15
+    ],
+    "iouMin": 0.8
+   }
   },
   {
    "name": "bristles-1-details",

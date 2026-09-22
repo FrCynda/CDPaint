@@ -231,6 +231,27 @@ await withPage(async (page) => {
             tiltSrc === 'elevation', tiltSrc);
         check('an option switched on without "use curve" follows no sensor',
             noCurve === 'none', noCurve);
+        /* Found against real Krita: drawing angle writes attributes before
+        * its id, the id went unread, and Pencil-4 turned with pressure. */
+        const more = BP => {
+            const bd = '<Brush type="auto_brush" spacing="0.1"><MaskGenerator id="default" ' +
+                'type="circle" hfade="1" vfade="1" diameter="32" ratio="1"/></Brush>';
+            return BP.toPreset({ params: { brush_definition: bd,
+                PressureRotation: 'true', RotationUseCurve: 'true',
+                RotationSensor: '<params fanCornersStep="30" fanCornersEnabled="0" id="drawingangle"/>',
+                'Texture/Pattern/Enabled': 'true', 'Texture/Pattern/Name': 'dots.png',
+                'Texture/Pattern/TexturingMode': '1', 'Texture/Pattern/Brightness': '0.55',
+                'Texture/Pattern/Contrast': '0.6', 'Texture/Pattern/Scale': '0.5',
+                'PressureTexture/Strength/': 'true', 'Texture/Strength/UseCurve': 'true',
+                'Texture/Strength/Sensor': '<params id="pressure"><curve>0,0.4;1,1;</curve></params>' } }).params;
+        };
+        const M = JSON.parse(await page.eval(`JSON.stringify((${more})(BrushPack))`));
+        check('a sensor named after other attributes is still read',
+            M.angleSrc === 'direction', M.angleSrc);
+        check("Krita's texture keeps its own maths and pressure response",
+            M.textureMode === 'subtract' && M.textureBrightness === 0.55 && M.textureContrast === 0.6 &&
+            M.textureScale === 0.5 && M.textureSrc === 'pressure' && Array.isArray(M.textureCurve),
+            JSON.stringify([M.textureMode, M.textureBrightness, M.textureContrast, M.textureScale, M.textureSrc]));
     }
     check('an eraser still erases',
         E.blendMode === 'erase' && tr.blendKnown, String(E.blendMode));
