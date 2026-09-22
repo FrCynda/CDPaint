@@ -113,7 +113,7 @@ await withPage(async (page) => {
         const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
         let ink = 0, clear = 0;
         for (let k = 3; k < d.length; k += 4) { if (d[k] > 128) ink++; else if (!d[k]) clear++; }
-        return JSON.stringify({ cells: t.cells, size: t.size, w: bmp.width, ink, clear });
+        return JSON.stringify({ cells: t.cells, size: t.size, w: bmp.width, ink, clear, spacing: t.spacing });
     })()`, { awaitPromise: true }).then(JSON.parse);
     check('one shape, at its own size', gbr.cells === 1 && gbr.size === 64 && gbr.w === 64,
         JSON.stringify(gbr));
@@ -122,6 +122,12 @@ await withPage(async (page) => {
      * the bristles would not. */
     check('coverage is read as coverage, not inverted',
         gbr.ink > 100 && gbr.clear > gbr.ink * 2, `${gbr.ink} inked, ${gbr.clear} clear of 4096`);
+
+    /* The fixture's own header asks for 1% spacing (heavy dab overlap), not
+     * our fallback default of 10 -- a bare-tip import must keep the file's
+     * own number instead of silently overriding it. */
+    check('a .gbr\'s own spacing is read, not defaulted', gbr.spacing === 1,
+        JSON.stringify(gbr));
 
     console.log('\n== importing a pack ==');
     const pack = await page.eval(`(async () => {

@@ -805,6 +805,13 @@
         var w = dv.getUint32(8), h = dv.getUint32(12), bpp = dv.getUint32(16);
         if (ver < 1 || ver > 3 || !w || !h || w > 8192 || h > 8192) return null;
         if (bpp !== 1 && bpp !== 4) return null;
+        /* Version 2/3 adds a "GIMP" magic number and the brush's own spacing
+         * (already a percentage of its width, 1-1000, same units as ours)
+         * between the fixed header above and the name. Version 1 has neither. */
+        var spacing = null;
+        if (ver >= 2 && off + 28 <= b.length) {
+            spacing = new DataView(b.buffer, b.byteOffset + off + 20, 8).getUint32(4);
+        }
         var start = off + hs, n = w * h;
         if (start + n * bpp > b.length) return null;
         var a = new Uint8ClampedArray(n), i;
@@ -817,7 +824,8 @@
                 a[i] = Math.round((1 - lum) * b[p + 3]);
             }
         }
-        return { w: w, h: h, alpha: a, next: start + n * bpp };
+        return { w: w, h: h, alpha: a, next: start + n * bpp,
+                 spacing: spacing ? Math.max(1, Math.min(400, spacing)) : null };
     }
 
     /* A GIMP brush pipe (.gih): a name line, a line of parameters, then that
@@ -842,7 +850,7 @@
             off = g.next;
         }
         if (!cells.length) return null;
-        return { cells: cells,
+        return { cells: cells, spacing: cells[0].spacing,
                  pick: (sel && sel[1] === 'incremental') ? 'cycle' : 'random' };
     }
 
@@ -913,13 +921,14 @@
                 if (!pipe) throw new Error('unreadable brush pipe');
                 var st = _strip(pipe.cells);
                 return Promise.resolve({ url: st.url, size: st.size,
-                    cells: pipe.cells.length, pick: pipe.pick });
+                    cells: pipe.cells.length, pick: pipe.pick, spacing: pipe.spacing });
             }
             if (/\.gbr$/i.test(name)) {
                 var one = _readGbr(bytes, 0);
                 if (!one) throw new Error('unreadable brush file');
                 var st1 = _strip([one]);
-                return Promise.resolve({ url: st1.url, size: st1.size, cells: 1, pick: 'random' });
+                return Promise.resolve({ url: st1.url, size: st1.size, cells: 1, pick: 'random',
+                    spacing: one.spacing });
             }
         } catch (e) { return Promise.reject(e); }
 

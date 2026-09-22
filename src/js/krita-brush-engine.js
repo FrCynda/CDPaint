@@ -6171,7 +6171,7 @@
         var name = _uniqueName(base);
         var ps = {
             size: _min(MAX_SIZE, _max(2, tip.size)), opacity: 100, flow: 100,
-            spacing: 10, hardness: 100, shape: 'custom', _tipUrl: _tipStash(tip.url)
+            spacing: tip.spacing || 10, hardness: 100, shape: 'custom', _tipUrl: _tipStash(tip.url)
         };
         /* A file that carried settings as well as a picture -- a Photoshop
          * set does -- brings them along. They land on top of the plain stamp
