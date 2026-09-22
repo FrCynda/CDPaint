@@ -198,8 +198,21 @@ await withPage(async (page) => {
         `${E.opacity}/${E.flow} and ${S.opacity}/${S.flow}`);
     /* A gaussian tip has no hard edge even with both fade sliders at zero,
      * so reading the sliders literally would import a soft eraser as a disc. */
+    /* Krita's fade is the share of the radius that stays SOLID (checked
+     * against KisCircleMaskGenerator::valueAt): this eraser is a gauss tip
+     * at fade 0, the softest there is. Read backwards it came in at 30. */
     check('a soft generated tip does not arrive hard-edged',
-        E.hardness > 20 && E.hardness < 80, `hardness ${E.hardness}`);
+        E.hardness === 0 && E.falloff === 'gauss', `hardness ${E.hardness} ${E.falloff}`);
+    {
+        const hard = BP => BP.toPreset({ params: { brush_definition:
+            '<Brush type="auto_brush" spacing="0.1" useAutoSpacing="1" autoSpacingCoeff="0.8">' +
+            '<MaskGenerator id="default" type="circle" hfade="1" vfade="1" diameter="32" ratio="1"/></Brush>' } }).params;
+        const H = JSON.parse(await page.eval(`JSON.stringify((${hard})(BrushPack))`));
+        check('a fade of 1 is a hard disc, not the softest brush',
+            H.hardness === 100 && !H.falloff, `hardness ${H.hardness}`);
+        check('auto spacing keeps its coefficient',
+            H.autoSpacing === 0.8, String(H.autoSpacing));
+    }
     check('an eraser still erases',
         E.blendMode === 'erase' && tr.blendKnown, String(E.blendMode));
     check('the pressure curve carries over point for point',

@@ -546,23 +546,24 @@ await withPage(async (page) => {
         JSON.stringify(Object.keys(vbr).map(f => vbr[f].r)));
     check('the brush keeps the name written in the file',
         vbr['star-ten.vbr'].n === 'a ten-pointed star', vbr['star-ten.vbr'].n);
-    /* The radius is half the size, and the spacing is already a percentage. */
-    check('radius becomes a diameter, spacing comes straight across',
-        vbr['star-ten.vbr'].size === 50 && vbr['star-ten.vbr'].spacing === 50,
+    /* The size is GIMP's own mask box -- 2 x sqrt(r^2 + (r/aspect)^2) for a
+     * spiked one, made odd -- and the spacing is already a percentage. */
+    check('the size is the box GIMP draws the dab in, spacing comes straight across',
+        vbr['star-ten.vbr'].size === 55 && vbr['star-ten.vbr'].spacing === 50,
         JSON.stringify(vbr['star-ten.vbr']));
     /* A plain round one needs no picture: that is the brush we already are,
      * and keeping it parametric means it stays sharp at any size. */
     check('a plain round one stays a round brush, softness and all',
         vbr['round-soft.vbr'].shape === 'circle' && vbr['round-soft.vbr'].w === 0 &&
         vbr['round-soft.vbr'].hardness === 40, JSON.stringify(vbr['round-soft.vbr']));
-    /* Everything else has to be drawn. A square of 4:1 is a wide block, so
-     * its middle is solid and its corners are empty. */
+    /* Everything else has to be drawn. A square of 4:1 is a wide block:
+     * GIMP's box for it is 51 x 13, solid in the middle. */
     check('a shape we cannot make parametrically is drawn instead',
-        vbr['block-wide.vbr'].shape === 'custom' && vbr['block-wide.vbr'].w === 50 &&
-        vbr['block-wide.vbr'].mid === 255 && vbr['block-wide.vbr'].corner === 0,
+        vbr['block-wide.vbr'].shape === 'custom' && vbr['block-wide.vbr'].w === 51 &&
+        vbr['block-wide.vbr'].h === 13 && vbr['block-wide.vbr'].mid === 255,
         JSON.stringify(vbr['block-wide.vbr']));
-    /* Spikes are what make these stars: above two, the shape is drawn once
-     * per spike, each turned a further half-turn divided by their number. */
+    /* Spikes are what make these stars: GIMP folds the plane into that
+     * many wedges. Its exact pixels are checked in brush-fidelity.mjs. */
     check('and a spiked one comes out as a star, not as its base shape',
         vbr['star-ten.vbr'].mid === 255 && vbr['star-ten.vbr'].corner === 0,
         JSON.stringify(vbr['star-ten.vbr']));

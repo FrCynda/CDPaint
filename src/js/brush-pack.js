@@ -435,7 +435,13 @@
          * only thing on file that scales with the author's intent. */
         if (_bool(bd.useAutoSpacing)) {
             out.spacing = Math.max(1, Math.round(_num(bd.autoSpacingCoeff, 1) * 25));
+            /* ...which is only right at one size. Krita's gap is
+             * coeff * sqrt(dab size) pixels (calcAutoSpacing), so the engine
+             * takes the coefficient itself; `spacing` stays as the slider's
+             * resting value for anyone who switches auto off. */
+            out.autoSpacing = _num(bd.autoSpacingCoeff, 1);
         }
+        if (_bool(P['Spacing/Isotropic'])) out.spacingIsotropic = true;
 
         var mask = bd.mask;
         if (mask) {
@@ -447,21 +453,21 @@
              * which is the same convention once inverted. */
             var ratio = _num(mask.ratio, 1);
             out.aspectRatio = (ratio > 0 && ratio < 1) ? Math.round((1 / ratio) * 100) / 100 : 1;
-            // hfade/vfade are how much of the radius fades out: all fade is
-            // our softest brush, none is our hardest.
-            var fade = Math.max(_num(mask.hfade, 0), _num(mask.vfade, 0));
-            out.hardness = Math.round((1 - Math.min(1, fade)) * 100);
-            /* A "gauss" generator is soft by construction: its edge falls off
-             * over the whole radius even with the fade sliders at zero, so
-             * taking the fade at face value would import a soft airbrush as a
-             * hard disc. Half is the closest single number; anyone importing
-             * one can nudge the hardness slider from there. */
-            /* "gauss" and "soft" fall off over the whole radius whatever the
-             * fade sliders say, so taking those at face value imports an
-             * airbrush as a hard disc. A third is the closest single number;
-             * the hardness slider goes the rest of the way. */
+            /* hfade/vfade are the share of the radius that stays SOLID --
+             * 1 is a hard disc, 0 a cone. That is the opposite of what the
+             * word suggests, and this read it the other way round until it
+             * was checked against KisCircleMaskGenerator::valueAt: solid out
+             * to `fade`, then (1 - r^2)/(1 - fade^2). Our hardness is that
+             * same number and our circle is that same curve. The gauss
+             * generator agrees on the direction (1 is hard) and has a
+             * profile of its own, which `falloff` selects. */
+            var fade = (_num(mask.hfade, 1) + _num(mask.vfade, 1)) / 2;
+            out.hardness = Math.round(Math.max(0, Math.min(1, fade)) * 100);
             var gen = String(mask.id || 'default');
-            if (gen === 'gauss' || gen === 'soft') out.hardness = Math.round(out.hardness * 0.3);
+            if (gen === 'gauss') out.falloff = 'gauss';
+            /* "soft" is a user-drawn curve over the same fade; no curve
+             * reader yet, so it keeps the old rough third. */
+            if (gen === 'soft') out.hardness = Math.round(out.hardness * 0.3);
             if (_num(mask.spikes, 2) > 2) warn.push('a star-shaped tip became a plain one');
         } else if (bd.filename) {
             out.shape = 'custom';
@@ -1723,36 +1729,78 @@
 
     var VBR_SHAPES = { circle: 1, square: 1, diamond: 1 };
 
-    function _vbrMask(shape, r, spikes, hard, aspect, angle) {
-        var side = Math.max(1, Math.ceil(r * 2)), c = side / 2;
-        var a = new Uint8ClampedArray(side * side);
-        /* Two spikes is GIMP's default and means the plain shape -- every
-         * ordinary round, square or rectangular brush in the stock set says
-         * 2. Above that the shape is drawn once per spike, each turned a
-         * further half-turn divided by their number, and the dab is
-         * wherever any of them landed. */
-        var steps = [], i, n = spikes > 2 ? spikes : 1;
-        for (i = 0; i < n; i++) {
-            var t = (angle + i * 180 / n) * Math.PI / 180;
-            steps.push([Math.cos(t), Math.sin(t)]);
+    /* GIMP's own generator (app/core/gimpbrushgenerated.c, 2.10), ported
+     * line for line because every approximation of it measured wrong against
+     * a headless GIMP render: a linear falloff put 2.8x the ink into a soft
+     * round, and drawing `spikes` turned copies made a 5-spike star with ten
+     * points where GIMP folds the plane into five wedges.
+     *
+     * The falloff is a lookup table of a not-quite-gauss of
+     * (d / radius)^(0.4 / (1 - hardness)), box-filtered over one pixel at
+     * four samples; d is the shape's own distance (round, square or
+     * diamond) after the pixel is turned by the angle, folded into the first
+     * of `spikes` wedges and squashed by the aspect ratio. The mask is the
+     * odd-sided box GIMP allocates, so the tip is GIMP's size to the pixel. */
+    function _gimpGauss(f) {
+        if (f < -0.5) { f = -1 - f; return 2 * f * f; }
+        if (f < 0.5) return 1 - 2 * f * f;
+        f = 1 - f; return 2 * f * f;
+    }
+
+    function _vbrMask(shape, radius, spikes, hard, aspect, angle) {
+        var OS = 4, x, y, d;
+        angle = Math.round(angle * 1000) / 1000;
+        var s = Math.sin(angle * Math.PI / 180), c = Math.cos(angle * Math.PI / 180);
+        var sr = radius / aspect;
+        var xa = [c * radius, -s * radius], ya = [s * sr, c * sr];
+        var hw, hh;
+        if (shape === 'square') { hw = Math.abs(xa[0]) + Math.abs(ya[0]); hh = Math.abs(xa[1]) + Math.abs(ya[1]); }
+        else if (shape === 'diamond') { hw = Math.max(Math.abs(xa[0]), Math.abs(ya[0])); hh = Math.max(Math.abs(xa[1]), Math.abs(ya[1])); }
+        else { hw = Math.hypot(xa[0], ya[0]); hh = Math.hypot(xa[1], ya[1]); }
+        if (spikes > 2) hw = hh = Math.sqrt(radius * radius + sr * sr);
+        var w = Math.max(1, Math.ceil(hw * 2)), h = Math.max(1, Math.ceil(hh * 2));
+        if (!(w & 1)) w++;
+        if (!(h & 1)) h++;
+
+        // gimp_brush_generated_calc_lut
+        var ex = (1 - hard) < 0.0000004 ? 1000000 : 0.4 / (1 - hard);
+        var len = OS * Math.ceil(1 + Math.sqrt(2 * Math.pow(Math.ceil(radius + 1), 2)));
+        var lut = new Float32Array(len), buf = new Float64Array(OS), sum = 0;
+        for (x = 0; x < OS; x++) {
+            d = Math.abs((x + 0.5) / OS - 0.5);
+            buf[x] = d > radius ? 0 : _gimpGauss(Math.pow(d / radius, ex));
+            sum += buf[x];
         }
-        var soft = 1 - Math.min(0.999, hard);
-        for (var y = 0; y < side; y++) {
-            for (var x = 0; x < side; x++) {
-                var dx = x + 0.5 - c, dy = y + 0.5 - c, best = 1e9;
-                for (i = 0; i < steps.length; i++) {
-                    var u = (dx * steps[i][0] + dy * steps[i][1]) / r;
-                    var v = (dy * steps[i][0] - dx * steps[i][1]) * aspect / r;
-                    var d = shape === 'square' ? Math.max(Math.abs(u), Math.abs(v))
-                          : shape === 'diamond' ? Math.abs(u) + Math.abs(v)
-                          : Math.sqrt(u * u + v * v);
-                    if (d < best) best = d;
+        for (x = 0; (d < radius || sum > 0.00001) && x < len; d += 1 / OS) {
+            sum -= buf[x % OS];
+            buf[x % OS] = d > radius ? 0 : _gimpGauss(Math.pow(d / radius, ex));
+            sum += buf[x % OS];
+            lut[x++] = sum / OS;
+        }
+
+        var cs = Math.cos(-2 * Math.PI / spikes), ss = Math.sin(-2 * Math.PI / spikes);
+        var half_w = w >> 1, half_h = h >> 1, alpha = new Uint8ClampedArray(w * h);
+        for (y = -half_h; y <= half_h; y++) {
+            for (x = -half_w; x <= half_w; x++) {
+                var tx = c * x - s * y, ty = Math.abs(s * x + c * y);
+                if (spikes > 2) {
+                    var an = Math.atan2(ty, tx);
+                    while (an > Math.PI / spikes) {
+                        var sx = tx, sy = ty;
+                        tx = cs * sx - ss * sy;
+                        ty = ss * sx + cs * sy;
+                        an -= 2 * Math.PI / spikes;
+                    }
                 }
-                a[y * side + x] = best >= 1 ? 0
-                    : Math.round(255 * Math.min(1, (1 - best) / soft));
+                ty *= aspect;
+                d = shape === 'square' ? Math.max(Math.abs(tx), Math.abs(ty))
+                  : shape === 'diamond' ? Math.abs(tx) + Math.abs(ty)
+                  : Math.sqrt(tx * tx + ty * ty);
+                var i = Math.round(d * OS);
+                alpha[(y + half_h) * w + x + half_w] = d < radius + 1 && i < len ? Math.round(255 * lut[i]) : 0;
             }
         }
-        return { w: side, h: side, alpha: a };
+        return { w: w, h: h, alpha: alpha };
     }
 
     BrushPack.readVbr = function (text, filename) {
@@ -1785,12 +1833,21 @@
         /* A plain round one needs no picture: that is the brush we already
          * are, and keeping it parametric means it stays sharp at any size. */
         if (shape === 'circle' && spikes === 2 && aspect === 1) {
+            out.falloff = 'gimp';
             if (angle) out.angle = ((Math.round(angle) % 360) + 360) % 360;
             return { name: name, params: out, tip: null };
         }
         var lim = Math.min(TIP_CAP_PX / 2, 400);
-        var st = _strip([_vbrMask(shape, Math.min(lim, radius), spikes, hard, aspect, angle)]);
+        /* Minus the angle: GIMP copies the brush's angle into the paint
+         * tool's option, which it stores negated (gimppaintoptions.c, "make
+         * the angle mathematically correct"), so the dab it PAINTS is turned
+         * the other way from the brush's own preview. Measured headless. */
+        var m = _vbrMask(shape, Math.min(lim, radius), spikes, hard, aspect, -angle);
+        var st = _strip([m]);
         out.shape = 'custom';
+        // The tip is sized by its longest side, and GIMP's box is a little
+        // over 2 x radius -- take the box, so a dab is GIMP's size exactly.
+        if (radius <= lim) out.size = Math.max(m.w, m.h);
         /* The picture already carries the softness the file asked for, so
          * the dab must not be softened a second time on the way out. */
         out.hardness = 100;

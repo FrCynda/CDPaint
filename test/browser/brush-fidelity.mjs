@@ -219,6 +219,48 @@ await withPage(async (page) => {
     })()`, { awaitPromise: true }));
     console.log('  ' + JSON.stringify(sh));
 
+    /* A round tip's falloff against Krita's own mask generators, ported
+     * from KisCircleMaskGenerator::valueAt and KisGaussCircleMaskGenerator
+     * (fade = share of the radius that stays solid; 1 is a hard disc). One
+     * 101px dab, its radius read left to right, error in alpha levels. */
+    const fo = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, L = PaintApp.layerMgr.layers[PaintApp.layerMgr.activeIdx];
+        const erf = x => { const s = Math.sign(x); x = Math.abs(x); const t = 1 / (1 + 0.3275911 * x);
+            return s * (1 - ((((1.061405429*t - 1.453152027)*t + 1.421413741)*t - 0.284496736)*t + 0.254829592)*t*Math.exp(-x*x)); };
+        const krita = (r, fade, gauss) => {
+            if (r >= 1) return 0;
+            if (!gauss) return r <= fade ? 1 : (1 - r*r) / (1 - fade*fade);
+            let f = 1 - fade; f = Math.min(Math.max(f, 1e-6), 1 - 1e-6);
+            const c = 2.5*(6761*f - 10000)/(Math.SQRT2*6761*f), k = Math.SQRT2*12500/(6761*f);
+            return (erf(r*k + c) - erf(r*k - c)) / (2*erf(c));
+        };
+        const out = {};
+        for (const [fade, gauss] of [[0,false],[0.5,false],[0.89,false],[0,true],[0.15,true],[0.5,true],[0.66,true]]) {
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0); b.setParam('flow', 100);
+            b.setParam('size', 101); b.setParam('hardness', fade * 100);
+            b.setParam('falloff', gauss ? 'gauss' : 'circle');
+            L.ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+            await new Promise(r => setTimeout(r, 60));
+            const row = L.ctx.getImageData(100, 100, 55, 1).data;
+            let max = 0, sum = 0;
+            for (let i = 0; i < 55; i++) {
+                const e = Math.abs(row[i*4 + 3] - 255 * krita((i + 0.5) / 50.5, fade, gauss));
+                max = Math.max(max, e); sum += e;
+            }
+            out[(gauss ? 'gauss ' : 'circle ') + fade] = { max: Math.round(max), mean: +(sum / 55).toFixed(1) };
+        }
+        b.setParam('falloff', 'circle');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(fo));
+    check("a round tip falls off the way Krita's mask generators do",
+        /* max allows half a pixel of rasteriser alignment at the rim, where
+         * fade 0.89 drops ~48 levels a pixel. The old linear ramp averaged
+         * 7 to 36 levels off; this is under 1. */
+        Object.values(fo).every(e => e.mean <= 2 && e.max <= 26), JSON.stringify(fo));
+
     check('a soft brush is mostly gradient until sharpness is asked for',
         sh.off.mid > sh.off.solid, JSON.stringify(sh.off));
     check('...and sharpness turns that gradient into an edge',
@@ -319,6 +361,54 @@ await withPage(async (page) => {
         sm.above[0] > 200 && sm.above[2] < 40, JSON.stringify(sm.above));
     check('...while the hairs over blue carry blue and nothing else',
         sm.below[2] > 200 && sm.below[0] < 40, JSON.stringify(sm.below));
+
+    /* GIMP's own dab of each .vbr fixture, rendered headless by GIMP 2.10.38
+     * (gimp-ref/dab.scm: gimp-paintbrush, one point at 100,100, Dynamics Off,
+     * tool options linked to the brush as the GUI does). Ours must land on
+     * the same pixels. */
+    console.log('\n== GIMP generated brushes, against GIMP itself ==');
+    const REF = join(FIX, 'gimp-ref');
+    const gv = JSON.parse(await page.eval(`(async () => {
+        const app = PaintApp, b = app.brush;
+        const cases = ${JSON.stringify(['round-soft', 'block-wide', 'star-ten'].map(n => ({ n,
+            vbr: readFileSync(join(FIX, n + '.vbr'), 'utf8'),
+            png: readFileSync(join(REF, n + '.png')).toString('base64') })))};
+        const out = {};
+        for (const k of cases) {
+            app.layerMgr.collapseToBase({ fresh: true });
+            app.setSize(200, 200); app.config.zoom = 1; app.updateBounds();
+            document.getElementById('lsys-add').click();
+            app.state.selection = null;
+            const v = BrushPack.readVbr(k.vbr, k.n + '.vbr');
+            b.forgetSaved('Round');     // earlier blocks left it a pure smudge
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+            for (const key of Object.keys(v.params)) b.setParam(key, v.params[key]);
+            if (v.tip) { b.loadCustomTip(v.tip.url); await new Promise(r => setTimeout(r, 400)); }
+            const L = app.layerMgr.layers[app.layerMgr.activeIdx];
+            b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+            await new Promise(r => setTimeout(r, 120));
+            const ours = L.ctx.getImageData(0, 0, 200, 200).data;
+            const img = new Image(); img.src = 'data:image/png;base64,' + k.png; await img.decode();
+            const c = new OffscreenCanvas(200, 200).getContext('2d'); c.drawImage(img, 0, 0);
+            const ref = c.getImageData(0, 0, 200, 200).data;
+            let so = 0, sr = 0, diff = 0, inked = 0;
+            for (let i = 3; i < ref.length; i += 4) {
+                so += ours[i]; sr += ref[i]; diff += Math.abs(ours[i] - ref[i]); if (ref[i]) inked++;
+            }
+            out[k.n] = { inkRatio: +(so / sr).toFixed(4), meanDiff: +(diff / inked).toFixed(2) };
+        }
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(gv));
+    /* Before the port: round-soft carried 2.8x GIMP's ink (mean 95 levels
+     * off) and star-ten had ten points where GIMP paints five. The block
+     * keeps a 1px fringe GIMP adds at 21/255, hence its looser mean. */
+    for (const [n, tol] of [['round-soft', 1], ['block-wide', 4], ['star-ten', 1]]) {
+        check(`${n}.vbr paints GIMP's own dab`,
+            near(gv[n].inkRatio, 1, 0.01) && gv[n].meanDiff <= tol, JSON.stringify(gv[n]));
+    }
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

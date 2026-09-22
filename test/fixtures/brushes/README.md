@@ -622,3 +622,43 @@ mutating the buffer that later dabs of the same stroke still composite into.
 `loadPreset` silently dropped the flag the importer set and every `.sut`
 watercolour brush painted as plain opaque ink regardless — fixed alongside
 the rest.
+
+## GIMP's own dabs, and Krita's own falloff (2026-09-22)
+
+`gimp-ref/` holds what GIMP 2.10.38 itself paints for each `.vbr` fixture:
+one `gimp-paintbrush` point at (100,100) on a 200x200 transparent layer,
+"Dynamics Off", rendered headless by `gimp-console-2.10 -i -f -b - < dab.scm`
+with the fixture copied into GIMP's `brushes/` folder. For `block-wide` and
+`star-ten` the script's `gimp-context-set-brush-aspect-ratio` was set to
+`(aspect - 1) * 20 / 19` and the angle to the brush's own, which is what the
+GUI's linked tool options do; left at 0, GIMP paints the shape round-cornered
+and unturned, and the reference is of a different brush. brush-fidelity.mjs
+paints the same dab through `readVbr` and compares pixel for pixel.
+
+They settled three things, all in the direction of "port it, don't
+approximate it":
+
+  * the falloff is GIMP's, not a ramp. `gauss(d^(0.4/(1-hardness)))` with
+    GIMP's own piecewise not-quite-gauss, box-filtered at four samples.
+    The linear ramp we had put 2.8x GIMP's ink into `round-soft` (mean 95
+    alpha levels off); now 0.16% and 0.3 levels;
+  * spikes FOLD the plane into that many wedges. Drawing `spikes` turned
+    copies made `star-ten` a ten-pointed star; GIMP paints five points, and
+    ours now lands on the same 940 pixels;
+  * a generated brush paints at MINUS its own angle: GIMP copies it into the
+    tool option, which gimppaintoptions.c stores negated.
+
+`block-wide` still differs by a one-pixel fringe at 21/255 that GIMP adds
+around the mask at its default size; total ink is within 0.14%.
+
+The Krita half is checked against source rather than a render, because
+Krita cannot be driven headless. `KisCircleMaskGenerator::valueAt` settles
+that `hfade`/`vfade` are the share of the radius that stays SOLID -- 1 is a
+hard disc -- which the importer had backwards: Revoy's "Basic Size Fill
+Area" (fade 1) arrived as our softest brush, and nine shipped library
+presets carried the inversion. The gauss generator is an erf bell of its
+own; both profiles are ported and measured within one alpha level on
+average. Spacing follows `KisPaintOpUtils::effectiveSpacing`: from the dab
+actually placed (pressure included), `coeff * sqrt(size)` pixels when auto,
+and an ellipse of the tip's own width and height, so a flat tip dragged
+across its thin side is spaced by that side.

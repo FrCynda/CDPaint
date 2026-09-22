@@ -2466,10 +2466,60 @@ await withPage(async (page) => {
         `carried ${sc.smudgeCarries}`);
     check('colour jitter really varies the colour along a stroke',
         new Set(sc.jitterPix).size === 3, sc.jitterPix.join(' | '));
+    /* Within one level: sample points sit at different dab-overlap counts,
+     * and a translucent pixel's colour rounds differently at each. */
     check('...and with it off the stroke is one colour',
-        new Set(sc.plainPix).size === 1, sc.plainPix.join(' | '));
+        sc.plainPix.every(s => s.split(',').slice(0, 3).every((v, i) =>
+            Math.abs(v - sc.plainPix[0].split(',')[i]) <= 1)), sc.plainPix.join(' | '));
     check('...and the same stroke on the same seed comes out the same',
         sc.jitterA === sc.jitterB, `${sc.jitterA} vs ${sc.jitterB}`);
+
+    /* Spacing, as Krita's effectiveSpacing does it. Each case is a hard
+     * stroke that Krita paints unbroken; count bare pixels down its middle. */
+    const gaps = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        const run = async (set, x0, y0, x1, y1, pr) => {
+            __B.doc(200, 200);
+            ['sizeSrc','sizeMin','sizeCurve','flowSrc','angleSrc','aspectRatio','angle','autoSpacing',
+             'spacingIsotropic','taperStart','taperEnd','smoothingMode']
+                .forEach(k => b.setParam(k, b.DEFAULTS[k]));
+            b.setParam('hardness', 100); b.setParam('flowSrc', 'none');
+            set();
+            const L = __B.layer();
+            b.beginStroke(x0, y0, pr, '#000000');
+            for (let i = 1; i <= 40; i++)
+                b.moveStroke(x0 + (x1 - x0) * i / 40, y0 + (y1 - y0) * i / 40, pr, '#000000');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 150));
+            let bare = 0;
+            for (let i = 10; i <= 30; i++) {
+                const x = Math.round(x0 + (x1 - x0) * i / 40), y = Math.round(y0 + (y1 - y0) * i / 40);
+                if (L.ctx.getImageData(x, y, 1, 1).data[3] < 128) bare++;
+            }
+            return bare;
+        };
+        const out = {};
+        // Light pressure on a pressure-sized brush: a 10px dab spaced for 40.
+        out.pressure = await run(() => { b.setParam('size', 40); b.setParam('spacing', 50);
+            b.setParam('sizeSrc', 'pressure'); b.setParam('sizeMin', 0); b.setParam('sizeCurve', 1); },
+            20, 100, 180, 100, 0.25);
+        // A 5:1 flat tip dragged across its thin side.
+        out.flat = await run(() => { b.setParam('size', 50); b.setParam('spacing', 40);
+            b.setParam('sizeSrc', 'none'); b.setParam('aspectRatio', 5); b.setParam('angle', 0); },
+            100, 20, 100, 180, 1);
+        // Auto spacing: 1 x sqrt(4) = 2px between 4px dabs, not 25% of 4.
+        out.auto = await run(() => { b.setParam('size', 4); b.setParam('spacing', 400);
+            b.setParam('sizeSrc', 'none'); b.setParam('autoSpacing', 1); },
+            20, 100, 180, 100, 1);
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check('spacing follows the pressure-scaled dab, so a light stroke does not bead',
+        gaps.pressure === 0, `${gaps.pressure} bare px`);
+    check('a flat tip is spaced by its thin side when dragged across it',
+        gaps.flat === 0, `${gaps.flat} bare px`);
+    check('auto spacing is coeff * sqrt(size) and overrides the percentage',
+        gaps.auto === 0, `${gaps.auto} bare px`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
