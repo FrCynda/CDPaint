@@ -338,7 +338,51 @@
             _flowCanvas = new OffscreenCanvas(_max(1, w), _max(1, h));
             _flowCtx = _flowCanvas.getContext('2d');
             _flowUsed = null;   // a new buffer is already blank
+            _adCanvas = null; _adCtx = null;
         }
+    }
+
+    /* Krita's "creamy" alpha darken (KoCompositeOpAlphaDarken.h), the
+     * default way its dabs build a stroke: a' = a + (o - a) * mask * flow
+     * while a < o, else a unchanged. The stroke's ink rises toward the dab's
+     * opacity `o` and never past it, so pressure-driven opacity sets how dark
+     * the line gets, not how fast it stacks.
+     *
+     * Canvas has no alpha operator like that, but it has one for colour:
+     * 'lighten' over an opaque backdrop is dst + s * max(0, src - dst), which
+     * is the formula exactly. So the stroke's alpha is kept as grey in an
+     * opaque buffer, each dab lightens it with grey level o at alpha
+     * mask * flow, and the flush turns grey back into alpha on the flow
+     * buffer. With o = 1 throughout this equals plain source-over, which is
+     * why only presets with a per-dab opacity sensor take this path.
+     *
+     * ponytail: one colour per stroke (the last dab's); colour jitter or
+     * smudge on such a preset would flatten. Krita's averageOpacity branch
+     * (falling pressure) is not modelled either. */
+    var _adCanvas = null, _adCtx = null, _adO = 1, _adColor = '#000000';
+    function _alphaDarken(p) {
+        return !!(p.dabOpacitySrc && p.dabOpacitySrc !== 'none')
+            && p.engineKind !== 'shape' && p.engineKind !== 'deform';
+    }
+    function _ensureAdBuffer() {
+        if (_adCanvas && _adCanvas.width === _flowCanvas.width && _adCanvas.height === _flowCanvas.height) return;
+        _adCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);
+        _adCtx = _adCanvas.getContext('2d', { willReadFrequently: true });
+        _adCtx.fillStyle = '#000';
+        _adCtx.fillRect(0, 0, _adCanvas.width, _adCanvas.height);
+    }
+    function _greyHex(o) {
+        var v = _round(_clamp(o, 0, 1) * 255).toString(16);
+        if (v.length < 2) v = '0' + v;
+        return '#' + v + v + v;
+    }
+    // Grey in the alpha-darken buffer becomes alpha in the flow buffer.
+    function _adToFlow(x, y, w, h) {
+        var img = _adCtx.getImageData(x, y, w, h), d = img.data, c = _hexToRgb(_adColor);
+        for (var i = 0; i < d.length; i += 4) {
+            d[i + 3] = d[i]; d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2];
+        }
+        _flowCtx.putImageData(img, x, y);
     }
 
     function _ensureScratch(w, h) {
@@ -428,6 +472,7 @@
         var x = _floor(_flowUsed.x1) - 1, y = _floor(_flowUsed.y1) - 1;
         var w = _ceil(_flowUsed.x2) - x + 2, h = _ceil(_flowUsed.y2) - y + 2;
         _flowCtx.clearRect(x, y, w, h);
+        if (_adCtx) { _adCtx.fillStyle = '#000'; _adCtx.fillRect(x, y, w, h); }
         _flowUsed = null;
     }
 
@@ -443,6 +488,7 @@
     // resident while idle. The _ensure* functions recreate them lazily on the next stroke.
     function _releaseOffscreenBuffers() {
         _flowCanvas = null; _flowCtx = null; _flowUsed = null;
+        _adCanvas = null; _adCtx = null;
         _covCanvas = null; _covCtx = null; _covUsed = null;
         _scratchCanvas = null; _scratchCtx = null;
         _tintMask = null; _tintColor = null;
@@ -1060,6 +1106,9 @@
         var ox = x - mw / 2;
         var oy = y - mh / 2;
 
+        var ad = destCtx === _flowCtx && _alphaDarken(getParams());
+        if (ad) { _ensureAdBuffer(); _adColor = colorHex; colorHex = _greyHex(_adO); }
+
         if (_tintMask !== maskCanvas || _tintColor !== colorHex) {
             _colorizeMask(maskCanvas, colorHex);
             _tintMask = maskCanvas;
@@ -1129,11 +1178,14 @@
          * 'low' rather than 'high' because the dab is drawn at 1:1 -- the
          * only filtering is the subpixel shift -- where the expensive filter
          * buys nothing visible and cost a fifth of the stroke. */
-        destCtx.globalAlpha = _clamp(alpha, 0, 1);
-        destCtx.imageSmoothingEnabled = true;
-        destCtx.imageSmoothingQuality = 'low';
-        destCtx.drawImage(_scratchCanvas, 0, 0, mw, mh, ox, oy, mw, mh);
-        destCtx.globalAlpha = 1;
+        var dc = ad ? _adCtx : destCtx;
+        if (ad) dc.globalCompositeOperation = 'lighten';
+        dc.globalAlpha = _clamp(alpha, 0, 1);
+        dc.imageSmoothingEnabled = true;
+        dc.imageSmoothingQuality = 'low';
+        dc.drawImage(_scratchCanvas, 0, 0, mw, mh, ox, oy, mw, mh);
+        dc.globalAlpha = 1;
+        if (ad) dc.globalCompositeOperation = 'source-over';
 
         var AA_MARGIN = 1;
         if (!_dirtyRect) {
@@ -1940,6 +1992,7 @@
         var effAngle = _dynAngle(p, p.angle, sc);
         var sz = _dyn(p, 'size', p.size, sc, 1) * tfSize;
         if (sz < 0.5) return;
+        _adO = _dyn(p, 'dabOpacity', 1, sc, 14);
 
         // Bristle mode: render multiple fiber dabs
         if (p.bristleCount > 1) {
@@ -2599,6 +2652,7 @@
         if (x + w > bw) w = bw - x;
         if (y + h > bh) h = bh - y;
         if (w <= 0 || h <= 0) { _dirtyRect = null; return; }
+        if (_adCtx && _alphaDarken(getParams())) _adToFlow(x, y, w, h);
         var opacity = getParams().opacity / 100;
         /* Alpha lock exists to protect a layer's shape. An eraser is the one
          * brush that attacks exactly that, so on a locked layer it does
@@ -3534,6 +3588,9 @@
         colorJitterPer: 'dab',
         sizeSrc: 'pressure',     sizeMin: 50,      sizeCurve: 1,
         flowSrc: 'pressure',     flowMin: 0,       flowCurve: 1,
+        /* Krita's per-dab opacity: the level a stroke's ink stops building
+         * at, not how much each dab adds. See _alphaDarken. */
+        dabOpacitySrc: 'none',   dabOpacityMin: 0, dabOpacityCurve: 1,
         hardnessSrc: 'none',     hardnessMin: 0,   hardnessCurve: 1,
         scatterSrc: 'none',      scatterMin: 0,    scatterCurve: 1,
         angleSrc: 'none',        angleRange: 180,
@@ -4681,7 +4738,7 @@
         var savedParams = _params;
         var savedState = _state;
         var savedTarget = _previewTarget;
-        var savedFlow = _flowCanvas, savedFlowCtx = _flowCtx;
+        var savedFlow = _flowCanvas, savedFlowCtx = _flowCtx, savedAd = _adCanvas, savedAdCtx = _adCtx;
         // _flowUsed says which part of the flow buffer to blank next
         // stroke. A preview drives the same painter over its own tiny
         // buffer, so leaving its bounds behind would blank a swatch-sized
@@ -4732,7 +4789,7 @@
                 lastProcessedIdx: 0, started: false, bounds: null, paintRaf: null,
                 suspend: null
             };
-            _flowCanvas = null; _flowCtx = null;
+            _flowCanvas = null; _flowCtx = null; _adCanvas = null; _adCtx = null;
             _bgCanvas = null; _bgCtx = null;
             _previewTarget = {
                 ctx: ctx, w: W, h: H,
@@ -4791,7 +4848,7 @@
             // before endStroke, its frozen params must not leak into UI reads.
             _strokeParams = null;
             _state = savedState;
-            _flowCanvas = savedFlow; _flowCtx = savedFlowCtx;
+            _flowCanvas = savedFlow; _flowCtx = savedFlowCtx; _adCanvas = savedAd; _adCtx = savedAdCtx;
             _flowUsed = savedFlowUsed;
             _bgCanvas = savedBg; _bgCtx = savedBgCtx;
         }

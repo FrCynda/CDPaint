@@ -90,8 +90,15 @@ two renders of the same job are byte-identical.
   it 7px. The fix adds a new `elevation` sensor.
 - An option switched on without "use curve" is a constant in Krita (it gets
   no sensor); we drove it from pressure.
-- The biggest remaining gap is dab blending. Krita's default "creamy alpha
-  darken" is `a' = a + (o - a)·mask·flow` while `a < o`, so overlapping dabs
-  never pass the dab's opacity. Ours accumulates source-over toward full
-  black, which makes Basic-2, Airbrush, Pencil-4 and Chalk 1.6–2.8× too dark
-  (`KoCompositeOpAlphaDarken.h`).
+- Dab blending. Krita's default "creamy alpha darken" is
+  `a' = a + (o - a)·mask·flow` while `a < o` (`KoCompositeOpAlphaDarken.h`),
+  so overlapping dabs never pass the dab's opacity `o`. The importer used to
+  fold a pressure-driven opacity into flow, and dabs stacked past it. Now it
+  becomes `dabOpacitySrc`, and the engine keeps the stroke's alpha as grey in
+  an opaque buffer where canvas `lighten` is exactly that formula
+  (`_alphaDarken`). Basic-2 went from 1.6× to 1.04× Krita's ink, with IoU
+  0.60 → 0.96. Airbrush went from 2.77× to 1.92×, and Marker Chisel from
+  1.93× to 1.27×.
+- With `o` = 1, alpha darken *is* source-over, so flow-driven brushes were
+  already right on blending. Pencil-4 and Chalk are still about 1.6× too dark;
+  the cause is elsewhere, probably the tip image or the texture.

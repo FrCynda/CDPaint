@@ -254,22 +254,15 @@ await withPage(async (page) => {
     check('a brush we can reproduce exactly reports nothing',
         tr.stamp.warnings.length === 0, JSON.stringify(tr.stamp.warnings));
     /* This eraser drives its opacity from pressure as well as its flow.
-     * Krita scales a dab's alpha by both, so the two responses multiply into
-     * the one dab-level control we have rather than one of them being
-     * dropped -- which is what used to happen, and which left the brush
-     * holding far too much ink at low pressure. */
-    check('two responses on one input are folded together, not halved',
-        tr.eraser.warnings.length === 0 &&
-        Array.isArray(tr.eraser.params.flowCurve) && tr.eraser.params.flowCurve.length === 8,
-        JSON.stringify(tr.eraser.warnings) + ' curve ' + JSON.stringify(tr.eraser.params.flowCurve));
-    check('...and the fold really is the product of the two',
-        (() => {
-            const c = tr.eraser.params.flowCurve || [];
-            const mid = c[3];            // halfway along the pressure range
-            // Two responses that each reduce ink must reduce it more together.
-            return mid && mid[1] <= 0.5 + 1e-6;
-        })(),
-        JSON.stringify(tr.eraser.params.flowCurve));
+     * Krita's opacity is the level a stroke's ink stops at (alpha darken),
+     * its flow how much each dab adds, so they stay two controls. Folding
+     * opacity into flow let dabs stack past it: measured against real Krita
+     * (test/krita), Basic-2 Opacity came out 1.6x too dark. */
+    check("Krita's opacity response becomes the dab's ceiling, flow keeps its own",
+        tr.eraser.warnings.length === 0 && tr.eraser.params.dabOpacitySrc === 'pressure' &&
+        tr.eraser.params.flowSrc === 'pressure' && Array.isArray(tr.eraser.params.dabOpacityCurve),
+        JSON.stringify(tr.eraser.warnings) + ' ' + tr.eraser.params.dabOpacitySrc + ' ' +
+        JSON.stringify(tr.eraser.params.dabOpacityCurve));
 
     console.log('== junk in, no crash out ==');
     const junk = JSON.parse(await page.eval(`(async () => {

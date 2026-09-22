@@ -565,62 +565,21 @@
         }
 
         // Size and flow ride their sensors the same way ours do.
-        /* Two responses on one input multiply. Sampled rather than solved:
-         * the product of two piecewise-linear curves is not itself piecewise
-         * linear, and eight points is what the engine stores anyway. */
-        function _curveVal(c, v) {
-            if (!c || !c.length) return v;             // absent means linear
-            if (c.length === 1) return c[0][1];
-            for (var i = 0; i < c.length - 1; i++) {
-                var a = c[i], b = c[i + 1];
-                if (v <= b[0]) {
-                    if (v <= a[0]) return a[1];
-                    var sp = b[0] - a[0];
-                    return sp > 1e-6 ? a[1] + (b[1] - a[1]) * ((v - a[0]) / sp) : a[1];
-                }
-            }
-            return c[c.length - 1][1];
-        }
-        function _mulCurves(a, b) {
-            if (!a || !a.length) a = null;
-            if (!b || !b.length) b = null;
-            if (!a && !b) return null;
-            var out = [];
-            for (var i = 0; i < 8; i++) {
-                var v = i / 7;
-                out.push([v, Math.max(0, Math.min(1, _curveVal(a, v) * _curveVal(b, v)))]);
-            }
-            return out;
-        }
-
         [['Size', 'size'], ['Flow', 'flow'], ['Opacity', 'opacity']].forEach(function (pair) {
             var s = _sensorFor(P, pair[0]);
             var key = pair[1];
             if (!s) return;
             if (key === 'opacity') {
-                /* Opacity is per stroke here and per dab there, where it does
-                 * the same job as flow. With flow left alone we can carry the
-                 * curve over on flow's back; with both driven we would be
-                 * applying the response twice, so the second one is reported
-                 * rather than folded in. */
-                if (!out.flowSrc && s.src) {
-                    out.flowSrc = s.src;
-                    out.flowMin = 0;
-                    if (s.curve) out.flowCurve = s.curve;
-                } else if (s.src && s.src === out.flowSrc) {
-                    /* Both riding the same input is the common case, and the
-                     * two responses are not a conflict: Krita scales a dab's
-                     * alpha by opacity AND by flow, so the pair multiply.
-                     * Folding them into one curve says the same thing our
-                     * single flow response can say. Dropping one of them --
-                     * which is what happened before -- made nine of David
-                     * Revoy's thirty-eight brushes hold far more ink at low
-                     * pressure than he drew them with. */
-                    out.flowCurve = _mulCurves(out.flowCurve, s.curve);
-                } else {
-                    warn.push('opacity also responded to ' + s.id +
-                        '; only the flow response was kept');
-                }
+                /* Krita's per-dab opacity is not more flow: it is the level
+                 * the stroke's ink stops building at (alpha darken, see the
+                 * engine's _alphaDarken). Riding it on flow let overlapping
+                 * dabs stack past it -- measured against Krita's own render,
+                 * Basic-2 Opacity came out 1.6x too dark and Airbrush 2.8x. */
+                if (!s.src) { warn.push('Opacity followed ' + s.id + ', which we have no input for'); return; }
+                out.dabOpacitySrc = s.src;
+                out.dabOpacityMin = 0;
+                _kritaReach(out, s);
+                if (s.curve) out.dabOpacityCurve = s.curve;
                 return;
             }
             if (!s.src) { warn.push(pair[0] + ' followed ' + s.id + ', which we have no input for'); return; }

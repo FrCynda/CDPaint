@@ -444,6 +444,15 @@ await withPage(async (page) => {
         stroke(0.8, { tiltX: 0, tiltY: 0, twist: 0 });   const eUp = inkOf().px;
         stroke(0.8, { tiltX: 60, tiltY: 0, twist: 0 });  const eFlat = inkOf().px;
         out.elevationIsKritasWayUp = eUp > eFlat * 3;
+        // Krita's per-dab opacity caps the stroke rather than adding ink:
+        // tightly overlapping dabs at half pressure stop at half alpha.
+        fresh();
+        b.setParam('flowSrc', 'none'); b.setParam('hardness', 100);
+        b.setParam('dabOpacitySrc', 'pressure');
+        stroke(0.5);
+        { const d = __B.layer().ctx.getImageData(0, 0, 200, 200).data; let m = 0;
+          for (let i = 3; i < d.length; i += 4) if (d[i] > m) m = d[i];
+          out.dabOpacityCapsAt = m; }
 
         // -- pen rotation ---------------------------------------------------
         fresh();
@@ -499,6 +508,8 @@ await withPage(async (page) => {
     check('the curve reshapes the response', d.curveChangesResponse);
     check('tilt drives a parameter', d.tiltDrivesSize);
     check("Krita's elevation is full upright and nothing at 60 degrees", d.elevationIsKritasWayUp);
+    check("Krita's dab opacity is a ceiling the stroke builds to, not past",
+        Math.abs(d.dabOpacityCapsAt - 128) <= 8, 'max alpha ' + d.dabOpacityCapsAt);
     check('pen rotation turns the tip', d.twistRotatesTip);
     check('hardness can be driven, which it never could', d.hardnessDrivable);
     check('scatter can be driven, which it never could', d.scatterDrivable);
