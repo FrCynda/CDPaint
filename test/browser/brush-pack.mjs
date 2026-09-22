@@ -252,6 +252,48 @@ await withPage(async (page) => {
             M.textureMode === 'subtract' && M.textureBrightness === 0.55 && M.textureContrast === 0.6 &&
             M.textureScale === 0.5 && M.textureSrc === 'pressure' && Array.isArray(M.textureCurve),
             JSON.stringify([M.textureMode, M.textureBrightness, M.textureContrast, M.textureScale, M.textureSrc]));
+        /* Found against real Krita: Airbrush Soft's tip is Krita's "soft"
+         * generator, whose falloff IS its curve, and Waterpaint Soft Edges
+         * takes a whole second stroke off itself (subtract masking brush). */
+        const wp = BP => {
+            const soft = '<Brush type="auto_brush" spacing="0.1"><MaskGenerator id="soft" type="circle" ' +
+                'diameter="60" ratio="1" hfade="0.5" vfade="0.5" softness_curve="0,0.4;0.43,0.12;1,0;"/></Brush>';
+            return {
+                corner: BP.parseCurve('<curve>0,0;0.5,0.2,is_corner;1,1;</curve>'),
+                soft: BP.toPreset({ params: { brush_definition: soft } }).params,
+                mask: BP.toPreset({ params: { brush_definition: soft,
+                    'MaskingBrush/Enabled': 'true', 'MaskingBrush/MaskingCompositeOp': 'subtract',
+                    'MaskingBrush/MasterSizeCoeff': '1.15', 'MaskingBrush/Preset/brush_definition': soft,
+                    'MaskingBrush/Preset/FlowValue': '0.67', 'MaskingBrush/Preset/PressureSize': 'true',
+                    'MaskingBrush/Preset/SizeUseCurve': 'true',
+                    'MaskingBrush/Preset/SizeSensor': '<params id="pressure"><curve>0,0.2;1,1;</curve></params>' } }).params
+            };
+        };
+        const W = JSON.parse(await page.eval(`JSON.stringify((${wp})(BrushPack))`));
+        check("a Krita curve point marked as a corner keeps the mark",
+            JSON.stringify(W.corner[1]) === '[0.5,0.2,1]', JSON.stringify(W.corner));
+        check("Krita's soft tip keeps its own falloff curve",
+            W.soft.shape === 'circle' && W.soft.tipCurve.length === 3 && W.soft.curveSmooth === true,
+            JSON.stringify([W.soft.shape, W.soft.tipCurve, W.soft.curveSmooth]));
+        check('a subtract masking brush becomes a second stroke with its own dynamics',
+            W.mask.maskOp === 'subtract' && W.mask.maskSize === 115 && W.mask.maskFlow === 67 &&
+            W.mask.maskSpacing === 10 && W.mask.maskSizeSrc === 'pressure' && W.mask.maskTipCurve.length === 3 &&
+            !W.mask._tip2Url, JSON.stringify([W.mask.maskOp, W.mask.maskSize, W.mask.maskFlow, W.mask.maskSizeSrc]));
+        /* Krita's oil_knife.png is dark on opaque white, bar eleven pixels
+         * at alpha 192; trusting the alpha stamped the whole white square. */
+        const knife = await page.eval(`(async () => {
+            const c = document.createElement('canvas'); c.width = c.height = 16;
+            const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, 16, 16);
+            x.fillStyle = '#000'; x.fillRect(6, 6, 4, 4);
+            x.clearRect(0, 0, 1, 1);
+            const u8 = new Uint8Array(await (await new Promise(r => c.toBlob(r))).arrayBuffer());
+            const tip = await BrushPack.tipStrip(u8, 'knife.png', { krita: true });
+            const img = new Image(); img.src = tip.url; await img.decode();
+            const g = document.createElement('canvas').getContext('2d'); g.drawImage(img, 0, 0);
+            return [g.getImageData(3, 3, 1, 1).data[3], g.getImageData(8, 8, 1, 1).data[3]].join(',');
+        })()`, { awaitPromise: true });
+        check("a grey Krita tip is ink where it is dark, whatever its alpha says",
+            knife === '0,255', knife);
     }
     check('an eraser still erases',
         E.blendMode === 'erase' && tr.blendKnown, String(E.blendMode));

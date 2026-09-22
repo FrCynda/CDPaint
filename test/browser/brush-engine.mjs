@@ -538,6 +538,37 @@ await withPage(async (page) => {
         Math.abs(kt.sub - 128) <= 6, 'alpha ' + kt.sub);
     check("...and multiply scales it by the pattern",
         Math.abs(kt.mul - 128) <= 6, 'alpha ' + kt.mul);
+    /* Measured against a real Krita dab (test/krita): its "soft" tip reads
+     * the curve at the SQUARED radius, and its curves are splines. Read at
+     * the plain radius, Airbrush Soft came out at 0.59x Krita's ink. And a
+     * subtract masking brush is a second stroke taken off the first, which
+     * is what makes Waterpaint Soft Edges hollow (it was 4.2x too dark). */
+    const soft = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        const dab = (set, at) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            b.setParam('size', 40); b.setParam('hardness', 100);
+            b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
+            set();
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(100, 100, 1, '#000000');
+            b.endStroke();
+            return at.map(x => __B.layer().ctx.getImageData(x, 100, 1, 1).data[3]);
+        };
+        return JSON.stringify({
+            line: dab(() => { b.setParam('curveSmooth', true); b.setParam('tipCurve', [[0, 1], [1, 0]]); }, [110]),
+            spline: dab(() => { b.setParam('curveSmooth', true); b.setParam('tipCurve', [[0, 1], [0.5, 0.2], [1, 0]]); }, [110]),
+            hollow: dab(() => { b.setParam('maskOp', 'subtract'); b.setParam('maskSize', 50); b.setParam('maskFlow', 100); }, [100, 116])
+        });
+    })()`));
+    // r = 0.5: 1 - r^2 = 0.75 (191); read at r it was 0.5 (128).
+    check("Krita's soft tip reads its curve at the squared radius",
+        soft.line[0] > 175 && soft.line[0] < 205, 'alpha ' + soft.line[0]);
+    // Spline through (0,1) (0.5,0.2) (1,0) at 0.25 is 0.55 (140); a straight line gives 0.6 (153).
+    check("...and bends it the way Krita's spline does",
+        soft.spline[0] > 125 && soft.spline[0] < 148, 'alpha ' + soft.spline[0]);
+    check('a subtract masking brush hollows the dab out',
+        soft.hollow[0] < 10 && soft.hollow[1] > 240, JSON.stringify(soft.hollow));
     check('pen rotation turns the tip', d.twistRotatesTip);
     check('hardness can be driven, which it never could', d.hardnessDrivable);
     check('scatter can be driven, which it never could', d.scatterDrivable);

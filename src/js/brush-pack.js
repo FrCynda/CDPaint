@@ -256,10 +256,11 @@
             var s = parts[i].trim();
             if (!s) continue;
             var xy = s.split(',');
-            if (xy.length !== 2) continue;
+            // "x,y,is_corner" (KisCubicCurve::fromString): the curve bends sharply there.
+            if (xy.length !== 2 && !(xy.length === 3 && xy[2].trim() === 'is_corner')) continue;
             var x = parseFloat(xy[0]), y = parseFloat(xy[1]);
             if (isNaN(x) || isNaN(y)) continue;
-            pts.push([x, y]);
+            pts.push(xy.length === 3 ? [x, y, 1] : [x, y]);
         }
         return pts.length >= 2 ? pts : null;
     };
@@ -476,9 +477,15 @@
             out.hardness = Math.round(Math.max(0, Math.min(1, fade)) * 100);
             var gen = String(mask.id || 'default');
             if (gen === 'gauss') out.falloff = 'gauss';
-            /* "soft" is a user-drawn curve over the same fade; no curve
-             * reader yet, so it keeps the old rough third. */
-            if (gen === 'soft') out.hardness = Math.round(out.hardness * 0.3);
+            /* "soft" is a drawn curve: opacity at each radius is the curve
+             * there (KisCurveCircleMaskGenerator::valueAt) and the fades play
+             * no part. Airbrush Soft peaks at 40% in the middle; read as a
+             * rough third of the fade it painted a solid-cored disc. The
+             * square one keeps the rough third. */
+            var sc0 = gen === 'soft' && out.shape === 'circle' &&
+                BrushPack.parseCurve('<curve>' + (mask.softness_curve || '') + '</curve>');
+            if (sc0) { out.tipCurve = sc0; out.hardness = 0; }
+            else if (gen === 'soft') out.hardness = Math.round(out.hardness * 0.3);
             if (_num(mask.spikes, 2) > 2) warn.push('a star-shaped tip became a plain one');
         } else if (bd.filename) {
             out.shape = 'custom';
@@ -512,8 +519,29 @@
          * whole preset is in the file under MaskingBrush/Preset, tip and all,
          * so the tip comes out of it the same way the main one does: a named
          * file the pack has to resolve, or a shape we draw here. */
-        if (_bool(P['MaskingBrush/Enabled'])) {
-            var mb = BrushPack.brushDefinition(preset, 'MaskingBrush/Preset/brush_definition');
+        var mb = _bool(P['MaskingBrush/Enabled']) &&
+            BrushPack.brushDefinition(preset, 'MaskingBrush/Preset/brush_definition');
+        /* Subtract is not a tip stamped through each dab: Krita paints the
+         * masking brush as a whole second stroke of its own and takes its
+         * alpha off the finished stroke (KisMaskingBrushRenderer). The
+         * Waterpaint presets hollow their strokes out that way. */
+        if (mb && mb.mask && P['MaskingBrush/MaskingCompositeOp'] === 'subtract') {
+            var MP = {}, pre = 'MaskingBrush/Preset/';
+            Object.keys(P).forEach(function (k) { if (k.indexOf(pre) === 0) MP[k.slice(pre.length)] = P[k]; });
+            out.maskOp = 'subtract';
+            out.maskSize = Math.round(_num(P['MaskingBrush/MasterSizeCoeff'], 1) * 100);
+            out.maskFlow = Math.round(_num(MP.FlowValue, 1) * 100);
+            out.maskSpacing = Math.max(1, Math.round(_num(mb.spacing, 0.1) * 100));
+            out.maskTipCurve = (mb.mask.id === 'soft' &&
+                BrushPack.parseCurve('<curve>' + (mb.mask.softness_curve || '') + '</curve>')) || null;
+            ['Size', 'Flow'].forEach(function (o) {
+                var s = _sensorFor(MP, o);
+                if (!s || !s.src) return;
+                out['mask' + o + 'Src'] = s.src;
+                out['mask' + o + 'Min'] = 0;
+                if (s.curve) out['mask' + o + 'Curve'] = s.curve;
+            });
+        } else if (_bool(P['MaskingBrush/Enabled'])) {
             if (mb && mb.mask) {
                 out._tip2Url = _maskPng(mb.mask);
             } else if (mb && mb.filename) {
@@ -771,6 +799,8 @@
             warn.push('this is a ' + preset.paintop + ', which we paint as an ordinary brush');
         }
 
+        out.curveSmooth = true;   // Krita draws every curve as a spline
+
         /* A Krita option that is switched off holds that dial still. Left
          * unset, ours falls back to the engine's defaults -- size down to
          * half and flow to nothing under a light touch -- so Basic-2 Opacity,
@@ -962,7 +992,16 @@
              * in the world paint nothing at all. */
             var clear = false, edge = 0, en = 0, i, px;
             for (i = 3; i < d.length; i += 4) { if (d[i] < 250) { clear = true; break; } }
-            if (clear) {
+            /* Krita has one rule for a grey tip, transparent or not: ink is
+             * darkness times alpha (fetchPremultipliedRed in kis_brush.cpp).
+             * Its oil_knife.png is dark on opaque white bar eleven stray
+             * pixels at alpha 192, and trusting the alpha stamped the whole
+             * white square. */
+            var gray = opts && opts.krita;
+            for (i = 0; gray && i < d.length; i += 4) { if (d[i] !== d[i + 1] || d[i] !== d[i + 2]) gray = false; }
+            if (gray) {
+                for (i = 0; i < a.length; i++) a[i] = Math.round((255 - d[i * 4]) * d[i * 4 + 3] / 255);
+            } else if (clear) {
                 for (i = 0; i < a.length; i++) a[i] = d[i * 4 + 3];
             } else {
                 for (var x = 0; x < c.width; x++) {

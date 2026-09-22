@@ -116,3 +116,23 @@ two renders of the same job are byte-identical.
   other attributes, and the reader missed it and defaulted to pressure. So
   Pencil-4's tip turned with pressure instead of with the stroke. It went
   from 1.62× to 0.90×, and Basic-6 from 0.78× to 0.88×.
+- Soft tips. Krita's "soft" generator (`KisCurveCircleMaskGenerator`) reads
+  its `softness_curve` at the *squared* radius (`norme` is `a*a + b*b`), and
+  every Krita curve is a natural cubic spline (`KisCubicCurve`), where an
+  `is_corner` point starts a new one. Measured on a single real dab, the
+  engine's falloff now matches within 2 levels of 255. Airbrush Soft went
+  from 0.59× to 0.96× (IoU 0.43 → 0.975).
+- Masking brush, subtract mode. Krita paints the masking preset as a whole
+  second stroke, with its own size, flow and spacing, and then does
+  `alpha = max(0, stroke − mask)` (`KisMaskingBrushRenderer`,
+  `KisMaskingBrushCompositeOp.h`). We used to tile it through each dab.
+  It is now `maskOp: 'subtract'` (`_maskStrokeDab`), which gives the hollow
+  Waterpaint Soft Edges stroke. Only generated masking tips take this path;
+  Waterpaint Hard Edges' mask is a picture (`square_rough.png`) and still
+  tiles. Other modes (multiply, linear dodge) still tile too.
+- Grey PNG tips. Krita's ink is `(255 − grey) × alpha` for any all-grey tip
+  (`fetchPremultipliedRed`, `kis_brush.cpp`). `oil_knife.png` is dark on
+  opaque white apart from eleven pixels at alpha 192. We trusted the alpha,
+  so each dab stamped the whole white square. Together with the masking
+  brush, this took Waterpaint Soft Edges from 4.2× to 1.06×
+  (IoU 0.14 → 0.49).

@@ -167,7 +167,8 @@
          * it buys nothing and costs the accuracy of a second resample --
          * which at the sizes a swatch draws at (a pixel or two across) is
          * the difference between a visible stroke and an empty tile. */
-        if ((shape === 'circle' || shape === 'gauss' || shape === 'gimp') && w === h) ang = 0;
+        var tc = shape.indexOf('curve:') === 0;
+        if ((shape === 'circle' || shape === 'gauss' || shape === 'gimp' || tc) && w === h) ang = 0;
         var needRotation = _abs(ang) > 0.001;
         var canvas, ctx, rx, ry;
 
@@ -197,7 +198,10 @@
             case 'gauss':
             case 'gimp': _drawCircle(ctx, rx, ry, hard, shape); break;
             case 'circle':
-            default: _drawCircle(ctx, rx, ry, hard); break;
+            default:
+                if (tc) _drawCircle(ctx, rx, ry, 0, 'curve');
+                else _drawCircle(ctx, rx, ry, hard);
+                break;
         }
 
         return canvas;
@@ -251,6 +255,9 @@
             var t = i / stops, a;
             if (kind === 'gauss') a = _gaussAt(t, hard);
             else if (kind === 'gimp') a = _gimpAt(t, hard);
+            // Krita's "soft" generator: opacity is the curve at the SQUARED
+            // radius (KisCurveCircleMaskGenerator::norme is a*a + b*b).
+            else if (kind === 'curve') a = _curveAt(_params.tipCurve, t * t, true);
             else a = t <= hard ? 1 : _clamp((1 - t * t) / _max(1e-6, 1 - hard * hard), 0, 1);
             grad.addColorStop(t, 'rgba(255,255,255,' + a.toFixed(4) + ')');
         }
@@ -338,7 +345,7 @@
             _flowCanvas = new OffscreenCanvas(_max(1, w), _max(1, h));
             _flowCtx = _flowCanvas.getContext('2d');
             _flowUsed = null;   // a new buffer is already blank
-            _adCanvas = null; _adCtx = null;
+            _adCanvas = null; _adCtx = null; _mkCanvas = null; _mkCtx = null;
         }
     }
 
@@ -361,7 +368,7 @@
      * (falling pressure) is not modelled either. */
     var _adCanvas = null, _adCtx = null, _adO = 1, _adColor = '#000000';
     function _alphaDarken(p) {
-        return !!(p.dabOpacitySrc && p.dabOpacitySrc !== 'none')
+        return !!((p.dabOpacitySrc && p.dabOpacitySrc !== 'none') || p.maskOp === 'subtract')
             && p.engineKind !== 'shape' && p.engineKind !== 'deform';
     }
     function _ensureAdBuffer() {
@@ -371,6 +378,42 @@
         _adCtx.fillStyle = '#000';
         _adCtx.fillRect(0, 0, _adCanvas.width, _adCanvas.height);
     }
+    /* Krita's masking brush, subtract mode (KisMaskingBrushRenderer): the
+     * masking preset paints a whole stroke of its own into a separate
+     * buffer, and the finished stroke's alpha is max(0, a - mask). That is
+     * how Waterpaint Soft Edges comes out hollow. The mask's alpha is taken
+     * off in _adToFlow, which rebuilds the stroke from the grey buffer on
+     * every flush, so the subtraction never compounds.
+     *
+     * ponytail: mask dabs land on main dab positions once their own spacing
+     * is covered; the main brush is far denser, so the error is under one
+     * main step. No scatter, mirror or rotation on the mask. */
+    var _mkCanvas = null, _mkCtx = null, _mkLast = null, _mkStamp = null;
+    function _maskStrokeDab(p, x, y, sc) {
+        var d = p.size * p.maskSize / 100 * _dyn(p, 'maskSize', 1, sc, 15);
+        if (d < 0.5) return;
+        if (_mkLast && Math.hypot(x - _mkLast.x, y - _mkLast.y) < _max(0.5, d * p.maskSpacing / 100)) return;
+        _mkLast = { x: x, y: y };
+        if (!_mkCanvas || _mkCanvas.width !== _flowCanvas.width || _mkCanvas.height !== _flowCanvas.height) {
+            _mkCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);
+            _mkCtx = _mkCanvas.getContext('2d', { willReadFrequently: true });
+        }
+        if (!_mkStamp || _mkStamp.curve !== p.maskTipCurve) {
+            var N = 128, c = new OffscreenCanvas(N, N), g = c.getContext('2d');
+            var grad = g.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
+            for (var i = 0; i <= 32; i++) {
+                var t = i / 32, a = p.maskTipCurve ? _curveAt(p.maskTipCurve, t * t, true) : 1;
+                grad.addColorStop(t, 'rgba(0,0,0,' + a.toFixed(4) + ')');
+            }
+            g.fillStyle = grad;
+            g.fillRect(0, 0, N, N);
+            _mkStamp = { curve: p.maskTipCurve, canvas: c };
+        }
+        _mkCtx.globalAlpha = _clamp(_dyn(p, 'maskFlow', p.maskFlow / 100, sc, 16), 0, 1);
+        _mkCtx.drawImage(_mkStamp.canvas, x - d / 2, y - d / 2, d, d);
+        _mkCtx.globalAlpha = 1;
+    }
+
     function _greyHex(o) {
         var v = _round(_clamp(o, 0, 1) * 255).toString(16);
         if (v.length < 2) v = '0' + v;
@@ -379,8 +422,10 @@
     // Grey in the alpha-darken buffer becomes alpha in the flow buffer.
     function _adToFlow(x, y, w, h) {
         var img = _adCtx.getImageData(x, y, w, h), d = img.data, c = _hexToRgb(_adColor);
+        var m = _mkCtx ? _mkCtx.getImageData(x, y, w, h).data : null;
         for (var i = 0; i < d.length; i += 4) {
-            d[i + 3] = d[i]; d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2];
+            d[i + 3] = m ? _max(0, d[i] - m[i + 3]) : d[i];
+            d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2];
         }
         _flowCtx.putImageData(img, x, y);
     }
@@ -473,6 +518,7 @@
         var w = _ceil(_flowUsed.x2) - x + 2, h = _ceil(_flowUsed.y2) - y + 2;
         _flowCtx.clearRect(x, y, w, h);
         if (_adCtx) { _adCtx.fillStyle = '#000'; _adCtx.fillRect(x, y, w, h); }
+        if (_mkCtx) _mkCtx.clearRect(x, y, w, h);
         _flowUsed = null;
     }
 
@@ -488,7 +534,7 @@
     // resident while idle. The _ensure* functions recreate them lazily on the next stroke.
     function _releaseOffscreenBuffers() {
         _flowCanvas = null; _flowCtx = null; _flowUsed = null;
-        _adCanvas = null; _adCtx = null;
+        _adCanvas = null; _adCtx = null; _mkCanvas = null; _mkCtx = null;
         _covCanvas = null; _covCtx = null; _covUsed = null;
         _scratchCanvas = null; _scratchCtx = null;
         _tintMask = null; _tintColor = null;
@@ -1744,7 +1790,7 @@
     var _isArray = Array.isArray;
     function _cloneCurve(c) {
         var out = [];
-        for (var i = 0; i < c.length; i++) out.push([c[i][0], c[i][1]]);
+        for (var i = 0; i < c.length; i++) out.push(c[i].slice(0, 3));   // [x, y, corner?]
         return out;
     }
 
@@ -1779,7 +1825,7 @@
     /* What the widget draws, and what _dyn applies — the same function, so the
      * curve on screen is the curve the brush uses. */
     function _evalCurve(key, v) {
-        return _curveAt(_params[key + 'Curve'], v);
+        return _curveAt(_params[key + 'Curve'], v, _params.curveSmooth);
     }
 
     function _setPenState(e) {
@@ -1845,13 +1891,60 @@
      *
      * ponytail: linear interpolation between points; swap in a spline only if
      * someone can actually see the corners. */
-    function _curveAt(curve, v) {
+    /* Krita draws a curve as a natural cubic spline through its points
+     * (KisCubicSpline in kis_cubic_curve_spline.h: second derivative 0 at
+     * both ends), and a point marked as a corner ([x, y, 1]) ends one spline
+     * and starts the next. Joining the points with straight lines ran below
+     * Krita's curve wherever it bows, so presets drawn in Krita take this
+     * path (`curveSmooth`); everything else keeps straight lines. */
+    var _splines = new WeakMap();
+    function _buildSpline(c) {
+        var runs = [], start = 0;
+        for (var i = 1; i < c.length; i++) {
+            if (i === c.length - 1 || c[i][2]) { runs.push(_naturalRun(c.slice(start, i + 1))); start = i; }
+        }
+        return runs;
+    }
+    function _naturalRun(p) {
+        var n = p.length - 1, h = [], m = [0], i;
+        for (i = 0; i < n; i++) h.push(_max(1e-9, p[i + 1][0] - p[i][0]));
+        if (n > 1) {       // tridiagonal solve for the inner second derivatives
+            var cp = [], dp = [];
+            for (i = 1; i < n; i++) {
+                var a = h[i - 1], b = 2 * (h[i - 1] + h[i]), cc = h[i];
+                var f = 6 * ((p[i + 1][1] - p[i][1]) / h[i] - (p[i][1] - p[i - 1][1]) / h[i - 1]);
+                var den = b - (i > 1 ? a * cp[i - 2] : 0);
+                cp.push(cc / den);
+                dp.push((f - (i > 1 ? a * dp[i - 2] : 0)) / den);
+            }
+            var inner = new Array(n - 1);
+            for (i = n - 2; i >= 0; i--) inner[i] = dp[i] - (i < n - 2 ? cp[i] * inner[i + 1] : 0);
+            m = m.concat(inner);
+        }
+        m.push(0);
+        return { p: p, h: h, m: m };
+    }
+    function _splineAt(c, v) {
+        var runs = _splines.get(c);
+        if (!runs) { runs = _buildSpline(c); _splines.set(c, runs); }
+        var x = _clamp(v, c[0][0], c[c.length - 1][0]);
+        var r = runs[runs.length - 1];
+        for (var k = 0; k < runs.length; k++) if (x <= runs[k].p[runs[k].p.length - 1][0]) { r = runs[k]; break; }
+        var i = 0;
+        while (i < r.h.length - 1 && x > r.p[i + 1][0]) i++;
+        var t = x - r.p[i][0], hi = r.h[i], m0 = r.m[i], m1 = r.m[i + 1];
+        var b = (r.p[i + 1][1] - r.p[i][1]) / hi - hi * (2 * m0 + m1) / 6;
+        return _clamp(r.p[i][1] + b * t + m0 * t * t / 2 + (m1 - m0) * t * t * t / (6 * hi), 0, 1);
+    }
+
+    function _curveAt(curve, v, smooth) {
         if (curve == null) return v;
         if (typeof curve === 'number') {
             return curve === 1 ? v : _pow(v, curve);
         }
         if (!curve.length) return v;
         if (curve.length === 1) return _clamp(curve[0][1], 0, 1);
+        if (smooth && curve.length > 2) return _splineAt(curve, v);
         for (var i = 0; i < curve.length - 1; i++) {
             var a = curve[i], b = curve[i + 1];
             if (v <= b[0]) {
@@ -1868,7 +1961,7 @@
     function _dyn(p, key, base, sc, seed) {
         var src = p[key + 'Src'];
         if (!src || src === 'none') return base;
-        var v = _curveAt(p[key + 'Curve'], _sensor(src, sc, seed, p));
+        var v = _curveAt(p[key + 'Curve'], _sensor(src, sc, seed, p), p.curveSmooth);
         var lo = (p[key + 'Min'] != null ? p[key + 'Min'] : 0) / 100;
         return base * (lo + (1 - lo) * v);
     }
@@ -2049,6 +2142,7 @@
         var sz = _dyn(p, 'size', p.size, sc, 1) * tfSize;
         if (sz < 0.5) return;
         _adO = _dyn(p, 'dabOpacity', 1, sc, 14);
+        if (p.maskOp === 'subtract' && _flowCanvas) _maskStrokeDab(p, x, y, sc);
 
         // Bristle mode: render multiple fiber dabs
         if (p.bristleCount > 1) {
@@ -2286,6 +2380,12 @@
 
     /* Which tip to stamp. Shared by the single-dab and bristle paths so a
      * bristle brush honours shape, hardness and custom tips like any other. */
+    var _tcKeys = new WeakMap();
+    function _tipCurveKey(c) {
+        var k = _tcKeys.get(c);
+        if (!k) { k = 'curve:' + JSON.stringify(c); _tcKeys.set(c, k); }
+        return k;
+    }
     function _maskFor(shape, sz, hardness, angleDeg, aspect) {
         var mask;
         if (shape === 'custom' && _tipCanvas()) {
@@ -2294,6 +2394,7 @@
         } else {
             // A gauss falloff is its own mask, so its own cache key.
             if (shape === 'circle' && (_params.falloff === 'gauss' || _params.falloff === 'gimp')) shape = _params.falloff;
+            if (shape === 'circle' && _isArray(_params.tipCurve)) shape = _tipCurveKey(_params.tipCurve);
             mask = _dabCache.get(shape, sz, hardness, angleDeg, aspect);
         }
         var sh = _params.sharpness;
@@ -3651,6 +3752,15 @@
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
         textureMode: '', textureBrightness: 0, textureContrast: 1,
         textureInvert: false, textureSoft: false,
+        /* Krita presets: curves are splines (_splineAt), and a round tip may
+         * carry its own falloff curve (Krita's "soft" generator). */
+        curveSmooth: false, tipCurve: null,
+        /* Krita's masking brush in subtract mode: a second stroke whose
+         * alpha comes off this one (see _maskStrokeDab). Sizes are % of the
+         * brush, spacing % of the mask dab. */
+        maskOp: '', maskSize: 100, maskFlow: 100, maskSpacing: 10, maskTipCurve: null,
+        maskSizeSrc: 'none', maskSizeMin: 0, maskSizeCurve: 1,
+        maskFlowSrc: 'none', maskFlowMin: 0, maskFlowCurve: 1,
         hardnessSrc: 'none',     hardnessMin: 0,   hardnessCurve: 1,
         scatterSrc: 'none',      scatterMin: 0,    scatterCurve: 1,
         angleSrc: 'none',        angleRange: 180,
@@ -4052,7 +4162,7 @@
     engine.beginStroke = function (x, y, pressure, color) {
         _strokeSeed = _pinnedSeed == null
             ? Math.floor(Math.random() * 2147483647) : _pinnedSeed;
-        _dabIndex = 0;
+        _dabIndex = 0; _mkLast = null;
         /* Freeze the params for this stroke (see the getParams seam): a copy,
          * not the pointer — setParam mutates _params in place. Iterates _params
          * itself rather than _paramMeta so saved-override keys outside DEFAULTS
@@ -4519,7 +4629,7 @@
             _lastDabDist = 0;
             // The replay repaints the whole stroke, so the fade sensor has
             // to start counting again with it.
-            _dabIndex = 0;
+            _dabIndex = 0; _mkLast = null;
             if (pts.length === 1) {
                 _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, _state.lastColor);
             } else {
@@ -4798,7 +4908,8 @@
         var savedParams = _params;
         var savedState = _state;
         var savedTarget = _previewTarget;
-        var savedFlow = _flowCanvas, savedFlowCtx = _flowCtx, savedAd = _adCanvas, savedAdCtx = _adCtx;
+        var savedFlow = _flowCanvas, savedFlowCtx = _flowCtx, savedAd = _adCanvas, savedAdCtx = _adCtx,
+            savedMk = _mkCanvas, savedMkCtx = _mkCtx;
         // _flowUsed says which part of the flow buffer to blank next
         // stroke. A preview drives the same painter over its own tiny
         // buffer, so leaving its bounds behind would blank a swatch-sized
@@ -4849,7 +4960,7 @@
                 lastProcessedIdx: 0, started: false, bounds: null, paintRaf: null,
                 suspend: null
             };
-            _flowCanvas = null; _flowCtx = null; _adCanvas = null; _adCtx = null;
+            _flowCanvas = null; _flowCtx = null; _adCanvas = null; _adCtx = null; _mkCanvas = null; _mkCtx = null;
             _bgCanvas = null; _bgCtx = null;
             _previewTarget = {
                 ctx: ctx, w: W, h: H,
@@ -4909,6 +5020,7 @@
             _strokeParams = null;
             _state = savedState;
             _flowCanvas = savedFlow; _flowCtx = savedFlowCtx; _adCanvas = savedAd; _adCtx = savedAdCtx;
+            _mkCanvas = savedMk; _mkCtx = savedMkCtx;
             _flowUsed = savedFlowUsed;
             _bgCanvas = savedBg; _bgCtx = savedBgCtx;
         }
@@ -6260,7 +6372,7 @@
                 var src = (preset.resources && preset.resources[file] &&
                            preset.resources[file].bytes) || pack.tips[file];
                 var p = src
-                    ? BrushPack.tipStrip(src, file).catch(function () { return null; })
+                    ? BrushPack.tipStrip(src, file, { krita: true }).catch(function () { return null; })
                     : _shippedTip(file);
                 tipCache[file] = p;
                 return p;
