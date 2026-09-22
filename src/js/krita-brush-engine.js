@@ -1692,6 +1692,18 @@
         return _clamp(t, 0, 1);
     }
 
+    /* Krita's tilt the other way up: 1 with the pen upright -- which is also
+     * what a mouse reports -- falling to 0 at 60 degrees, where Krita's
+     * scale stops. KisPaintInformation::tiltElevation, verbatim. Krita
+     * brushes are drawn against this, so reading them through `tilt`
+     * painted them inside out: the Marker Chisel came out 60px wide where
+     * Krita paints it 7. */
+    function _elevation() {
+        var x = _clamp(_penTiltX / 60, -1, 1), y = _clamp(_penTiltY / 60, -1, 1);
+        var e = Math.sqrt(1 + (Math.abs(x) > Math.abs(y) ? y * y : x * x));
+        return Math.acos(Math.min(1, _hypot(x, y) / e)) / (_PI / 2);
+    }
+
     /* Every sensor returns 0..1 so one formula drives every parameter.
      *
      * `fade` and `distance` are the two that do not come from the pen: they
@@ -1704,6 +1716,7 @@
         switch (src) {
             case 'pressure': return _clamp(sc.pressure, 0, 1);
             case 'tilt':     return _tiltAmount();
+            case 'elevation': return _elevation();
             case 'twist':    return _clamp((_penTwist % 360) / 360, 0, 1);
             case 'wheel':    return _clamp(_penWheel, 0, 1);
             case 'speed':    return _clamp(_smoothSpeed / 3, 0, 1);

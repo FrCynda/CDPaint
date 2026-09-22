@@ -1,0 +1,251 @@
+{
+ "bundle": "Krita_4_Default_Resources.bundle",
+ "width": 520,
+ "height": 220,
+ "note": "one stroke per preset, pressure 0.05 -> 1.0 left to right, the preset's own size unless 'size' says; 'expect' holds what currently matches Krita and --check enforces it; cases without one are known gaps",
+ "cases": [
+  {
+   "name": "basic-2-opacity",
+   "preset": "b) Basic-2 Opacity",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ],
+   "expect": {
+    "thickTol": 2
+   }
+  },
+  {
+   "name": "basic-5-size",
+   "preset": "b) Basic-5 Size",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ],
+   "expect": {
+    "iouMin": 0.8,
+    "thickTol": 4
+   }
+  },
+  {
+   "name": "basic-6-details",
+   "preset": "b) Basic-6 Details",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "airbrush-soft",
+   "preset": "b) Airbrush Soft",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ],
+   "size": 60
+  },
+  {
+   "name": "pencil-1-hard",
+   "preset": "c) Pencil-1 Hard",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "pencil-2",
+   "preset": "c) Pencil-2",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ],
+   "expect": {
+    "inkRatio": [
+     0.9,
+     1.1
+    ],
+    "iouMin": 0.85,
+    "thickTol": 2
+   }
+  },
+  {
+   "name": "pencil-4-soft",
+   "preset": "c) Pencil-4 Soft",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "ink-1-precision",
+   "preset": "d) Ink-1 Precision",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "ink-3-gpen",
+   "preset": "d) Ink-3 Gpen",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ],
+   "expect": {
+    "thickTol": 2
+   }
+  },
+  {
+   "name": "marker-chisel-smooth",
+   "preset": "e) Marker Chisel Smooth",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ],
+   "expect": {
+    "thickTol": 2
+   }
+  },
+  {
+   "name": "chalk-soft",
+   "preset": "h) Chalk Soft",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "bristles-1-details",
+   "preset": "f) Bristles-1 Details",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "waterpaint-soft-edges",
+   "preset": "j) Waterpaint Soft Edges",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "pixel-art",
+   "preset": "u) Pixel Art",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ],
+   "expect": {
+    "inkRatio": [
+     0.98,
+     1.02
+    ],
+    "iouMin": 0.99
+   }
+  },
+  {
+   "name": "basic-1",
+   "preset": "b) Basic-1",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1.0
+    ]
+   ],
+   "expect": {
+    "iouMin": 0.9,
+    "thickTol": 3
+   }
+  }
+ ]
+}

@@ -212,6 +212,25 @@ await withPage(async (page) => {
             H.hardness === 100 && !H.falloff, `hardness ${H.hardness}`);
         check('auto spacing keeps its coefficient',
             H.autoSpacing === 0.8, String(H.autoSpacing));
+        /* Found by painting against real Krita (test/krita): with no size
+         * or flow option switched on, ours fell back to its own defaults and
+         * shrank and faded Basic-2 Opacity under a light touch. */
+        check('an option Krita has switched off holds its dial still',
+            H.sizeSrc === 'none' && H.flowSrc === 'none', `${H.sizeSrc} / ${H.flowSrc}`);
+        const sens = BP => {
+            const bd = '<Brush type="auto_brush" spacing="0.1"><MaskGenerator id="default" ' +
+                'type="circle" hfade="1" vfade="1" diameter="32" ratio="1"/></Brush>';
+            const tilt = '<params id="declination"><curve>0,1;1,0.1;</curve></params>';
+            return [
+                BP.toPreset({ params: { brush_definition: bd, PressureSize: 'true', SizeUseCurve: 'true', SizeSensor: tilt } }).params,
+                BP.toPreset({ params: { brush_definition: bd, PressureSize: 'true', SizeUseCurve: 'false', SizeSensor: tilt } }).params
+            ].map(p => p.sizeSrc);
+        };
+        const [tiltSrc, noCurve] = JSON.parse(await page.eval(`JSON.stringify((${sens})(BrushPack))`));
+        check("Krita's declination reads the pen Krita's way up",
+            tiltSrc === 'elevation', tiltSrc);
+        check('an option switched on without "use curve" follows no sensor',
+            noCurve === 'none', noCurve);
     }
     check('an eraser still erases',
         E.blendMode === 'erase' && tr.blendKnown, String(E.blendMode));

@@ -437,6 +437,13 @@ await withPage(async (page) => {
         stroke(0.8, { tiltX: 0, tiltY: 0, twist: 0 });   const upright = inkOf().px;
         stroke(0.8, { tiltX: 85, tiltY: 0, twist: 0 });  const flat = inkOf().px;
         out.tiltDrivesSize = flat > upright * 1.4;
+        // Krita's elevation reads the other way up: 1 upright (and for a
+        // mouse), 0 at 60 degrees -- measured against Krita's Marker Chisel.
+        fresh();
+        b.setParam('sizeSrc', 'elevation'); b.setParam('sizeMin', 0);
+        stroke(0.8, { tiltX: 0, tiltY: 0, twist: 0 });   const eUp = inkOf().px;
+        stroke(0.8, { tiltX: 60, tiltY: 0, twist: 0 });  const eFlat = inkOf().px;
+        out.elevationIsKritasWayUp = eUp > eFlat * 3;
 
         // -- pen rotation ---------------------------------------------------
         fresh();
@@ -491,6 +498,7 @@ await withPage(async (page) => {
     check('the floor sets how far a parameter collapses', d.floorRaisesMinimum);
     check('the curve reshapes the response', d.curveChangesResponse);
     check('tilt drives a parameter', d.tiltDrivesSize);
+    check("Krita's elevation is full upright and nothing at 60 degrees", d.elevationIsKritasWayUp);
     check('pen rotation turns the tip', d.twistRotatesTip);
     check('hardness can be driven, which it never could', d.hardnessDrivable);
     check('scatter can be driven, which it never could', d.scatterDrivable);

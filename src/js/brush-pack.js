@@ -331,14 +331,18 @@
         fuzzystroke: 'random',
         drawingangle: 'direction',
         ascension: 'tilt',
-        declination: 'tilt',
+        /* Krita reads these as 1 with the pen upright, 0 at 60 degrees --
+         * the reverse of our `tilt` -- so they get Krita's own sensor.
+         * ponytail: x/y tilt are one axis each in Krita; both read the
+         * whole lean here. Split them if a brush ever depends on one. */
+        declination: 'elevation',
         tilt: 'tilt',
         tiltdirection: 'tilt',
         rotation: 'twist',
         tangentialpressure: 'wheel',
         speed: 'speed',
-        xtilt: 'tilt',
-        ytilt: 'tilt',
+        xtilt: 'elevation',
+        ytilt: 'elevation',
         /* Neither of these comes off the pen: they come off how far into the
          * stroke the dab is. Krita gives each a `length` attribute on the
          * sensor tag -- pixels for distance, dabs for fade -- so the reach
@@ -378,8 +382,13 @@
      * on/off switch "Pressure<Option>" for most options but leaves it out for
      * the ones that are always live, where <Option>UseCurve is the switch. */
     function _sensorFor(params, opt) {
-        var flag = params['Pressure' + opt];
-        var on = (flag === undefined) ? _bool(params[opt + 'UseCurve']) : _bool(flag);
+        /* Krita reads a sensor only when the option is switched on AND its
+         * "use curve" box is ticked (KisCurveOption::computeValueComponents
+         * tests m_useCurve); with the box clear the option is a constant.
+         * Dozens of Krita's own presets are on-but-no-curve. */
+        var flag = params['Pressure' + opt], useCurve = params[opt + 'UseCurve'];
+        var on = (flag === undefined) ? _bool(useCurve)
+            : _bool(flag) && (useCurve === undefined || _bool(useCurve));
         if (!on) return null;
         var raw = params[opt + 'Sensor'] || '';
         var m = /<params\s+id="([^"]+)"/.exec(raw);
@@ -779,6 +788,14 @@
         } else if (preset.paintop && preset.paintop !== 'paintbrush') {
             warn.push('this is a ' + preset.paintop + ', which we paint as an ordinary brush');
         }
+
+        /* A Krita option that is switched off holds that dial still. Left
+         * unset, ours falls back to the engine's defaults -- size down to
+         * half and flow to nothing under a light touch -- so Basic-2 Opacity,
+         * which only fades, arrived shrinking as well. Measured against
+         * Krita's own render (test/krita). */
+        if (!out.sizeSrc) out.sizeSrc = 'none';
+        if (!out.flowSrc) out.flowSrc = 'none';
 
         return { name: preset.name || 'Imported', params: out,
                  tipFile: bd.filename || null, warnings: warn };

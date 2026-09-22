@@ -1,0 +1,92 @@
+{
+ "basic-2-opacity": {
+  "preset": "b) Basic-2 Opacity",
+  "size": 40,
+  "file": "b)_Basic-2_Opacity.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "basic-5-size": {
+  "preset": "b) Basic-5 Size",
+  "size": 40,
+  "file": "b)_Basic-5_Size_default.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "basic-6-details": {
+  "preset": "b) Basic-6 Details",
+  "size": 7.5,
+  "file": "b)_Basic-6_Details.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "airbrush-soft": {
+  "preset": "b) Airbrush Soft",
+  "size": 60,
+  "file": "b)_Airbrush_Soft.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "pencil-1-hard": {
+  "preset": "c) Pencil-1 Hard",
+  "size": 10,
+  "file": "c)_Pencil-1_Hard.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "pencil-2": {
+  "preset": "c) Pencil-2",
+  "size": 10,
+  "file": "c)_Pencil-2.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "pencil-4-soft": {
+  "preset": "c) Pencil-4 Soft",
+  "size": 16,
+  "file": "c)_Pencil-4_Soft.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "ink-1-precision": {
+  "preset": "d) Ink-1 Precision",
+  "size": 3,
+  "file": "d)_Ink-1_Precision.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "ink-3-gpen": {
+  "preset": "d) Ink-3 Gpen",
+  "size": 5,
+  "file": "d)_Ink-3_Gpen.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "marker-chisel-smooth": {
+  "preset": "e) Marker Chisel Smooth",
+  "size": 60,
+  "file": "e)_Marker_Chisel_Smooth.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "chalk-soft": {
+  "preset": "h) Chalk Soft",
+  "size": 135,
+  "file": "h)_Chalk_Soft.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "bristles-1-details": {
+  "preset": "f) Bristles-1 Details",
+  "size": 15.999984,
+  "file": "f)_Bristles-1_Details.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "waterpaint-soft-edges": {
+  "preset": "j) Waterpaint Soft Edges",
+  "size": 96,
+  "file": "j)_Waterpaint_Soft_Edges.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "pixel-art": {
+  "preset": "u) Pixel Art",
+  "size": 1,
+  "file": "u)_Pixel_Art.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "basic-1": {
+  "preset": "b) Basic-1",
+  "size": 40,
+  "file": "b)_Basic-1.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ }
+}
