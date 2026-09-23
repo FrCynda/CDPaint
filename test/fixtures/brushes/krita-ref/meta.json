@@ -118,5 +118,11 @@
   "size": 12,
   "file": "h)_Charcoal_Pencil_Medium.kpp",
   "krita": "5.3.2.1 (git 0619060)"
+ },
+ "ink-1-pressure-spacing": {
+  "preset": "d) Ink-1 Precision",
+  "size": 12,
+  "file": "d)_Ink-1_Precision.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
  }
 }

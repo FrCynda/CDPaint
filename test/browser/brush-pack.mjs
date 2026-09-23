@@ -367,7 +367,39 @@ await withPage(async (page) => {
                     SizecommonCurve: '0,0;1,0.5;' } }).params.sizeCurve,
                 buildUp: BP.toPreset({ params: { brush_definition: round, PaintOpAction: '1', OpacityValue: '0.25', FlowValue: '0.25' } }).params,
                 wash: BP.toPreset({ params: { brush_definition: round, PaintOpAction: '2', OpacityValue: '0.25', FlowValue: '0.25' } }).params,
-                blocks: BP.toPreset({ params: { brush_definition: bd('gauss', 'rect', 0.43, 0.82) } }).params
+                // Glow: build up, with opacity (and flow) on pressure.
+                buildPress: BP.toPreset({ params: { brush_definition: round, PaintOpAction: '1', OpacityUseCurve: 'true',
+                    OpacitySensor: '<params id="pressure"><curve>0,0;0.5,0.25;1,1;</curve></params>',
+                    PressureFlow: 'true', FlowUseCurve: 'true', FlowSensor: '<params id="speed"><curve>0,0;1,1;</curve></params>' } }).params,
+                blocks: BP.toPreset({ params: { brush_definition: bd('gauss', 'rect', 0.43, 0.82) } }).params,
+                // Ink-1 Precision with its spacing option on, as the spacing probe rendered it.
+                spaced: BP.toPreset({ params: { brush_definition: round, PressureSpacing: 'true', SpacingUseCurve: 'true',
+                    SpacingValue: '0.08', SpacingUseSameCurve: 'false',
+                    SpacingSensor: '<params id="pressure"><curve>0,0;1,1;</curve></params>' } }).params,
+                spacedFlat: BP.toPreset({ params: { brush_definition: round, PressureSpacing: 'true', SpacingUseCurve: 'false',
+                    SpacingValue: '0.5' } }).params,
+                unspaced: BP.toPreset({ params: { brush_definition: round, PressureSpacing: 'false', SpacingValue: '0.08' } }).params,
+                // X1BB Addition Soft: opacity flag off, curve box ticked.
+                opBox: BP.toPreset({ params: { brush_definition: round, PressureOpacity: 'false', OpacityUseCurve: 'true',
+                    OpacitySensor: '<params id="pressure"><curve>0,0;1,1;</curve></params>' } }).params,
+                opFlag: BP.toPreset({ params: { brush_definition: round, PressureOpacity: 'true', OpacityUseCurve: 'false',
+                    OpacitySensor: '<params id="pressure"><curve>0,0;1,1;</curve></params>' } }).params,
+                // mixbrush bis: a smudge preset carrying build up and a spacing option.
+                smudgeBuild: BP.toPreset({ paintop: 'colorsmudge', params: { brush_definition: round, PaintOpAction: '1',
+                    OpacityUseCurve: 'true', OpacitySensor: '<params id="pressure"><curve>0,0;1,1;</curve></params>',
+                    PressureSpacing: 'true', SpacingUseCurve: 'true', SpacingValue: '1',
+                    SpacingSensor: '<params id="pressure"><curve>0,0;1,1;</curve></params>' } }).params,
+                faint: BP.toPreset({ params: { brush_definition: round, OpacityValue: '0.004', FlowValue: '0.006' } }).params,
+                // Grease Charcoal: tip turned by tilt direction alone...
+                asc: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
+                    RotationSensor: '<params id="ascension"><curve>0,0;1,1;</curve></params>' } }).params,
+                // gouache: texture cut off above 159, read as black there.
+                cutoff: BP.toPreset({ params: { brush_definition: round, 'Texture/Pattern/Enabled': 'true',
+                    'Texture/Pattern/Name': 'x.png', 'Texture/Pattern/TexturingMode': '1',
+                    'Texture/Pattern/CutoffPolicy': '1', 'Texture/Pattern/CutoffLeft': '0', 'Texture/Pattern/CutoffRight': '159' } }),
+                // ...Large Chalk: tilt direction and pressure together.
+                ascList: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
+                    RotationSensor: '<params id="sensorslist"> <ChildSensor id="ascension"/> <ChildSensor id="pressure"> <curve>0,0;1,1;</curve> </ChildSensor> </params>' } }).params
             };
         };
         const B = JSON.parse(await page.eval(`JSON.stringify((${bank})(BrushPack))`));
@@ -382,6 +414,48 @@ await withPage(async (page) => {
             B.buildUp.flow === 25 && B.buildUp.opacity === 100, `${B.buildUp.flow} / ${B.buildUp.opacity}`);
         check('...and a "wash" brush keeps opacity as the stroke\'s ceiling',
             B.wash.flow === 25 && B.wash.opacity === 25, `${B.wash.flow} / ${B.wash.opacity}`);
+        /* Measured (test/krita/probes/buildup): in build up a pressure opacity
+         * scales each dab and the dabs stack -- a ceiling held the line at
+         * 128 where Krita's reached 209 -- and flow's own sensor is ignored. */
+        check('a "build up" pressure opacity scales each dab through flow, not as a ceiling',
+            B.buildPress.flowSrc === 'pressure' && !B.buildPress.dabOpacitySrc && B.buildPress.flowCurve &&
+            B.buildPress.flowCurve[1][1] === 0.25, JSON.stringify([B.buildPress.flowSrc, B.buildPress.dabOpacitySrc, B.buildPress.flowCurve]));
+        /* Measured on Krita's own renders (test/krita/probes/spacing): the
+         * spacing option multiplies the gap by its strength times its curve,
+         * and with the curve box clear by the strength alone. */
+        check("Krita's spacing option carries its strength and its pressure curve",
+            B.spaced.spacingStrength === 0.08 && B.spaced.spacingSrc === 'pressure' && B.spaced.spacingMin === 0,
+            `${B.spaced.spacingStrength} ${B.spaced.spacingSrc}`);
+        check('...on with no curve it is the strength alone',
+            B.spacedFlat.spacingStrength === 0.5 && (!B.spacedFlat.spacingSrc || B.spacedFlat.spacingSrc === 'none'),
+            `${B.spacedFlat.spacingStrength} ${B.spacedFlat.spacingSrc}`);
+        check('...and switched off it does nothing',
+            B.unspaced.spacingStrength == null, String(B.unspaced.spacingStrength));
+        /* Measured (test/krita/probes/optswitch): opacity's curve box alone
+         * decides -- flag off with the box ticked faded p0.25 to 137. */
+        check("Krita's opacity curve paints whenever its box is ticked, flag or no flag",
+            B.opBox.dabOpacitySrc === 'pressure' && !B.opFlag.dabOpacitySrc,
+            `${B.opBox.dabOpacitySrc} / ${B.opFlag.dabOpacitySrc}`);
+        /* A smudge preset's build-up and spacing keys are leftovers: taking
+         * them painted mixbrush bis solid black where Krita paints it grey. */
+        check('a smudge preset keeps its opacity and spacing as before',
+            B.smudgeBuild.dabOpacitySrc === 'pressure' && B.smudgeBuild.spacingStrength == null,
+            `${B.smudgeBuild.dabOpacitySrc} ${B.smudgeBuild.spacingStrength}`);
+        /* Measured (test/krita/probes/ascension): with no pen tilt, tilt
+         * direction lays a thin tip a quarter turn round, and in a list it
+         * adds that quarter on top of the pressure turn. */
+        check('tilt direction with no tilt turns the tip a quarter turn',
+            B.asc.angle === 90 && B.asc.angleSrc === 'tilt', `${B.asc.angle} ${B.asc.angleSrc}`);
+        check('...and alongside pressure, pressure turns it from there',
+            B.ascList.angle === 90 && B.ascList.angleSrc === 'pressure', `${B.ascList.angle} ${B.ascList.angleSrc}`);
+        /* Measured (test/krita/probes/texture): outside its grey range policy 1
+         * reads the pattern as black, 2 as white. */
+        check("a texture's cutoff comes across instead of a warning",
+            B.cutoff.params.textureCutoff === 1 && B.cutoff.params.textureCutoffLo === 0 &&
+            B.cutoff.params.textureCutoffHi === 159 && !B.cutoff.warnings.some(w => /cutoff/.test(w)),
+            JSON.stringify([B.cutoff.params.textureCutoff, B.cutoff.params.textureCutoffHi, B.cutoff.warnings]));
+        check('faint opacity and flow keep their tenths of a percent',
+            B.faint.opacity === 0.4 && B.faint.flow === 0.6, `${B.faint.opacity} / ${B.faint.flow}`);
         check("Krita's gauss square keeps its side and end fades apart (ZBlocks)",
             B.blocks.falloff === 'krita-gauss' && B.blocks.hardness === 43 && B.blocks.hardnessY === 82,
             JSON.stringify([B.blocks.falloff, B.blocks.hardness, B.blocks.hardnessY]));

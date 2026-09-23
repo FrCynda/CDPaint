@@ -370,7 +370,9 @@
         dodge: 'color-dodge', burn: 'color-burn',
         hard_light: 'hard-light', soft_light: 'soft-light',
         diff: 'difference', hue: 'hue', saturation: 'saturation',
-        color: 'color', luminize: 'luminosity'
+        color: 'color', luminize: 'luminosity',
+        // Add and linear dodge are one sum; the SVG soft light is the W3C one.
+        add: 'add', linear_dodge: 'add', soft_light_svg: 'soft-light'
     };
 
     function _num(v, dflt) {
@@ -388,6 +390,11 @@
          * tests m_useCurve); with the box clear the option is a constant.
          * Dozens of Krita's own presets are on-but-no-curve. */
         var flag = params['Pressure' + opt], useCurve = params[opt + 'UseCurve'];
+        /* Opacity has no off switch: measured on Krita's renders
+         * (test/krita/probes/optswitch), its curve box alone decides -- flag off
+         * with the box ticked still faded p0.25 to 137 -- and X1BB Addition
+         * Soft's flag-off pressure curve paints in Krita. */
+        if (opt === 'Opacity' && useCurve !== undefined) flag = undefined;
         var on = (flag === undefined) ? _bool(useCurve)
             : _bool(flag) && (useCurve === undefined || _bool(useCurve));
         if (!on) return null;
@@ -442,14 +449,23 @@
         var warn = [];
         var out = {};
 
-        out.opacity = Math.round(_num(P.OpacityValue, 1) * 100);
-        out.flow = Math.round(_num(P.FlowValue, 1) * 100);
+        /* Tenths of a percent: whole ones painted 0.6% and 1% build-up alike
+         * and 0.4% not at all, where Krita's layer shows them apart
+         * (test/krita/probes/faint). */
+        out.opacity = Math.round(_num(P.OpacityValue, 1) * 1000) / 10;
+        out.flow = Math.round(_num(P.FlowValue, 1) * 1000) / 10;
         /* "Build up" painting (PaintOpAction 1; Wash, 2, is the default):
          * each dab lands straight on the layer at the opacity, so dabs
-         * darken past it, and flow plays no part -- only Wash's alpha-darken
-         * op reads flow. Ramon's Airbrush Digital (25%/25%) peaked at 15%
-         * in Krita and 3.5% here. */
-        if (_num(P.PaintOpAction, 2) === 1) {
+         * darken past it, and flow plays no part. Measured on Krita's own
+         * renders (test/krita/probes/buildup): halving flow changed nothing,
+         * halving opacity halved the dab. Ramon's Airbrush Digital
+         * (25%/25%) peaked at 15% in Krita and 3.5% here. */
+        var buildUp = _num(P.PaintOpAction, 2) === 1;
+        /* What follows from the probes was measured on the pixel brush only;
+         * a smudge preset keeps these keys as leftovers, and taking them
+         * turned mixbrush bis solid black where Krita paints it grey. */
+        var measured = preset.paintop !== 'colorsmudge';
+        if (buildUp) {
             out.flow = out.opacity;
             out.opacity = 100;
         }
@@ -654,9 +670,56 @@
             if (s.curve) out[key + 'Curve'] = s.curve;
         });
 
+        /* The spacing option multiplies the gap by its strength times its
+         * curve. Measured on Krita 5.3's own renders of Ink-1 Precision with
+         * the option switched on: strength 0.08 spaced dabs 0.08x as far, 0.5
+         * spaced them 0.5x, and a pressure curve scaled the gap in step. With
+         * its curve box clear it is the strength alone. */
+        if (measured && _bool(P.PressureSpacing)) {
+            out.spacingStrength = _num(P.SpacingValue, 1);
+            var sps = _sensorFor(P, 'Spacing');
+            if (sps && !sps.src) warn.push('Spacing followed ' + sps.id + ', which we have no input for');
+            else if (sps) {
+                out.spacingSrc = sps.src;
+                out.spacingMin = 0;
+                _kritaReach(out, sps);
+                if (sps.curve) out.spacingCurve = sps.curve;
+            }
+        }
+
+        /* ...and a pressure-driven opacity in build-up scales each dab, which
+         * then stacks: the same probe's lone dab at pressure 0.5 was 124 and
+         * its line 209, where a ceiling held ours at 128. So it rides flow. */
+        if (measured && buildUp) {
+            // Krita's own flow and its sensor play no part here.
+            delete out.flowSrc; delete out.flowMin; delete out.flowCurve;
+            if (out.dabOpacitySrc) {
+                out.flowSrc = out.dabOpacitySrc;
+                out.flowMin = out.dabOpacityMin;
+                if (out.dabOpacityCurve) out.flowCurve = out.dabOpacityCurve;
+                delete out.dabOpacitySrc; delete out.dabOpacityMin; delete out.dabOpacityCurve;
+            }
+        }
+
         /* Rotation is an angle, not a factor, so it takes the source only --
          * its curve would reshape a full turn and we do not offer that. */
         var rot = _sensorFor(P, 'Rotation');
+        /* Tilt direction ("ascension") with no pen tilt -- a mouse, or
+         * Krita's scripted strokes -- turns the tip a quarter turn: measured
+         * (test/krita/probes/ascension), a thin rect at 0 painted as the one at
+         * 90 and 90 as 0. In a list it adds that quarter on top of the other
+         * inputs, which then turn the tip as they would alone; Grease
+         * Charcoal and Large Chalk lay their flat tips that way. */
+        if (rot && rot.id === 'ascension') {
+            var rsRaw = String(P.RotationSensor || '');
+            var rest = rsRaw.replace(/<ChildSensor\s+id="ascension"\s*\/>|<ChildSensor\s+id="ascension"[\s\S]*?<\/ChildSensor>/, '');
+            out.angle = ((out.angle || 0) + 90) % 360;
+            if (rest !== rsRaw && /<ChildSensor\b/.test(rest)) {
+                var P2 = {}; for (var pk in P) P2[pk] = P[pk];
+                P2.RotationSensor = rest;
+                rot = _sensorFor(P2, 'Rotation');
+            }
+        }
         if (rot) {
             /* Every sensor the engine can read now spins the tip -- the ones
              * that ARE an angle (direction, twist, tilt) point it, the rest
@@ -715,9 +778,16 @@
                 out.textureContrast = _num(P['Texture/Pattern/Contrast'], 1);
                 out.textureInvert = _bool(P['Texture/Pattern/Invert']);
                 out.textureSoft = _bool(P['Texture/Pattern/UseSoftTexturing']);
-                if (_num(P['Texture/Pattern/NeutralPoint'], 0.5) !== 0.5 ||
-                    _num(P['Texture/Pattern/CutoffPolicy'], 0) !== 0)
-                    warn.push('texture neutral point / cutoff not carried');
+                /* Cutoff: outside its grey range the pattern reads as black
+                 * (policy 1) or white (2) -- see _kritaTexMask. */
+                var cp = Math.round(_num(P['Texture/Pattern/CutoffPolicy'], 0));
+                if (cp === 1 || cp === 2) {
+                    out.textureCutoff = cp;
+                    out.textureCutoffLo = _num(P['Texture/Pattern/CutoffLeft'], 0);
+                    out.textureCutoffHi = _num(P['Texture/Pattern/CutoffRight'], 255);
+                }
+                if (_num(P['Texture/Pattern/NeutralPoint'], 0.5) !== 0.5)
+                    warn.push('texture neutral point not carried');
                 var ts = _sensorFor(P, 'Texture/Strength/');
                 if (ts && ts.src) {
                     out.textureSrc = ts.src;

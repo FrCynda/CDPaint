@@ -468,6 +468,73 @@
     ],
     "iouMin": 0.65
    }
+  },
+  {
+   "name": "ink-1-pressure-spacing",
+   "preset": "d) Ink-1 Precision",
+   "size": 12,
+   "lines": [
+    [
+     40,
+     60,
+     0.1,
+     460,
+     60,
+     1
+    ],
+    [
+     40,
+     150,
+     0.5,
+     460,
+     150,
+     0.5
+    ]
+   ],
+   "note": "Ink-1 with its spacing option on: 5x spacing, strength 1, a straight pressure curve. Krita spaces dabs 60*pressure px apart (measured, test/krita/out/spacing)",
+   "xmlSub": [
+    [
+     "(name=\"PressureSize\"[^>]*>(?:<!\\[CDATA\\[)?)(true|false)",
+     "\\g<1>false"
+    ],
+    [
+     "spacing=\"0.15\"",
+     "spacing=\"5\""
+    ],
+    [
+     "(name=\"PressureSpacing\"[^>]*>(?:<!\\[CDATA\\[)?)(true|false)",
+     "\\g<1>true"
+    ],
+    [
+     "(name=\"SpacingUseCurve\"[^>]*>(?:<!\\[CDATA\\[)?)(true|false)",
+     "\\g<1>true"
+    ],
+    [
+     "(?s)(name=\"SpacingSensor\".*?<curve>)[^<]*",
+     "\\g<1>0,0;1,1;"
+    ],
+    [
+     "(name=\"SpacingValue\"[^>]*>(?:<!\\[CDATA\\[)?)[0-9.]+",
+     "\\g<1>1"
+    ]
+   ],
+   "params": {
+    "sizeSrc": "none",
+    "spacing": 500,
+    "spacingStrength": 1,
+    "spacingSrc": "pressure",
+    "spacingCurve": [
+     [
+      0,
+      0
+     ],
+     [
+      1,
+      1
+     ]
+    ],
+    "spacingMin": 0
+   }
   }
  ]
 }

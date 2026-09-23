@@ -906,7 +906,9 @@
         var tile = _patWanted && _patTiles[_patWanted];
         if (!tile) return null;
         var sc = p.textureScale || 1;
-        var key = _patWanted + '|' + sc + '|' + p.textureBrightness + '|' + p.textureContrast + '|' + !!p.textureInvert;
+        var cut = p.textureCutoff || 0, lo = p.textureCutoffLo || 0, hi = p.textureCutoffHi == null ? 255 : p.textureCutoffHi;
+        var key = _patWanted + '|' + sc + '|' + p.textureBrightness + '|' + p.textureContrast + '|' + !!p.textureInvert +
+            '|' + cut + '|' + lo + '|' + hi;
         if (_ktMask && _ktMask.key === key) return _ktMask;
         var w = _max(2, _round(tile.width * sc)), h = _max(2, _round(tile.height * sc));
         var c = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true });
@@ -918,6 +920,16 @@
             var a = d[i * 4 + 3] / 255;
             var g = ((d[i * 4] * 11 + d[i * 4 + 1] * 16 + d[i * 4 + 2] * 5) >> 5) / 255;
             var v = _clamp(((g * a + 1 - a) - br - 0.5) * ct + 0.5, 0, 1);
+            /* Cutoff, measured on Krita's renders of a grey ramp
+             * (test/krita/probes/texture): outside [lo, hi] of the pattern's
+             * grey, policy 1 reads it as black and 2 as white; inside, and
+             * under policy 0, nothing changes. ponytail: measured at default
+             * brightness/contrast/invert only -- their order against the
+             * cutoff is a guess. */
+            if (cut) {
+                var gv = (g * a + 1 - a) * 255;
+                if (gv < lo || gv > hi) v = cut === 1 ? 0 : 1;
+            }
             m[i] = _round((p.textureInvert ? 1 - v : v) * 255);
         }
         _ktMask = { key: key, w: w, h: h, m: m };
@@ -2933,7 +2945,10 @@
         hue:         'hue',
         saturation:  'saturation',
         color:       'color',
-        luminosity:  'luminosity'
+        luminosity:  'luminosity',
+        // Add / linear dodge: the paint's light is summed onto what is there
+        // (W3C Compositing 'plus-lighter', canvas 'lighter').
+        add:         'lighter'
     };
     function _blendOp(mode) { return _BLEND_OPS[mode] || 'source-over'; }
     /* The layer compositor's _render() repaints the whole document on every
@@ -3318,8 +3333,10 @@
                 var phi = ((ang || 0) - _dynAngle(p, p.angle, sc) + (p.angle || 0)) * _PI / 180;
                 g = 1 / Math.sqrt(_pow(_cos(phi) / a, 2) + _pow(_sin(phi) / b, 2));
             }
-            if (p.spacingSrc && p.spacingSrc !== 'none') {
-                g *= _dyn(p, 'spacing', 1, sc, 10);
+            /* spacingStrength: a Krita spacing option's own multiplier, which
+             * holds when its curve box is clear and can pass 1. */
+            if (p.spacingStrength != null || (p.spacingSrc && p.spacingSrc !== 'none')) {
+                g *= _dyn(p, 'spacing', p.spacingStrength == null ? 1 : p.spacingStrength, sc, 10);
             }
             /* Krita's floor (MIN_DISTANCE_SPACING, kis_distance_information.cpp).
              * At 1px Ink-1 Precision's 3px dabs, due every 0.45px, stacked to
@@ -3965,7 +3982,7 @@
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
         textureMode: '', textureBrightness: 0, textureContrast: 1,
-        textureInvert: false, textureSoft: false,
+        textureInvert: false, textureSoft: false, textureCutoff: 0, textureCutoffLo: 0, textureCutoffHi: 255,
         /* Krita presets: curves are splines (_splineAt), and a round tip may
          * carry its own falloff curve (Krita's "soft" generator). */
         curveSmooth: false, tipCurve: null,
@@ -3984,6 +4001,7 @@
         textureSrc: 'none',      textureMin: 0,    textureCurve: 1,
         colorRateSrc: 'none',    colorRateMin: 0,  colorRateCurve: 1,
         spacingSrc: 'none',      spacingMin: 0,    spacingCurve: 1,
+        spacingStrength: null,
         dabCountSrc: 'none',     dabCountMin: 0,   dabCountCurve: 1,
         offsetSrc: 'none',       offsetMin: 0,     offsetCurve: 1,
         /* How far the two stroke-position sensors reach: dabs for fade, the

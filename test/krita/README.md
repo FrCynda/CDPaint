@@ -275,13 +275,45 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
   - Still open: GIMP holds a 1px line at 128 where ours builds to 182.
     GIMP lays its dabs differently along the line (the first dab straddles
     and the rest don't), and it isn't worked out yet.
+- Found black-box, from Krita's own renders only. Each probe is a
+  `test/krita/probes/<name>/job.mjs` (Krita's side, one fresh Krita per
+  variant, written to `test/krita/out/<name>`) plus
+  `test/krita/probes/probe-cdp.mjs <name>` (ours, through the real
+  importer). Run `probes/dump-ink1.mjs` once first:
+  - `buildup`: in build-up each dab paints opacity × the pressure curve,
+    flow plays no part, and the dabs stack past the opacity. Glow's IoU went
+    0.52 → 0.96 and Light Beam's 0.65 → 0.90.
+  - `spacing`: the spacing option multiplies the gap by its strength × its
+    curve. With the curve box clear it is the strength alone; with its flag
+    off it does nothing. Light pressure has the same minimum gap as ours.
+  - `optswitch`: opacity has no off switch. Its curve box alone decides
+    (flag off with the box ticked still faded p0.25 to 137), whereas size
+    and spacing follow their flags.
+  - Smudge presets keep `PaintOpAction` and a spacing option as leftovers.
+    Applying the two rules above to them turned mixbrush bis solid black, so
+    those rules are for the pixel brush only.
+  - `faint`: opacity and flow need tenths of a percent (0.4% painted nothing).
+  - `ascension`: tilt direction with no pen tilt (a mouse, or a scripted
+    stroke) turns the tip a quarter turn. In a list with pressure the two add.
+    Grease Charcoal and Large Chalk lay their flat tips this way. How it turns
+    with a real tilt can't be probed: scripted strokes carry no tilt.
+  - `texture`: a grey-ramp pattern gives the transfer curve directly. Ours
+    matched without a cutoff. Outside the cutoff range, policy 1 reads the
+    pattern as black and 2 as white. Only default brightness, contrast and
+    invert were probed.
+  - Airbrush mode adds nothing to a scripted stroke.
+  - Still open: very faint build-up (well under one 8-bit level a dab)
+    accumulates less in ours than in Krita. X1BB Addition Soft (5% × a
+    pressure curve, 64%-peak soft tip) sits at 0.68× ink. The tip, spacing
+    and dab count all match, so it is how the canvas adds sub-level dabs.
 - Still open:
   - Charcoal's IoU is 0.69 with the texture on. Krita gives the texture a
     random offset per stroke (`isRandomOffsetX/Y`), so the grain can't line
     up pixel for pixel.
   - Waterpaint and Chalk still vary a little from run to run, because their
     tips turn at random.
-- Source to read: the installed Krita is 5.3.2 (`meta.json` records it), so
-  read the `v5.2.x` tags of github.com/KDE/krita (the mirror has no 5.3 tag),
-  not 4.4. The masking brush, alpha darken and spacing code checked here are
-  the same in both.
+- Don't read Krita's or GIMP's source. Both are GPL and CDPaint is MIT.
+  Behaviour is worked out from what the real programs paint (a probe per
+  question, as above) and from public specs. The installed Krita is 5.3.2
+  (`meta.json` records it). Some older findings above name Krita source
+  files; they come from before this rule and are kept as history.
