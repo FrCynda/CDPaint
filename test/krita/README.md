@@ -356,6 +356,15 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
     rate's slider, not its curve. Mean error: smudge4 10.0 → 2.6 levels,
     smudge5 8.5 → 2.0; smudge3 ends at 1.4 and smudge6 at 2.3. The
     flat-curve grid is unchanged.
+  - `smudge7` (dulling on empty and red, opacity slider 1 and 0.5): dulling
+    already matched. The opacity slider scales each dab exactly as the
+    opacity curve does. Ours ignored it (a smudge writes the layer itself,
+    past the stroke-wide opacity), so 0.5 held at 253 where Krita built to
+    209. Mean 7.3 → 1.8 levels. From the bank, not a probe: a smudge dab
+    takes its texture too (pastel_014 ink 6.4x → 0.98x once its tip also
+    resolved), and a preset's `abr_brush` tip "<set>_<n>" is the n-th tip,
+    counted from 1, of <set>.abr in the pack. Colour smudge went from
+    0 / 6 / 50 (close / near / off) before this rebuild to 19 / 17 / 22.
   - Still open: very faint build-up (well under one 8-bit level a dab)
     accumulates less in ours than in Krita. X1BB Addition Soft (5% × a
     pressure curve, 64%-peak soft tip) sits at 0.68× ink. The tip, spacing
