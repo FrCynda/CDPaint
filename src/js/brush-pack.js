@@ -642,6 +642,18 @@
             if (rot.src) { out.angleSrc = rot.src; _kritaReach(out, rot); }
             else warn.push('the tip turned with ' + rot.id + ', which we cannot turn it with');
         }
+        /* Inputs that are not themselves an angle go through Krita's own
+         * formula: strength and curve kept, and a half turn on top (see
+         * _dynAngle). A switched-on option with no input is the half turn
+         * alone. The angle inputs keep pointing the tip as they did. */
+        if (_bool(P.PressureRotation) && !(rot && /^(direction|twist|tilt)$/.test(rot.src || ''))) {
+            if (rot && rot.src) {
+                out.angleStrength = _num(P.RotationValue, 1);
+                if (rot.curve) out.angleCurve = rot.curve;
+            } else if (!rot) {
+                out.angle = (out.angle + 180) % 360;
+            }
+        }
 
         /* Krita's Texture option paints the dab through a pattern image.
          * The image itself lives in the pack, not in the preset, so only its
@@ -730,7 +742,9 @@
         }
 
         // A per-dab flip is exactly what our strip tips already do.
-        var mrx = _bool(P.HorizontalMirrorEnabled), mry = _bool(P.VerticalMirrorEnabled);
+        // Only when the option is on: Krita keeps both boxes' last state either way.
+        var mon = _bool(P.PressureMirror);
+        var mrx = mon && _bool(P.HorizontalMirrorEnabled), mry = mon && _bool(P.VerticalMirrorEnabled);
         if (mrx || mry) out.tipMirror = (mrx && mry) ? 'both' : (mrx ? 'h' : 'v');
 
         for (var i = 0; i < DROPPED.length; i++) {

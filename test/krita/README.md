@@ -202,12 +202,21 @@ two renders of the same job are byte-identical.
   Charcoal's 0.8 tip at 309° has a box 10.4px wide, not 8.3, and we laid a
   fifth too many dabs. Charcoal went 1.15× → 0.99×, and with mask and texture
   off it is 1.01× (IoU 0.95). One dab is 1.00×, peaking at 53 on both sides.
+- Rotation option (`KisRotationOption::apply`, `KisCurveOption::rotationLikeValue`).
+  The tip turns by (1 − v)·π, where v = strength × the sensor read as −1..1.
+  Random (fuzzy) is additive; other sensors are scaling, which Krita negates.
+  So a tip with the option on sits upside down and wobbles from there.
+  Waterpaint's knife (strength 0.19) turns 160–207°; we imported it as a full
+  random spin. Its IoU went 0.65 → 0.85, and Chalk's 0.87 → 0.94. The angle
+  sensors (drawing angle, twist, tilt) keep their old handling.
+- Mirror boxes are stored ticked whether or not the option is on; only
+  `PressureMirror` switches them on. Waterpaint was flipping at random.
 - Still open:
   - Charcoal's IoU is 0.69 with the texture on. Krita gives the texture a
     random offset per stroke (`isRandomOffsetX/Y`), so the grain can't line
     up pixel for pixel.
-  - Waterpaint's IoU is about 0.66, and varies from run to run because its
-    tip is random.
+  - Waterpaint and Chalk still vary a little from run to run, because their
+    tips turn at random.
 - Source to read: the installed Krita is 5.3.2 (`meta.json` records it), so
   read the `v5.2.x` tags of github.com/KDE/krita (the mirror has no 5.3 tag),
   not 4.4. The masking brush, alpha darken and spacing code checked here are

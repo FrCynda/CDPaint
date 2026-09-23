@@ -2088,6 +2088,18 @@
          * than spins, and Photoshop and Procreate both ask for small
          * wobbles far more often than for full spins. */
         var range = p.angleRange == null ? 180 : p.angleRange;
+        /* A Krita rotation option (KisRotationOption::apply): the tip turns
+         * by (1 - v) * pi, v = strength * the sensor as -1..1 (random reads
+         * additive, the rest scaling, which Krita negates), and Krita's turn
+         * shows as minus ours. So a tip with the option on sits upside down
+         * and wobbles from there: Waterpaint's knife turns 160..207 degrees,
+         * not a full spin. */
+        if (p.angleStrength != null && src && src !== 'none') {
+            var c = _curveAt(p.angleCurve, _sensor(src, sc, 11, p), p.curveSmooth);
+            var v = p.angleStrength * (2 * c - 1) * (src === 'random' ? 1 : -1);
+            v = ((v + 1) % 2 + 2) % 2 - 1;
+            return baseAngle + 180 + 180 * v;
+        }
         if (src === 'random') return baseAngle + (_dabRand(sc.x, sc.y, 11) * 2 - 1) * range;
         /* Anything else the sensors understand spins the tip through a full
          * turn across its range. Krita lets pressure drive rotation and
@@ -3916,7 +3928,7 @@
         maskFlowSrc: 'none', maskFlowMin: 0, maskFlowCurve: 1,
         hardnessSrc: 'none',     hardnessMin: 0,   hardnessCurve: 1,
         scatterSrc: 'none',      scatterMin: 0,    scatterCurve: 1,
-        angleSrc: 'none',        angleRange: 180,
+        angleSrc: 'none',        angleRange: 180, angleStrength: null, angleCurve: 1,
         aspectRatioSrc: 'none',  aspectRatioMin: 0, aspectRatioCurve: 1,
         textureSrc: 'none',      textureMin: 0,    textureCurve: 1,
         colorRateSrc: 'none',    colorRateMin: 0,  colorRateCurve: 1,

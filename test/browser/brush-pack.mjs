@@ -294,6 +294,15 @@ await withPage(async (page) => {
         const turned = await page.eval(`BrushPack.toPreset({ params: { brush_definition:
             '<Brush type="auto_brush" angle="0.5" spacing="0.1"><MaskGenerator id="default" type="circle" diameter="20" ratio="0.5" hfade="1" vfade="1"/></Brush>' } }).params.angle`);
         check("a Krita tip's fixed angle is turned Krita's way round", turned === 331, 'angle ' + turned);
+        // Waterpaint Soft Edges: a 0.19 random rotation, and mirror boxes ticked with the option off.
+        const wpRot = JSON.parse(await page.eval(`JSON.stringify(BrushPack.toPreset({ params: {
+            brush_definition: '<Brush type="auto_brush" angle="0" spacing="0.1"><MaskGenerator id="default" type="circle" diameter="20" ratio="0.5" hfade="1" vfade="1"/></Brush>',
+            PressureRotation: 'true', RotationUseCurve: 'true', RotationValue: '0.19',
+            RotationSensor: '<params id="fuzzy"><curve>0,0.20603;1,0.889447;</curve></params>',
+            PressureMirror: 'false', VerticalMirrorEnabled: 'true' } }).params)`));
+        check("Krita's rotation keeps its strength and curve, and an unticked mirror stays off",
+            wpRot.angleSrc === 'random' && wpRot.angleStrength === 0.19 && wpRot.angleCurve.length === 2 && !wpRot.tipMirror,
+            JSON.stringify([wpRot.angleSrc, wpRot.angleStrength, wpRot.angleCurve, wpRot.tipMirror]));
         /* Krita's oil_knife.png is dark on opaque white, bar eleven pixels
          * at alpha 192; trusting the alpha stamped the whole white square. */
         const knife = await page.eval(`(async () => {
