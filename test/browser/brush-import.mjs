@@ -25,6 +25,7 @@ const FILES = {
     'two-tips-v6-sub2.abr': b64('two-tips-v6-sub2.abr'),
     'two-tips-v2.abr': b64('two-tips-v2.abr'),
     'three-tips-v10.abr': b64('three-tips-v10.abr'),
+    'abr-tip-pack.bundle': b64('abr-tip-pack.bundle'),
     'one-tool.tpl': b64('one-tool.tpl'),
     'round-soft.vbr': b64('round-soft.vbr'),
     'block-wide.vbr': b64('block-wide.vbr'),
@@ -381,6 +382,20 @@ await withPage(async (page) => {
      * names. It must not inherit the name above it. */
     check('and a tip the descriptor forgot is numbered, not misnamed',
         named[2] === 'three tips v10 3', JSON.stringify(named));
+
+    /* A Krita preset can take its tip out of a Photoshop set beside it,
+     * naming only "<set>_<n>" (n from 1). Unresolved, portnov's pastel
+     * brushes came in as plain squares -- 6.4x Krita's ink. */
+    const abrTip = await page.eval(`(async () => {
+        const buf = await window.__files['abr-tip-pack.bundle'].arrayBuffer();
+        const r = await PaintApp.brush.importBrushPack(new Uint8Array(buf), 'abr-tip-pack.bundle');
+        const P = PaintApp.brush.PRESETS;
+        const got = r.added.length ? P[r.added[0]] : {};
+        return JSON.stringify({ r, shape: got.shape, same: !!got._tipUrl && got._tipUrl === P['a bar']._tipUrl,
+            other: got._tipUrl === P['a blob']._tipUrl });
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('a Krita preset finds its tip inside the .abr beside it, counted from 1',
+        abrTip.shape === 'custom' && abrTip.same && !abrTip.other, JSON.stringify(abrTip).slice(0, 300));
 
     /* The same descriptor holds every dial Photoshop paints with, and until
      * this session we read none of them: a downloaded pack arrived as flat

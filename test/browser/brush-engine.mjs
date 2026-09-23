@@ -545,6 +545,30 @@ await withPage(async (page) => {
         Math.abs(kt.mul - 128) <= 6, 'alpha ' + kt.mul);
     check("a texture's cutoff fill lands after Invert, as Krita's does",
         kt.cut >= 250, 'alpha ' + kt.cut);
+    /* A colour smudge writes the layer itself, so it has to grain its own
+     * dabs: it skipped texture and pastel_014 laid 6x Krita's ink. */
+    const st = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        const c = document.createElement('canvas'); c.width = c.height = 8;
+        const x = c.getContext('2d'); x.fillStyle = '#808080'; x.fillRect(0, 0, 8, 8);
+        const url = c.toDataURL();
+        const run = (tex) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            for (const [k, v] of Object.entries({ smudgeMode: 0, colorRate: 100, smudgeRate: 25, size: 30, hardness: 100,
+                falloff: 'krita', autoSpacing: 0.3, flowSrc: 'none', sizeSrc: 'none', colorRateSrc: 'none', smoothingMode: 'none',
+                texture: tex, textureMode: 'multiply' })) b.setParam(k, v);
+            b.loadTexturePattern(url);
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(90, 100, 1, '#000000');
+            for (let i = 91; i <= 100; i++) b.moveStroke(i, 100, 1, '#000000');
+            b.endStroke();
+            return __B.layer().ctx.getImageData(95, 100, 1, 1).data[3];
+        };
+        run(100); await new Promise(r => setTimeout(r, 300));   // the pattern decodes async
+        return JSON.stringify({ plain: run(0), grained: run(100) });
+    })()`, { awaitPromise: true }));
+    check('a colour smudge dab is grained by its texture too',
+        st.plain > 100 && st.grained < st.plain * 0.75, JSON.stringify(st));
     /* Krita's sketch engine (test/krita/probes/sketch): lines out to earlier
      * points within half the brush, trimmed by the offset. Its first cut
      * only repainted round the newest point, so a fast stroke kept its last

@@ -2290,7 +2290,7 @@
     var _smPrev = null;
     var _smMaskA = new WeakMap();
 
-    function _smudgeDab(p, x, y, mask, colorHex, alpha, sc, sz) {
+    function _smudgeDab(p, x, y, mask, colorHex, alpha, sc, sz, tex) {
         var ctx = _outCtx();
         if (!ctx) return;
         var ma = _smMaskA.get(mask);
@@ -2363,6 +2363,11 @@
             }
             for (n = 0; n < ma.length; n++) { u = n * 4; src[u] = ar; src[u + 1] = ag; src[u + 2] = ab; src[u + 3] = aa; }
         }
+        /* Texture thins the tip where the paper is low, as it does a plain
+         * dab (_applyKritaTexture's rule, pinned to the document): smooth,
+         * pastel_014 laid 2.1x Krita's ink. */
+        var tx = p.textureMode && tex > 0 ? _kritaTexMask(p) : null;
+        var ts = tx ? _clamp(tex / 100, 0, 1) : 0, tsub = p.textureMode === 'subtract', tsoft = !!p.textureSoft;
         var locked = _alphaLocked();
         var stencil = null;
         if (_selStencil && !_previewTarget) {
@@ -2372,6 +2377,12 @@
             for (i = 0; i < mw; i++) {
                 var m = ma[j * mw + i];
                 if (!m) continue;
+                if (tx) {
+                    var tm = tx.m[((((oy + j) % tx.h) + tx.h) % tx.h) * tx.w + ((((ox + i) % tx.w) + tx.w) % tx.w)] / 255;
+                    if (tsub) m = tsoft ? m - tm * ts * 255 : m - (tm + 1 - ts) * 255;
+                    else m = tsoft ? m * (tm + (1 - ts) * (1 - tm)) : m * tm * ts;
+                    if (!(m > 0)) continue;
+                }
                 var px = ox + i - rx, py = oy + j - ry;
                 if (px < 0 || py < 0 || px >= rw || py >= rh) continue;
                 t = (py * rw + px) * 4; u = (j * mw + i) * 4;
@@ -2531,7 +2542,7 @@
             var alpha = _clamp(_dyn(p, 'flow', p.flow / 100, flowSc, 4), 0, 1);
             if (tfInk < 1) alpha = _taperAlpha(alpha, tfInk, sz, p);
 
-            if (p.smudgeMode != null) _smudgeDab(p, dx, dy, mask, finalColor, alpha, sc, sz);
+            if (p.smudgeMode != null) _smudgeDab(p, dx, dy, mask, finalColor, alpha, sc, sz, tex);
             else _paintDab(_flowCtx, dx, dy, mask, finalColor, alpha, tex, p.textureScale, p.textureType, p.wetBlend);
         }
     }
@@ -6848,9 +6859,24 @@
                            preset.resources[file].bytes) || pack.tips[file];
                 var p = src
                     ? BrushPack.tipStrip(src, file, { krita: true }).catch(function () { return null; })
-                    : _shippedTip(file);
+                    : _abrTip(file) || _shippedTip(file);
                 tipCache[file] = p;
                 return p;
+            }
+
+            /* Krita names a tip taken out of a Photoshop set "<set>_<n>", and
+             * the preset carries only that name: the picture is the n-th in
+             * <set>.abr beside it in the pack. */
+            var abrSets = {};
+            function _abrTip(file) {
+                var m = /^(.+)_(\d+)$/.exec(file), set = m && pack.tips[m[1] + '.abr'];
+                if (!set) return null;
+                if (!abrSets[m[1]]) {
+                    try { abrSets[m[1]] = BrushPack.readAbr(set); } catch (e) { abrSets[m[1]] = []; }
+                }
+                // counted from 1: from 0, Bristle_frottis001111's overlap with Krita's render was 0, from 1 it is 0.6
+                var tip = abrSets[m[1]][+m[2] - 1];
+                return tip && tip.url ? Promise.resolve({ url: tip.url, size: tip.size, cells: 1, pick: 'random' }) : null;
             }
 
             var chain = Promise.resolve();

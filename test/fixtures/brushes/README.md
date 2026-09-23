@@ -281,6 +281,16 @@ blobs, and the grain is the whole brush. 106 brushes import in 2.4s, a
 size it is painted, so a big tip costs storage and one decode rather than
 memory per dab.
 
+## A Krita preset whose tip lives in a Photoshop set
+
+`abr-tip-pack.bundle` is written by make-abr-tip-pack.py: thin-brush-pointy
+with its tip swapped for `type="abr_brush" filename="three-tips-v10_2"`,
+bundled with three-tips-v10.abr. Krita keeps no picture of such a tip in the
+preset, only "<set>_<n>", and the picture is the n-th tip of <set>.abr in the
+same pack, counted from 1 (measured on portnov's pastel pack: counted from 0,
+Bristle_frottis001111's overlap with Krita's render was 0, from 1 it is 0.6).
+Unresolved, those presets came in as plain squares.
+
 ## The eight presets that were never being read, and the two that are not brushes
 
 `itxt-binary-md5.kpp` is thin-brush-pointy rewritten by make-itxt-kpp.py the
