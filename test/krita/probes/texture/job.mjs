@@ -17,11 +17,11 @@ function rampPng() {
 }
 const png = rampPng();
 const p = (k, v) => '<param type="string" name="' + k + '"><![CDATA[' + v + ']]></param>';
-const tex = (mode, policy, left, right) => ['</Preset>', [
+const tex = (mode, policy, left, right, inv = 'false') => ['</Preset>', [
     p('Texture/Pattern/Enabled', 'true'), p('Texture/Pattern/Pattern', png), p('Texture/Pattern/Name', 'cdp-ramp.png'),
     p('Texture/Pattern/PatternFileName', 'cdp-ramp.png'), p('Texture/Pattern/Scale', '1'), p('Texture/Pattern/Strength', '1'),
     p('Texture/Pattern/TexturingMode', mode), p('Texture/Pattern/CutoffPolicy', policy), p('Texture/Pattern/CutoffLeft', left),
-    p('Texture/Pattern/CutoffRight', right), p('Texture/Pattern/Invert', 'false'), p('Texture/Pattern/OffsetX', '0'),
+    p('Texture/Pattern/CutoffRight', right), p('Texture/Pattern/Invert', inv), p('Texture/Pattern/OffsetX', '0'),
     p('Texture/Pattern/OffsetY', '0'), p('Texture/Pattern/isRandomOffsetX', 'false'), p('Texture/Pattern/isRandomOffsetY', 'false'),
     p('Texture/Pattern/MaximumOffsetX', '0'), p('Texture/Pattern/MaximumOffsetY', '0'),
     p('Texture/Strength/Value', '1'), p('PressureTexture/Strength/', 'false'),
@@ -32,6 +32,9 @@ const V = {
     m0p0: tex(0, 0, 0, 255), m0p1: tex(0, 1, 64, 192), m0p2: tex(0, 2, 64, 192),
     m1p0: tex(1, 0, 0, 255), m1p1: tex(1, 1, 64, 192), m1p2: tex(1, 2, 64, 192),
     m1p0r: tex(1, 0, 64, 192), m1p1r159: tex(1, 1, 0, 159),
+    // is the cutoff range tested before or after Invert, and is its fill?
+    i0p1: tex(0, 1, 64, 192, 'true'), i0p2: tex(0, 2, 64, 192, 'true'),
+    m0p1full: tex(0, 1, 0, 255),   // is 255 itself cut when right is 255?
 };
 const dry = process.argv.includes('--dry');
 const arg = process.argv.slice(2).find(a => a !== '--dry');

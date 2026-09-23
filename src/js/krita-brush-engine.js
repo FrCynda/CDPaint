@@ -899,8 +899,8 @@
      * Returns false when the pattern has not arrived yet.
      *
      * ponytail: CPU per dab (one getImageData each); a GPU pass would be
-     * the upgrade if huge textured brushes get slow. Neutral point, cutoff
-     * and pattern offsets are not modelled; the importer warns about them. */
+     * the upgrade if huge textured brushes get slow. Neutral point and
+     * pattern offsets are not modelled; the importer warns about them. */
     var _ktMask = null;
     function _kritaTexMask(p) {
         var tile = _patWanted && _patTiles[_patWanted];
@@ -923,14 +923,15 @@
             /* Cutoff, measured on Krita's renders of a grey ramp
              * (test/krita/probes/texture): outside [lo, hi] of the pattern's
              * grey, policy 1 reads it as black and 2 as white; inside, and
-             * under policy 0, nothing changes. ponytail: measured at default
-             * brightness/contrast/invert only -- their order against the
-             * cutoff is a guess. */
+             * under policy 0, nothing changes. The range tests the raw grey
+             * but the fill lands after Invert (probe i0p1/i0p2).
+             * ponytail: brightness/contrast against the cutoff unmeasured. */
+            if (p.textureInvert) v = 1 - v;
             if (cut) {
                 var gv = (g * a + 1 - a) * 255;
                 if (gv < lo || gv > hi) v = cut === 1 ? 0 : 1;
             }
-            m[i] = _round((p.textureInvert ? 1 - v : v) * 255);
+            m[i] = _round(v * 255);
         }
         _ktMask = { key: key, w: w, h: h, m: m };
         return _ktMask;

@@ -519,11 +519,12 @@ await withPage(async (page) => {
         const c = document.createElement('canvas'); c.width = c.height = 8;
         const x = c.getContext('2d'); x.fillStyle = '#808080'; x.fillRect(0, 0, 8, 8);
         const url = c.toDataURL();
-        const run = (mode) => {
+        const run = (mode, more = {}) => {
             b.forgetSaved('Round'); b.loadPreset('Round');
             b.setParam('size', 20); b.setParam('spacing', 12); b.setParam('hardness', 100);
             b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
             b.setParam('texture', 100); b.setParam('textureMode', mode);
+            for (const k in more) b.setParam(k, more[k]);
             b.loadTexturePattern(url);
             __B.layer().ctx.clearRect(0, 0, 200, 200);
             b.beginStroke(20, 100, 1, '#000000');
@@ -532,12 +533,18 @@ await withPage(async (page) => {
         };
         run('subtract');
         await new Promise(r => setTimeout(r, 300));   // the pattern decodes async
-        return JSON.stringify({ sub: run('subtract'), mul: run('multiply') });
+        const sub = run('subtract'), mul = run('multiply');
+        // grey 128 sits below a cutoff range starting at 200: policy 2 fills
+        // white AFTER Invert (Krita probe i0p2), so a multiply dab stays solid
+        const cut = run('multiply', { textureInvert: true, textureCutoff: 2, textureCutoffLo: 200, textureCutoffHi: 255 });
+        return JSON.stringify({ sub, mul, cut });
     })()`, { awaitPromise: true }));
     check("Krita's subtract texture takes ink away, not just tints it",
         Math.abs(kt.sub - 128) <= 6, 'alpha ' + kt.sub);
     check("...and multiply scales it by the pattern",
         Math.abs(kt.mul - 128) <= 6, 'alpha ' + kt.mul);
+    check("a texture's cutoff fill lands after Invert, as Krita's does",
+        kt.cut >= 250, 'alpha ' + kt.cut);
     /* Measured against a real Krita dab (test/krita): its "soft" tip reads
      * the curve at the SQUARED radius, and its curves are splines. Read at
      * the plain radius, Airbrush Soft came out at 0.59x Krita's ink. And a

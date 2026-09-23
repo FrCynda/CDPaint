@@ -299,8 +299,11 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
     with a real tilt can't be probed: scripted strokes carry no tilt.
   - `texture`: a grey-ramp pattern gives the transfer curve directly. Ours
     matched without a cutoff. Outside the cutoff range, policy 1 reads the
-    pattern as black and 2 as white. Only default brightness, contrast and
-    invert were probed.
+    pattern as black and 2 as white. With Invert the range still tests the
+    raw grey, but that fill is not inverted (`i0p1`, `i0p2`; filling before
+    invert blanked Texture Wood Fiber, 0.79 -> 0.09). The range is inclusive
+    (`m0p1full`), and Krita's pattern sits one column right of ours.
+    Brightness and contrast against the cutoff are unprobed.
   - Airbrush mode adds nothing to a scripted stroke.
   - Still open: very faint build-up (well under one 8-bit level a dab)
     accumulates less in ours than in Krita. X1BB Addition Soft (5% × a
