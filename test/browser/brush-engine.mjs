@@ -545,6 +545,33 @@ await withPage(async (page) => {
         Math.abs(kt.mul - 128) <= 6, 'alpha ' + kt.mul);
     check("a texture's cutoff fill lands after Invert, as Krita's does",
         kt.cut >= 250, 'alpha ' + kt.cut);
+    /* Krita's sketch engine (test/krita/probes/sketch): lines out to earlier
+     * points within half the brush, trimmed by the offset. Its first cut
+     * only repainted round the newest point, so a fast stroke kept its last
+     * 17px of a 400px line. */
+    const sk = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = () => __B.layer().ctx;
+        const run = (pts) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            for (const [k, v] of Object.entries({ engineKind: 'sketch', size: 30, flowSrc: 'none', sizeSrc: 'none',
+                smoothingMode: 'none', sketchOffset: 0.2, sketchProb: 1, sketchWidth: 1 })) b.setParam(k, v);
+            L().clearRect(0, 0, 200, 200);
+            b.beginStroke(pts[0][0], pts[0][1], 1, '#000000');
+            for (const [x, y] of pts.slice(1)) b.moveStroke(x, y, 1, '#000000');
+            b.endStroke();
+        };
+        const uturn = (d) => { const o = []; for (let x = 20; x <= 120; x += 2) o.push([x, 50]); for (let x = 120; x >= 20; x -= 2) o.push([x, 50 + d]); return o; };
+        run([[10, 20], [190, 20]]);
+        const row = L().getImageData(0, 20, 200, 1).data; let n = 0; for (let x = 0; x < 200; x++) if (row[x * 4 + 3]) n++;
+        run(uturn(8)); const near = L().getImageData(70, 54, 1, 1).data[3];
+        run(uturn(20)); const far = L().getImageData(70, 60, 1, 1).data[3];
+        b.setParam('sketchWidthSrc', 'pressure'); b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify({ n, near, far, leak: b.getParams().sketchWidthSrc });
+    })()`));
+    check('a sketch line drawn in one long move paints end to end', sk.n >= 180, sk.n + ' of 181 px');
+    check('...joins across a gap inside half the brush', sk.near > 200, 'alpha ' + sk.near);
+    check('...and not across one beyond it', sk.far === 0, 'alpha ' + sk.far);
+    check("...and one preset's line-width sensor does not leak into the next", sk.leak === 'none', sk.leak);
     /* Measured against a real Krita dab (test/krita): its "soft" tip reads
      * the curve at the SQUARED radius, and its curves are splines. Read at
      * the plain radius, Airbrush Soft came out at 0.59x Krita's ink. And a

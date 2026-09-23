@@ -3903,9 +3903,12 @@
          * greys over the colour, 'color' the picture itself. */
         tipMode: 'alpha',
         /* Which engine paints. 'brush' stamps dabs; 'shape' fills the
-         * outline the stroke draws, which is Krita's experiment brush. */
+         * outline the stroke draws, which is Krita's experiment brush;
+         * 'sketch' draws the path as a line sketchWidth wide. */
         engineKind: 'brush',
         shapeWinding: true,
+        sketchWidth: 1, sketchWidthSrc: 'none', sketchWidthMin: 0, sketchWidthCurve: 1,
+        sketchOffset: 0.3, sketchProb: 1, sketchMagnet: true, sketchDistDensity: false, sketchDistOpacity: false,
         /* What a deform does to the pixels it finds, and how hard. */
         deformAction: 'move',
         deformAmount: 30,
@@ -4691,6 +4694,88 @@
         _flowUsed = { x1: x1 - M, y1: y1 - M, x2: x2 + M, y2: y2 + M };
     }
 
+    /* Krita's sketch brush, as its own renders show it (test/krita/probes/
+     * sketch, job.mjs and reach.mjs). No dabs: each new point of the stroke
+     *  - joins the one before it with a line (the "connection line"), and
+     *  - joins every earlier point closer than half the brush size with a
+     *    line trimmed by `sketchOffset` of its length at both ends -- 20%
+     *    left a 12px gap filled from 2.4 to 9.6 -- drawn with probability
+     *    `sketchProb`.
+     * Lines are the preset's line width, hard-edged, at the opacity its
+     * curve reads at the pen's pressure, and they stack as ordinary paint:
+     * 1..6 chrome lines measured 125, 189, 221, 238, 246, 250. The history
+     * is the input points; a scripted Krita line is one segment, so it has
+     * none, which is why a straight probe line came out as a bare hairline.
+     *
+     * ponytail: O(history) per point -- a grid of past points if very long
+     * strokes get slow. Magnetify off, distance density/opacity: guessed
+     * linear falloff, unmeasured. Wide lines are anti-aliased; Krita's hard. */
+    function _paintSketch(pts, from, to) {
+        var p = getParams(), c = _flowCtx;
+        if (!c) return;
+        c.save();
+        c.fillStyle = c.strokeStyle = _state.lastColor;
+        c.lineCap = 'round';
+        var off = p.sketchOffset == null ? 0.3 : p.sketchOffset, prob = p.sketchProb == null ? 1 : p.sketchProb;
+        for (var i = _max(1, from + 1); i <= to; i++) {
+            var b = pts[i], sc = { pressure: b.pressure, x: b.x, y: b.y };
+            var w = _max(0.5, _dyn(p, 'sketchWidth', p.sketchWidth || 1, sc, 0));
+            var o = _clamp(_dyn(p, 'flow', p.flow / 100, sc, 0), 0, 1);
+            var reach = _dyn(p, 'size', p.size, sc, 0) / 2;
+            c.lineWidth = w;
+            _sketchLine(c, pts[i - 1], b, w, o, i > 1);
+            for (var j = 0; j < i - 1; j++) {
+                var q = pts[j], dx = q.x - b.x, dy = q.y - b.y, D = _hypot(dx, dy);
+                if (D >= reach || D < 1e-6) continue;
+                var f = 1 - D / reach, a = o, pr = prob;
+                if (p.sketchDistOpacity) a *= f;
+                if (p.sketchDistDensity) pr *= f;
+                if (pr < 1 && _dabRand(i, j, 29) >= pr) continue;
+                var s0 = { x: b.x + dx * off, y: b.y + dy * off };
+                var s1 = p.sketchMagnet === false   // fur: centred on the new point, pointing at the old one
+                    ? { x: b.x - dx * off, y: b.y - dy * off } : { x: q.x - dx * off, y: q.y - dy * off };
+                _sketchLine(c, s0, s1, w, a, false);
+            }
+            // the reach round the new point, and the whole connection line back
+            var a0 = pts[i - 1], M = _max(reach, w) + 2, r = { x1: _min(a0.x, b.x) - M, y1: _min(a0.y, b.y) - M,
+                x2: _max(a0.x, b.x) + M + 1, y2: _max(a0.y, b.y) + M + 1 };
+            _dirtyRect = _unionRect(_dirtyRect, r);
+            _clearBounds = _unionRect(_clearBounds, r);
+            _flowUsed = _unionRect(_flowUsed, r);
+        }
+        c.restore();
+    }
+    /* One sketch line. A hairline is hard pixel steps, as Krita's is --
+     * smoothed, each pixel split over two and the probe's zigzag lost a
+     * third of its match. `skipFirst` leaves the start pixel to the line
+     * that already ended there, or every joint would take two coats. */
+    function _sketchLine(c, a, b, w, o, skipFirst) {
+        if (o <= 0) return;
+        c.globalAlpha = o;
+        if (w <= 1.5) {
+            // ends cut to whole pixels (a gap filled from 2.4 to 9.6 in Krita
+            // stops on 9), the steps between them rounded
+            a = { x: _floor(a.x), y: _floor(a.y) }; b = { x: _floor(b.x), y: _floor(b.y) };
+            var n = _max(1, _max(Math.abs(b.x - a.x), Math.abs(b.y - a.y))), lx = NaN, ly = NaN;
+            if (skipFirst) { lx = _round(a.x); ly = _round(a.y); }
+            for (var k = 0; k <= n; k++) {
+                var x = _round(a.x + (b.x - a.x) * k / n), y = _round(a.y + (b.y - a.y) * k / n);
+                if (x === lx && y === ly) continue;
+                c.fillRect(x, y, 1, 1);
+                lx = x; ly = y;
+            }
+        } else {
+            c.beginPath();
+            c.moveTo(a.x + 0.5, a.y + 0.5);   // on the pixel, as Krita's line sits
+            c.lineTo(b.x + 0.5, b.y + 0.5);
+            c.stroke();
+        }
+    }
+    function _unionRect(a, b) {
+        return !a ? { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 }
+            : { x1: _min(a.x1, b.x1), y1: _min(a.y1, b.y1), x2: _max(a.x2, b.x2), y2: _max(a.y2, b.y2) };
+    }
+
     /* Krita's deform brush, which paints nothing at all: it takes the
      * pixels already on the layer and pushes them about. Grow, shrink, the
      * two swirls, move, and the two lenses are all the same loop with a
@@ -4819,6 +4904,18 @@
             }
             return;
         }
+        if (getParams().engineKind === 'sketch') {
+            var kp = _state.strokePoints;
+            if (kp.length < 2 || !_state.lastColor) return;
+            _dirtyRect = null;
+            _paintSketch(kp, _state.lastProcessedIdx, kp.length - 1);
+            _state.lastProcessedIdx = kp.length - 1;
+            _state.started = true;
+            _hintFlushRect(final);
+            var _skOc = _outCtx();
+            if (_skOc && _dirtyRect) _flushFlowBuffer(_skOc, false, final);
+            return;
+        }
         if (getParams().engineKind === 'shape') {
             var sp = _state.strokePoints;
             if (sp.length < 1 || !_state.lastColor) return;
@@ -4903,7 +5000,7 @@
             var pts = _state.strokePoints;
             if (pts.length < 2 || !_state.lastColor) return;
             var ek = getParams().engineKind;
-            if (ek === 'shape' || ek === 'deform') { _flushPending(false); return; }
+            if (ek === 'shape' || ek === 'deform' || ek === 'sketch') { _flushPending(false); return; }
             var startIdx = _state.started ? _state.lastProcessedIdx : 0;
             var endIdx = pts.length - 1;
             if (startIdx < endIdx) {

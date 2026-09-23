@@ -6,6 +6,7 @@ import { withPage } from '../../browser.mjs';
 // names a real .kpp as `src`.
 //   node test/krita/probes/<name>/job.mjs          Krita's side, into test/krita/out/<name>
 //   node test/krita/probes/probe-cdp.mjs <name>    ours, beside it as cdp.png
+//   CDP_KEYS=flow,flowSrc  prints those imported params instead of the rotation
 const root = path.resolve('test/krita/out', process.argv[2]);
 const ink1 = fs.readFileSync(path.resolve('test/krita/out/spacing/off.xml'), 'utf8');
 const KPP_XML = [
@@ -20,7 +21,7 @@ const names = fs.readdirSync(root).filter(d => fs.existsSync(path.join(root, d, 
 const xmls = {}, jobs = {};
 for (const n of names) {
     const j = JSON.parse(fs.readFileSync(path.join(root, n, 'job.json'), 'utf8')), r = j.renders[0];
-    jobs[n] = { lines: r.lines, W: j.width, H: j.height, size: r.size };
+    jobs[n] = { lines: r.lines || [], paths: r.paths || [], W: j.width, H: j.height, size: r.size || r.maxSize };
     const src = r.src ? execFileSync('python', ['-c', KPP_XML, r.src], { encoding: 'utf8' }) : ink1;
     xmls[n] = execFileSync('python', ['-c', SUBS, JSON.stringify(r.xmlSub || [])], { input: src, encoding: 'utf8' });
 }
@@ -29,7 +30,7 @@ await withPage(async (page) => {
         const app = PaintApp, b = app.brush, out = {};
         const jobs = ${JSON.stringify(jobs)};
         for (const [name, xml] of Object.entries(${JSON.stringify(xmls)})) {
-            const { lines, W, H, size } = jobs[name];
+            const { lines, paths, W, H, size } = jobs[name];
             app.layerMgr.collapseToBase({ fresh: true }); app.setSize(W, H); app.config.zoom = 1; app.updateBounds();
             document.getElementById('lsys-add').click(); app.state.selection = null;
             const L = app.layerMgr.layers[app.layerMgr.activeIdx];
@@ -44,10 +45,18 @@ await withPage(async (page) => {
             await new Promise(r => setTimeout(r, 300));   // let a texture decode
             L.ctx.clearRect(0, 0, W, H);
             const clock = performance.now; performance.now = () => 0;
+            const oneSeg = params.engineKind === 'sketch';   // as measure.mjs: Krita hands it the two ends only
             for (const [x0, y0, p0, x1, y1, p1] of lines) {
-                const n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0)));
+                const n = oneSeg ? 1 : Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0)));
                 b.beginStroke(x0, y0, p0, '#000000');
                 for (let i = 1; i <= n; i++) { const t = i / n; b.moveStroke(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, p0 + (p1 - p0) * t, '#000000'); }
+                b.endStroke();
+            }
+            // full pressure, as Krita's paintPath gives, and only the path's own
+            // points: a sketch brush remembers each one it is handed
+            for (const pts of paths) {
+                b.beginStroke(pts[0], pts[1], 1, '#000000');
+                for (let k = 2; k < pts.length; k += 2) b.moveStroke(pts[k], pts[k + 1], 1, '#000000');
                 b.endStroke();
             }
             performance.now = clock;
@@ -55,7 +64,7 @@ await withPage(async (page) => {
             const c = new OffscreenCanvas(W, H); c.getContext('2d').drawImage(L.canvas, 0, 0);
             const blob = await c.convertToBlob(), buf = new Uint8Array(await blob.arrayBuffer());
             let s = ''; for (let i = 0; i < buf.length; i++) s += String.fromCharCode(buf[i]);
-            out[name] = { png: btoa(s), rot: [params.angle, params.angleSrc, params.angleStrength], warn: pr.warnings || [] };
+            out[name] = { png: btoa(s), rot: ${JSON.stringify(process.env.CDP_KEYS || '')} ? ${JSON.stringify(process.env.CDP_KEYS || '')}.split(',').map(k => params[k]) : [params.angle, params.angleSrc, params.angleStrength], warn: pr.warnings || [] };
         }
         return JSON.stringify(out);
     })()`, { awaitPromise: true }));

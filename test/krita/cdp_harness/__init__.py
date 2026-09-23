@@ -6,6 +6,7 @@ A job is JSON:
     "renders": [ { "name": "basic5", "preset": "b) Basic-5 Size",   (or "file": "x.kpp")
                    "color": [0, 0, 0], "size": 30,            (size optional)
                    "lines": [ [x0, y0, p0, x1, y1, p1], ... ],
+                   "paths": [ [x, y, x, y, ...], ... ],   (optional: one stroke each)
                    "xmlSub": [ [regex, replacement], ... ],            (optional)
                    "maxSize": 40,                  (optional: cap the preset's own size)
                    "dumpXml": true } ],        (optional: <out>/<name>.xml)
@@ -19,8 +20,8 @@ transparent layer and is written to <out>/<name>.png as straight RGBA.
 """
 import os, re, json, traceback
 from krita import Krita, Extension, ManagedColor, Preset
-from PyQt5.QtCore import QPoint, QTimer
-from PyQt5.QtGui import QImage
+from PyQt5.QtCore import QPoint, QPointF, QTimer
+from PyQt5.QtGui import QImage, QPainterPath
 
 JOB = os.environ.get("CDP_KRITA_JOB")
 
@@ -69,8 +70,13 @@ def _run():
             layer = doc.createNode(r["name"], "paintlayer")
             root.addChildNode(layer, None)
             doc.setActiveNode(layer)
-            for x0, y0, p0, x1, y1, p1 in r["lines"]:
+            for x0, y0, p0, x1, y1, p1 in r.get("lines", []):
                 layer.paintLine(QPoint(round(x0), round(y0)), QPoint(round(x1), round(y1)), p0, p1, "ForegroundColor")
+                doc.waitForDone()
+            for pts in r.get("paths", []):   # one stroke through [x, y, x, y, ...] (Node.paintPath)
+                path = QPainterPath(QPointF(pts[0], pts[1]))
+                for i in range(2, len(pts), 2): path.lineTo(QPointF(pts[i], pts[i + 1]))
+                layer.paintPath(path, "ForegroundColor", "None")
                 doc.waitForDone()
             doc.waitForDone()
             data = bytes(layer.pixelData(0, 0, W, H))

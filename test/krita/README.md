@@ -305,6 +305,22 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
     (`m0p1full`), and Krita's pattern sits one column right of ours.
     Brightness and contrast against the cutoff are unprobed.
   - Airbrush mode adds nothing to a scripted stroke.
+  - `sketch` (`job.mjs`, `reach.mjs`; the harness's `paths` paints one
+    stroke through many points): the sketch engine has no dabs. Each new
+    point draws a line from the point before it, plus lines to every earlier
+    point closer than half the brush size (at size 30, gaps of 12 fill and
+    16 don't; at 15, 4 fills and 8 doesn't; at 60, 24 fills and 32
+    doesn't). Those lines are trimmed by `Sketch/offset` at both ends: at
+    20%, a 12px gap fills from 2.4 to 9.6, cut to whole pixels. Each line is
+    hard-edged, `lineWidth` wide, at the opacity curve's value for the pen
+    pressure, and lines stack as ordinary paint. Chrome's 1 to 6 coats
+    measured 125, 189, 221, 238, 246 and 250. Only the points handed to the
+    brush count as history. A scripted `paintLine` hands it two, so it has
+    nothing to join back to, and the bank replays sketch presets that way
+    (`measure.mjs`). Not modelled: Krita's fill fades a little towards the
+    newer side of the stroke (ours is 3% dark on the U-turns), magnetify off
+    (a guess), distance density and opacity (guessed linear), and random
+    RGB and opacity.
   - Still open: very faint build-up (well under one 8-bit level a dab)
     accumulates less in ours than in Krita. X1BB Addition Soft (5% × a
     pressure curve, 64%-peak soft tip) sits at 0.68× ink. The tip, spacing

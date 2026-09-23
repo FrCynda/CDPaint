@@ -28,8 +28,12 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         // Node.paintLine hands Krita no speed at all, so the clock stands
         // still while we draw: every speed sensor reads 0 on both sides.
         const clock = performance.now; performance.now = () => 0;
+        // A sketch brush remembers every point it is handed and joins back to
+        // them; Krita's paintLine hands it the two ends and nothing between
+        // (test/krita/probes/sketch), so it gets the same here.
+        const oneSeg = b.getParams().engineKind === 'sketch';
         for (const [x0, y0, p0, x1, y1, p1] of ${JSON.stringify(c.lines)}) {
-            const n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0)));
+            const n = oneSeg ? 1 : Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0)));
             b.beginStroke(x0, y0, p0, '#000000');
             for (let i = 1; i <= n; i++) {
                 const t = i / n;

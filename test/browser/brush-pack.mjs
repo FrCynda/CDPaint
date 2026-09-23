@@ -399,10 +399,24 @@ await withPage(async (page) => {
                     'Texture/Pattern/CutoffPolicy': '1', 'Texture/Pattern/CutoffLeft': '0', 'Texture/Pattern/CutoffRight': '159' } }),
                 // ...Large Chalk: tilt direction and pressure together.
                 ascList: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
-                    RotationSensor: '<params id="sensorslist"> <ChildSensor id="ascension"/> <ChildSensor id="pressure"> <curve>0,0;1,1;</curve> </ChildSensor> </params>' } }).params
+                    RotationSensor: '<params id="sensorslist"> <ChildSensor id="ascension"/> <ChildSensor id="pressure"> <curve>0,0;1,1;</curve> </ChildSensor> </params>' } }).params,
+                // Sketch chrome: Krita's sketch engine, build up, opacity on a pressure curve.
+                sketch: BP.toPreset({ paintop: 'sketchbrush', params: { brush_definition: round, PaintOpAction: '1',
+                    PressureOpacity: 'true', OpacityUseCurve: 'true', OpacitySensor: '<params id="pressure"><curve>0,0;0.5,0.49;</curve></params>',
+                    'Sketch/lineWidth': '3', 'Sketch/offset': '20', 'Sketch/probability': '1', 'Sketch/magnetify': 'true',
+                    'PressureLine width': 'true', 'Line widthUseCurve': 'true', 'Line widthSensor': '<params id="pressure"/>' } })
             };
         };
         const B = JSON.parse(await page.eval(`JSON.stringify((${bank})(BrushPack))`));
+        /* Krita's sketch engine was painted as a round brush: 34x Krita's
+         * ink on Sketch chrome. Measured (test/krita/probes/sketch) it is
+         * hard lines out to nearby points, the opacity curve their ink. */
+        const sk = B.sketch.params;
+        check('a Krita sketch preset comes in as the sketch engine, its lines and their ink carried',
+            sk.engineKind === 'sketch' && sk.sketchWidth === 3 && sk.sketchOffset === 0.2 && sk.sketchProb === 1 &&
+            sk.sketchWidthSrc === 'pressure' && sk.flowSrc === 'pressure' && !sk.dabOpacitySrc &&
+            !B.sketch.warnings.some(w => /ordinary brush/.test(w)),
+            JSON.stringify([sk.engineKind, sk.sketchWidth, sk.sketchOffset, sk.sketchWidthSrc, sk.flowSrc, B.sketch.warnings]));
         check("a sensor under Krita's \"same curve for all\" takes the shared curve",
             B.common && B.common[B.common.length - 1][1] === 0.5, JSON.stringify(B.common));
         check('...and one with the box unticked keeps its own',

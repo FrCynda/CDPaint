@@ -922,6 +922,32 @@
             for (var xi = 0; xi < xnot.length; xi++) {
                 if (_bool(P[xnot[xi][0]])) warn.push('dropped: ' + xnot[xi][1]);
             }
+        } else if (preset.paintop === 'sketchbrush') {
+            /* Measured on Krita's own renders (test/krita/probes/sketch):
+             * hard lines of Sketch/lineWidth, as dark as the opacity curve
+             * reads at the pen's pressure, out to earlier points within half
+             * the tip, trimmed by the offset. The tip is only that reach. */
+            out.engineKind = 'sketch';
+            out.sketchWidth = Math.max(0.5, _num(P['Sketch/lineWidth'], 1));
+            out.sketchOffset = _num(P['Sketch/offset'], 30) / 100;
+            out.sketchProb = Math.max(0, Math.min(1, _num(P['Sketch/probability'], 0.5) * _num(P.DensityValue, 1)));
+            out.sketchMagnet = _bool(P['Sketch/magnetify']);
+            out.sketchDistDensity = _bool(P['Sketch/distanceDensity']);
+            out.sketchDistOpacity = _bool(P['Sketch/distanceOpacity']);
+            if (out.dabOpacitySrc) {   // a line has no dabs to cap: the opacity is its ink
+                out.flowSrc = out.dabOpacitySrc;
+                out.flowMin = out.dabOpacityMin;
+                if (out.dabOpacityCurve) out.flowCurve = out.dabOpacityCurve;
+                delete out.dabOpacitySrc; delete out.dabOpacityMin; delete out.dabOpacityCurve;
+            }
+            var lw = _bool(P['PressureLine width']) && _sensorFor(P, 'Line width');
+            if (lw && lw.src) {
+                out.sketchWidthSrc = lw.src;
+                out.sketchWidthMin = 0;
+                if (lw.curve) out.sketchWidthCurve = lw.curve;
+            }
+            if (_bool(P['Sketch/randomRGB'])) warn.push('dropped: the slight colour wobble on its lines');
+            if (_bool(P['Sketch/randomOpacity'])) warn.push('dropped: the random opacity on its lines');
         } else if (preset.paintop && preset.paintop !== 'paintbrush') {
             warn.push('this is a ' + preset.paintop + ', which we paint as an ordinary brush');
         }
