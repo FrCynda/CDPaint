@@ -40,8 +40,12 @@
     ]
    ],
    "expect": {
-    "iouMin": 0.8,
-    "thickTol": 4
+    "inkRatio": [
+     0.95,
+     1.05
+    ],
+    "iouMin": 0.95,
+    "thickTol": 2
    }
   },
   {
@@ -59,10 +63,10 @@
    ],
    "expect": {
     "inkRatio": [
-     0.82,
-     1
+     0.95,
+     1.1
     ],
-    "iouMin": 0.83
+    "iouMin": 0.8
    }
   },
   {
@@ -116,10 +120,10 @@
    ],
    "expect": {
     "inkRatio": [
-     0.9,
-     1.1
+     0.95,
+     1.05
     ],
-    "iouMin": 0.85,
+    "iouMin": 0.9,
     "thickTol": 2
    }
   },
@@ -155,7 +159,14 @@
      110,
      1
     ]
-   ]
+   ],
+   "expect": {
+    "inkRatio": [
+     0.93,
+     1.05
+    ],
+    "iouMin": 0.95
+   }
   },
   {
    "name": "ink-3-gpen",
@@ -171,7 +182,12 @@
     ]
    ],
    "expect": {
-    "thickTol": 2
+    "inkRatio": [
+     0.97,
+     1.03
+    ],
+    "iouMin": 0.97,
+    "thickTol": 1
    }
   },
   {
@@ -188,12 +204,12 @@
     ]
    ],
    "expect": {
-    "thickTol": 2,
+    "thickTol": 1,
     "inkRatio": [
-     1,
-     1.4
+     0.98,
+     1.02
     ],
-    "iouMin": 0.7
+    "iouMin": 0.99
    }
   },
   {
@@ -229,7 +245,14 @@
      110,
      1
     ]
-   ]
+   ],
+   "expect": {
+    "inkRatio": [
+     0.93,
+     1.05
+    ],
+    "iouMin": 0.88
+   }
   },
   {
    "name": "waterpaint-soft-edges",
@@ -249,7 +272,7 @@
      0.9,
      1.2
     ],
-    "iouMin": 0.4
+    "iouMin": 0.6
    }
   },
   {

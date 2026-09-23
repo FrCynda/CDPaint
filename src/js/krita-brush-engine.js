@@ -115,22 +115,22 @@
             return _round((angle || 0) / step) * step;
         }
 
-        function _key(shape, size, hardness, angle, aspect) {
-            return shape + '|' + _round(size) + '|' + _round(hardness) + '|'
-                + angle.toFixed(2) + '|' + (aspect || 1).toFixed(2);
+        function _key(shape, size, hardness, angle, aspect, phase) {
+            return shape + '|' + (/^k(circle|gauss)/.test(shape) ? size : _round(size)) + '|' + _round(hardness) + '|'
+                + angle.toFixed(2) + '|' + (aspect || 1).toFixed(2) + (phase ? '|' + phase : '');
         }
 
         return {
-            get: function (shape, size, hardness, angle, aspect) {
+            get: function (shape, size, hardness, angle, aspect, phase) {
                 angle = _quantAngle(angle, size);
-                var k = _key(shape, size, hardness, angle, aspect);
+                var k = _key(shape, size, hardness, angle, aspect, phase);
                 var entry = _map.get(k);
                 if (entry) {
                     _map.delete(k);
                     _map.set(k, entry);
                     return entry.canvas;
                 }
-                var canvas = _generateMask(shape, size, hardness, angle, aspect);
+                var canvas = _generateMask(shape, size, hardness, angle, aspect, phase);
                 var est = canvas.width * canvas.height * 4;
                 _map.set(k, { canvas: canvas, bytes: est });
                 _bytes += est;
@@ -150,7 +150,7 @@
 
     function _ceil(v) { return Math.ceil(v); }
 
-    function _generateMask(shape, size, hardness, angleDeg, aspectRatio) {
+    function _generateMask(shape, size, hardness, angleDeg, aspectRatio, phase) {
         /* Squash, never stretch. Aspect is width-to-height, and the long
          * axis is always `size` -- so a flat brush is a flat brush, not one
          * four times too big. This used to multiply the HEIGHT by aspect:
@@ -168,8 +168,11 @@
          * which at the sizes a swatch draws at (a pixel or two across) is
          * the difference between a visible stroke and an empty tile. */
         var tc = shape.indexOf('curve:') === 0;
-        if ((shape === 'circle' || shape === 'gauss' || shape === 'gimp' || tc) && w === h) ang = 0;
+        var kc = shape.indexOf('kcircle') === 0 || shape.indexOf('kgauss') === 0;
+        if ((shape === 'circle' || kc || shape === 'gauss' || shape === 'gimp' || tc) && w === h) ang = 0;
         var needRotation = _abs(ang) > 0.001;
+        if (kc && !needRotation) return _kritaCircleMask(size, aspect, hardness / 100, phase,
+                                                         shape.slice(-3) === ':aa', shape.charAt(1) === 'g');
         var canvas, ctx, rx, ry;
 
         if (needRotation) {
@@ -180,6 +183,17 @@
             ry = h / 2;
             ctx.translate(diag / 2, diag / 2);
             ctx.rotate(ang);
+        } else if (phase) {
+            /* Drawn where the dab really sits within its pixel, one pixel
+             * wider to make room; _paintDab then places it on whole pixels.
+             * See _maskFor. */
+            canvas = new OffscreenCanvas(w + 1, h + 1);
+            ctx = canvas.getContext('2d');
+            rx = w / 2;
+            ry = h / 2;
+            canvas._cx = rx + (((phase[0] - rx) % 1) + 1) % 1;
+            canvas._cy = ry + (((phase[1] - ry) % 1) + 1) % 1;
+            ctx.translate(canvas._cx, canvas._cy);
         } else {
             canvas = new OffscreenCanvas(w, h);
             ctx = canvas.getContext('2d');
@@ -197,6 +211,9 @@
             case 'slash': _drawLine(ctx, rx, ry, hard); break;
             case 'gauss':
             case 'gimp': _drawCircle(ctx, rx, ry, hard, shape); break;
+            // Turned: not Krita's own yet.
+            case 'kcircle': case 'kcircle:aa': _drawCircle(ctx, rx, ry, hard); break;
+            case 'kgauss': case 'kgauss:aa': _drawCircle(ctx, rx, ry, hard, 'gauss'); break;
             case 'circle':
             default:
                 if (tc) _drawCircle(ctx, rx, ry, 0, 'curve');
@@ -229,6 +246,57 @@
     function _gimpAt(t, hard) {
         var f = _pow(t, 0.4 / _max(4e-7, 1 - hard));
         return f < 0.5 ? 1 - 2 * f * f : 2 * (1 - f) * (1 - f);
+    }
+
+    /* Krita's default circle, pixel for pixel (KisCircleMaskGenerator, and
+     * KisBrushMaskScalarApplicator which drives it for small tips), at the
+     * tip's real size rather than rounded to a whole pixel.
+     *
+     * With "anti-alias edges" on, the fade is worked out one pixel further
+     * from the centre on each axis than the pixel really is, so the edge
+     * fades INSIDE the radius where a filled ellipse fades half a pixel
+     * either side. A tip under 10px is also supersampled, 3x3 (6x6 under
+     * 1px) -- from the pixel's corner, not around its centre, which puts
+     * the dab a third of a pixel up and left of the cursor. Measured on
+     * Ink-3 G-Pen's 5px line: rows 164,254,254,254,229 in Krita, fitted by
+     * exactly this and by nothing centred. Not radially symmetric, hence
+     * per pixel rather than a gradient.
+     *
+     * `gauss` is its gauss generator (KisGaussCircleMaskGenerator), whose
+     * anti-aliasing is instead a linear fade over the last pixel of the
+     * radius (KisAntialiasingFadeMaker1D). */
+    function _kritaCircleMask(size, aspect, hard, phase, aa, gauss) {
+        var rx = size / 2, ry = size / aspect / 2;
+        if (aspect < 1) { rx = size * aspect / 2; ry = size / 2; }
+        var W = _ceil(rx * 2) + 3, H = _ceil(ry * 2) + 3;
+        var canvas = new OffscreenCanvas(W, H), cx = W / 2, cy = H / 2;
+        if (phase) { canvas._cx = cx = _floor(W / 2) + phase[0]; canvas._cy = cy = _floor(H / 2) + phase[1]; }
+        var ss = aa && (rx < 5 || ry < 5) ? (rx < 0.5 || ry < 0.5 ? 6 : 3) : 1, e = aa ? 1 : 0;
+        var fx = hard > 0 ? 1 / (hard * rx) : 1, fy = hard > 0 ? 1 / (hard * ry) : 1;
+        var fs = _max(0, rx - 1), fsv = gauss ? _gaussAt(fs / rx, hard) : 0;
+        var ctx = canvas.getContext('2d'), img = ctx.createImageData(W, H), d = img.data;
+        for (var j = 0; j < H; j++) {
+            for (var i = 0; i < W; i++) {
+                var sum = 0;
+                for (var sy = 0; sy < ss; sy++) {
+                    var y = j + 0.5 - cy + sy / ss, ay = (_abs(y) + e) * fy;
+                    for (var sx = 0; sx < ss; sx++) {
+                        var x = i + 0.5 - cx + sx / ss, n = (x / rx) * (x / rx) + (y / ry) * (y / ry);
+                        if (n > 1) continue;
+                        if (gauss) {
+                            var dist = Math.sqrt(n) * rx;
+                            sum += aa && dist > fs ? fsv * (rx - dist) / (rx - fs) : _gaussAt(dist / rx, hard);
+                            continue;
+                        }
+                        var ax = (_abs(x) + e) * fx, nf = ax * ax + ay * ay;
+                        sum += nf < 1 ? 1 : 1 - n * (nf - 1) / (nf - n);
+                    }
+                }
+                if (sum) { var k = (j * W + i) * 4; d[k] = d[k + 1] = d[k + 2] = 255; d[k + 3] = _round(sum / (ss * ss) * 255); }
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+        return canvas;
     }
 
     function _drawCircle(ctx, rx, ry, hard, kind) {
@@ -1202,8 +1270,8 @@
     function _paintDab(destCtx, x, y, maskCanvas, colorHex, alpha, texture, textureScale, textureType, wetBlend) {
         var mw = maskCanvas.width;
         var mh = maskCanvas.height;
-        var ox = x - mw / 2;
-        var oy = y - mh / 2;
+        var ox = maskCanvas._cx != null ? _round(x - maskCanvas._cx) : x - mw / 2;
+        var oy = maskCanvas._cy != null ? _round(y - maskCanvas._cy) : y - mh / 2;
 
         var ad = destCtx === _flowCtx && _alphaDarken(getParams());
         if (ad) { _ensureAdBuffer(); _adColor = colorHex; colorHex = _greyHex(_adO); }
@@ -2140,7 +2208,8 @@
 
         var effAngle = _dynAngle(p, p.angle, sc);
         var sz = _dyn(p, 'size', p.size, sc, 1) * tfSize;
-        if (sz < 0.5) return;
+        // Krita paints a dab down to a hundredth of a pixel (checkSizeTooSmall).
+        if (sz < (/^krita.*-aa$/.test(p.falloff) ? 0.01 : 0.5)) return;
         _adO = _dyn(p, 'dabOpacity', 1, sc, 14);
         if (p.maskOp === 'subtract' && _flowCanvas) _maskStrokeDab(p, x, y, sc);
 
@@ -2223,7 +2292,7 @@
             }
 
             if (p.shape === 'custom') _pickTipCell(p, dx, dy);
-            var mask = _maskFor(p.shape, sz, hard, effAngle, asp);
+            var mask = _maskFor(p.shape, sz, hard, effAngle, asp, dx, dy);
 
             // Per-dab alpha. Both sensors now read the real pressure; the
             // taper is applied on top of whatever they produce, not smuggled
@@ -2278,6 +2347,7 @@
             d[i] = _round((a + (sharp - a) * amt) * 255);
         }
         cx.putImageData(img, 0, 0);
+        c._cx = mask._cx; c._cy = mask._cy;
         _sharpCache.set(mask, { key: key, canvas: c });
         return c;
     }
@@ -2386,7 +2456,15 @@
         if (!k) { k = 'curve:' + JSON.stringify(c); _tcKeys.set(c, k); }
         return k;
     }
-    function _maskFor(shape, sz, hardness, angleDeg, aspect) {
+    /* A dab is drawn from a mask image whose centre sits at w/2, so a dab
+     * at a whole-pixel point landed on a half pixel and the browser blended
+     * it across its neighbours. At Ink-1 Precision's 3px that took a single
+     * dab from Krita's 197 to 137 and spread it over three rows instead of
+     * two -- Krita works each pixel out at the dab's true position. Small
+     * round masks are therefore built at the dab's own sub-pixel phase
+     * (x, y given), to a quarter pixel; big ones cannot see the difference.
+     * Krita-imported tips only (see below). */
+    function _maskFor(shape, sz, hardness, angleDeg, aspect, x, y) {
         var mask;
         if (shape === 'custom' && _tipCanvas()) {
             mask = _getCustomTipMask(sz, angleDeg, aspect, hardness) ||
@@ -2395,7 +2473,27 @@
             // A gauss falloff is its own mask, so its own cache key.
             if (shape === 'circle' && (_params.falloff === 'gauss' || _params.falloff === 'gimp')) shape = _params.falloff;
             if (shape === 'circle' && _isArray(_params.tipCurve)) shape = _tipCurveKey(_params.tipCurve);
-            mask = _dabCache.get(shape, sz, hardness, angleDeg, aspect);
+            var kf = /^krita(-gauss)?(-aa)?$/.exec(_params.falloff || '');
+            if (shape === 'circle' && kf) {
+                shape = (kf[1] ? 'kgauss' : 'kcircle') + (kf[2] ? ':aa' : '');
+                sz = sz < 16 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);   // its real size, see _kritaCircleMask
+            }
+            var ph = null;
+            // Sharpness snaps dabs to whole pixels in Krita, so it keeps the old path.
+            // Krita's own tips only: the built-in brushes keep the look they have.
+            if (x != null && sz <= 32 && !(_params.sharpness > 0) &&
+                (/^k(circle|gauss)/.test(shape) || shape.indexOf('curve:') === 0)) {
+                ph = [_round((x % 1) * 4) / 4, _round((y % 1) * 4) / 4];
+            } else if (x != null && /^k(circle|gauss)/.test(shape)) {
+                /* Sharpness: Krita rounds the dab's corner (cursor minus half
+                 * its size, at least a pixel) to a whole pixel
+                 * (KisSharpnessOption::apply), so the centre's phase is that
+                 * half size's. Centred on the cursor, a 1px Pixel Art dab
+                 * straddled four pixels and the threshold kept none. */
+                var hs = (_max(1, sz) / 2) % 1;
+                ph = [hs, hs];
+            }
+            mask = _dabCache.get(shape, sz, hardness, angleDeg, aspect, ph);
         }
         var sh = _params.sharpness;
         if (sh > 0) mask = _sharpenMask(mask, sh, _params.sharpSoftness);
@@ -3121,7 +3219,10 @@
             if (p.spacingSrc && p.spacingSrc !== 'none') {
                 g *= _dyn(p, 'spacing', 1, sc, 10);
             }
-            return _max(1.0, g);
+            /* Krita's floor (MIN_DISTANCE_SPACING, kis_distance_information.cpp).
+             * At 1px Ink-1 Precision's 3px dabs, due every 0.45px, stacked to
+             * 159 where Krita's reach 225. */
+            return _max(0.5, g);
         }
         var step = resume ? resume.step
             : _stepFor(points[startIdx] ? points[startIdx].pressure || 0.5 : 0.5,
@@ -4910,6 +5011,9 @@
         var savedTarget = _previewTarget;
         var savedFlow = _flowCanvas, savedFlowCtx = _flowCtx, savedAd = _adCanvas, savedAdCtx = _adCtx,
             savedMk = _mkCanvas, savedMkCtx = _mkCtx;
+        // A tip that takes its shapes in turn would otherwise skip ahead by
+        // however many dabs the tile drew.
+        var savedCycle = _tipCycle;
         // _flowUsed says which part of the flow buffer to blank next
         // stroke. A preview drives the same painter over its own tiny
         // buffer, so leaving its bounds behind would blank a swatch-sized
@@ -5022,6 +5126,7 @@
             _flowCanvas = savedFlow; _flowCtx = savedFlowCtx; _adCanvas = savedAd; _adCtx = savedAdCtx;
             _mkCanvas = savedMk; _mkCtx = savedMkCtx;
             _flowUsed = savedFlowUsed;
+            _tipCycle = savedCycle;
             _bgCanvas = savedBg; _bgCtx = savedBgCtx;
         }
 

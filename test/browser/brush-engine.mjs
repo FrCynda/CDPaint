@@ -569,6 +569,43 @@ await withPage(async (page) => {
         soft.spline[0] > 125 && soft.spline[0] < 148, 'alpha ' + soft.spline[0]);
     check('a subtract masking brush hollows the dab out',
         soft.hollow[0] < 10 && soft.hollow[1] > 240, JSON.stringify(soft.hollow));
+    /* Small tips, measured against real Krita strokes (test/krita). */
+    const small = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        const paint = (set, pts, x, ys, pr = 1) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            b.setParam('flow', 100); b.setParam('hardness', 100);
+            b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
+            set();
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(pts[0][0], pts[0][1], pr, '#000000');
+            for (const p of pts.slice(1)) b.moveStroke(p[0], p[1], pr, '#000000');
+            b.endStroke();
+            return ys.map(y => __B.layer().ctx.getImageData(x, y, 1, 1).data[3]);
+        };
+        const dot = [[100, 100]], line = [];
+        for (let x = 40; x <= 160; x += 0.25) line.push([x, 100]);
+        return JSON.stringify({
+            aa: paint(() => { b.setParam('size', 5); b.setParam('falloff', 'krita-aa'); }, dot, 100, [97, 102]),
+            // Pressure 0.08 of 5px: a 0.4px dab.
+            tiny: paint(() => { b.setParam('size', 5); b.setParam('falloff', 'krita-aa');
+                                b.setParam('sizeSrc', 'pressure'); b.setParam('sizeMin', 0); b.setParam('sizeCurve', [[0, 0], [1, 1]]); },
+                        [[100.6, 100.6]], 100, [100], 0.08),   // lands up-left, see above
+            rows: paint(() => { b.setParam('size', 3); b.setParam('hardness', 4); b.setParam('falloff', 'krita-gauss'); }, dot, 100, [98, 99, 100, 101]),
+            stack: paint(() => { b.setParam('size', 3); b.setParam('hardness', 4); b.setParam('falloff', 'krita-gauss'); b.setParam('spacing', 15); }, line, 100, [99]),
+            sharp: paint(() => { b.setParam('size', 1); b.setParam('falloff', 'krita-gauss'); b.setParam('sharpness', 100); }, dot, 100, [100])
+        });
+    })()`));
+    // Supersampled from each pixel's corner (KisBrushMaskScalarApplicator): up and left by a third.
+    check("Krita's small anti-aliased tip sits a third of a pixel up and left, as Krita's does",
+        small.aa[0] > 20 && small.aa[1] === 0, JSON.stringify(small));
+    check('a Krita dab under half a pixel still paints', small.tiny[0] > 0, 'alpha ' + small.tiny[0]);
+    check('a 3px dab on a whole pixel covers two rows, not three',
+        small.rows[1] === small.rows[2] && small.rows[1] > 60 && small.rows[0] < 10 && small.rows[3] < 10,
+        JSON.stringify(small.rows));
+    // Krita's floor is half a pixel (MIN_DISTANCE_SPACING); at 1px this line stacked to 159 where Krita's reach 225.
+    check('dabs closer than a pixel apart stack up, as Krita lets them', small.stack[0] > 200, 'alpha ' + small.stack[0]);
+    check('a sharpened 1px Krita tip still paints its pixel', small.sharp[0] > 200, 'alpha ' + small.sharp[0]);
     check('pen rotation turns the tip', d.twistRotatesTip);
     check('hardness can be driven, which it never could', d.hardnessDrivable);
     check('scatter can be driven, which it never could', d.scatterDrivable);

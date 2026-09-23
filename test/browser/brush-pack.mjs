@@ -202,14 +202,14 @@ await withPage(async (page) => {
      * against KisCircleMaskGenerator::valueAt): this eraser is a gauss tip
      * at fade 0, the softest there is. Read backwards it came in at 30. */
     check('a soft generated tip does not arrive hard-edged',
-        E.hardness === 0 && E.falloff === 'gauss', `hardness ${E.hardness} ${E.falloff}`);
+        E.hardness === 0 && /^krita-gauss/.test(E.falloff), `hardness ${E.hardness} ${E.falloff}`);
     {
         const hard = BP => BP.toPreset({ params: { brush_definition:
             '<Brush type="auto_brush" spacing="0.1" useAutoSpacing="1" autoSpacingCoeff="0.8">' +
             '<MaskGenerator id="default" type="circle" hfade="1" vfade="1" diameter="32" ratio="1"/></Brush>' } }).params;
         const H = JSON.parse(await page.eval(`JSON.stringify((${hard})(BrushPack))`));
         check('a fade of 1 is a hard disc, not the softest brush',
-            H.hardness === 100 && !H.falloff, `hardness ${H.hardness}`);
+            H.hardness === 100 && H.falloff === 'krita', `hardness ${H.hardness}`);
         check('auto spacing keeps its coefficient',
             H.autoSpacing === 0.8, String(H.autoSpacing));
         /* Found by painting against real Krita (test/krita): with no size

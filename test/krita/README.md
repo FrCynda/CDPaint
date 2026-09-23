@@ -136,3 +136,33 @@ two renders of the same job are byte-identical.
   so each dab stamped the whole white square. Together with the masking
   brush, this took Waterpaint Soft Edges from 4.2× to 1.06×
   (IoU 0.14 → 0.49).
+- Dab placement. A mask was centred at `w/2` and drawn at the dab's
+  fractional position, so the browser blurred it across a pixel. Krita works
+  each pixel out at the dab's true position. Small Krita tips are now built
+  at the dab's own quarter-pixel phase and drawn on whole pixels.
+- Spacing floor. Ours was 1px; Krita's is 0.5px (`MIN_DISTANCE_SPACING`,
+  `kis_distance_information.cpp`). Ink-1 Precision went from 0.73× to 1.00×.
+- Krita's own round tips (`_kritaCircleMask`). Imports of the `default` and
+  `gauss` generators get `falloff: 'krita…'` and are computed per pixel at
+  their real (unrounded) size:
+  - "Anti-alias edges" works the fade out one pixel further from the centre
+    on each axis (`KisCircleMaskGenerator::valueAt`), so a hard edge fades
+    *inside* the radius. On the gauss generator it is a linear fade over the
+    last pixel (`KisAntialiasingFadeMaker1D`).
+  - A tip under 10px with anti-aliasing is supersampled 3×3, or 6×6 under 1px
+    (`KisBrushMaskScalarApplicator`), starting from the pixel's corner. That
+    puts the dab about a third of a pixel up and left of the cursor, and it
+    shows: G-Pen's 5px line reads 164,254,254,254,229 across its rows.
+  - Krita paints dabs down to 0.01px (`checkSizeTooSmall`), so a light
+    stroke starts where Krita's does.
+  - With sharpness on, the dab's corner is rounded to a whole pixel
+    (`KisSharpnessOption::apply`).
+
+  Ink-3 G-Pen went from 1.08× (IoU 0.77) to 1.00× (IoU 0.99). Basic-5 now
+  has IoU 0.99, and Marker Chisel is exact.
+- Still open:
+  - The speed sensor. Krita smooths pen timing its own way
+    (`KisSpeedSmoother`). Ink-1's size follows speed, and it now reads a
+    touch thin (0.97×). Whole-pixel rounding used to hide this.
+  - A turned, non-round Krita tip still uses the old gradient path.
+  - Pencil-1's IoU of 0 is the metric: neither image has a pixel over 127.
