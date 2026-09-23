@@ -365,6 +365,14 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
     resolved), and a preset's `abr_brush` tip "<set>_<n>" is the n-th tip,
     counted from 1, of <set>.abr in the pack. Colour smudge went from
     0 / 6 / 50 (close / near / off) before this rebuild to 19 / 17 / 22.
+  - `smudge8` (the smudge rules on soft gauss and linear tips, a .gbr and a
+    .png picture tip; paint on empty, over red, a drag out of blue, and
+    dulling): the rules fitted on the hard tip hold unchanged, with a mean
+    of 2.5 levels. The only difference: a drag's last faint trace stalls at
+    alpha 2–5 in ours, where Krita's fades to 0. Changing the rounding
+    doesn't fix it. Always rounding down scored 6.7, rounding down only
+    when fading 2.7, and random rounding lost 2.0 → 4.6 on smudge5.
+    Left as is.
   - Still open: very faint build-up (well under one 8-bit level a dab)
     accumulates less in ours than in Krita. X1BB Addition Soft (5% × a
     pressure curve, 64%-peak soft tip) sits at 0.68× ink. The tip, spacing
