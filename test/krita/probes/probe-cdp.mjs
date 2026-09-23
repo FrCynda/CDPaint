@@ -28,7 +28,8 @@ for (const n of names) {
 await withPage(async (page) => {
   for (const one of names) {   // a call each: CDP gives one call 30s
     const res = JSON.parse(await page.eval(`(async () => {
-        const app = PaintApp, b = app.brush, out = {};        const jobs = ${JSON.stringify(jobs)};
+        const app = PaintApp, b = app.brush, out = {};
+        const jobs = ${JSON.stringify(jobs)};
         for (const [name, xml] of Object.entries(${JSON.stringify({ [one]: xmls[one] })})) {
             const { lines, paths, W, H, size, fill, rects } = jobs[name];
             app.layerMgr.collapseToBase({ fresh: true }); app.setSize(W, H); app.config.zoom = 1; app.updateBounds();

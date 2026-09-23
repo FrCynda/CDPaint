@@ -182,7 +182,8 @@ async function scorePack(page, p) {
                     { packVar: 'window.__pk', packName: path.basename(p.zip), refB64: A, W, H });
             } catch (err) { row.status = 'harness error'; row.why = [err.message]; continue; }
             if (r.error) { row.status = 'CDPaint could not import it'; row.why = [r.error, ...(r.skipped || []).map(s => s.why)]; continue; }
-            if (!r.krita.ink) { row.status = 'Krita painted nothing'; continue; }
+            // ours should be blank too: say how much we laid down where Krita laid none
+            if (!r.krita.ink) { row.status = 'Krita painted nothing'; row.ourInk = r.ours.ink; continue; }
             fs.writeFileSync(path.join(p.dir, e.key + '.png'), Buffer.from(r.png, 'base64'));
             Object.assign(row, { status: 'scored', key: e.key, inkRatio: r.inkRatio, bandInk: r.bandInk, iou: r.iou,
                 meanDiff: r.meanDiff, warnings: (r.warnings[0] || {}).warnings || [] });

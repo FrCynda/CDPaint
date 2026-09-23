@@ -2325,14 +2325,19 @@
          * on colour smudge it acts with its pressure switch off too: a flat
          * 0.5 smudge under a linear opacity curve at pressure 0.5 smeared as
          * a flat 0.25, switch on or off (test/krita/probes/smudge6). */
-        var k0 = s * _clamp(alpha, 0, 1) * _adO;
+        /* The opacity slider does the same: a smudge writes the layer dab by
+         * dab, so the stroke-wide opacity the other brushes get never reached
+         * it. Slider 0.5 painted Krita's 209 where ours stayed at 253
+         * (test/krita/probes/smudge7). */
+        var op = _adO * (p.opacity == null ? 100 : p.opacity) / 100;
+        var k0 = s * _clamp(alpha, 0, 1) * op;
         if (!(k0 > 0)) return;
         /* The paint's share reads the smudge rate's slider, not its curve,
          * and the opacity curve thins it as well: Basic_mix's own curves at
          * pressure 0.6..1 fit this and not the curved rate (smudge4/5/6,
          * mean error 6.1 -> 2.6 levels on smudge4). */
         var sv = (p.smudgeRate == null ? 100 : p.smudgeRate) / 100;
-        if (!p.smudgePure) c *= _max(0.2, 1 - sv) * _adO;
+        if (!p.smudgePure) c *= _max(0.2, 1 - sv) * op;
         var rgb = _hexToRgb(colorHex);
         var pr = rgb[0] * c, pg = rgb[1] * c, pb = rgb[2] * c, pa = 255 * c;
         if (app.layerMgr && app.layerMgr.markDirty && ctx === app.ctx) app.layerMgr.markDirty(rx - 1, ry - 1, rw + 2, rh + 2);

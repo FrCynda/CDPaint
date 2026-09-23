@@ -593,12 +593,13 @@ await withPage(async (page) => {
         run({ colorRate: 0, smudgeRate: 25 }, 30, 190, blue); const flat = [a(70), a(80), a(90)];
         run({ colorRate: 0, smudgeRate: 50, dabOpacitySrc: 'pressure', dabOpacityCurve: 1 }, 30, 190, blue, 0.5);
         const byOp = [a(70), a(80), a(90)];
+        run({ colorRate: 100, smudgeRate: 100, opacity: 50 }, 20, 180); const half = a(100);
         run({ colorRate: 100, smudgeRate: 25 }, 80, 80); const dot = a(80);
         run({ colorRate: 100, smudgeRate: 0 }, 20, 180); const off = a(100);
         run({ colorRate: 100, smudgeRate: 25 }, 90, 100); const short = a(95);
         run({ colorRate: 0, smudgeRate: 50 }, 30, 190, c => { c.fillStyle = '#0000ff'; c.fillRect(0, 0, 60, 200); });
         const drag = [a(80), a(100), a(120)];
-        return JSON.stringify({ dot, off, short, drag, flat, byOp });
+        return JSON.stringify({ dot, off, short, drag, flat, byOp, half });
     })()`));
     check('a colour smudge dab on its own only picks up, as in Krita', sm.dot === 0, 'alpha ' + sm.dot);
     check('...smudge rate 0 lays nothing down', sm.off === 0, 'alpha ' + sm.off);
@@ -607,6 +608,8 @@ await withPage(async (page) => {
         Math.abs(sm.drag[0] - 212) <= 20 && Math.abs(sm.drag[1] - 41) <= 20 && sm.drag[2] <= 5, sm.drag.join(','));
     check('...and the opacity curve scales the smear: 0.5 at half pressure smears as a flat 0.25 (smudge6)',
         sm.flat.every((v, i) => Math.abs(v - sm.byOp[i]) <= 3) && sm.flat[0] > 20, sm.flat.join(',') + ' vs ' + sm.byOp.join(','));
+    check("...and so does the opacity slider: 50% builds to Krita's 209, not 253 (smudge7)",
+        Math.abs(sm.half - 209) <= 12, 'alpha ' + sm.half);
     /* Measured against a real Krita dab (test/krita): its "soft" tip reads
      * the curve at the SQUARED radius, and its curves are splines. Read at
      * the plain radius, Airbrush Soft came out at 0.59x Krita's ink. And a
