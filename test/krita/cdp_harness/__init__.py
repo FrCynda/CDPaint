@@ -7,20 +7,24 @@ A job is JSON:
                    "color": [0, 0, 0], "size": 30,            (size optional)
                    "lines": [ [x0, y0, p0, x1, y1, p1], ... ],
                    "paths": [ [x, y, x, y, ...], ... ],   (optional: one stroke each)
+                   "fill": [r, g, b, a],        (optional: the layer's colour before painting)
+                   "rects": [ [x, y, w, h, r, g, b, a], ... ],   (optional: blocks over the fill)
                    "xmlSub": [ [regex, replacement], ... ],            (optional)
                    "maxSize": 40,                  (optional: cap the preset's own size)
                    "dumpXml": true } ],        (optional: <out>/<name>.xml)
   "listFile": "C:/.../presets.json" }          (optional: every loaded preset)
 xmlSub edits the preset's XML before painting (Preset.toXML/fromXML), to
 render a preset with one option switched off. The edit is in memory only:
-Krita keeps it as an unsaved tweak and nothing is written back.
+Krita keeps it as an unsaved tweak and nothing is written back -- which also
+means it is STILL THERE for every later render of the same preset in the job.
+A render must set every value an earlier one changed, or run in its own job.
 Each line is ONE Krita stroke (Node.paintLine, whole-pixel ends in 5.3): pressure runs linearly from
 p0 to p1 along it, the way a tablet sweep would. Each render goes on a fresh
 transparent layer and is written to <out>/<name>.png as straight RGBA.
 """
 import os, re, json, traceback
 from krita import Krita, Extension, ManagedColor, Preset
-from PyQt5.QtCore import QPoint, QPointF, QTimer
+from PyQt5.QtCore import QPoint, QPointF, QTimer, QByteArray
 from PyQt5.QtGui import QImage, QPainterPath
 
 JOB = os.environ.get("CDP_KRITA_JOB")
@@ -70,6 +74,11 @@ def _run():
             layer = doc.createNode(r["name"], "paintlayer")
             root.addChildNode(layer, None)
             doc.setActiveNode(layer)
+            if r.get("fill"):   # [r, g, b, a]: the layer starts painted, for brushes that pick colour up
+                f = r["fill"]
+                layer.setPixelData(QByteArray(bytes([f[2], f[1], f[0], f[3]]) * (W * H)), 0, 0, W, H)
+            for x, y, w, h, cr, cg, cb, ca in r.get("rects", []):   # then painted blocks on top
+                layer.setPixelData(QByteArray(bytes([cb, cg, cr, ca]) * (w * h)), x, y, w, h)
             for x0, y0, p0, x1, y1, p1 in r.get("lines", []):
                 layer.paintLine(QPoint(round(x0), round(y0)), QPoint(round(x1), round(y1)), p0, p1, "ForegroundColor")
                 doc.waitForDone()

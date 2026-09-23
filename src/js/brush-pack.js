@@ -863,24 +863,29 @@
              * Ours is one dial between the same two ends, so the split
              * between them is what carries over -- both at full there means
              * half and half, not a brush that never picks anything up. */
+            /* Krita's own model now (the engine's _smudgeDab): colour rate is
+             * how much paint goes into what the dab picked up, smudge rate
+             * how strongly that is laid down. Measured
+             * (test/krita/probes/smudge): colour rate switched off adds no
+             * paint at all, and smudge rate switched off is a plain brush
+             * painting at the colour rate. */
             var cr = _num(P.ColorRateValue, 0.5), sr = _num(P.SmudgeRateValue, 0.5);
-            out.colorRate = Math.round((cr / Math.max(1e-6, cr + sr)) * 100);
-            out.smudgeLength = Math.round(sr * 100);
-            /* Krita drives the fresh-colour half from the pen, which is the
-             * same dial ours drives -- it just had nowhere to be driven from
-             * until colorRate grew a sensor. */
-            var mix = _sensorFor(P, 'Mix');
-            if (mix) {
-                if (mix.src) {
-                    out.colorRateSrc = mix.src;
-                    out.colorRateMin = 0;
-                    if (mix.curve) out.colorRateCurve = mix.curve;
-                    _kritaReach(out, mix);
-                } else {
-                    warn.push('colour mixing followed ' + mix.id +
-                        ', which we have no input for');
-                }
-            }
+            var crS = _sensorFor(P, 'ColorRate'), srS = _sensorFor(P, 'SmudgeRate');
+            var crOn = _bool(P.PressureColorRate), srOn = _bool(P.PressureSmudgeRate);
+            out.smudgeMode = Math.round(_num(P.SmudgeRateMode, 0)) === 1 ? 1 : 0;
+            out.colorRate = crOn ? Math.round(cr * 100) : 0;
+            out.smudgeRate = srOn ? Math.round(sr * 100) : out.colorRate;
+            if (!srOn) { out.colorRate = 100; out.smudgePure = true; srS = crS; }
+            [['colorRate', crOn && srOn ? crS : null], ['smudgeRate', srS]].forEach(function (e) {
+                var s = e[1];
+                if (!s) return;
+                if (!s.src) { warn.push('colour smudging followed ' + s.id + ', which we have no input for'); return; }
+                out[e[0] + 'Src'] = s.src;
+                out[e[0] + 'Min'] = 0;
+                if (s.curve) out[e[0] + 'Curve'] = s.curve;
+                _kritaReach(out, s);
+            });
+            if (_bool(P.MergedPaint)) warn.push('dropped: picking colour up from every layer rather than this one');
         } else if (preset.paintop === 'deformbrush') {
             /* The deform brush moves the pixels that are already there.
              * `deformAction` is which way: Krita numbers them from one, in

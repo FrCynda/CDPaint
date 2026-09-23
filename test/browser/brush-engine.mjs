@@ -572,6 +572,41 @@ await withPage(async (page) => {
     check('...joins across a gap inside half the brush', sk.near > 200, 'alpha ' + sk.near);
     check('...and not across one beyond it', sk.far === 0, 'alpha ' + sk.far);
     check("...and one preset's line-width sensor does not leak into the next", sk.leak === 'none', sk.leak);
+    /* Krita's colour smudge (test/krita/probes/smudge, smudge2). Ours mixed
+     * one picked-up colour into an opaque dab, so on an empty layer it drew
+     * solid black where Krita draws nothing or a diluted ramp, and a pure
+     * smear never let go of what it carried. Numbers are Krita's. */
+    const sm = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = () => __B.layer().ctx;
+        const run = (set, x0, x1, prep, pr = 1) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            for (const [k, v] of Object.entries({ smudgeMode: 0, size: 30, hardness: 100, falloff: 'krita-gauss',
+                autoSpacing: 0.3, flowSrc: 'none', sizeSrc: 'none', colorRateSrc: 'none', smoothingMode: 'none', ...set })) b.setParam(k, v);
+            L().clearRect(0, 0, 200, 200);
+            if (prep) prep(L());
+            b.beginStroke(x0, 100, pr, '#000000');
+            for (let x = x0 + 1; x <= x1; x++) b.moveStroke(x, 100, pr, '#000000');
+            b.endStroke();
+        };
+        const a = (x) => L().getImageData(x, 100, 1, 1).data[3];
+        const blue = c => { c.fillStyle = '#0000ff'; c.fillRect(0, 0, 60, 200); };
+        run({ colorRate: 0, smudgeRate: 25 }, 30, 190, blue); const flat = [a(70), a(80), a(90)];
+        run({ colorRate: 0, smudgeRate: 50, dabOpacitySrc: 'pressure', dabOpacityCurve: 1 }, 30, 190, blue, 0.5);
+        const byOp = [a(70), a(80), a(90)];
+        run({ colorRate: 100, smudgeRate: 25 }, 80, 80); const dot = a(80);
+        run({ colorRate: 100, smudgeRate: 0 }, 20, 180); const off = a(100);
+        run({ colorRate: 100, smudgeRate: 25 }, 90, 100); const short = a(95);
+        run({ colorRate: 0, smudgeRate: 50 }, 30, 190, c => { c.fillStyle = '#0000ff'; c.fillRect(0, 0, 60, 200); });
+        const drag = [a(80), a(100), a(120)];
+        return JSON.stringify({ dot, off, short, drag, flat, byOp });
+    })()`));
+    check('a colour smudge dab on its own only picks up, as in Krita', sm.dot === 0, 'alpha ' + sm.dot);
+    check('...smudge rate 0 lays nothing down', sm.off === 0, 'alpha ' + sm.off);
+    check("...a short stroke on an empty layer builds to Krita's 165, not solid", Math.abs(sm.short - 165) <= 12, 'alpha ' + sm.short);
+    check('...and a pure smear lets go of what it carries (Krita 212, 41, 0)',
+        Math.abs(sm.drag[0] - 212) <= 20 && Math.abs(sm.drag[1] - 41) <= 20 && sm.drag[2] <= 5, sm.drag.join(','));
+    check('...and the opacity curve scales the smear: 0.5 at half pressure smears as a flat 0.25 (smudge6)',
+        sm.flat.every((v, i) => Math.abs(v - sm.byOp[i]) <= 3) && sm.flat[0] > 20, sm.flat.join(',') + ' vs ' + sm.byOp.join(','));
     /* Measured against a real Krita dab (test/krita): its "soft" tip reads
      * the curve at the SQUARED radius, and its curves are splines. Read at
      * the plain radius, Airbrush Soft came out at 0.59x Krita's ink. And a
@@ -1398,7 +1433,8 @@ await withPage(async (page) => {
         const inked = [];
         for (const t of mine) {
             grid.scrollTop = t.offsetTop - grid.offsetTop - 20;
-            await settle();
+            // a fixed wait raced the lazy draw; give it up to 2s
+            for (let i = 0; i < 16 && !ink(t); i++) await settle();
             inked.push(ink(t));
         }
         // Walk the whole list; nothing may stay blank once it has been seen.

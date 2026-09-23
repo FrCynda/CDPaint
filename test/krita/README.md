@@ -321,6 +321,41 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
     newer side of the stroke (ours is 3% dark on the U-turns), magnetify off
     (a guess), distance density and opacity (guessed linear), and random
     RGB and opacity.
+  - `smudge`, `smudge2` (colour smudge, Basic_mix at size 30 with flat
+    sensor curves, on an empty layer, a red one, or blue blocks via the
+    harness's `fill` and `rects`). A dab carries pixels, not a colour. It
+    copies what lies under the previous dab (smearing), or takes the one
+    pixel under that dab's centre (dulling). It mixes paint into that at
+    `c × max(0.2, 1 − s)` (c = colour rate, s = smudge rate; fitted 0.75,
+    0.5, 0.25, 0.2, 0.2 of c at s = 0.25 … 1, and the same at size 60). The
+    result replaces the canvas at `s × tip × flow`, premultiplied. So s = 0
+    lays nothing down, and on an empty layer the paint is diluted by the
+    transparency it picks up. The first dab only picks up, and a click paints
+    nothing. The auto gap is `0.3 × √(size + 1)`: a 10px stroke lays 5 dabs,
+    not 6. The pick-up moves by both ends rounded to whole pixels, alternating
+    1 and 2 at a 1.64px gap. Rounded against the dab's own phase, it was 2
+    every time and carried colour a fifth too far.
+    Switches: colour rate off adds no paint. Smudge rate off is a plain brush
+    painting at the colour rate. With this, the whole 79-render grid is within
+    0.77 levels on average, where the old single-colour mix painted solid
+    black on empty layers. Not modelled yet: smudge radius (8 presets), merged
+    paint (12), and soft or picture tips (probed on a hard disc only). Dulling
+    at half rate fades a little in Krita (225 after 320px) and holds in ours
+    (254): 8-bit rounding.
+    Harness trap found here: an `xmlSub` edit stays on the preset for the rest
+    of the job. One "colour rate off" render blanked every render after it.
+  - `smudge3` … `smudge6` (the same, with pressure): Basic_mix as shipped
+    painted far lighter in Krita under a pressure ramp. Black on an empty
+    layer can't separate colour rate from smudge rate (many pairs look alike),
+    so `smudge5` reads each where only it matters: a pure smear out of a blue
+    block for the smudge rate, a red fill for the colour rate. Found:
+    the opacity curve scales the whole dab, smear and paint alike, on colour
+    smudge with its pressure switch off too. `smudge6`: a flat 0.5 smudge
+    under a linear opacity curve at pressure 0.5 smears exactly as a flat
+    0.25, switch on or off. The paint's `max(0.2, 1 − s)` reads the smudge
+    rate's slider, not its curve. Mean error: smudge4 10.0 → 2.6 levels,
+    smudge5 8.5 → 2.0; smudge3 ends at 1.4 and smudge6 at 2.3. The
+    flat-curve grid is unchanged.
   - Still open: very faint build-up (well under one 8-bit level a dab)
     accumulates less in ours than in Krita. X1BB Addition Soft (5% × a
     pressure curve, 64%-peak soft tip) sits at 0.68× ink. The tip, spacing

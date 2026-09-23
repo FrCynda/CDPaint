@@ -750,12 +750,13 @@ await withPage(async (page) => {
 
     /* Krita drives the fresh-colour half of a smudge from the pen. It is the
      * same dial ours drives -- it just had nowhere to be driven from until
-     * colorRate grew a sensor of its own. */
+     * colorRate grew a sensor of its own. (Krita spells it ColorRate; an
+     * older "Mix" spelling here matched no preset in the whole bank.) */
     const mix = await page.eval(`(() => {
         const t = BrushPack.toPreset({ paintop: 'colorsmudge', name: 'Blender', params: {
             ColorRateValue: '0.4', SmudgeRateValue: '0.6',
-            PressureMix: 'true',
-            MixSensor: '<param name="MixSensor"><params id="pressure"/></param>'
+            PressureColorRate: 'true', ColorRateUseCurve: 'true', PressureSmudgeRate: 'true',
+            ColorRateSensor: '<params id="pressure"/>'
         } });
         return JSON.stringify({ p: t.params, w: t.warnings });
     })()`).then(JSON.parse);

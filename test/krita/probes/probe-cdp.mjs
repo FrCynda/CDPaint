@@ -21,16 +21,16 @@ const names = fs.readdirSync(root).filter(d => fs.existsSync(path.join(root, d, 
 const xmls = {}, jobs = {};
 for (const n of names) {
     const j = JSON.parse(fs.readFileSync(path.join(root, n, 'job.json'), 'utf8')), r = j.renders[0];
-    jobs[n] = { lines: r.lines || [], paths: r.paths || [], W: j.width, H: j.height, size: r.size || r.maxSize };
+    jobs[n] = { lines: r.lines || [], paths: r.paths || [], W: j.width, H: j.height, size: r.size || r.maxSize, fill: r.fill, rects: r.rects || [] };
     const src = r.src ? execFileSync('python', ['-c', KPP_XML, r.src], { encoding: 'utf8' }) : ink1;
     xmls[n] = execFileSync('python', ['-c', SUBS, JSON.stringify(r.xmlSub || [])], { input: src, encoding: 'utf8' });
 }
 await withPage(async (page) => {
+  for (const one of names) {   // a call each: CDP gives one call 30s
     const res = JSON.parse(await page.eval(`(async () => {
-        const app = PaintApp, b = app.brush, out = {};
-        const jobs = ${JSON.stringify(jobs)};
-        for (const [name, xml] of Object.entries(${JSON.stringify(xmls)})) {
-            const { lines, paths, W, H, size } = jobs[name];
+        const app = PaintApp, b = app.brush, out = {};        const jobs = ${JSON.stringify(jobs)};
+        for (const [name, xml] of Object.entries(${JSON.stringify({ [one]: xmls[one] })})) {
+            const { lines, paths, W, H, size, fill, rects } = jobs[name];
             app.layerMgr.collapseToBase({ fresh: true }); app.setSize(W, H); app.config.zoom = 1; app.updateBounds();
             document.getElementById('lsys-add').click(); app.state.selection = null;
             const L = app.layerMgr.layers[app.layerMgr.activeIdx];
@@ -44,6 +44,8 @@ await withPage(async (page) => {
             if (params.texturePattern) b.loadTexturePattern(params.texturePattern, b._currentPreset);
             await new Promise(r => setTimeout(r, 300));   // let a texture decode
             L.ctx.clearRect(0, 0, W, H);
+            if (fill) { L.ctx.fillStyle = 'rgba(' + fill.slice(0, 3).join(',') + ',' + fill[3] / 255 + ')'; L.ctx.fillRect(0, 0, W, H); }
+            for (const [x, y, w, h, ...c] of rects) { L.ctx.clearRect(x, y, w, h); L.ctx.fillStyle = 'rgba(' + c.slice(0, 3).join(',') + ',' + c[3] / 255 + ')'; L.ctx.fillRect(x, y, w, h); }
             const clock = performance.now; performance.now = () => 0;
             const oneSeg = params.engineKind === 'sketch';   // as measure.mjs: Krita hands it the two ends only
             for (const [x0, y0, p0, x1, y1, p1] of lines) {
@@ -72,4 +74,5 @@ await withPage(async (page) => {
         fs.writeFileSync(path.join(root, n, 'cdp.png'), Buffer.from(res[n].png, 'base64'));
         console.log(n.padEnd(8), JSON.stringify(res[n].rot), res[n].warn.join('; '));
     }
+  }
 });

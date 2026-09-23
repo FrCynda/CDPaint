@@ -2267,6 +2267,127 @@
         return _mixColors(w, colorHex, rate);
     }
 
+    /* Krita's colour smudge (smudgeMode set), rebuilt from black-box renders
+     * (test/krita/probes/smudge, smudge2) rather than from its source.
+     *
+     * A dab does not carry a colour, it carries PIXELS: it takes up what lies
+     * under the previous dab (smearing, mode 0) or the one pixel under that
+     * dab's centre (dulling, mode 1), mixes the paint colour in, and lays
+     * that down at smudge rate s times the tip and the flow, replacing rather
+     * than covering -- so on an empty layer what it picks up is transparency,
+     * and the paint comes out diluted the way Krita's does, while at s = 0 it
+     * lays down nothing at all. The very first dab only picks up. All mixing
+     * is premultiplied.
+     *
+     * The paint's share is NOT the colour rate c: it is c * max(0.2, 1 - s),
+     * fitted per setting on Krita's renders (0.75, 0.5, 0.25, 0.2, 0.2 of c
+     * at s = 0.25 .. 1, the same at twice the size). With it the whole grid
+     * matches Krita to within a level or so; with plain c a long stroke went
+     * black in a few pixels where Krita's took a hundred and fifty.
+     *
+     * Straight onto the layer, like the deform brush: each dab has to read
+     * what the one before it left. */
+    var _smPrev = null;
+    var _smMaskA = new WeakMap();
+
+    function _smudgeDab(p, x, y, mask, colorHex, alpha, sc, sz) {
+        var ctx = _outCtx();
+        if (!ctx) return;
+        var ma = _smMaskA.get(mask);
+        if (!ma) {
+            var mc = new OffscreenCanvas(mask.width, mask.height).getContext('2d', { willReadFrequently: true });
+            mc.drawImage(mask, 0, 0);
+            var md = mc.getImageData(0, 0, mask.width, mask.height).data;
+            ma = new Uint8Array(mask.width * mask.height);
+            for (var q = 0; q < ma.length; q++) ma[q] = md[q * 4 + 3];
+            _smMaskA.set(mask, ma);
+        }
+        var mw = mask.width, mh = mask.height;
+        var cx = mask._cx != null ? mask._cx : mw / 2, cy = mask._cy != null ? mask._cy : mh / 2;
+        var ox = _round(x - cx), oy = _round(y - cy);
+        var prev = _smPrev;
+        _smPrev = [x, y];
+        if (!prev) return;                  // the first dab only loads the brush
+        /* How far the pick-up moves: both ends rounded against the SAME
+         * half size, so a 1.64px step alternates 1 and 2 as Krita's does.
+         * Rounded against this dab's own phase (round tips are built at it)
+         * it came out 2 every time, and colour travelled a fifth too far. */
+        var h = (sz || mw) / 2;
+        var sx = ox - (_round(x - h) - _round(prev[0] - h)), sy = oy - (_round(y - h) - _round(prev[1] - h));
+        // One read covering both footprints.
+        var W = _docW(), H = _docH();
+        var rx = _max(0, _min(ox, sx)), ry = _max(0, _min(oy, sy));
+        var rw = _min(W, _max(ox, sx) + mw) - rx, rh = _min(H, _max(oy, sy) + mh) - ry;
+        if (rw <= 0 || rh <= 0) return;
+        var c = _clamp(_dyn(p, 'colorRate', p.colorRate, sc, 9), 0, 100) / 100;
+        var s = _clamp(_dyn(p, 'smudgeRate', p.smudgeRate == null ? 100 : p.smudgeRate, sc, 15), 0, 100) / 100;
+        /* The opacity curve scales the whole dab, smear and paint alike, and
+         * on colour smudge it acts with its pressure switch off too: a flat
+         * 0.5 smudge under a linear opacity curve at pressure 0.5 smeared as
+         * a flat 0.25, switch on or off (test/krita/probes/smudge6). */
+        var k0 = s * _clamp(alpha, 0, 1) * _adO;
+        if (!(k0 > 0)) return;
+        /* The paint's share reads the smudge rate's slider, not its curve,
+         * and the opacity curve thins it as well: Basic_mix's own curves at
+         * pressure 0.6..1 fit this and not the curved rate (smudge4/5/6,
+         * mean error 6.1 -> 2.6 levels on smudge4). */
+        var sv = (p.smudgeRate == null ? 100 : p.smudgeRate) / 100;
+        if (!p.smudgePure) c *= _max(0.2, 1 - sv) * _adO;
+        var rgb = _hexToRgb(colorHex);
+        var pr = rgb[0] * c, pg = rgb[1] * c, pb = rgb[2] * c, pa = 255 * c;
+        if (app.layerMgr && app.layerMgr.markDirty && ctx === app.ctx) app.layerMgr.markDirty(rx - 1, ry - 1, rw + 2, rh + 2);
+        var img;
+        try { img = ctx.getImageData(rx, ry, rw, rh); } catch (e) { return; }
+        var d = img.data, src = new Float32Array(mw * mh * 4);
+        var i, j, t, u, a, n;
+        // What the brush picked up, premultiplied; off the canvas is transparent.
+        for (j = 0; j < mh; j++) {
+            for (i = 0; i < mw; i++) {
+                var gx = sx + i - rx, gy = sy + j - ry;
+                if (gx < 0 || gy < 0 || gx >= rw || gy >= rh) continue;
+                t = (gy * rw + gx) * 4; u = (j * mw + i) * 4; a = d[t + 3] / 255;
+                src[u] = d[t] * a; src[u + 1] = d[t + 1] * a; src[u + 2] = d[t + 2] * a; src[u + 3] = d[t + 3];
+            }
+        }
+        if (p.smudgeMode === 1) {
+            // Dulling: one colour, the pixel under the previous dab's centre.
+            var qx = _floor(prev[0]) - rx, qy = _floor(prev[1]) - ry, ar = 0, ag = 0, ab = 0, aa = 0;
+            if (qx >= 0 && qy >= 0 && qx < rw && qy < rh) {
+                t = (qy * rw + qx) * 4; a = d[t + 3] / 255;
+                ar = d[t] * a; ag = d[t + 1] * a; ab = d[t + 2] * a; aa = d[t + 3];
+            }
+            for (n = 0; n < ma.length; n++) { u = n * 4; src[u] = ar; src[u + 1] = ag; src[u + 2] = ab; src[u + 3] = aa; }
+        }
+        var locked = _alphaLocked();
+        var stencil = null;
+        if (_selStencil && !_previewTarget) {
+            try { stencil = _selStencil.getContext('2d').getImageData(rx, ry, rw, rh).data; } catch (e2) { stencil = null; }
+        }
+        for (j = 0; j < mh; j++) {
+            for (i = 0; i < mw; i++) {
+                var m = ma[j * mw + i];
+                if (!m) continue;
+                var px = ox + i - rx, py = oy + j - ry;
+                if (px < 0 || py < 0 || px >= rw || py >= rh) continue;
+                t = (py * rw + px) * 4; u = (j * mw + i) * 4;
+                if (stencil && !stencil[t + 3]) continue;
+                var k = k0 * m / 255, ci = 1 - c;
+                var da = d[t + 3] / 255;
+                // premultiplied: lerp(dst, lerp(pickup, paint, c), s * tip)
+                var oa = d[t + 3] + ((src[u + 3] * ci + pa) - d[t + 3]) * k;
+                var or = d[t] * da + ((src[u] * ci + pr) - d[t] * da) * k;
+                var og = d[t + 1] * da + ((src[u + 1] * ci + pg) - d[t + 1] * da) * k;
+                var ob = d[t + 2] * da + ((src[u + 2] * ci + pb) - d[t + 2] * da) * k;
+                if (oa <= 0) { if (!locked) d[t + 3] = 0; continue; }
+                var inv = 255 / oa;
+                d[t] = _clamp(or * inv, 0, 255); d[t + 1] = _clamp(og * inv, 0, 255);
+                d[t + 2] = _clamp(ob * inv, 0, 255);
+                if (!locked) d[t + 3] = oa;
+            }
+        }
+        ctx.putImageData(img, rx, ry);
+    }
+
     /* Fading a dab's own alpha does not fade the LINE. Dabs overlap, and
      * stacking n of them at alpha a with source-over reaches 1-(1-a)^n — so
      * the ink saturated solid long before the ramp finished, and how far it
@@ -2325,7 +2446,7 @@
 
         // Smudge: sample canvas color and mix with brush color
         var rate = _clamp(_dyn(p, 'colorRate', p.colorRate, sc, 9), 0, 100);
-        if (rate < 100) {
+        if (rate < 100 && p.smudgeMode == null) {
             finalColor = _wetColor(p, x, y, finalColor, 0, sz / 2, rate);
             if (finalColor === null) return;      // nothing loaded, nothing to lay down
         }
@@ -2405,7 +2526,8 @@
             var alpha = _clamp(_dyn(p, 'flow', p.flow / 100, flowSc, 4), 0, 1);
             if (tfInk < 1) alpha = _taperAlpha(alpha, tfInk, sz, p);
 
-            _paintDab(_flowCtx, dx, dy, mask, finalColor, alpha, tex, p.textureScale, p.textureType, p.wetBlend);
+            if (p.smudgeMode != null) _smudgeDab(p, dx, dy, mask, finalColor, alpha, sc, sz);
+            else _paintDab(_flowCtx, dx, dy, mask, finalColor, alpha, tex, p.textureScale, p.textureType, p.wetBlend);
         }
     }
 
@@ -3314,6 +3436,10 @@
             _tipAsp = _tc.width / _max(1, _tc.height);
         }
         function _gap(d) {
+            /* The colour smudge's auto gap is measured one pixel wider: a
+             * 10px stroke at size 30 lays five dabs in Krita, not six
+             * (test/krita/probes/smudge2). Only checked there, so only there. */
+            if (p.autoSpacing > 0 && p.smudgeMode != null && d >= 1) d += 1;
             return p.autoSpacing > 0 ? p.autoSpacing * (d < 1 ? d : Math.sqrt(d)) : d * spacing;
         }
         function _stepFor(pr, px, py, ang) {
@@ -3922,6 +4048,12 @@
         offsetAcross: 0,
         colorRate: 100,
         smudgeLength: 50,
+        /* Krita's colour smudge (_smudgeDab): null is our own smudge; 0
+         * smears, 1 dulls. smudgeRate is how strongly a dab lays down. */
+        smudgeMode: null,
+        smudgePure: false,   // smudge rate switched off in Krita: lays paint unmixed
+        smudgeRate: 100,
+        smudgeRateSrc: 'none', smudgeRateMin: 0, smudgeRateCurve: 1,
         smudgeRadius: 100,
         airbrushRate: 40,
         airbrushMode: false,
@@ -4411,6 +4543,7 @@
             if (_params.hasOwnProperty(_fk)) _strokeParams[_fk] = _isArray(_params[_fk]) ? _cloneCurve(_params[_fk]) : _params[_fk];
         }
         _wet = [];                // the brush is loaded fresh each stroke
+        _smPrev = null;
         _wetPos = [];
         _smoothAngle = NaN;
         _lastDabDist = 0;
