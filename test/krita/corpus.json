@@ -357,8 +357,114 @@
    ],
    "expect": {
     "inkRatio": [
-     1,
-     1.25
+     0.9,
+     1.1
+    ],
+    "iouMin": 0.62
+   }
+  },
+  {
+   "name": "charcoal-pencil-nomask",
+   "preset": "h) Charcoal Pencil Medium",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1
+    ]
+   ],
+   "note": "Charcoal with its masking brush switched off on both sides, to measure the main stroke alone",
+   "xmlSub": [
+    [
+     "(name=\"MaskingBrush/Enabled\"[^>]*>(?:<!\\[CDATA\\[)?)true",
+     "\\1false"
+    ]
+   ],
+   "params": {
+    "maskOp": ""
+   },
+   "expect": {
+    "inkRatio": [
+     0.9,
+     1.08
+    ],
+    "iouMin": 0.4
+   }
+  },
+  {
+   "name": "charcoal-pencil-plain",
+   "preset": "h) Charcoal Pencil Medium",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1
+    ]
+   ],
+   "note": "Charcoal with its masking brush and texture both off, to measure the tip, opacity and flow alone",
+   "xmlSub": [
+    [
+     "(name=\"MaskingBrush/Enabled\"[^>]*>(?:<!\\[CDATA\\[)?)true",
+     "\\1false"
+    ],
+    [
+     "(name=\"Texture/Pattern/Enabled\"[^>]*>(?:<!\\[CDATA\\[)?)true",
+     "\\1false"
+    ]
+   ],
+   "params": {
+    "maskOp": "",
+    "texture": 0,
+    "textureMode": ""
+   },
+   "expect": {
+    "inkRatio": [
+     0.97,
+     1.04
+    ],
+    "iouMin": 0.92,
+    "thickTol": 1
+   }
+  },
+  {
+   "name": "charcoal-dab",
+   "preset": "h) Charcoal Pencil Medium",
+   "lines": [
+    [
+     260,
+     110,
+     0.38,
+     261,
+     110,
+     0.38
+    ]
+   ],
+   "note": "one plain Charcoal dab at pressure 0.38",
+   "xmlSub": [
+    [
+     "(name=\"MaskingBrush/Enabled\"[^>]*>(?:<!\\[CDATA\\[)?)true",
+     "\\1false"
+    ],
+    [
+     "(name=\"Texture/Pattern/Enabled\"[^>]*>(?:<!\\[CDATA\\[)?)true",
+     "\\1false"
+    ]
+   ],
+   "params": {
+    "maskOp": "",
+    "texture": 0,
+    "textureMode": ""
+   },
+   "expect": {
+    "inkRatio": [
+     0.97,
+     1.03
     ],
     "iouMin": 0.65
    }

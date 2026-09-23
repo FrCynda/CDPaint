@@ -5,13 +5,18 @@ A job is JSON:
   { "width": 400, "height": 200, "out": "C:/.../dir",
     "renders": [ { "name": "basic5", "preset": "b) Basic-5 Size",
                    "color": [0, 0, 0], "size": 30,            (size optional)
-                   "lines": [ [x0, y0, p0, x1, y1, p1], ... ] } ] }
+                   "lines": [ [x0, y0, p0, x1, y1, p1], ... ],
+                   "xmlSub": [ [regex, replacement], ... ],            (optional)
+                   "dumpXml": true } ] }       (optional: <out>/<name>.xml)
+xmlSub edits the preset's XML before painting (Preset.toXML/fromXML), to
+render a preset with one option switched off. The edit is in memory only:
+Krita keeps it as an unsaved tweak and nothing is written back.
 Each line is ONE Krita stroke (Node.paintLine, whole-pixel ends in 5.3): pressure runs linearly from
 p0 to p1 along it, the way a tablet sweep would. Each render goes on a fresh
 transparent layer and is written to <out>/<name>.png as straight RGBA.
 """
-import os, json, traceback
-from krita import Krita, Extension, ManagedColor
+import os, re, json, traceback
+from krita import Krita, Extension, ManagedColor, Preset
 from PyQt5.QtCore import QPoint, QTimer
 from PyQt5.QtGui import QImage
 
@@ -39,6 +44,16 @@ def _run():
             if p is None:
                 _log("MISSING PRESET " + r["preset"]); continue
             view.setCurrentBrushPreset(p)
+            if r.get("dumpXml"):
+                open(os.path.join(job["out"], r["name"] + ".xml"), "w", encoding="utf-8").write(Preset(view.currentBrushPreset()).toXML())
+            if r.get("xmlSub"):
+                cur = Preset(view.currentBrushPreset())
+                xml = cur.toXML()
+                for pat, rep in r["xmlSub"]:
+                    xml, n = re.subn(pat, rep, xml)
+                    _log("xmlSub %r: %d" % (pat, n))
+                cur.fromXML(xml)
+                view.setCurrentBrushPreset(view.currentBrushPreset())
             if "size" in r: view.setBrushSize(float(r["size"]))
             c = ManagedColor("RGBA", "U8", "")
             rgb = r.get("color", [0, 0, 0])

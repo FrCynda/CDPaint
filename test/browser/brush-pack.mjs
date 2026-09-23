@@ -290,6 +290,10 @@ await withPage(async (page) => {
             W.dodge.maskOpacitySrc === 'pressure' && W.dodge.maskOpacityCurve.length === 3 && !W.dodge._tip2Url,
             JSON.stringify([W.dodge.maskOp, W.dodge.maskSize, W.dodge.maskHardness, W.dodge.maskOpacitySrc]));
         check("a Krita preset reads speed against Krita's 30 px/ms ceiling", W.soft.speedMax === 30, W.soft.speedMax);
+        // Krita turns its tip the other way from ctx.rotate; a lone Charcoal Pencil dab leaned wrong.
+        const turned = await page.eval(`BrushPack.toPreset({ params: { brush_definition:
+            '<Brush type="auto_brush" angle="0.5" spacing="0.1"><MaskGenerator id="default" type="circle" diameter="20" ratio="0.5" hfade="1" vfade="1"/></Brush>' } }).params.angle`);
+        check("a Krita tip's fixed angle is turned Krita's way round", turned === 331, 'angle ' + turned);
         /* Krita's oil_knife.png is dark on opaque white, bar eleven pixels
          * at alpha 192; trusting the alpha stamped the whole white square. */
         const knife = await page.eval(`(async () => {

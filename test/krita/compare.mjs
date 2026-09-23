@@ -28,8 +28,8 @@ const cases = corpus.cases.filter(c => !onlyArg || onlyArg.includes(c.name));
 if (argv.includes('--render')) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-krita-'));
     const job = { width: corpus.width, height: corpus.height, out: tmp.replace(/\\/g, '/'),
-        renders: cases.map(c => ({ name: c.name, preset: c.preset, size: c.size, lines: c.lines })) };
-    job.renders.forEach(r => { if (r.size === undefined) delete r.size; });
+        renders: cases.map(c => ({ name: c.name, preset: c.preset, size: c.size, lines: c.lines, xmlSub: c.xmlSub })) };
+    job.renders.forEach(r => { if (r.size === undefined) delete r.size; if (!r.xmlSub) delete r.xmlSub; });
     const jf = path.join(tmp, 'job.json');
     fs.writeFileSync(jf, JSON.stringify(job));
     console.log(renderKrita(jf).trim());
@@ -69,6 +69,7 @@ const results = await withPage(async (page) => {
             const L = app.layerMgr.layers[app.layerMgr.activeIdx];
             b.loadPreset(imp.added[0]);
             ${meta[c.name] ? `b.setParam('size', ${meta[c.name].size});` : ''}
+            ${Object.entries(c.params || {}).map(([k, v]) => `b.setParam(${JSON.stringify(k)}, ${JSON.stringify(v)});`).join(' ')}   // the same edit xmlSub made in Krita
             await new Promise(res => setTimeout(res, 600));          // let the tip load
             L.ctx.clearRect(0, 0, W, H);
             // Krita's paintLine interpolates pressure along the line; a

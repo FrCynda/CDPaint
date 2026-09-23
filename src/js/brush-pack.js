@@ -566,14 +566,18 @@
                  * is a subtle grain, not a mistake. */
                 var coeff = _num(P['MaskingBrush/MasterSizeCoeff'], 1);
                 out.tip2Size = Math.max(1, Math.min(2000, Math.round(coeff * 100)));
-                out.tip2Angle = ((Math.round(_num(mb.angle, 0) * 180 / Math.PI) % 360) + 360) % 360;
+                out.tip2Angle = ((Math.round(-_num(mb.angle, 0) * 180 / Math.PI) % 360) + 360) % 360;   // negated, as out.angle below
             } else {
                 warn.push('dropped: a second brush used as a mask');
             }
         }
 
-        // Krita stores the tip's own turn in radians.
-        out.angle = Math.round(_num(bd.angle, 0) * 180 / Math.PI) % 360;
+        /* Krita stores the tip's own turn in radians, and turns it the other
+         * way from ctx.rotate: it samples the tip at (cos x - sin y,
+         * sin x + cos y) (KisBrushMaskScalarApplicator), which shows the tip
+         * turned by minus the angle. A lone Charcoal Pencil dab next to
+         * Krita's leaned the wrong way until this was negated. */
+        out.angle = ((Math.round(-_num(bd.angle, 0) * 180 / Math.PI) % 360) + 360) % 360;
 
         /* Scatter is a multiple of the tip diameter there and a percentage of
          * it here. Krita can scatter along one axis only; we always scatter in

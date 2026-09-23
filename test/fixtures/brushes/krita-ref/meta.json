@@ -100,5 +100,23 @@
   "size": 12,
   "file": "h)_Charcoal_Pencil_Medium.kpp",
   "krita": "5.3.2.1 (git 0619060)"
+ },
+ "charcoal-pencil-nomask": {
+  "preset": "h) Charcoal Pencil Medium",
+  "size": 12,
+  "file": "h)_Charcoal_Pencil_Medium.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "charcoal-pencil-plain": {
+  "preset": "h) Charcoal Pencil Medium",
+  "size": 12,
+  "file": "h)_Charcoal_Pencil_Medium.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "charcoal-dab": {
+  "preset": "h) Charcoal Pencil Medium",
+  "size": 12,
+  "file": "h)_Charcoal_Pencil_Medium.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
  }
 }

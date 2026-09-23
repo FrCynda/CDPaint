@@ -3230,11 +3230,16 @@
          *    preset's size, a light-pressure stretch of a pressure brush was
          *    spaced for a full-size dab and broke into beads;
          *  - auto spacing is coeff * sqrt(size) pixels, not a percentage;
-         *  - the gap is an ellipse with the tip's own width and height as
-         *    axes, turned with the tip, so a flat tip dragged across its thin
-         *    side packs its dabs by its thin side. Off its longest side, a
-         *    5:1 chisel at 10% laid dabs twice their own thickness apart.
-         *    The aspect SENSOR is left out, as Krita leaves it out. */
+         *  - the gap is an ellipse whose axes are the tip's width and height,
+         *    so a flat tip dragged across its thin side packs its dabs by its
+         *    thin side. Off its longest side, a 5:1 chisel at 10% laid dabs
+         *    twice their own thickness apart. The aspect SENSOR is left out,
+         *    as Krita leaves it out;
+         *  - those axes are the box around the tip turned by its FIXED angle
+         *    (KisBrush::characteristicSize), and only the rotation sensor
+         *    turns the ellipse (KisBrushOp::updateSpacingImpl). Charcoal
+         *    Pencil's 0.8 tip at 309 degrees is 10.4px across its box, not
+         *    8.3, and packed a fifth too many dabs. */
         var _tipAsp = 1;
         if (p.shape === 'custom' && _tipCanvas()) {
             var _tc = _tipCanvas();
@@ -3250,12 +3255,15 @@
             if (_tipAsp >= 1) h = d / _tipAsp; else w = d * _tipAsp;
             var asp = p.aspectRatio || 1;
             if (asp >= 1) h /= asp; else w *= asp;
+            var t0 = (p.angle || 0) * _PI / 180, c0 = _abs(_cos(t0)), s0 = _abs(_sin(t0));
+            var bw = w * c0 + h * s0, bh = w * s0 + h * c0;
+            w = bw; h = bh;
             var g;
             if (p.spacingIsotropic || _abs(w - h) < 0.5) {
                 g = _gap(_max(w, h));
             } else {
                 var a = _gap(w), b = _gap(h);
-                var phi = ((ang || 0) - _dynAngle(p, p.angle, sc)) * _PI / 180;
+                var phi = ((ang || 0) - _dynAngle(p, p.angle, sc) + (p.angle || 0)) * _PI / 180;
                 g = 1 / Math.sqrt(_pow(_cos(phi) / a, 2) + _pow(_sin(phi) / b, 2));
             }
             if (p.spacingSrc && p.spacingSrc !== 'none') {

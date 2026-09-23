@@ -181,12 +181,34 @@ two renders of the same job are byte-identical.
   follows its own sensor. Charcoal Pencil Medium went from 0.52× (IoU 0.36)
   to 1.15× (0.70). Waterpaint moved from 1.05× to about 1.0×, because its
   subtract mask now builds up the same capped way.
+- A job can now edit a preset before painting it: `xmlSub` runs regex
+  replacements on the preset's XML (`Preset.toXML`/`fromXML`, in memory only),
+  and a corpus case's `params` makes the same edit on our side. The Charcoal
+  cases use this to switch the mask and texture off, so each part is measured
+  alone. A render only ever holds the edit in memory; nothing under
+  `%APPDATA%/krita` changed during these runs. `dumpXml` writes the preset's
+  XML next to the PNG.
+- Krita paints nothing for a zero-length `paintLine`. A single dab is a
+  one-pixel line (`charcoal-dab`).
+- Tip angle direction. That lone dab leaned the wrong way. Krita samples the
+  tip at `cos·x − sin·y`, `sin·x + cos·y`, which shows it turned by minus
+  its angle, while `ctx.rotate` turns it by plus. So the importer now negates
+  Krita's `angle` (and the masking tip's). `_kritaCircleMask` samples with
+  `−sin` so that it turns the way `ctx.rotate` does, like every other shape.
+- Spacing of turned tips. Krita's dab gap is an ellipse whose axes are the
+  box around the tip turned by its *fixed* angle
+  (`KisBrush::characteristicSize`, `KisQImagePyramid`). Only the rotation
+  option turns the ellipse itself (`KisBrushOp::updateSpacingImpl`).
+  Charcoal's 0.8 tip at 309° has a box 10.4px wide, not 8.3, and we laid a
+  fifth too many dabs. Charcoal went 1.15× → 0.99×, and with mask and texture
+  off it is 1.01× (IoU 0.95). One dab is 1.00×, peaking at 53 on both sides.
 - Still open:
-  - Charcoal Pencil is 1.15×, too wide at the light start of the line
-    (6px against 4px). The mask lands on the stroke's faint fringe.
+  - Charcoal's IoU is 0.69 with the texture on. Krita gives the texture a
+    random offset per stroke (`isRandomOffsetX/Y`), so the grain can't line
+    up pixel for pixel.
   - Waterpaint's IoU is about 0.66, and varies from run to run because its
     tip is random.
-  - No default preset turns a flat Krita tip by a fixed angle (the only two
-    flat, angled tips follow tilt), so whether our fixed angle turns the same
-    way as Krita's is unmeasured. Krita adds the preset's angle to the
-    rotation option's value, and flips only the latter.
+- Source to read: the installed Krita is 5.3.2 (`meta.json` records it), so
+  read the `v5.2.x` tags of github.com/KDE/krita (the mirror has no 5.3 tag),
+  not 4.4. The masking brush, alpha darken and spacing code checked here are
+  the same in both.

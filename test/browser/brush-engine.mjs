@@ -594,6 +594,27 @@ await withPage(async (page) => {
         dodge.one[0] > 160 && dodge.one[0] < 200 && dodge.one[1] === 0, JSON.stringify(dodge));
     check('...and its dabs build up to their own opacity, not past it',
         dodge.many[0] - dodge.one[0] < 90 && dodge.many[1] === 0, JSON.stringify(dodge));
+    /* Krita spaces dabs by the box around the tip turned by its fixed angle
+     * (KisBrush::characteristicSize). A 20x5 tip at 45 degrees has a
+     * 17.7px box, so at 100% spacing its dabs stand apart along a line; an
+     * ellipse turned with the tip packed them 6.9px apart, touching.
+     * Charcoal Pencil laid a fifth too many dabs that way. */
+    const boxRuns = await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        b.setParam('size', 20); b.setParam('aspectRatio', 4); b.setParam('angle', 45); b.setParam('spacing', 100);
+        b.setParam('hardness', 100); b.setParam('falloff', 'krita');
+        b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(30, 100, 1, '#000000');
+        for (let x = 31; x <= 170; x++) b.moveStroke(x, 100, 1, '#000000');
+        b.endStroke();
+        const d = __B.layer().ctx.getImageData(30, 100, 140, 1).data;
+        let runs = 0, on = false;
+        for (let i = 3; i < d.length; i += 4) { const ink = d[i] > 20; if (ink && !on) runs++; on = ink; }
+        return runs;
+    })()`);
+    check("dabs are spaced by the box around the turned tip, as Krita's are", boxRuns >= 6 && boxRuns <= 9, 'runs of ink ' + boxRuns);
     /* Krita smooths speed over the last few samples (KisSpeedSmoother) and
      * reads it against its own ceiling; with the clock stopped, as in the
      * headless Krita render, speed is 0. */
