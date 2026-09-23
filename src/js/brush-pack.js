@@ -410,9 +410,19 @@
             }
         }
         var len = /length="([0-9.]+)"/.exec(raw);
+        /* "Share curve across all settings" -- on unless the file says off --
+         * paints every sensor with <opt>commonCurve, not the sensor's own
+         * (KisKritaSensorPack::read, KisCurveOption generateSensors). Revoy's
+         * Mechanical Pencil keeps a straight line in its sensor and a curve
+         * topping out at 0.57 in commonCurve; reading the sensor's drew it
+         * at twice the width. */
+        var curve = BrushPack.parseCurve(raw);
+        if (params[opt + 'UseSameCurve'] === undefined || _bool(params[opt + 'UseSameCurve'])) {
+            curve = BrushPack.parseCurve('<curve>' + (params[opt + 'commonCurve'] || '') + '</curve>') || curve;
+        }
         return { id: id, src: SENSORS[id] || null,
                  length: len ? parseFloat(len[1]) : null,
-                 curve: BrushPack.parseCurve(raw) };
+                 curve: curve };
     }
 
     /* Turns one Krita preset into the parameters our engine takes.
@@ -434,6 +444,15 @@
 
         out.opacity = Math.round(_num(P.OpacityValue, 1) * 100);
         out.flow = Math.round(_num(P.FlowValue, 1) * 100);
+        /* "Build up" painting (PaintOpAction 1; Wash, 2, is the default):
+         * each dab lands straight on the layer at the opacity, so dabs
+         * darken past it, and flow plays no part -- only Wash's alpha-darken
+         * op reads flow. Ramon's Airbrush Digital (25%/25%) peaked at 15%
+         * in Krita and 3.5% here. */
+        if (_num(P.PaintOpAction, 2) === 1) {
+            out.flow = out.opacity;
+            out.opacity = 100;
+        }
 
         /* Spacing is a fraction of the tip in Krita and a percentage here,
          * which is the same number twice. Auto-spacing is Krita computing it
@@ -479,6 +498,11 @@
             // Krita's own circle, edge and all -- see _kritaCircleMask.
             var aa = String(mask.antialiasEdges) === '1' ? '-aa' : '';
             if (gen === 'gauss') out.falloff = 'krita-gauss' + aa;
+            // Krita's gauss square fades its sides and its ends apart.
+            if (gen === 'gauss' && out.shape === 'square' && _num(mask.hfade, 1) !== _num(mask.vfade, 1)) {
+                out.hardness = Math.round(Math.max(0, Math.min(1, _num(mask.hfade, 1))) * 100);
+                out.hardnessY = Math.round(Math.max(0, Math.min(1, _num(mask.vfade, 1))) * 100);
+            }
             else if (gen === 'default') out.falloff = 'krita' + aa;
             /* "soft" is a drawn curve: opacity at each radius is the curve
              * there (KisCurveCircleMaskGenerator::valueAt) and the fades play
@@ -670,6 +694,14 @@
                 P['Texture/Pattern/PatternFileName'] || '').split(/[\/]/).pop();
             if (patName) {
                 out.texturePatternFile = patName;
+                /* Krita 4 on also keeps a copy of the picture in the preset
+                 * (KisEmbeddedPatternManager): a PNG, base64'd twice. That
+                 * copy is there whether or not the pack carries the file --
+                 * Grease Charcoal names one from Krita's own set -- and it is
+                 * a PNG where the pack's may be a .pat. */
+                var emb = String(P['Texture/Pattern/Pattern'] || '');
+                try { if (emb && emb.indexOf('iVBOR') !== 0) emb = atob(emb); } catch (e) { emb = ''; }
+                if (emb.indexOf('iVBOR') === 0) out.texturePatternData = 'data:image/png;base64,' + emb;
                 out.texture = Math.round(_num(P['Texture/Strength/Value'], 1) * 100);
                 /* Krita's own maths, not our grain: measured against Krita,
                  * Chalk Soft's texture removed no ink at all through the
@@ -858,7 +890,8 @@
      * between the format's versions. One byte per pixel is coverage — that
      * byte IS the alpha, nothing to invert. Four is RGBA, which Krita reads
      * the way it reads a PNG tip: dark is ink, and the file's own alpha
-     * still counts. */
+     * still counts. GIMP reads the same file as a picture that paints its
+     * own colours through its alpha, so `rgb`/`clear` keep that reading. */
     function _readGbr(b, off) {
         if (off + 20 > b.length) return null;
         var dv = new DataView(b.buffer, b.byteOffset + off, Math.min(20, b.length - off));
@@ -875,17 +908,20 @@
         }
         var start = off + hs, n = w * h;
         if (start + n * bpp > b.length) return null;
-        var a = new Uint8ClampedArray(n), i;
+        var a = new Uint8ClampedArray(n), i, rgb = null, clear = null;
         if (bpp === 1) {
             for (i = 0; i < n; i++) a[i] = b[start + i];
         } else {
+            rgb = new Uint8ClampedArray(n * 3); clear = new Uint8ClampedArray(n);
             for (i = 0; i < n; i++) {
                 var p = start + i * 4;
                 var lum = (b[p] * 0.299 + b[p + 1] * 0.587 + b[p + 2] * 0.114) / 255;
                 a[i] = Math.round((1 - lum) * b[p + 3]);
+                rgb[i * 3] = b[p]; rgb[i * 3 + 1] = b[p + 1]; rgb[i * 3 + 2] = b[p + 2];
+                clear[i] = b[p + 3];
             }
         }
-        return { w: w, h: h, alpha: a, next: start + n * bpp,
+        return { w: w, h: h, alpha: a, rgb: rgb, clear: clear, next: start + n * bpp,
                  spacing: spacing ? Math.max(1, Math.min(400, spacing)) : null };
     }
 
@@ -976,20 +1012,38 @@
      * that and not what we chose to store. */
     BrushPack.tipStrip = function (bytes, filename, opts) {
         var name = String(filename || '');
+        /* A colour .gbr/.gih on its own is a GIMP brush, and GIMP stamps its
+         * picture through its alpha (Pepper, GEGL goat). Inside a Krita
+         * preset the same file is a dark-is-ink mask, as above. */
+        function gimpCells(cells) {
+            var color = !(opts && opts.krita) && cells.some(function (c) { return c.rgb; });
+            return { color: color, cells: cells.map(function (c) {
+                return color && c.rgb ? { w: c.w, h: c.h, alpha: c.clear, rgb: c.rgb }
+                                      : { w: c.w, h: c.h, alpha: c.alpha };
+            }) };
+        }
         try {
             if (/\.gih$/i.test(name)) {
                 var pipe = _readGih(bytes);
                 if (!pipe) throw new Error('unreadable brush pipe');
-                var st = _strip(pipe.cells);
+                var gc = gimpCells(pipe.cells);
+                /* GIMP steps an in-order pipe BEFORE it paints
+                 * (gimp_brush_pipe_select_brush), so a brush's first dab is
+                 * cell 1 and cell 0 comes last; ours stamps from the front.
+                 * Measured with a numbered five-cell pipe: 1 2 3 4 | 0 1 2 |
+                 * 3 4 0 1 2 over three strokes. */
+                if (!(opts && opts.krita) && pipe.pick === 'cycle') gc.cells.push(gc.cells.shift());
+                var st = _strip(gc.cells);
                 return Promise.resolve({ url: st.url, size: st.size,
-                    cells: pipe.cells.length, pick: pipe.pick, spacing: pipe.spacing });
+                    cells: pipe.cells.length, pick: pipe.pick, spacing: pipe.spacing,
+                    params: gc.color ? { tipMode: 'color' } : null });
             }
             if (/\.gbr$/i.test(name)) {
                 var one = _readGbr(bytes, 0);
                 if (!one) throw new Error('unreadable brush file');
-                var st1 = _strip([one]);
+                var gc1 = gimpCells([one]), st1 = _strip(gc1.cells);
                 return Promise.resolve({ url: st1.url, size: st1.size, cells: 1, pick: 'random',
-                    spacing: one.spacing });
+                    spacing: one.spacing, params: gc1.color ? { tipMode: 'color' } : null });
             }
         } catch (e) { return Promise.reject(e); }
 

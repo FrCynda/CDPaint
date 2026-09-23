@@ -701,6 +701,70 @@ await withPage(async (page) => {
     // Krita's floor is half a pixel (MIN_DISTANCE_SPACING); at 1px this line stacked to 159 where Krita's reach 225.
     check('dabs closer than a pixel apart stack up, as Krita lets them', small.stack[0] > 200, 'alpha ' + small.stack[0]);
     check('a sharpened 1px Krita tip still paints its pixel', small.sharp[0] > 200, 'alpha ' + small.sharp[0]);
+
+    /* Found by the brush bank (test/krita/bank.mjs, test/gimp/bank.mjs). */
+    const bank = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, L = () => __B.layer().ctx;
+        const fresh = (set) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            b.setParam('flow', 100); b.setParam('hardness', 100); b.setParam('flowSrc', 'none');
+            b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none'); set();
+        };
+        const stroke = (pts) => {
+            L().clearRect(0, 0, 200, 200);
+            b.beginStroke(pts[0][0], pts[0][1], 1, '#000000');
+            for (const p of pts.slice(1)) b.moveStroke(p[0], p[1], 1, '#000000');
+            b.endStroke();
+        };
+        const col = (x, y0, y1) => Array.from({ length: y1 - y0 }, (_, i) => L().getImageData(x, y0 + i, 1, 1).data[3]);
+        const out = {};
+        // A 30x15 tip down a 60px line, dabs its own height apart twice over.
+        fresh(() => { b.setParam('shape', 'square'); b.setParam('size', 30); b.setParam('aspectRatio', 2); b.setParam('spacing', 200); });
+        const down = []; for (let y = 50; y <= 110; y++) down.push([100, y]);
+        stroke(down);
+        out.runs = col(100, 30, 140).reduce((n, a, i, c) => n + (a > 0 && !(c[i - 1] > 0) ? 1 : 0), 0);
+        // EO Pixel Perfect: a 0.01px hard square.
+        fresh(() => { b.setParam('shape', 'square'); b.setParam('size', 0.01); b.setParam('falloff', 'krita'); });
+        stroke([[100.3, 100.3]]);
+        out.hundredth = L().getImageData(95, 95, 10, 10).data.filter((v, i) => i % 4 === 3 && v > 0).length;
+        // ZBlocks: Krita's gauss square, fade 0.43, is 18px of ink across 30.
+        fresh(() => { b.setParam('shape', 'square'); b.setParam('size', 30); b.setParam('falloff', 'krita-gauss'); b.setParam('hardness', 43); });
+        stroke([[100, 100]]);
+        out.grect = [100, 112].map(x => L().getImageData(x, 100, 1, 1).data[3]);
+        // PixelArt_Round: full sharpness keeps every pixel a cone tip touches.
+        fresh(() => { b.setParam('size', 5); b.setParam('falloff', 'krita'); b.setParam('hardness', 0); b.setParam('sharpness', 100); });
+        stroke([[100, 100]]);
+        out.solid = L().getImageData(90, 90, 20, 20).data.filter((v, i) => i % 4 === 3 && v > 200).length;
+        // Splats 02: a pipe stepped in order starts over when the brush is picked again.
+        const gbr = (a) => { const n = new TextEncoder().encode('c\\0'), h = 28 + n.length, px = new Uint8Array(16); for (let y = 0; y < 4; y++) px[y * 4 + a] = 255;
+            const u = new Uint8Array(h + 16), dv = new DataView(u.buffer);
+            [h, 2, 4, 4, 1, 0x47494D50, 400].forEach((v, i) => dv.setUint32(i * 4, v)); u.set(n, 28); u.set(px, h); return u; };
+        const head = new TextEncoder().encode('p\\n3 ncells:3 cellwidth:4 cellheight:4 step:100 dim:1 cols:1 rows:1 placement:constant rank0:3 sel0:incremental\\n');
+        const cells = [0, 1, 2].map(gbr), gih = new Uint8Array(head.length + 3 * cells[0].length);
+        gih.set(head); cells.forEach((c, i) => gih.set(c, head.length + i * c.length));
+        const r = await b.importBrushTip(gih, 'cycle.gih');
+        // each cell inks a different column, so the painted column names the cell
+        const dot = () => { stroke([[100, 100]]); const d = L().getImageData(90, 100, 20, 1).data;
+            let x = 0; for (let i = 1; i < 20; i++) if (d[i * 4 + 3] > d[x * 4 + 3]) x = i; return x; };
+        const pick = async () => { b.loadPreset(r.name); b.setParam('size', 4); b.setParam('spacing', 100);
+            await new Promise(res => setTimeout(res, 300)); };   // the strip decodes async
+        await pick();
+        const first = dot(), second = dot();
+        await pick();
+        out.cycle = [first, second, dot(), r.ok, r.name];
+        b.deleteUserPreset(r.name);
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check('the first gap is measured along the stroke too, not across it (GIMP goat)',
+        bank.runs === 3, `${bank.runs} dabs`);
+    check('a Krita tip a hundredth of a pixel wide still paints its pixel (EO Pixel Perfect)',
+        bank.hundredth >= 1, `${bank.hundredth} pixels`);
+    check("Krita's gauss square fades in from its edge, as Krita's does (ZBlocks)",
+        bank.grect[0] > 200 && bank.grect[1] < 128, JSON.stringify(bank.grect));
+    check("full sharpness keeps every pixel the tip touches, as Krita's threshold does",
+        bank.solid >= 12, `${bank.solid} solid pixels`);
+    check('a GIMP pipe starts over from its first cell when the brush is picked again',
+        bank.cycle[0] === bank.cycle[2] && bank.cycle[0] !== bank.cycle[1], JSON.stringify(bank.cycle));
     check('pen rotation turns the tip', d.twistRotatesTip);
     check('hardness can be driven, which it never could', d.hardnessDrivable);
     check('scatter can be driven, which it never could', d.scatterDrivable);

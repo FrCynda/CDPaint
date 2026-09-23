@@ -188,6 +188,10 @@
         var kc = shape.indexOf('kcircle') === 0 || shape.indexOf('kgauss') === 0;
         if ((shape === 'circle' || kc || shape === 'gauss' || shape === 'gimp' || tc) && w === h) ang = 0;
         var needRotation = _abs(ang) > 0.001;
+        if (shape.indexOf('kgrect') === 0) {
+            var hy = shape.split(':')[1];
+            return _kritaGaussRectMask(size, aspect, hardness / 100, (hy ? +hy : hardness) / 100, ang);
+        }
         if (kc) return _kritaCircleMask(size, aspect, hardness / 100, phase,
                                         shape.slice(-3) === ':aa', shape.charAt(1) === 'g', ang);
         var canvas, ctx, rx, ry;
@@ -312,6 +316,34 @@
                     }
                 }
                 if (sum) { var k = (j * W + i) * 4; d[k] = d[k + 1] = d[k + 2] = 255; d[k + 3] = _round(sum / (ss * ss) * 255); }
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+        return canvas;
+    }
+
+    /* Krita's gauss square (KisGaussRectangleMaskGenerator): an erf edge
+     * whose half-way line sits 2.5 fade-widths INSIDE the box, the fade
+     * width being (1 - fade/2) tenths of the side. ZBlocks' 30px square is
+     * 18px of ink in Krita; the plain square edge painted all 30. */
+    function _kritaGaussRectMask(size, aspect, hard, hardY, ang) {
+        var w = size, h = size / aspect;
+        if (aspect < 1) { w = size * aspect; h = size; }
+        var xf = _max(1e-6, (1 - hard / 2) * w * 0.1), yf = _max(1e-6, (1 - hardY / 2) * h * 0.1);
+        var kx = 1 / (Math.SQRT2 * xf), ky = 1 / (Math.SQRT2 * yf);
+        var hw = w / 2 - 2.5 * xf, hh = h / 2 - 2.5 * yf;
+        var af = 1 / (4 * _erf(hw * kx) * _erf(hh * ky));
+        if (!isFinite(af)) af = 0;
+        var D = _ceil(_hypot(w, h)) + 2, canvas = new OffscreenCanvas(D, D), c = D / 2;
+        var ca = _cos(ang || 0), sa = -_sin(ang || 0);
+        var ctx = canvas.getContext('2d'), img = ctx.createImageData(D, D), d = img.data;
+        for (var j = 0; j < D; j++) {
+            for (var i = 0; i < D; i++) {
+                var x0 = i + 0.5 - c, y0 = j + 0.5 - c;
+                var x = _abs(ca * x0 - sa * y0), y = _abs(sa * x0 + ca * y0);
+                if (x > w / 2 || y > h / 2) continue;
+                var v = af * (_erf((hw + x) * kx) + _erf((hw - x) * kx)) * (_erf((hh + y) * ky) + _erf((hh - y) * ky));
+                if (v > 0) { var k = (j * D + i) * 4; d[k] = d[k + 1] = d[k + 2] = 255; d[k + 3] = _round(_min(1, v) * 255); }
             }
         }
         ctx.putImageData(img, 0, 0);
@@ -2263,7 +2295,9 @@
         var effAngle = _dynAngle(p, p.angle, sc);
         var sz = _dyn(p, 'size', p.size, sc, 1) * tfSize;
         // Krita paints a dab down to a hundredth of a pixel (checkSizeTooSmall).
-        if (sz < (/^krita.*-aa$/.test(p.falloff) ? 0.01 : 0.5)) return;
+        // Hard-edged ones too: EO Pixel Perfect is a 0.01px square Krita
+        // draws as a clean 1px line.
+        if (sz < (/^krita/.test(p.falloff) ? 0.01 : 0.5)) return;
         _adO = _dyn(p, 'dabOpacity', 1, sc, 14);
         if (p.maskOp && _flowCanvas) _maskStrokeDab(p, x, y, sc);
 
@@ -2390,15 +2424,17 @@
         cx.drawImage(mask, 0, 0);
         var img = cx.getImageData(0, 0, w, h);
         var d = img.data;
-        /* A fully sharp edge is a threshold, which aliases badly at the
-         * sizes a dab is drawn at, so the ramp never closes completely. */
-        var half = _max(0.01, (softness / 100) * 0.5);
-        var lo = 0.5 - half, span = half * 2;
-        var amt = _clamp(amount / 100, 0, 1);
+        /* Krita's threshold (KisSharpnessOption::applyThreshold): above
+         * 255 * (1 - sharpness) a pixel is solid, at or below `softness`
+         * percent short of that it is gone, between it keeps its own value.
+         * Full sharpness keeps every pixel the tip touches at all -- the
+         * ramp round 50% this used to be cut PixelArt_Round to 71% of
+         * Krita's ink. */
+        var tol = _floor(255 - _clamp(amount / 100, 0, 1) * 255);
+        var lo = (100 - _clamp(softness || 0, 0, 100)) * tol / 100;
         for (var i = 3; i < d.length; i += 4) {
-            var a = d[i] / 255;
-            var sharp = _clamp((a - lo) / span, 0, 1);
-            d[i] = _round((a + (sharp - a) * amt) * 255);
+            if (d[i] > tol) d[i] = 255;
+            else if (d[i] <= lo) d[i] = 0;
         }
         cx.putImageData(img, 0, 0);
         c._cx = mask._cx; c._cy = mask._cy;
@@ -2528,6 +2564,7 @@
             if (shape === 'circle' && (_params.falloff === 'gauss' || _params.falloff === 'gimp')) shape = _params.falloff;
             if (shape === 'circle' && _isArray(_params.tipCurve)) shape = _tipCurveKey(_params.tipCurve);
             var kf = /^krita(-gauss)?(-aa)?$/.exec(_params.falloff || '');
+            if (shape === 'square' && kf && kf[1]) shape = 'kgrect' + (_params.hardnessY != null ? ':' + _params.hardnessY : '');
             if (shape === 'circle' && kf) {
                 shape = (kf[1] ? 'kgauss' : 'kcircle') + (kf[2] ? ':aa' : '');
                 sz = sz < 16 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);   // its real size, see _kritaCircleMask
@@ -3255,7 +3292,10 @@
         var _tipAsp = 1;
         if (p.shape === 'custom' && _tipCanvas()) {
             var _tc = _tipCanvas();
-            _tipAsp = (_tc.width / _max(1, p.tipCells || 1)) / _max(1, _tc.height);
+            /* One cell: _tipCanvas is already cut from the strip. Dividing by
+             * tipCells again made GIMP's five-cell Splats 02 a fifth as wide
+             * as it is, and it laid dabs 2.6px apart where GIMP lays 12. */
+            _tipAsp = _tc.width / _max(1, _tc.height);
         }
         function _gap(d) {
             return p.autoSpacing > 0 ? p.autoSpacing * (d < 1 ? d : Math.sqrt(d)) : d * spacing;
@@ -3271,7 +3311,7 @@
             var bw = w * c0 + h * s0, bh = w * s0 + h * c0;
             w = bw; h = bh;
             var g;
-            if (p.spacingIsotropic || _abs(w - h) < 0.5) {
+            if (p.spacingIsotropic || w === h) {   // GIMP spaces a 164x166 tip by its 164
                 g = _gap(_max(w, h));
             } else {
                 var a = _gap(w), b = _gap(h);
@@ -3364,6 +3404,10 @@
                 if (_hypot(_dx, _dy) >= 0.001) {
                     _firstAngle = Math.atan2(_dy, _dx) * 180 / _PI;
                     _smoothAngle = _firstAngle;
+                    /* The first gap is along the stroke too: sized for a
+                     * left-to-right stroke, GIMP's 532x400 goat went down a
+                     * 70px line in 3 dabs where GIMP lays 4. */
+                    step = _stepFor(_tp, prev.x, prev.y, _firstAngle);
                 }
             }
             _renderDab(prev.x, prev.y, _tp, colorHex, _firstAngle,
@@ -3816,6 +3860,7 @@
          * every direction, rather than from its width along the stroke. */
         spacingIsotropic: false,
         hardness: 80,
+        hardnessY: null,   // Krita's gauss square only: the ends' fade when it differs from the sides'
         shape: 'circle',
         // Round-tip profile: 'gauss' is Krita's gauss generator, 'gimp' GIMP's
         // generated brush; anything else Krita's default circle.
@@ -4239,6 +4284,7 @@
             _params[k] = _isArray(v) ? _cloneCurve(v) : v;
         }
         engine._currentPreset = name;
+        _tipCycle = 0;   // an in-order pipe starts from its first cell, as GIMP's does
         _loadSavedParams(name);
         // The tile for a preset is rendered from live params while it is the
         // active one, so its cached copy is stale as soon as it stops being.
@@ -6576,10 +6622,13 @@
                          * pack, so the preset can only name it. Resolve it
                          * here, where the pack is still in hand. */
                         if (ps.texturePatternFile) {
-                            var pf = ps.texturePatternFile;
+                            var pf = ps.texturePatternFile, pe = ps.texturePatternData;
                             delete ps.texturePatternFile;
+                            delete ps.texturePatternData;
                             var pb = pack.tips[pf];
-                            if (pb) {
+                            if (pe) {
+                                ps.texturePattern = pe;   // the preset's own copy, see toPreset
+                            } else if (pb) {
                                 ps.texturePattern = _bytesToPngUrl(pb);
                             } else {
                                 /* Painting it smooth is the bigger miss. A

@@ -22,7 +22,9 @@ const PYK = path.join(ROAMING, 'krita', 'pykrita');
 const SNAP = [path.join(LOCAL, 'kritarc'), path.join(LOCAL, 'kritadisplayrc'),
     path.join(ROAMING, 'krita', 'resourcecache.sqlite')];
 
-export function renderKrita(jobFile, { timeoutMs = 180000 } = {}) {
+// resourceDir: a private resource folder for this run (Krita 5 keeps its
+// resource database inside it), so foreign packs never enter the user's own.
+export function renderKrita(jobFile, { timeoutMs = 180000, resourceDir } = {}) {
     jobFile = path.resolve(jobFile);
     const job = JSON.parse(fs.readFileSync(jobFile, 'utf8'));
     fs.mkdirSync(job.out, { recursive: true });
@@ -36,12 +38,18 @@ export function renderKrita(jobFile, { timeoutMs = 180000 } = {}) {
     const saved = SNAP.filter(f => fs.existsSync(f)).map(f => {
         const b = path.join(bak, path.basename(f)); fs.copyFileSync(f, b); return [f, b];
     });
-    const created = [path.join(PYK, 'cdp_harness.desktop'), path.join(PYK, 'cdp_harness')];
+    const pyk = resourceDir ? path.join(resourceDir, 'pykrita') : PYK;   // plugins load from the resource folder
+    const created = [path.join(pyk, 'cdp_harness.desktop'), path.join(pyk, 'cdp_harness')];
     try {
-        fs.mkdirSync(PYK, { recursive: true });
+        fs.mkdirSync(pyk, { recursive: true });
         fs.copyFileSync(path.join(here, 'cdp_harness.desktop'), created[0]);
         fs.cpSync(path.join(here, 'cdp_harness'), created[1], { recursive: true });
         fs.appendFileSync(path.join(LOCAL, 'kritarc'), '\r\n[python]\r\nenable_cdp_harness=true\r\n');
+        if (resourceDir) {   // KisResourceLocator reads it from the header-less default group
+            const rc = path.join(LOCAL, 'kritarc');
+            fs.writeFileSync(rc, 'ResourceDirectory=' + resourceDir.replace(/\\/g, '/') + '\r\n' +
+                fs.readFileSync(rc, 'utf8').replace(/^ResourceDirectory=.*\r?\n/m, ''));
+        }
         // No GPU canvas: the offscreen platform has no OpenGL to give it.
         const drc = path.join(LOCAL, 'kritadisplayrc');
         const d = fs.existsSync(drc) ? fs.readFileSync(drc, 'utf8').replace(/^OpenGLRenderer=.*$/m, '') : '';

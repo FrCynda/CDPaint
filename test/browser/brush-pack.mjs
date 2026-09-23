@@ -351,6 +351,80 @@ await withPage(async (page) => {
         JSON.stringify(tr.eraser.warnings) + ' ' + tr.eraser.params.dabOpacitySrc + ' ' +
         JSON.stringify(tr.eraser.params.dabOpacityCurve));
 
+    console.log('== found by the brush bank (test/krita/bank.mjs, test/gimp/bank.mjs) ==');
+    {
+        const bank = BP => {
+            const bd = (gen, type, h, v) => '<Brush type="auto_brush" spacing="0.1"><MaskGenerator id="' + gen +
+                '" type="' + type + '" hfade="' + h + '" vfade="' + v + '" diameter="30" ratio="1"/></Brush>';
+            const round = bd('default', 'circle', 1, 1);
+            return {
+                // Revoy's Mechanical Pencil: one curve shared by every sensor.
+                common: BP.toPreset({ params: { brush_definition: round, PressureSize: 'true', SizeUseCurve: 'true',
+                    SizeSensor: '<params id="pressure"><curve>0,0;1,1;</curve></params>',
+                    SizecommonCurve: '0,0;1,0.5;' } }).params.sizeCurve,
+                own: BP.toPreset({ params: { brush_definition: round, PressureSize: 'true', SizeUseCurve: 'true',
+                    SizeUseSameCurve: 'false', SizeSensor: '<params id="pressure"><curve>0,0;1,1;</curve></params>',
+                    SizecommonCurve: '0,0;1,0.5;' } }).params.sizeCurve,
+                buildUp: BP.toPreset({ params: { brush_definition: round, PaintOpAction: '1', OpacityValue: '0.25', FlowValue: '0.25' } }).params,
+                wash: BP.toPreset({ params: { brush_definition: round, PaintOpAction: '2', OpacityValue: '0.25', FlowValue: '0.25' } }).params,
+                blocks: BP.toPreset({ params: { brush_definition: bd('gauss', 'rect', 0.43, 0.82) } }).params
+            };
+        };
+        const B = JSON.parse(await page.eval(`JSON.stringify((${bank})(BrushPack))`));
+        check("a sensor under Krita's \"same curve for all\" takes the shared curve",
+            B.common && B.common[B.common.length - 1][1] === 0.5, JSON.stringify(B.common));
+        check('...and one with the box unticked keeps its own',
+            B.own && B.own[B.own.length - 1][1] === 1, JSON.stringify(B.own));
+        /* Ramon's Airbrush Digital (build up, 25%/25%) peaked at 15% in
+         * Krita and 3.5% here: a build-up dab lands at the opacity and flow
+         * plays no part. */
+        check('a "build up" brush spends its opacity on each dab and ignores flow',
+            B.buildUp.flow === 25 && B.buildUp.opacity === 100, `${B.buildUp.flow} / ${B.buildUp.opacity}`);
+        check('...and a "wash" brush keeps opacity as the stroke\'s ceiling',
+            B.wash.flow === 25 && B.wash.opacity === 25, `${B.wash.flow} / ${B.wash.opacity}`);
+        check("Krita's gauss square keeps its side and end fades apart (ZBlocks)",
+            B.blocks.falloff === 'krita-gauss' && B.blocks.hardness === 43 && B.blocks.hardnessY === 82,
+            JSON.stringify([B.blocks.falloff, B.blocks.hardness, B.blocks.hardnessY]));
+
+        /* GIMP tips. A colour .gbr is a picture GIMP stamps through its
+         * alpha (Pepper came out grey at half its ink); a .gih stepped in
+         * order paints cell 1 first. The Krita path reads the same colour
+         * file as a dark-is-ink mask, so it must stay that way there. */
+        const gimp = await page.eval(`(async () => {
+            const gbr = (w, h, bpp, px) => {
+                const name = new TextEncoder().encode('t\\0'), head = 28 + name.length;
+                const b = new Uint8Array(head + px.length), dv = new DataView(b.buffer);
+                [head, 2, w, h, bpp, 0x47494D50, 25].forEach((v, i) => dv.setUint32(i * 4, v));
+                b.set(name, 28); b.set(px, head); return b;
+            };
+            // 2x1 RGBA: an opaque pure red pixel and a half-clear white one.
+            const col = gbr(2, 1, 4, [255, 0, 0, 255, 255, 255, 255, 128]);
+            const readBack = async url => { const i = new Image(); i.src = url; await i.decode();
+                const c = new OffscreenCanvas(i.width, i.height), g = c.getContext('2d'); g.drawImage(i, 0, 0);
+                return Array.from(g.getImageData(0, 0, i.width, i.height).data); };
+            const asGimp = await BrushPack.tipStrip(col, 'c.gbr');
+            const asKrita = await BrushPack.tipStrip(col, 'c.gbr', { krita: true });
+            // Three 1x1 cells, alpha 10/20/30, stepped in order.
+            const head = new TextEncoder().encode('p\\n3 ncells:3 cellwidth:1 cellheight:1 step:100 dim:1 cols:1 rows:1 placement:constant rank0:3 sel0:incremental\\n');
+            const cells = [10, 20, 30].map(a => gbr(1, 1, 1, [a]));
+            const gih = new Uint8Array(head.length + cells.reduce((s, c) => s + c.length, 0));
+            let o = head.length; gih.set(head, 0); for (const c of cells) { gih.set(c, o); o += c.length; }
+            const pipe = await BrushPack.tipStrip(gih, 'p.gih');
+            const px = await readBack(pipe.url);
+            return JSON.stringify({ gimpMode: asGimp.params && asGimp.params.tipMode, kritaMode: asKrita.params && asKrita.params.tipMode,
+                gimpPx: await readBack(asGimp.url), kritaPx: await readBack(asKrita.url),
+                order: [px[3], px[7], px[11]], pick: pipe.pick });
+        })()`, { awaitPromise: true });
+        const G = JSON.parse(gimp);
+        check('a colour GIMP brush paints its own colours through its own alpha',
+            G.gimpMode === 'color' && G.gimpPx[0] === 255 && G.gimpPx[1] === 0 && G.gimpPx[3] === 255 &&
+            Math.abs(G.gimpPx[7] - 128) <= 1, JSON.stringify([G.gimpMode, G.gimpPx]));
+        check('...while inside a Krita preset it stays a dark-is-ink mask',
+            !G.kritaMode && G.kritaPx[7] === 0 && G.kritaPx[3] > 100, JSON.stringify([G.kritaMode, G.kritaPx]));
+        check("a GIMP pipe stepped in order starts on its second cell, as GIMP's does",
+            G.pick === 'cycle' && G.order.join() === '20,30,10', JSON.stringify(G.order));
+    }
+
     console.log('== junk in, no crash out ==');
     const junk = JSON.parse(await page.eval(`(async () => {
         const out = {};

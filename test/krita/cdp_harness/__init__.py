@@ -3,11 +3,13 @@ job file; render.mjs installs it for one run and removes it again.
 
 A job is JSON:
   { "width": 400, "height": 200, "out": "C:/.../dir",
-    "renders": [ { "name": "basic5", "preset": "b) Basic-5 Size",
+    "renders": [ { "name": "basic5", "preset": "b) Basic-5 Size",   (or "file": "x.kpp")
                    "color": [0, 0, 0], "size": 30,            (size optional)
                    "lines": [ [x0, y0, p0, x1, y1, p1], ... ],
                    "xmlSub": [ [regex, replacement], ... ],            (optional)
-                   "dumpXml": true } ] }       (optional: <out>/<name>.xml)
+                   "maxSize": 40,                  (optional: cap the preset's own size)
+                   "dumpXml": true } ],        (optional: <out>/<name>.xml)
+  "listFile": "C:/.../presets.json" }          (optional: every loaded preset)
 xmlSub edits the preset's XML before painting (Preset.toXML/fromXML), to
 render a preset with one option switched off. The edit is in memory only:
 Krita keeps it as an unsaved tweak and nothing is written back.
@@ -33,6 +35,8 @@ def _run():
     job = json.load(open(JOB, encoding="utf-8"))
     W, H = job["width"], job["height"]
     presets = k.resources("preset")
+    if job.get("listFile"):   # what Krita actually loaded: name -> file
+        json.dump({n: p.filename() for n, p in presets.items()}, open(job["listFile"], "w", encoding="utf-8"))
     doc = k.createDocument(W, H, "cdp", "RGBA", "U8", "", 72.0)
     win = k.activeWindow() or k.openWindow()
     view = win.addView(doc)
@@ -40,9 +44,11 @@ def _run():
     meta = {}
     for r in job["renders"]:
         try:
-            p = presets.get(r["preset"])
+            p = presets.get(r.get("preset"))
+            if p is None and r.get("file"):   # by file: Krita's name is not always the file's
+                p = next((q for q in presets.values() if q.filename() == r["file"]), None)
             if p is None:
-                _log("MISSING PRESET " + r["preset"]); continue
+                _log("MISSING PRESET %s %s" % (r.get("preset"), r.get("file"))); continue
             view.setCurrentBrushPreset(p)
             if r.get("dumpXml"):
                 open(os.path.join(job["out"], r["name"] + ".xml"), "w", encoding="utf-8").write(Preset(view.currentBrushPreset()).toXML())
@@ -55,6 +61,7 @@ def _run():
                 cur.fromXML(xml)
                 view.setCurrentBrushPreset(view.currentBrushPreset())
             if "size" in r: view.setBrushSize(float(r["size"]))
+            if "maxSize" in r and view.brushSize() > r["maxSize"]: view.setBrushSize(float(r["maxSize"]))
             c = ManagedColor("RGBA", "U8", "")
             rgb = r.get("color", [0, 0, 0])
             c.setComponents([rgb[2] / 255, rgb[1] / 255, rgb[0] / 255, 1.0])  # Krita's U8 order is BGRA
