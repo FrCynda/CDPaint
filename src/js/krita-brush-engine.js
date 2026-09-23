@@ -3625,10 +3625,16 @@
             w = _max(1, _round(w * asp));
         }
 
-        // Step 1: create base (unrotated) mask with tip image clipped
-        var base = new OffscreenCanvas(w, h);
+        /* Step 1: create base (unrotated) mask with tip image clipped.
+         * A clear pixel all round: the browser filters a half-pixel
+         * drawImage only inside the source, and holds its outer edge on
+         * whole pixels. Without the margin, a tip inked to its border (a 1px
+         * or solid 5px GIMP square) lands on whole pixels. GIMP places the
+         * corner at centre − width/2, so an odd tip straddles two pixels. */
+        var base = new OffscreenCanvas(w + 2, h + 2);
         var bctx = base.getContext('2d');
         bctx.imageSmoothingQuality = 'high';
+        bctx.translate(1, 1);
         if (mode === 'alpha') {
             // A cut-out: white everywhere the tip covers, and its own
             // pixels never reach the canvas.
@@ -3658,12 +3664,12 @@
         var ang = (angleDeg || 0) * _PI / 180;
         var needRot = _abs(ang) > 0.001;
         if (needRot) {
-            var diag = _ceil(_hypot(w, h));
+            var diag = _ceil(_hypot(w, h)) + 2;
             var dst = new OffscreenCanvas(diag, diag);
             var ctx = dst.getContext('2d');
             ctx.translate(diag / 2, diag / 2);
             ctx.rotate(ang);
-            ctx.drawImage(base, -w / 2, -h / 2);
+            ctx.drawImage(base, -base.width / 2, -base.height / 2);
             return _tipCacheKeep(key, dst);
         }
 

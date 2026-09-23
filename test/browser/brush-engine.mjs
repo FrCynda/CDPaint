@@ -753,6 +753,15 @@ await withPage(async (page) => {
         await pick();
         out.cycle = [first, second, dot(), r.ok, r.name];
         b.deleteUserPreset(r.name);
+        // GIMP's pixel.gbr: a 1px tip at a whole coordinate straddles four pixels.
+        const one = (() => { const nm = new TextEncoder().encode('p' + String.fromCharCode(0)), h = 28 + nm.length, u = new Uint8Array(h + 1);
+            const dv = new DataView(u.buffer); [h, 2, 1, 1, 1, 0x47494D50, 100].forEach((v, i) => dv.setUint32(i * 4, v));
+            u.set(nm, 28); u[h] = 255; return u; })();
+        const r1 = await b.importBrushTip(one, 'pixel.gbr');
+        b.loadPreset(r1.name); b.setParam('size', 1); await new Promise(res => setTimeout(res, 300));
+        stroke([[100, 100]]);
+        out.straddle = [99, 100].flatMap(y => [99, 100].map(x => L().getImageData(x, y, 1, 1).data[3]));
+        b.deleteUserPreset(r1.name);
         return JSON.stringify(out);
     })()`, { awaitPromise: true }));
     check('the first gap is measured along the stroke too, not across it (GIMP goat)',
@@ -765,6 +774,8 @@ await withPage(async (page) => {
         bank.solid >= 12, `${bank.solid} solid pixels`);
     check('a GIMP pipe starts over from its first cell when the brush is picked again',
         bank.cycle[0] === bank.cycle[2] && bank.cycle[0] !== bank.cycle[1], JSON.stringify(bank.cycle));
+    check('a 1px tip at a whole coordinate straddles four pixels, as GIMP places it',
+        bank.straddle.every(a => a > 40 && a < 90), JSON.stringify(bank.straddle));
     check('pen rotation turns the tip', d.twistRotatesTip);
     check('hardness can be driven, which it never could', d.hardnessDrivable);
     check('scatter can be driven, which it never could', d.scatterDrivable);

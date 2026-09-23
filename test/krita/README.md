@@ -54,6 +54,41 @@ borrows the user's settings for about eight seconds. It:
 The same bytes come back every time (checked with md5 before and after), and
 two renders of the same job are byte-identical.
 
+## Brush bank
+
+`compare.mjs` checks a hand-picked corpus. `bank.mjs` runs whole packs, so
+edge cases in brushes nobody picked get caught too:
+
+    node test/krita/bank.mjs [--render] [--packs krita4,eo-v3]
+    node test/gimp/bank.mjs  [--render] [--only extras,slos]
+
+- **Krita packs:**
+  - Krita's own Krita 4, Krita 3 and RGBA bundles. Krita 3 ships switched off,
+    so it is unpacked into a folder.
+  - David Revoy's 2021 and 23-01 bundles (davidrevoy.com), downloaded into
+    `out/bank/deevad21`, `deevad23`.
+  - `github.com/EyeOdin/eo_bundle` (v2, v3) and `github.com/portnov/krita-brushes`.
+- **GIMP brushes:**
+  - GIMP's own brushes.
+  - `GNOME/gimp-data-extras`, `SenlinOS/SLOS-GIMPainter`,
+    `wesleycsj/GIMP-pixelart-brushes`, `LinuxBeaver/Gimp_Leaves-Brush-Pack` and
+    `vascoalexander/gimp-brush-collection`, cloned as `out/bank/gimp-*`.
+
+Each pack renders into a private resource folder (Krita) or profile (GIMP,
+headless `gimp-console`), so the user's own libraries are never touched.
+Every brush paints the same four strips on both sides. Brushes that ask for
+chance are left out: fuzzy sensors, scatter, random tips and textures, and
+random `.gih` pipes. So is any Krita brush whose two renders differ.
+
+Each brush is graded:
+
+- **close**: IoU ≥ 0.9 and ink within 0.9–1.1×;
+- **near**: IoU ≥ 0.75 and ink within 0.8–1.25×;
+- **off**: anything else.
+
+Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
+`--packs` only replaces that pack's rows.
+
 ## Limits
 
 - Krita 5.3's binding takes whole-pixel `QPoint`s, not `QPointF`.
@@ -211,6 +246,35 @@ two renders of the same job are byte-identical.
   sensors (drawing angle, twist, tilt) keep their old handling.
 - Mirror boxes are stored ticked whether or not the option is on; only
   `PressureMirror` switches them on. Waterpaint was flipping at random.
+- Found by the brush bank:
+  - Build-up mode (`PaintOpAction` 1) lands each dab at the opacity, and flow
+    is ignored. Airbrush Digital went 0.23× → 0.98×.
+  - Gauss square tips (`KisGaussRectangleMaskGenerator`) have their own erf
+    falloff, with hfade on the width and vfade on the height. ZBlocks went
+    1.54× → 1.05×.
+  - Sharpness is a threshold (`KisSharpnessOption::applyThreshold`), not a
+    blur cut. PixelArt_Round went 0.71× → 1.01×, and Dithering 1.45× → 1.02×.
+  - Presets embed their texture as `Texture/Pattern/Pattern`, a PNG
+    base64'd twice. Pastel_texture_large went 2.0× → 0.99×.
+  - Every Krita falloff paints dabs down to 0.01px. EO Pixel Perfect went
+    from painting nothing to 1.0×.
+  - GIMP pipes step *before* painting, so the first dab is cell 1, and the
+    count restarts per brush. This was proved with a numbered probe pipe.
+    Splats 02's IoU went 0.12 → 0.84.
+  - RGBA GIMP brushes paint their own colours. Pepper went 0.51× → 1.01×.
+  - The first dab gap uses the stroke direction for non-square tips. The
+    GEGL goat's IoU went 0.21 → 0.63.
+  - Picture tips landed on whole pixels. Chrome filters a half-pixel
+    `drawImage` only inside the source, and holds the source's outer edge on
+    whole pixels. So a tip inked to its border never straddled, where GIMP
+    puts an odd tip across two pixels (the corner goes at centre − w/2).
+    Custom tip masks now carry a clear 1px margin:
+    - square (5x5): IoU 0.84 → 0.98;
+    - Pixel (1x1): 0.54 → 0.96;
+    - the pixel-art squares are exact to within 2/255.
+  - Still open: GIMP holds a 1px line at 128 where ours builds to 182.
+    GIMP lays its dabs differently along the line (the first dab straddles
+    and the rest don't), and it isn't worked out yet.
 - Still open:
   - Charcoal's IoU is 0.69 with the texture on. Krita gives the texture a
     random offset per stroke (`isRandomOffsetX/Y`), so the grain can't line
