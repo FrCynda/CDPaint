@@ -73,6 +73,9 @@ const results = await withPage(async (page) => {
             L.ctx.clearRect(0, 0, W, H);
             // Krita's paintLine interpolates pressure along the line; a
             // tablet reports about one sample a pixel at this speed.
+            // Node.paintLine hands Krita no speed at all, so the clock stands
+            // still while we draw: every speed sensor reads 0 on both sides.
+            const clock = performance.now; performance.now = () => 0;
             for (const [x0, y0, p0, x1, y1, p1] of ${JSON.stringify(c.lines)}) {
                 const n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0)));
                 b.beginStroke(x0, y0, p0, '#000000');
@@ -82,6 +85,7 @@ const results = await withPage(async (page) => {
                 }
                 b.endStroke();
             }
+            performance.now = clock;
             await new Promise(res => setTimeout(res, 250));
             const ours = L.ctx.getImageData(0, 0, W, H).data;
             const img = new Image(); img.src = 'data:image/png;base64,${ref}'; await img.decode();
@@ -109,12 +113,17 @@ const results = await withPage(async (page) => {
             dx.fillStyle = '#fff'; dx.fillRect(0, 0, W, H * 3);
             dx.drawImage(L.canvas, 0, 0); dx.drawImage(kc, 0, H);
             const dd = dx.getImageData(0, H * 2, W, H);
+            /* "Inked" is at least half Krita's darkest pixel -- a fixed 127
+             * scored Pencil-1 (60% opacity, nothing past 153) as no overlap. */
+            let kmax = 1;
+            for (let i = 0; i < W * H; i++) kmax = Math.max(kmax, theirs[i * 4 + 3]);
+            const half = kmax >> 1;
             for (let i = 0; i < W * H; i++) {
                 const a = ours[i * 4 + 3], k = theirs[i * 4 + 3];
                 if (a || k) { n++; diff += Math.abs(a - k); }
                 if (Math.abs(a - k) > maxd) maxd = Math.abs(a - k);
-                if (a > 127 && k > 127) both++;
-                if (a > 127 || k > 127) either++;
+                if (a > half && k > half) both++;
+                if (a > half || k > half) either++;
                 // red: CDPaint has more ink, blue: Krita has more
                 const e = Math.min(255, Math.abs(a - k) * 2);
                 dd.data[i * 4] = a >= k ? 255 : 255 - e;

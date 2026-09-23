@@ -103,7 +103,14 @@
      110,
      1
     ]
-   ]
+   ],
+   "expect": {
+    "inkRatio": [
+     0.93,
+     1.03
+    ],
+    "iouMin": 0.9
+   }
   },
   {
    "name": "pencil-2",
@@ -162,10 +169,10 @@
    ],
    "expect": {
     "inkRatio": [
-     0.93,
-     1.05
+     0.98,
+     1.03
     ],
-    "iouMin": 0.95
+    "iouMin": 0.98
    }
   },
   {
@@ -272,7 +279,7 @@
      0.9,
      1.2
     ],
-    "iouMin": 0.6
+    "iouMin": 0.62
    }
   },
   {
@@ -312,6 +319,48 @@
    "expect": {
     "iouMin": 0.9,
     "thickTol": 3
+   }
+  },
+  {
+   "name": "ink-4-pen-rough",
+   "preset": "d) Ink-4 Pen Rough",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1
+    ]
+   ],
+   "expect": {
+    "inkRatio": [
+     0.95,
+     1.05
+    ],
+    "iouMin": 0.85
+   }
+  },
+  {
+   "name": "charcoal-pencil-medium",
+   "preset": "h) Charcoal Pencil Medium",
+   "lines": [
+    [
+     60,
+     110,
+     0.05,
+     460,
+     110,
+     1
+    ]
+   ],
+   "expect": {
+    "inkRatio": [
+     1,
+     1.25
+    ],
+    "iouMin": 0.65
    }
   }
  ]

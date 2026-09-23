@@ -266,7 +266,13 @@ await withPage(async (page) => {
                     'MaskingBrush/MasterSizeCoeff': '1.15', 'MaskingBrush/Preset/brush_definition': soft,
                     'MaskingBrush/Preset/FlowValue': '0.67', 'MaskingBrush/Preset/PressureSize': 'true',
                     'MaskingBrush/Preset/SizeUseCurve': 'true',
-                    'MaskingBrush/Preset/SizeSensor': '<params id="pressure"><curve>0,0.2;1,1;</curve></params>' } }).params
+                    'MaskingBrush/Preset/SizeSensor': '<params id="pressure"><curve>0,0.2;1,1;</curve></params>' } }).params,
+                dodge: BP.toPreset({ params: { brush_definition: soft,
+                    'MaskingBrush/Enabled': 'true', 'MaskingBrush/MaskingCompositeOp': 'linear_dodge',
+                    'MaskingBrush/MasterSizeCoeff': '0.45',
+                    'MaskingBrush/Preset/brush_definition': soft.replace('id="soft"', 'id="default"'),
+                    'MaskingBrush/Preset/PressureOpacity': 'true', 'MaskingBrush/Preset/OpacityUseCurve': 'true',
+                    'MaskingBrush/Preset/OpacitySensor': '<params id="pressure"><curve>0,0;0.8,0.35;1,0.76;</curve></params>' } }).params
             };
         };
         const W = JSON.parse(await page.eval(`JSON.stringify((${wp})(BrushPack))`));
@@ -279,6 +285,11 @@ await withPage(async (page) => {
             W.mask.maskOp === 'subtract' && W.mask.maskSize === 115 && W.mask.maskFlow === 67 &&
             W.mask.maskSpacing === 10 && W.mask.maskSizeSrc === 'pressure' && W.mask.maskTipCurve.length === 3 &&
             !W.mask._tip2Url, JSON.stringify([W.mask.maskOp, W.mask.maskSize, W.mask.maskFlow, W.mask.maskSizeSrc]));
+        check('a linear-dodge masking brush becomes an added second stroke, soft edge and opacity kept',
+            W.dodge.maskOp === 'add' && W.dodge.maskSize === 45 && W.dodge.maskHardness === 50 &&
+            W.dodge.maskOpacitySrc === 'pressure' && W.dodge.maskOpacityCurve.length === 3 && !W.dodge._tip2Url,
+            JSON.stringify([W.dodge.maskOp, W.dodge.maskSize, W.dodge.maskHardness, W.dodge.maskOpacitySrc]));
+        check("a Krita preset reads speed against Krita's 30 px/ms ceiling", W.soft.speedMax === 30, W.soft.speedMax);
         /* Krita's oil_knife.png is dark on opaque white, bar eleven pixels
          * at alpha 192; trusting the alpha stamped the whole white square. */
         const knife = await page.eval(`(async () => {

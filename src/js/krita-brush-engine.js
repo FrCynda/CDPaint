@@ -39,7 +39,7 @@
     var _smoothBuffer = [];
     var _stabilizerX = 0, _stabilizerY = 0;
     var _lastRawX = 0, _lastRawY = 0;
-    var _lastStrokeTime = 0, _lastStrokeX = 0, _lastStrokeY = 0, _smoothSpeed = 0;
+    var _smoothSpeed = 0, _spLast = null, _spTime = 0, _spDists = [0], _spDts = [];
     var _lazyX = 0, _lazyY = 0;
 
     /* ------------------------------------------------------------------ */
@@ -70,21 +70,38 @@
         return amount <= 0 ? 0 : amount;
     }
 
+    /* Pen speed in px/ms, worked out as Krita does (KisSpeedSmoother):
+     * the distance of the last few samples -- at least four and 5px --
+     * over that many ticks of the tablet's own rate, which is a trimmed
+     * mean of the gaps between events (KisFilteredRollingMean, the middle
+     * 80% of the last 200). One late event then cannot spike the reading.
+     * The rate is the pen's, so it outlives the stroke. */
     function _strokeSpeed(x, y) {
-        if (_lastStrokeTime === 0) {
-            _lastStrokeTime = performance.now();
-            _lastStrokeX = x; _lastStrokeY = y;
-            _smoothSpeed = 0;
-            return 0;
-        }
         var now = performance.now();
-        var dt = now - _lastStrokeTime;
-        if (dt < 4) dt = 4;
-        var dx = x - _lastStrokeX, dy = y - _lastStrokeY;
-        var raw = _hypot(dx, dy) / dt;
-        _smoothSpeed += (raw - _smoothSpeed) * 0.3;
-        _lastStrokeTime = now;
-        _lastStrokeX = x; _lastStrokeY = y;
+        if (!_spLast) {
+            _spLast = { x: x, y: y }; _spTime = now;
+            return (_smoothSpeed = 0);
+        }
+        var dist = _hypot(x - _spLast.x, y - _spLast.y);
+        if (dist < 1e-9) return _smoothSpeed;       // the same point, reported again
+        _spDts.push(now - _spTime);
+        if (_spDts.length > 200) _spDts.shift();
+        _spLast.x = x; _spLast.y = y; _spTime = now;
+        _spDists.push(dist);
+        if (_spDists.length > 512) _spDists.shift();
+
+        var sorted = _spDts.slice().sort(function (a, b) { return a - b; });
+        var keep = _max(1, _round(0.8 * sorted.length)), lo = _round((sorted.length - keep) / 2);
+        var tick = 0;
+        for (var i = lo; i < lo + keep; i++) tick += sorted[i];
+        tick /= keep;
+
+        var total = 0, n = 0;
+        for (var k = _spDists.length - 1; k >= 0; k--) {
+            n++; total += _spDists[k];
+            if (n > 3 && total > 5) break;
+        }
+        if (tick > 0 && total > 5) _smoothSpeed = total / (n * tick);
         return _smoothSpeed;
     }
 
@@ -171,8 +188,8 @@
         var kc = shape.indexOf('kcircle') === 0 || shape.indexOf('kgauss') === 0;
         if ((shape === 'circle' || kc || shape === 'gauss' || shape === 'gimp' || tc) && w === h) ang = 0;
         var needRotation = _abs(ang) > 0.001;
-        if (kc && !needRotation) return _kritaCircleMask(size, aspect, hardness / 100, phase,
-                                                         shape.slice(-3) === ':aa', shape.charAt(1) === 'g');
+        if (kc) return _kritaCircleMask(size, aspect, hardness / 100, phase,
+                                        shape.slice(-3) === ':aa', shape.charAt(1) === 'g', ang);
         var canvas, ctx, rx, ry;
 
         if (needRotation) {
@@ -211,9 +228,6 @@
             case 'slash': _drawLine(ctx, rx, ry, hard); break;
             case 'gauss':
             case 'gimp': _drawCircle(ctx, rx, ry, hard, shape); break;
-            // Turned: not Krita's own yet.
-            case 'kcircle': case 'kcircle:aa': _drawCircle(ctx, rx, ry, hard); break;
-            case 'kgauss': case 'kgauss:aa': _drawCircle(ctx, rx, ry, hard, 'gauss'); break;
             case 'circle':
             default:
                 if (tc) _drawCircle(ctx, rx, ry, 0, 'curve');
@@ -265,7 +279,7 @@
      * `gauss` is its gauss generator (KisGaussCircleMaskGenerator), whose
      * anti-aliasing is instead a linear fade over the last pixel of the
      * radius (KisAntialiasingFadeMaker1D). */
-    function _kritaCircleMask(size, aspect, hard, phase, aa, gauss) {
+    function _kritaCircleMask(size, aspect, hard, phase, aa, gauss, ang) {
         var rx = size / 2, ry = size / aspect / 2;
         if (aspect < 1) { rx = size * aspect / 2; ry = size / 2; }
         var W = _ceil(rx * 2) + 3, H = _ceil(ry * 2) + 3;
@@ -273,15 +287,20 @@
         if (phase) { canvas._cx = cx = _floor(W / 2) + phase[0]; canvas._cy = cy = _floor(H / 2) + phase[1]; }
         var ss = aa && (rx < 5 || ry < 5) ? (rx < 0.5 || ry < 0.5 ? 6 : 3) : 1, e = aa ? 1 : 0;
         var fx = hard > 0 ? 1 / (hard * rx) : 1, fy = hard > 0 ? 1 / (hard * ry) : 1;
+        // Each sample is turned into the tip's own frame, as Krita does it
+        // (MaskProcessingData's cosa/sina, applied before valueAt).
+        var ca = _cos(ang || 0), sa = -_sin(ang || 0);
         var fs = _max(0, rx - 1), fsv = gauss ? _gaussAt(fs / rx, hard) : 0;
         var ctx = canvas.getContext('2d'), img = ctx.createImageData(W, H), d = img.data;
         for (var j = 0; j < H; j++) {
             for (var i = 0; i < W; i++) {
                 var sum = 0;
                 for (var sy = 0; sy < ss; sy++) {
-                    var y = j + 0.5 - cy + sy / ss, ay = (_abs(y) + e) * fy;
+                    var y0 = j + 0.5 - cy + sy / ss;
                     for (var sx = 0; sx < ss; sx++) {
-                        var x = i + 0.5 - cx + sx / ss, n = (x / rx) * (x / rx) + (y / ry) * (y / ry);
+                        var x0 = i + 0.5 - cx + sx / ss;
+                        var x = ca * x0 - sa * y0, y = sa * x0 + ca * y0;
+                        var n = (x / rx) * (x / rx) + (y / ry) * (y / ry), ay = (_abs(y) + e) * fy;
                         if (n > 1) continue;
                         if (gauss) {
                             var dist = Math.sqrt(n) * rx;
@@ -436,7 +455,7 @@
      * (falling pressure) is not modelled either. */
     var _adCanvas = null, _adCtx = null, _adO = 1, _adColor = '#000000';
     function _alphaDarken(p) {
-        return !!((p.dabOpacitySrc && p.dabOpacitySrc !== 'none') || p.maskOp === 'subtract')
+        return !!((p.dabOpacitySrc && p.dabOpacitySrc !== 'none') || p.maskOp)
             && p.engineKind !== 'shape' && p.engineKind !== 'deform';
     }
     function _ensureAdBuffer() {
@@ -446,17 +465,21 @@
         _adCtx.fillStyle = '#000';
         _adCtx.fillRect(0, 0, _adCanvas.width, _adCanvas.height);
     }
-    /* Krita's masking brush, subtract mode (KisMaskingBrushRenderer): the
-     * masking preset paints a whole stroke of its own into a separate
-     * buffer, and the finished stroke's alpha is max(0, a - mask). That is
-     * how Waterpaint Soft Edges comes out hollow. The mask's alpha is taken
-     * off in _adToFlow, which rebuilds the stroke from the grey buffer on
-     * every flush, so the subtraction never compounds.
+    /* Krita's masking brush (KisMaskingBrushRenderer) in the modes that
+     * are not a tip stamped through each dab: the masking preset paints a
+     * whole stroke of its own into a separate buffer, which is then laid on
+     * the finished stroke's alpha --
+     *   subtract:     max(0, a - mask)   Waterpaint Soft Edges, hollow;
+     *   add:          a ? min(1, a + mask) : 0   (linear dodge), Charcoal.
+     * The mask is built the way Krita builds any stroke, alpha darken
+     * included, so it is kept as grey on black like _adCanvas and its dabs
+     * cap at their own opacity. Applied in _adToFlow, which rebuilds the
+     * stroke from the grey buffer on every flush, so it never compounds.
      *
      * ponytail: mask dabs land on main dab positions once their own spacing
      * is covered; the main brush is far denser, so the error is under one
      * main step. No scatter, mirror or rotation on the mask. */
-    var _mkCanvas = null, _mkCtx = null, _mkLast = null, _mkStamp = null;
+    var _mkCanvas = null, _mkCtx = null, _mkLast = null, _mkStamp = null, _mkDab = null;
     function _maskStrokeDab(p, x, y, sc) {
         var d = p.size * p.maskSize / 100 * _dyn(p, 'maskSize', 1, sc, 15);
         if (d < 0.5) return;
@@ -465,21 +488,38 @@
         if (!_mkCanvas || _mkCanvas.width !== _flowCanvas.width || _mkCanvas.height !== _flowCanvas.height) {
             _mkCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);
             _mkCtx = _mkCanvas.getContext('2d', { willReadFrequently: true });
+            _mkCtx.fillStyle = '#000';
+            _mkCtx.fillRect(0, 0, _mkCanvas.width, _mkCanvas.height);
         }
-        if (!_mkStamp || _mkStamp.curve !== p.maskTipCurve) {
+        var hard = _clamp((p.maskHardness == null ? 100 : p.maskHardness) / 100, 0, 1);
+        if (!_mkStamp || _mkStamp.curve !== p.maskTipCurve || _mkStamp.hard !== hard) {
             var N = 128, c = new OffscreenCanvas(N, N), g = c.getContext('2d');
             var grad = g.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
             for (var i = 0; i <= 32; i++) {
-                var t = i / 32, a = p.maskTipCurve ? _curveAt(p.maskTipCurve, t * t, true) : 1;
-                grad.addColorStop(t, 'rgba(0,0,0,' + a.toFixed(4) + ')');
+                var t = i / 32, a = p.maskTipCurve ? _curveAt(p.maskTipCurve, t * t, true)
+                    : t <= hard ? 1 : (1 - t * t) / _max(1e-6, 1 - hard * hard);   // Krita's circle
+                grad.addColorStop(t, 'rgba(255,255,255,' + a.toFixed(4) + ')');
             }
             g.fillStyle = grad;
             g.fillRect(0, 0, N, N);
-            _mkStamp = { curve: p.maskTipCurve, canvas: c };
+            _mkStamp = { curve: p.maskTipCurve, hard: hard, canvas: c };
         }
+        // The dab in grey at its opacity, then lightened on: alpha darken.
+        var o = _clamp(_dyn(p, 'maskOpacity', 1, sc, 17), 0, 1);
+        var n = _max(1, _ceil(d) + 2);
+        if (!_mkDab || _mkDab.width < n || _mkDab.height < n) _mkDab = new OffscreenCanvas(n, n);
+        var dc = _mkDab.getContext('2d');
+        dc.clearRect(0, 0, n, n);
+        dc.fillStyle = _greyHex(o);
+        dc.fillRect(0, 0, n, n);
+        dc.globalCompositeOperation = 'destination-in';
+        dc.drawImage(_mkStamp.canvas, n / 2 - d / 2, n / 2 - d / 2, d, d);
+        dc.globalCompositeOperation = 'source-over';
+        _mkCtx.globalCompositeOperation = 'lighten';
         _mkCtx.globalAlpha = _clamp(_dyn(p, 'maskFlow', p.maskFlow / 100, sc, 16), 0, 1);
-        _mkCtx.drawImage(_mkStamp.canvas, x - d / 2, y - d / 2, d, d);
+        _mkCtx.drawImage(_mkDab, 0, 0, n, n, x - n / 2, y - n / 2, n, n);
         _mkCtx.globalAlpha = 1;
+        _mkCtx.globalCompositeOperation = 'source-over';
     }
 
     function _greyHex(o) {
@@ -490,9 +530,10 @@
     // Grey in the alpha-darken buffer becomes alpha in the flow buffer.
     function _adToFlow(x, y, w, h) {
         var img = _adCtx.getImageData(x, y, w, h), d = img.data, c = _hexToRgb(_adColor);
-        var m = _mkCtx ? _mkCtx.getImageData(x, y, w, h).data : null;
+        var op = getParams().maskOp;
+        var m = op && _mkCtx ? _mkCtx.getImageData(x, y, w, h).data : null;
         for (var i = 0; i < d.length; i += 4) {
-            d[i + 3] = m ? _max(0, d[i] - m[i + 3]) : d[i];
+            d[i + 3] = !m ? d[i] : op === 'add' ? (d[i] ? _min(255, d[i] + m[i]) : 0) : _max(0, d[i] - m[i]);
             d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2];
         }
         _flowCtx.putImageData(img, x, y);
@@ -586,7 +627,7 @@
         var w = _ceil(_flowUsed.x2) - x + 2, h = _ceil(_flowUsed.y2) - y + 2;
         _flowCtx.clearRect(x, y, w, h);
         if (_adCtx) { _adCtx.fillStyle = '#000'; _adCtx.fillRect(x, y, w, h); }
-        if (_mkCtx) _mkCtx.clearRect(x, y, w, h);
+        if (_mkCtx) { _mkCtx.fillStyle = '#000'; _mkCtx.fillRect(x, y, w, h); }
         _flowUsed = null;
     }
 
@@ -1941,7 +1982,8 @@
             case 'elevation': return _elevation();
             case 'twist':    return _clamp((_penTwist % 360) / 360, 0, 1);
             case 'wheel':    return _clamp(_penWheel, 0, 1);
-            case 'speed':    return _clamp(_smoothSpeed / 3, 0, 1);
+            // Krita's scale is 30 px/ms (maxAllowedSpeedValue); ours predates it.
+            case 'speed':    return _clamp(_smoothSpeed / _max(0.01, (p && p.speedMax) || 3), 0, 1);
             case 'random':   return _dabRand(sc.x, sc.y, seed);
             case 'fade':
                 return _clamp(1 - _dabIndex / _max(1, (p && p.fadeSteps) || 25), 0, 1);
@@ -2211,7 +2253,7 @@
         // Krita paints a dab down to a hundredth of a pixel (checkSizeTooSmall).
         if (sz < (/^krita.*-aa$/.test(p.falloff) ? 0.01 : 0.5)) return;
         _adO = _dyn(p, 'dabOpacity', 1, sc, 14);
-        if (p.maskOp === 'subtract' && _flowCanvas) _maskStrokeDab(p, x, y, sc);
+        if (p.maskOp && _flowCanvas) _maskStrokeDab(p, x, y, sc);
 
         // Bristle mode: render multiple fiber dabs
         if (p.bristleCount > 1) {
@@ -3859,7 +3901,9 @@
         /* Krita's masking brush in subtract mode: a second stroke whose
          * alpha comes off this one (see _maskStrokeDab). Sizes are % of the
          * brush, spacing % of the mask dab. */
-        maskOp: '', maskSize: 100, maskFlow: 100, maskSpacing: 10, maskTipCurve: null,
+        speedMax: 3,             // px/ms that reads as full speed
+        maskOp: '', maskSize: 100, maskFlow: 100, maskSpacing: 10, maskTipCurve: null, maskHardness: 100,
+        maskOpacitySrc: 'none', maskOpacityMin: 0, maskOpacityCurve: 1,
         maskSizeSrc: 'none', maskSizeMin: 0, maskSizeCurve: 1,
         maskFlowSrc: 'none', maskFlowMin: 0, maskFlowCurve: 1,
         hardnessSrc: 'none',     hardnessMin: 0,   hardnessCurve: 1,
@@ -4278,7 +4322,7 @@
         _lastDabDist = 0;
         _smoothPosX = x; _smoothPosY = y;
         _smoothBuffer = [];
-        _lastStrokeTime = 0;
+        _spLast = null; _spDists = [0];
         _lazyX = x; _lazyY = y;
         _stabilizerX = x; _stabilizerY = y;
         _lastRawX = x; _lastRawY = y;

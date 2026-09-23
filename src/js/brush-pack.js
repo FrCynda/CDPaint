@@ -527,17 +527,21 @@
         /* Subtract is not a tip stamped through each dab: Krita paints the
          * masking brush as a whole second stroke of its own and takes its
          * alpha off the finished stroke (KisMaskingBrushRenderer). The
-         * Waterpaint presets hollow their strokes out that way. */
-        if (mb && mb.mask && P['MaskingBrush/MaskingCompositeOp'] === 'subtract') {
+         * Waterpaint presets hollow their strokes out that way. Linear dodge
+         * is the same second stroke added on instead (Charcoal Pencil). */
+        var mop = { subtract: 'subtract', linear_dodge: 'add' }[P['MaskingBrush/MaskingCompositeOp']];
+        if (mb && mb.mask && mop) {
             var MP = {}, pre = 'MaskingBrush/Preset/';
             Object.keys(P).forEach(function (k) { if (k.indexOf(pre) === 0) MP[k.slice(pre.length)] = P[k]; });
-            out.maskOp = 'subtract';
+            out.maskOp = mop;
+            if (mb.mask.id === 'default' || !mb.mask.id)
+                out.maskHardness = Math.round((_num(mb.mask.hfade, 1) + _num(mb.mask.vfade, 1)) / 2 * 100);
             out.maskSize = Math.round(_num(P['MaskingBrush/MasterSizeCoeff'], 1) * 100);
             out.maskFlow = Math.round(_num(MP.FlowValue, 1) * 100);
             out.maskSpacing = Math.max(1, Math.round(_num(mb.spacing, 0.1) * 100));
             out.maskTipCurve = (mb.mask.id === 'soft' &&
                 BrushPack.parseCurve('<curve>' + (mb.mask.softness_curve || '') + '</curve>')) || null;
-            ['Size', 'Flow'].forEach(function (o) {
+            ['Size', 'Flow', 'Opacity'].forEach(function (o) {
                 var s = _sensorFor(MP, o);
                 if (!s || !s.src) return;
                 out['mask' + o + 'Src'] = s.src;
@@ -803,6 +807,7 @@
         }
 
         out.curveSmooth = true;   // Krita draws every curve as a spline
+        out.speedMax = 30;        // and reads speed against 30 px/ms (maxAllowedSpeedValue)
 
         /* A Krita option that is switched off holds that dial still. Left
          * unset, ours falls back to the engine's defaults -- size down to

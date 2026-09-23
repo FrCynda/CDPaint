@@ -569,6 +569,58 @@ await withPage(async (page) => {
         soft.spline[0] > 125 && soft.spline[0] < 148, 'alpha ' + soft.spline[0]);
     check('a subtract masking brush hollows the dab out',
         soft.hollow[0] < 10 && soft.hollow[1] > 240, JSON.stringify(soft.hollow));
+    /* Charcoal Pencil adds its masking stroke on (linear dodge), but only
+     * where the stroke already has ink, and the mask builds up to its own
+     * opacity like any Krita stroke (KisMaskingBrushCompositeOp). */
+    const dodge = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        const run = (pts, pr) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            b.setParam('size', 20); b.setParam('hardness', 100); b.setParam('flow', 20);
+            b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
+            b.setParam('maskOp', 'add'); b.setParam('maskSize', 200); b.setParam('maskSpacing', 10);
+            b.setParam('maskOpacitySrc', 'pressure'); b.setParam('maskOpacityMin', 0); b.setParam('maskOpacityCurve', [[0, 0], [1, 1]]);
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(pts[0][0], pts[0][1], pr, '#000000');
+            for (const p of pts.slice(1)) b.moveStroke(p[0], p[1], pr, '#000000');
+            b.endStroke();
+            return [100, 116].map(y => __B.layer().ctx.getImageData(100, y, 1, 1).data[3]);
+        };
+        const line = [];
+        for (let x = 60; x <= 140; x += 2) line.push([x, 100]);
+        return JSON.stringify({ one: run([[100, 100]], 0.5), many: run(line, 0.5) });
+    })()`));
+    check('a linear-dodge masking brush adds its stroke on where there is ink, and nowhere else',
+        dodge.one[0] > 160 && dodge.one[0] < 200 && dodge.one[1] === 0, JSON.stringify(dodge));
+    check('...and its dabs build up to their own opacity, not past it',
+        dodge.many[0] - dodge.one[0] < 90 && dodge.many[1] === 0, JSON.stringify(dodge));
+    /* Krita smooths speed over the last few samples (KisSpeedSmoother) and
+     * reads it against its own ceiling; with the clock stopped, as in the
+     * headless Krita render, speed is 0. */
+    const speed = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, clock = performance.now;
+        const run = (msPerPx) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            b.setParam('size', 20); b.setParam('hardness', 100); b.setParam('smoothingMode', 'none');
+            b.setParam('flowSrc', 'none'); b.setParam('speedMax', 3);
+            b.setParam('sizeSrc', 'speed'); b.setParam('sizeMin', 20); b.setParam('sizeCurve', [[0, 0], [1, 1]]);
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            let t = 1000; performance.now = () => t;
+            try {
+                b.beginStroke(20, 100, 1, '#000000');
+                for (let x = 20.5; x <= 180; x += 0.5) { t += 0.5 * msPerPx; b.moveStroke(x, 100, 1, '#000000'); }   // 260 events by x=150 flush the 200-gap rate history earlier strokes left
+                b.endStroke();
+            } finally { performance.now = clock; }
+            let n = 0;
+            for (let y = 80; y < 120; y++) if (__B.layer().ctx.getImageData(150, y, 1, 1).data[3] > 128) n++;
+            return n;
+        };
+        run(0);   // leaves a history of stopped-clock gaps behind, as the Krita harness does
+        return JSON.stringify({ still: run(0), fast: run(1 / 3), slow: run(2 / 3) });
+    })()`));
+    check('speed reads 0 with the clock stopped, full at its ceiling, half at half of it',
+        speed.still <= 5 && speed.fast >= 18 && speed.slow > speed.still + 3 && speed.slow < speed.fast - 3,
+        JSON.stringify(speed));
     /* Small tips, measured against real Krita strokes (test/krita). */
     const small = JSON.parse(await page.eval(`(() => {
         const b = PaintApp.brush;

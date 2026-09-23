@@ -160,9 +160,33 @@ two renders of the same job are byte-identical.
 
   Ink-3 G-Pen went from 1.08× (IoU 0.77) to 1.00× (IoU 0.99). Basic-5 now
   has IoU 0.99, and Marker Chisel is exact.
+- Speed (`KisSpeedSmoother`). Krita sums the last few moves until there are
+  more than three and they cover more than 5px, divides by that many ticks
+  of the pen's own rate (a trimmed mean of the last 200 event gaps,
+  `KisFilteredRollingMean`), and reads the result against 30 px/ms
+  (`maxAllowedSpeedValue`). `Node.paintLine` hands Krita no timing, so its
+  speed is 0. `compare.mjs` stops the clock while it draws so ours is 0 too.
+  Ink-1 went from 0.97× to 1.00× (IoU 1.00).
+- IoU is measured at half of Krita's own darkest pixel, not a fixed 127.
+  Pencil-1 never passes 127 on either side, so its IoU read 0; it is 0.92.
+- Turned Krita tips use the same per-pixel maths, sampling at
+  `cos·x − sin·y, sin·x + cos·y` (`KisBrushMaskScalarApplicator`). Our
+  angle turns the tip the same way `ctx.rotate` does, like every other
+  shape here. Ink-4 Pen Rough went from 1.33× (IoU 0.73) to 0.99× (0.90).
+- Linear dodge masking brush (`KisMaskingBrushCompositeOp`, `maskingAddition`).
+  The mask is a second stroke, painted white with alpha darken into a grey
+  buffer (`setupMaskingBrushPainter`), and added to the stroke's alpha
+  wherever the stroke already has some. Its size is `MasterSizeCoeff` × the
+  preset's size, its soft edge is the generator's fade, and its opacity
+  follows its own sensor. Charcoal Pencil Medium went from 0.52× (IoU 0.36)
+  to 1.15× (0.70). Waterpaint moved from 1.05× to about 1.0×, because its
+  subtract mask now builds up the same capped way.
 - Still open:
-  - The speed sensor. Krita smooths pen timing its own way
-    (`KisSpeedSmoother`). Ink-1's size follows speed, and it now reads a
-    touch thin (0.97×). Whole-pixel rounding used to hide this.
-  - A turned, non-round Krita tip still uses the old gradient path.
-  - Pencil-1's IoU of 0 is the metric: neither image has a pixel over 127.
+  - Charcoal Pencil is 1.15×, too wide at the light start of the line
+    (6px against 4px). The mask lands on the stroke's faint fringe.
+  - Waterpaint's IoU is about 0.66, and varies from run to run because its
+    tip is random.
+  - No default preset turns a flat Krita tip by a fixed angle (the only two
+    flat, angled tips follow tilt), so whether our fixed angle turns the same
+    way as Krita's is unmeasured. Krita adds the preset's angle to the
+    rotation option's value, and flips only the latter.

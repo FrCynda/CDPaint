@@ -88,5 +88,17 @@
   "size": 40,
   "file": "b)_Basic-1.kpp",
   "krita": "5.3.2.1 (git 0619060)"
+ },
+ "ink-4-pen-rough": {
+  "preset": "d) Ink-4 Pen Rough",
+  "size": 7,
+  "file": "d)_Ink-4_Pen_Rough.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
+ },
+ "charcoal-pencil-medium": {
+  "preset": "h) Charcoal Pencil Medium",
+  "size": 12,
+  "file": "h)_Charcoal_Pencil_Medium.kpp",
+  "krita": "5.3.2.1 (git 0619060)"
  }
 }
