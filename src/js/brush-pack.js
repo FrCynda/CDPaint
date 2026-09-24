@@ -381,6 +381,24 @@
     }
     function _bool(v) { return String(v) === 'true' || String(v) === '1'; }
 
+    /* An option's sensor as written, except that a lone input stored with no
+     * curve (<params id="ascension"/>) is Krita's input AND pressure:
+     * measured (test/krita/probes/frottis), Bristle_frottis0011's tip turns
+     * with pressure, a quarter turn at 0.5 and 1 and upright near 0.75, and
+     * stops turning once the same sensor carries a curve; size on such a
+     * sensor grows with pressure the same way. Only with the older
+     * Custom<Option> flag on: RGBA_06_Rock and Gouache Tilt #1 store the
+     * same bare sensor without it and do not turn, and Rock turns once
+     * CustomRotation is added. */
+    function _sensorRaw(params, opt) {
+        var raw = String(params[opt + 'Sensor'] || '');
+        if (!_bool(params['Custom' + opt])) return raw;
+        var m = /^\s*(?:<!DOCTYPE params>)?\s*<params\s+id="(\w+)"\s*\/>\s*$/.exec(raw);
+        if (!m || m[1].toLowerCase() === 'pressure' || m[1].toLowerCase() === 'sensorslist') return raw;
+        return '<!DOCTYPE params> <params id="sensorslist"> <ChildSensor id="' + m[1] +
+            '"></ChildSensor> <ChildSensor id="pressure"></ChildSensor> </params>';
+    }
+
     /* Which input drives one option, and how it responds. Krita spells the
      * on/off switch "Pressure<Option>" for most options but leaves it out for
      * the ones that are always live, where <Option>UseCurve is the switch. */
@@ -405,7 +423,7 @@
         var on = (flag === undefined) ? _bool(useCurve)
             : _bool(flag) && (useCurve === undefined || _bool(useCurve));
         if (!on) return null;
-        var raw = params[opt + 'Sensor'] || '';
+        var raw = _sensorRaw(params, opt);
         /* id need not come first: drawing angle writes its fan settings
          * before it, and missing it here read the tip's turn as pressure. */
         var m = /<params\b[^>]*?\bid="([^"]+)"/.exec(raw);
@@ -417,7 +435,10 @@
         var common = BrushPack.parseCurve('<curve>' + (params[opt + 'commonCurve'] || '') + '</curve>');
         var kids = [];
         if (id === 'sensorslist') {
-            var ch = /<ChildSensor\s+id="([^"]+)"[\s\S]*?<\/ChildSensor>/g, c;
+            /* A child may close itself (<ChildSensor id="pressure"/>) and may
+             * carry settings before its id (drawing angle's fan); matching
+             * only the long form lost both Bristle_frottis lists whole. */
+            var ch = /<ChildSensor\b[^>]*?\bid="([^"]+)"[^>]*?(?:\/>|>[\s\S]*?<\/ChildSensor>)/g, c;
             while ((c = ch.exec(raw))) kids.push({ id: c[1].toLowerCase(), raw: c[0] });
             var pick = kids.filter(function (k) { return SENSORS[k.id]; })[0];
             if (pick) { id = pick.id; raw = pick.raw; }
@@ -746,10 +767,13 @@
          * (test/krita/probes/ascension), a thin rect at 0 painted as the one at
          * 90 and 90 as 0. In a list it adds that quarter on top of the other
          * inputs, which then turn the tip as they would alone; Grease
-         * Charcoal and Large Chalk lay their flat tips that way. */
-        if (rot && rot.id === 'ascension') {
-            var rsRaw = String(P.RotationSensor || '');
-            var rest = rsRaw.replace(/<ChildSensor\s+id="ascension"\s*\/>|<ChildSensor\s+id="ascension"[\s\S]*?<\/ChildSensor>/, '');
+         * Charcoal and Large Chalk lay their flat tips that way. A list
+         * multiplies its inputs, so where in it the tilt sits is no matter
+         * (Bristle_frottis001111 puts pressure first). */
+        var rsRaw = _sensorRaw(P, 'Rotation');
+        var ascKid = /<ChildSensor\b[^>]*?\bid="ascension"[^>]*?(?:\/>|>[\s\S]*?<\/ChildSensor>)/;
+        if (rot && (rot.id === 'ascension' || ascKid.test(rsRaw))) {
+            var rest = rsRaw.replace(ascKid, '');
             out.angle = ((out.angle || 0) + 90) % 360;
             if (rest !== rsRaw && /<ChildSensor\b/.test(rest)) {
                 var P2 = {}; for (var pk in P) P2[pk] = P[pk];
@@ -2052,8 +2076,7 @@
         f = 1 - f; return 2 * f * f;
     }
 
-    function _vbrMask(shape, radius, spikes, hard, aspect, angle) {
-        var OS = 4, x, y, d;
+    function _vbrBox(shape, radius, spikes, aspect, angle) {
         angle = Math.round(angle * 1000) / 1000;
         var s = Math.sin(angle * Math.PI / 180), c = Math.cos(angle * Math.PI / 180);
         var sr = radius / aspect;
@@ -2064,8 +2087,14 @@
         else { hw = Math.hypot(xa[0], ya[0]); hh = Math.hypot(xa[1], ya[1]); }
         if (spikes > 2) hw = hh = Math.sqrt(radius * radius + sr * sr);
         var w = Math.max(1, Math.ceil(hw * 2)), h = Math.max(1, Math.ceil(hh * 2));
-        if (!(w & 1)) w++;
-        if (!(h & 1)) h++;
+        return { w: w | 1, h: h | 1 };
+    }
+
+    function _vbrMask(shape, radius, spikes, hard, aspect, angle) {
+        var OS = 4, x, y, d;
+        angle = Math.round(angle * 1000) / 1000;
+        var s = Math.sin(angle * Math.PI / 180), c = Math.cos(angle * Math.PI / 180);
+        var box = _vbrBox(shape, radius, spikes, aspect, angle), w = box.w, h = box.h;
 
         // gimp_brush_generated_calc_lut
         var ex = (1 - hard) < 0.0000004 ? 1000000 : 0.4 / (1 - hard);
@@ -2128,9 +2157,16 @@
         var angle = _num(lines[at++], 0);
         if (!(radius > 0)) throw new Error('That generated brush has no size.');
 
+        /* GIMP sizes the brush by its mask's box but spaces dabs by its
+         * diameter at that scale. Measured headless (test/gimp/probe.mjs, 200%
+         * spacing, dab centres): the step over the size was 50/51 for
+         * Hardness 100, 11/11 for Circle (11), 50/55 for 2. Star, 28/29 and
+         * 11/13 for the diagonal stars, at every size tried and along x and y
+         * alike. Our spacing is a share of the size, so it takes that ratio. */
+        var box = _vbrBox(shape, radius, spikes, aspect, -angle);
         var out = {
             size: Math.max(1, Math.min(1000, Math.round(radius * 2))),
-            spacing: Math.max(1, Math.min(400, Math.round(spacing))),
+            spacing: Math.max(1, Math.min(400, Math.round(spacing * 2 * radius / Math.max(box.w, box.h) * 10) / 10)),
             opacity: 100, flow: 100,
             hardness: Math.round(hard * 100),
             shape: 'circle'

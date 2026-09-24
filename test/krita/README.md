@@ -488,6 +488,23 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
     (dither and square brushes 0.06 → 0.96). The alpha-darken grey buffer
     stays 8-bit: float16 there cost hard pixel presets IoU (EO Pixel
     Opacity 0.99 → 0.92), so Krita rounds there.
+  - `frottis` (Bristle_frottis0011 drew its diagonal half as thick): in
+    the pixel engine, a sensor stored bare (`<params id="ascension"/>`,
+    no curve) also follows pressure. The tip turns a quarter turn at
+    pressure 0.5 and 1 and stands upright near 0.75. Size on such a sensor
+    grows with pressure. Written with a curve, it stops. Adding
+    `RotationcommonCurve` or `RotationcurveMode` did not stop it. The
+    trigger is the older `Custom<Option>` flag: RGBA_06_Rock and Gouache
+    Tilt #1 store the same bare sensor without it and do not turn, and Rock
+    turns once `CustomRotation` is added (`rockcu`). Frottis079 IoU 0.53 →
+    0.90, 0011 0.60 → 0.84.
+  - GIMP generated brushes (`test/gimp/probe.mjs`, dab centres at 200%
+    spacing): the size fits the mask's odd box, but the gap is spacing ×
+    diameter at that scale. Step over size: 50/51 for Hardness 100, 11/11
+    for Circle (11), 50/55 for 2. Star, and 28/29 and 11/13 for the
+    diagonal stars. It is the same along x and y and at every size.
+    2. Star IoU 0.68 → 0.95. GIMP's pipe counter for incremental
+    selection carries across strokes, as ours already did.
   - Probing trap: Krita re-serialises the preset's XML before `xmlSub`
     runs, and the attribute order changes from session to session.
     Match `<param [^>]*name="X"` and never rely on attribute order. A

@@ -400,6 +400,21 @@ await withPage(async (page) => {
                 // ...Large Chalk: tilt direction and pressure together.
                 ascList: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
                     RotationSensor: '<params id="sensorslist"> <ChildSensor id="ascension"/> <ChildSensor id="pressure"> <curve>0,0;1,1;</curve> </ChildSensor> </params>' } }).params,
+                // Bristle_frottis0011: tilt direction stored with no curve.
+                ascBare: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
+                    CustomRotation: 'true', RotationSensor: '<!DOCTYPE params>\n<params id="ascension"/>\n' } }).params,
+                // Bristle_frottis001111 and 0017: lists of self-closing children, and one with its fan settings first.
+                listShort: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
+                    RotationSensor: '<!DOCTYPE params> <params id="sensorslist"> <ChildSensor id="pressure"/> <ChildSensor id="ascension"/> </params> ' } }).params,
+                listFan: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
+                    RotationSensor: '<!DOCTYPE params> <params id="sensorslist"> <ChildSensor fanCornersStep="30" fanCornersEnabled="0" angleOffset="0" id="drawingangle"> <curve>0,0;1,1;</curve> </ChildSensor> <ChildSensor id="pressure"/> </params> ' } }),
+                // RGBA_06_Rock: the same without the Custom flag.
+                ascBareNew: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
+                    RotationSensor: '<!DOCTYPE params>\n<params id="ascension"/>\n' } }).params,
+                // GIMP's 2. Star and Hardness 100, spaced by diameter over mask box
+                vbrStar: BP.readVbr('GIMP-VBR\n1.5\n2. Star\ndiamond\n50.000000\n25.000000\n5\n1.000000\n2.500000\n17.500000\n').params,
+                vbrRound: BP.readVbr('GIMP-VBR\n1.0\n2. Hardness 100\n10.000000\n25.000000\n1.000000\n1.000000\n0.000000\n').params,
+                vbrSmall: BP.readVbr('GIMP-VBR\n1.0\nCircle (11)\n20.000000\n5.500000\n1.000000\n1.000000\n0.000000\n').params,
                 // Sketch chrome: Krita's sketch engine, build up, opacity on a pressure curve.
                 sketch: BP.toPreset({ paintop: 'sketchbrush', params: { brush_definition: round, PaintOpAction: '1',
                     PressureOpacity: 'true', OpacityUseCurve: 'true', OpacitySensor: '<params id="pressure"><curve>0,0;0.5,0.49;</curve></params>',
@@ -452,8 +467,9 @@ await withPage(async (page) => {
             `${B.opBox.dabOpacitySrc} / ${B.opFlag.dabOpacitySrc}`);
         /* A smudge preset's build-up and spacing keys are leftovers: taking
          * them painted mixbrush bis solid black where Krita paints it grey. */
-        check('a smudge preset keeps its opacity and spacing as before',
-            B.smudgeBuild.dabOpacitySrc === 'pressure' && B.smudgeBuild.spacingStrength == null,
+        // ...and its spacing option, as Wet_Smear measured
+        check('a smudge preset keeps its opacity and takes its spacing option',
+            B.smudgeBuild.dabOpacitySrc === 'pressure' && B.smudgeBuild.spacingStrength === 1,
             `${B.smudgeBuild.dabOpacitySrc} ${B.smudgeBuild.spacingStrength}`);
         /* Measured (test/krita/probes/ascension): with no pen tilt, tilt
          * direction lays a thin tip a quarter turn round, and in a list it
@@ -462,6 +478,28 @@ await withPage(async (page) => {
             B.asc.angle === 90 && B.asc.angleSrc === 'tilt', `${B.asc.angle} ${B.asc.angleSrc}`);
         check('...and alongside pressure, pressure turns it from there',
             B.ascList.angle === 90 && B.ascList.angleSrc === 'pressure', `${B.ascList.angle} ${B.ascList.angleSrc}`);
+        /* Measured (test/krita/probes/frottis): the same input stored with no
+         * curve turns with pressure too -- upright near 0.75 -- and stops once
+         * a curve is written in. It was painted fixed at the quarter turn. */
+        /* Measured headless in GIMP (dab centres at 200% spacing): the step
+         * is the spacing times the diameter, at the scale that fits the mask
+         * box to the size -- 0.909 of the size for 2. Star, 0.98 for Hardness
+         * 100, exactly the size for Circle (11). It was the size throughout. */
+        check('a GIMP generated brush spaces its dabs by diameter, not by box',
+            B.vbrStar.spacing === 45.5 && B.vbrRound.spacing === 9.8 && B.vbrSmall.spacing === 20,
+            `${B.vbrStar.spacing} ${B.vbrRound.spacing} ${B.vbrSmall.spacing}`);
+        check('tilt direction with no curve brings pressure in with it',
+            B.ascBare.angle === 90 && B.ascBare.angleSrc === 'pressure' && B.ascBare.angleStrength === 1,
+            `${B.ascBare.angle} ${B.ascBare.angleSrc} ${B.ascBare.angleStrength}`);
+        /* Both lists were read as no input at all: the child pattern wanted
+         * <ChildSensor id="..."> ... </ChildSensor> and nothing else. */
+        check('a list of self-closing inputs is read (pressure, then tilt direction)',
+            B.listShort.angle === 90 && B.listShort.angleSrc === 'pressure', `${B.listShort.angle} ${B.listShort.angleSrc}`);
+        check('...and an input with its settings before its id',
+            B.listFan.params.angleSrc === 'direction' && !B.listFan.warnings.some(w => /turned/.test(w)),
+            `${B.listFan.params.angleSrc} ${JSON.stringify(B.listFan.warnings)}`);
+        check('...only with the older Custom flag on, as RGBA_06_Rock shows',
+            B.ascBareNew.angle === 90 && B.ascBareNew.angleSrc === 'tilt', `${B.ascBareNew.angle} ${B.ascBareNew.angleSrc}`);
         /* Measured (test/krita/probes/texture): outside its grey range policy 1
          * reads the pattern as black, 2 as white. */
         check("a texture's cutoff comes across instead of a warning",

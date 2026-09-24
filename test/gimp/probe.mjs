@@ -3,7 +3,8 @@
 // paints them (gimp-console, private profile, Dynamics Off, opacity 100).
 //   node test/gimp/probe.mjs <out> '<json>'
 // json: { "brushes": [{ "name": "2. Hardness 050", "size": 30, "spacing": 10 }],
-//         "strokes": { "dab": [[100, 50.5]], "line": [[40, 50, 160, 50]] }, "w": 200, "h": 100 }
+//         "strokes": { "dab": [[100, 50.5]], "line": [[40, 50, 160, 50]] }, "w": 200, "h": 100,
+//         "files": ["test/krita/out/bank/.../x.gbr"] }
 // A stroke is one or more polylines; a single point is a lone dab. Writes
 // test/krita/out/gimp-probe/<out>/<brush index>-<stroke>.png.
 import { REPO_ROOT } from '../browser.mjs';
@@ -19,6 +20,8 @@ const dir = path.join(REPO_ROOT, 'test', 'krita', 'out', 'gimp-probe', out);
 const prof = path.join(dir, 'profile');
 fs.rmSync(prof, { recursive: true, force: true });
 fs.mkdirSync(path.join(prof, 'brushes'), { recursive: true });
+// "files": brush files (repo-relative) to load beside GIMP's own
+for (const f of job.files || []) fs.copyFileSync(path.join(REPO_ROOT, f), path.join(prof, 'brushes', path.basename(f)));
 const q = s => '"' + s.replace(/\\/g, '/') + '"';
 const num = v => (Number.isInteger(v) ? v + '.0' : String(v));
 const scm = [`(gimp-message-set-handler 1)
