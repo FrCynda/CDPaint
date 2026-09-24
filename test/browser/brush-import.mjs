@@ -832,6 +832,16 @@ await withPage(async (page) => {
         } });
         return JSON.stringify({ h: t.params.hatch, w: t.warnings || [] });
     })()`).then(JSON.parse);
+    /* A colour smudge's spacing option counts too (bank: Wet_Smear, whose
+     * gaps close as the pen presses, 0.61x -> 0.96x ink). It was skipped
+     * along with the pixel brush's leftover build-up keys. */
+    const smsp = await page.eval(`(() => JSON.stringify(BrushPack.toPreset({ paintop: 'colorsmudge', name: 'S', params: {
+        PressureSpacing: 'true', SpacingValue: '1', SpacingUseCurve: 'true',
+        SpacingSensor: '<params id="pressure"> <curve>0,1;1,0;</curve> </params>'
+    } }).params))()`).then(JSON.parse);
+    check("a colour smudge's spacing follows its pen curve",
+        smsp.spacingSrc === 'pressure' && smsp.spacingStrength === 1 && smsp.spacingCurve && smsp.spacingCurve[0][1] === 1,
+        JSON.stringify([smsp.spacingSrc, smsp.spacingStrength, smsp.spacingCurve]));
     const grid = await page.eval(`(() => JSON.stringify(BrushPack.toPreset({ paintop: 'gridbrush', name: 'Grid', params: {
         'Grid/gridWidth': '25', 'Grid/gridHeight': '20', 'Grid/divisionLevel': '2', 'Grid/scale': '1', 'GridShape/shape': '0'
     } }).params.grid))()`).then(JSON.parse);

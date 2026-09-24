@@ -686,8 +686,11 @@
          * curve. Measured on Krita 5.3's own renders of Ink-1 Precision with
          * the option switched on: strength 0.08 spaced dabs 0.08x as far, 0.5
          * spaced them 0.5x, and a pressure curve scaled the gap in step. With
-         * its curve box clear it is the strength alone. */
-        if (measured && _bool(P.PressureSpacing)) {
+         * its curve box clear it is the strength alone. A colour smudge has
+         * the same option: taken there too, Wet_Smear (gaps closing as the
+         * pen presses) went from 0.61x to 0.96x ink and both mixbrushes
+         * from off/near to close in the bank. */
+        if (_bool(P.PressureSpacing)) {
             out.spacingStrength = _num(P.SpacingValue, 1);
             var sps = _sensorFor(P, 'Spacing');
             if (sps && !sps.src) warn.push('Spacing followed ' + sps.id + ', which we have no input for');
