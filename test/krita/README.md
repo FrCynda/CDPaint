@@ -515,6 +515,22 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
     sphere (79), Manju's Flower (Large) and SLOS_dirty-spot sit half a
     pixel astray, and nothing tried (padding side, box size, sampling
     origin) fits them all. GIMP bank 159 → 171 close, 11 → 6 off.
+  - `defrect` (Krita's default, not gauss, rectangle tip, with lone dabs
+    at fades 0 to 1 and ratios 0.15 to 1): each axis stays solid out to its
+    fade, then ramps straight down to nothing at the edge. The lower of the
+    two axes wins. This matches Krita within a grey level. We used to draw
+    a solid box whatever the fade. Under 10px, with anti-aliasing on, the
+    tip is supersampled from the pixel corner, the same as the small circle.
+  - `gchar` (Grease Charcoal: a 5px bar, subtract texture at scale 0.19):
+    Krita's stroke is each dab minus the grain, piled up source-over,
+    within 3 grey levels. The grain sits on canvas pixels, so a textured
+    dab is moved to its fraction of a pixel first and grained on the
+    canvas grid after. Grained first, the grain slid from dab to dab and
+    the stroke smeared it back in. Snapping dabs to whole pixels fixed
+    that too, but cost the deevad textured brushes 0.03–0.05 IoU. With
+    the tip and placement fixed, IoU goes 0.73 → 0.88 and ink 1.74 → 1.16
+    (0.98 with the texture off). Still over: at pressure 0.5, ours lays
+    1.5× Krita's ink.
   - Probing trap: Krita re-serialises the preset's XML before `xmlSub`
     runs, and the attribute order changes from session to session.
     Match `<param [^>]*name="X"` and never rely on attribute order. A

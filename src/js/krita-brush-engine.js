@@ -188,9 +188,10 @@
         var kc = shape.indexOf('kcircle') === 0 || shape.indexOf('kgauss') === 0;
         if ((shape === 'circle' || kc || shape === 'gauss' || shape === 'gimp' || tc) && w === h) ang = 0;
         var needRotation = _abs(ang) > 0.001;
-        if (shape.indexOf('kgrect') === 0) {
+        if (shape.indexOf('kgrect') === 0 || shape.indexOf('klrect') === 0) {
             var hy = shape.split(':')[1];
-            return _kritaGaussRectMask(size, aspect, hardness / 100, (hy ? +hy : hardness) / 100, ang);
+            return _kritaGaussRectMask(size, aspect, hardness / 100, (hy ? +hy : hardness) / 100, ang,
+                                       shape.charAt(1) === 'l', shape.charAt(6) === 'a');
         }
         if (kc) return _kritaCircleMask(size, aspect, hardness / 100, phase,
                                         shape.slice(-3) === ':aa', shape.charAt(1) === 'g', ang);
@@ -354,8 +355,16 @@
     /* Krita's gauss square (KisGaussRectangleMaskGenerator): an erf edge
      * whose half-way line sits 2.5 fade-widths INSIDE the box, the fade
      * width being (1 - fade/2) tenths of the side. ZBlocks' 30px square is
-     * 18px of ink in Krita; the plain square edge painted all 30. */
-    function _kritaGaussRectMask(size, aspect, hard, hardY, ang) {
+     * 18px of ink in Krita; the plain square edge painted all 30.
+     * lin: Krita's default square instead -- each axis solid out to its fade
+     * share of the half side, then a straight ramp to nothing at the edge,
+     * the lower of the two winning (test/krita/probes/defrect: within a grey
+     * level of Krita's lone dabs at fades 0-0.9, ratio 0.15-1). This was a
+     * solid box whatever the fade: Grease Charcoal's 5px bar painted as 4
+     * rows of full ink. Under 10px on a side and anti-aliased it is
+     * supersampled from the pixel's corner like the circle (_kritaCircleMask),
+     * a third of a pixel up and left: that bar's rows 46,209,254,236,104. */
+    function _kritaGaussRectMask(size, aspect, hard, hardY, ang, lin, aa) {
         var w = size, h = size / aspect;
         if (aspect < 1) { w = size * aspect; h = size; }
         var xf = _max(1e-6, (1 - hard / 2) * w * 0.1), yf = _max(1e-6, (1 - hardY / 2) * h * 0.1);
@@ -363,15 +372,26 @@
         var hw = w / 2 - 2.5 * xf, hh = h / 2 - 2.5 * yf;
         var af = 1 / (4 * _erf(hw * kx) * _erf(hh * ky));
         if (!isFinite(af)) af = 0;
-        var D = _ceil(_hypot(w, h)) + 2, canvas = new OffscreenCanvas(D, D), c = D / 2;
-        var ca = _cos(ang || 0), sa = -_sin(ang || 0);
+        // even, so the centre is a pixel corner and a whole-pixel dab is not smeared across two
+        var D = 2 * _ceil(_hypot(w, h) / 2) + 2, canvas = new OffscreenCanvas(D, D), c = D / 2;
+        var ca = _cos(ang || 0), sa = -_sin(ang || 0), ss = lin && aa && (w < 10 || h < 10) ? (w < 1 || h < 1 ? 6 : 3) : 1;
         var ctx = canvas.getContext('2d'), img = ctx.createImageData(D, D), d = img.data;
         for (var j = 0; j < D; j++) {
             for (var i = 0; i < D; i++) {
-                var x0 = i + 0.5 - c, y0 = j + 0.5 - c;
-                var x = _abs(ca * x0 - sa * y0), y = _abs(sa * x0 + ca * y0);
-                if (x > w / 2 || y > h / 2) continue;
-                var v = af * (_erf((hw + x) * kx) + _erf((hw - x) * kx)) * (_erf((hh + y) * ky) + _erf((hh - y) * ky));
+                if (lin) {
+                    var v = 0;
+                    for (var sy = 0; sy < ss; sy++) for (var sx = 0; sx < ss; sx++) {
+                        var x1 = i + 0.5 - c + sx / ss, y1 = j + 0.5 - c + sy / ss;
+                        var ux = _abs(ca * x1 - sa * y1), uy = _abs(sa * x1 + ca * y1);
+                        if (ux < w / 2 && uy < h / 2) v += _min(1, (1 - ux * 2 / w) / _max(1e-6, 1 - hard), (1 - uy * 2 / h) / _max(1e-6, 1 - hardY));
+                    }
+                    v /= ss * ss;
+                } else {
+                    var x0 = i + 0.5 - c, y0 = j + 0.5 - c;
+                    var x = _abs(ca * x0 - sa * y0), y = _abs(sa * x0 + ca * y0);
+                    if (x > w / 2 || y > h / 2) continue;
+                    var v = af * (_erf((hw + x) * kx) + _erf((hw - x) * kx)) * (_erf((hh + y) * ky) + _erf((hh - y) * ky));
+                }
                 if (v > 0) { var k = (j * D + i) * 4; d[k] = d[k + 1] = d[k + 2] = 255; d[k + 3] = _round(_min(1, v) * 255); }
             }
         }
@@ -608,6 +628,7 @@
         _flowCtx.putImageData(img, x, y);
     }
 
+    var _shiftCanvas = null, _shiftCtx = null;   // _paintDab's grained dab, before its sub-pixel move
     function _ensureScratch(w, h) {
         if (!_scratchCanvas || _scratchCanvas.width < w || _scratchCanvas.height < h
             || (_scratchCanvas.width > w * 2 && _scratchCanvas.width * SHRINK_THRESHOLD > w)) {
@@ -1528,6 +1549,28 @@
          * pressure-driven texture modulation, since the flush pass reads the
          * static param -- no watercolour preset in hand uses that. */
         var _tp = getParams();
+        /* Krita's grain is fixed to the canvas pixel for pixel, so the dab
+         * is moved to its fraction of a pixel FIRST and grained on the
+         * canvas's own grid after: grained and then drawn at the fraction,
+         * the grain slid up to half a pixel from dab to dab and the stroke
+         * averaged it away (test/krita/probes/gchar, Grease Charcoal: IoU
+         * 0.75 -> 0.84; Krita's there is each dab minus the grain, piled up
+         * source-over, to within 3 grey levels). Snapping the dab to whole
+         * pixels instead cost the deevad textured brushes 0.03-0.05. */
+        var fx = ox - _floor(ox), fy = oy - _floor(oy);
+        if (_tp.textureMode && (fx || fy) && _kritaTexMask(_tp)) {
+            if (!_shiftCanvas || _shiftCanvas.width < mw || _shiftCanvas.height < mh) {
+                _shiftCanvas = new OffscreenCanvas(mw, mh);
+                _shiftCtx = _shiftCanvas.getContext('2d');
+            }
+            _shiftCtx.clearRect(0, 0, mw, mh);
+            _shiftCtx.drawImage(_scratchCanvas, 0, 0, mw, mh, 0, 0, mw, mh);
+            _ensureScratch(mw + 1, mh + 1);
+            _scratchCtx.clearRect(0, 0, mw + 1, mh + 1);
+            _scratchCtx.drawImage(_shiftCanvas, 0, 0, mw, mh, fx, fy, mw, mh);
+            mw++; mh++; ox -= fx; oy -= fy;
+            _tintMask = null;
+        }
         if (_tp.textureMode && _applyKritaTexture(_scratchCtx, mw, mh, ox, oy, texture / 100, _tp)) {
             _tintMask = null;
         } else if (texture > 0 && !_tp.watercolor) {
@@ -2871,7 +2914,9 @@
             if (shape === 'circle' && (_params.falloff === 'gauss' || _params.falloff === 'gimp')) shape = _params.falloff;
             if (shape === 'circle' && _isArray(_params.tipCurve)) shape = _tipCurveKey(_params.tipCurve);
             var kf = /^krita(-gauss)?(-aa)?$/.exec(_params.falloff || '');
-            if (shape === 'square' && kf && kf[1]) shape = 'kgrect' + (_params.hardnessY != null ? ':' + _params.hardnessY : '');
+            // a hard square keeps the plain box: it paints its pixel however small (EO Pixel Perfect)
+            if (shape === 'square' && kf && (kf[1] || hardness < 100 || (_params.hardnessY != null && _params.hardnessY < 100)))
+                shape = (kf[1] ? 'kgrect' : 'klrect' + (kf[2] ? 'a' : '')) + (_params.hardnessY != null ? ':' + _params.hardnessY : '');
             if (shape === 'circle' && kf) {
                 shape = (kf[1] ? 'kgauss' : 'kcircle') + (kf[2] ? ':aa' : '');
                 sz = sz < 16 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);   // its real size, see _kritaCircleMask
@@ -4276,7 +4321,7 @@
          * every direction, rather than from its width along the stroke. */
         spacingIsotropic: false,
         hardness: 80,
-        hardnessY: null,   // Krita's gauss square only: the ends' fade when it differs from the sides'
+        hardnessY: null,   // Krita's squares only: the ends' fade when it differs from the sides'
         shape: 'circle',
         // Round-tip profile: 'gauss' is Krita's gauss generator, 'gimp' GIMP's
         // generated brush; anything else Krita's default circle.

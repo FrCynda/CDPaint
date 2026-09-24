@@ -372,6 +372,7 @@ await withPage(async (page) => {
                     OpacitySensor: '<params id="pressure"><curve>0,0;0.5,0.25;1,1;</curve></params>',
                     PressureFlow: 'true', FlowUseCurve: 'true', FlowSensor: '<params id="speed"><curve>0,0;1,1;</curve></params>' } }).params,
                 blocks: BP.toPreset({ params: { brush_definition: bd('gauss', 'rect', 0.43, 0.82) } }).params,
+                gchar: BP.toPreset({ params: { brush_definition: bd('default', 'rect', 1, 0.31) } }).params,
                 // Ink-1 Precision with its spacing option on, as the spacing probe rendered it.
                 spaced: BP.toPreset({ params: { brush_definition: round, PressureSpacing: 'true', SpacingUseCurve: 'true',
                     SpacingValue: '0.08', SpacingUseSameCurve: 'false',
@@ -511,6 +512,9 @@ await withPage(async (page) => {
         check("Krita's gauss square keeps its side and end fades apart (ZBlocks)",
             B.blocks.falloff === 'krita-gauss' && B.blocks.hardness === 43 && B.blocks.hardnessY === 82,
             JSON.stringify([B.blocks.falloff, B.blocks.hardness, B.blocks.hardnessY]));
+        check("...and so does its default square (Grease Charcoal)",
+            B.gchar.falloff === 'krita' && B.gchar.hardness === 100 && B.gchar.hardnessY === 31,
+            JSON.stringify([B.gchar.falloff, B.gchar.hardness, B.gchar.hardnessY]));
 
         /* GIMP tips. A colour .gbr is a picture GIMP stamps through its
          * alpha (Pepper came out grey at half its ink); a .gih stepped in

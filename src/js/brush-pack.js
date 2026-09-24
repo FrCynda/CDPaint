@@ -554,12 +554,12 @@
             // Krita's own circle, edge and all -- see _kritaCircleMask.
             var aa = String(mask.antialiasEdges) === '1' ? '-aa' : '';
             if (gen === 'gauss') out.falloff = 'krita-gauss' + aa;
-            // Krita's gauss square fades its sides and its ends apart.
-            if (gen === 'gauss' && out.shape === 'square' && _num(mask.hfade, 1) !== _num(mask.vfade, 1)) {
+            else if (gen === 'default') out.falloff = 'krita' + aa;
+            // Krita's squares fade their sides and their ends apart.
+            if ((gen === 'gauss' || gen === 'default') && out.shape === 'square' && _num(mask.hfade, 1) !== _num(mask.vfade, 1)) {
                 out.hardness = Math.round(Math.max(0, Math.min(1, _num(mask.hfade, 1))) * 100);
                 out.hardnessY = Math.round(Math.max(0, Math.min(1, _num(mask.vfade, 1))) * 100);
             }
-            else if (gen === 'default') out.falloff = 'krita' + aa;
             /* "soft" is a drawn curve: opacity at each radius is the curve
              * there (KisCurveCircleMaskGenerator::valueAt) and the fades play
              * no part. Airbrush Soft peaks at 40% in the middle; read as a

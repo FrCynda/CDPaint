@@ -549,6 +549,34 @@ await withPage(async (page) => {
         kt.cut >= 250, 'alpha ' + kt.cut);
     check("Krita's height texture rises with strength and the neutral point scales the grain",
         Math.abs(kt.h30 - 58) <= 4 && kt.hNp <= 2, 'alpha ' + kt.h30 + ', ' + kt.hNp);
+    /* Krita's grain is fixed to canvas pixels (probes/gchar). Dabs drawn at
+     * fractions slid it half a pixel from dab to dab, so a stroke refilled
+     * the columns a 1px striped pattern cuts out. */
+    const ks = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        const c = document.createElement('canvas'); c.width = c.height = 2;
+        const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 2, 2); x.fillStyle = '#fff'; x.fillRect(1, 0, 1, 2);
+        const url = c.toDataURL();
+        const run = () => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            b.setParam('size', 20); b.setParam('spacing', 7); b.setParam('hardness', 100);
+            b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
+            b.setParam('texture', 100); b.setParam('textureMode', 'subtract'); b.setParam('textureScale', 1);
+            b.loadTexturePattern(url);
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(40.3, 100.4, 1, '#000000');
+            for (let i = 1; i <= 30; i++) b.moveStroke(40.3 + i * 1.37, 100.4, 1, '#000000');
+            b.endStroke();
+            const d = __B.layer().ctx.getImageData(60, 100, 20, 1).data, a = [];
+            for (let i = 3; i < d.length; i += 4) a.push(d[i]);
+            return a;
+        };
+        run(); await new Promise(r => setTimeout(r, 300));   // the pattern decodes async
+        const a = run();
+        return JSON.stringify({ black: Math.min(...a.filter((_, i) => i % 2 === 0)), white: Math.max(...a.filter((_, i) => i % 2 === 1)) });
+    })()`, { awaitPromise: true }));
+    check("Krita's grain stays on its canvas pixels down a stroke, not smeared from dab to dab",
+        ks.black > 250 && ks.white < 5, JSON.stringify(ks));
     /* A colour smudge writes the layer itself, so it has to grain its own
      * dabs: it skipped texture and pastel_014 laid 6x Krita's ink. */
     const st = JSON.parse(await page.eval(`(async () => {
@@ -949,6 +977,10 @@ await withPage(async (page) => {
         fresh(() => { b.setParam('shape', 'square'); b.setParam('size', 30); b.setParam('falloff', 'krita-gauss'); b.setParam('hardness', 43); });
         stroke([[100, 100]]);
         out.grect = [100, 112].map(x => L().getImageData(x, 100, 1, 1).data[3]);
+        // Grease Charcoal: Krita's default square ramps straight from its fade to the edge.
+        fresh(() => { b.setParam('shape', 'square'); b.setParam('size', 30); b.setParam('falloff', 'krita'); b.setParam('hardness', 50); });
+        stroke([[100, 100]]);
+        out.lrect = [100, 112].map(x => L().getImageData(x, 100, 1, 1).data[3]);
         // PixelArt_Round: full sharpness keeps every pixel a cone tip touches.
         fresh(() => { b.setParam('size', 5); b.setParam('falloff', 'krita'); b.setParam('hardness', 0); b.setParam('sharpness', 100); });
         stroke([[100, 100]]);
@@ -988,6 +1020,9 @@ await withPage(async (page) => {
         bank.hundredth >= 1, `${bank.hundredth} pixels`);
     check("Krita's gauss square fades in from its edge, as Krita's does (ZBlocks)",
         bank.grect[0] > 200 && bank.grect[1] < 128, JSON.stringify(bank.grect));
+    /* probes/defrect: it was drawn as a solid box whatever the fade. */
+    check("Krita's default square fades linearly from its fade to the edge (Grease Charcoal)",
+        bank.lrect[0] > 250 && bank.lrect[1] > 40 && bank.lrect[1] < 140, JSON.stringify(bank.lrect));
     check("full sharpness keeps every pixel the tip touches, as Krita's threshold does",
         bank.solid >= 12, `${bank.solid} solid pixels`);
     check('a GIMP pipe starts over from its first cell when the brush is picked again',
