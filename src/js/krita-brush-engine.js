@@ -487,7 +487,7 @@
      * (falling pressure) is not modelled either. */
     var _adCanvas = null, _adCtx = null, _adO = 1, _adColor = '#000000';
     function _alphaDarken(p) {
-        return !!((p.dabOpacitySrc && p.dabOpacitySrc !== 'none') || p.maskOp)
+        return !!((p.dabOpacitySrc && p.dabOpacitySrc !== 'none') || p.maskOp || p.hatch)
             && p.engineKind !== 'shape' && p.engineKind !== 'deform';
     }
     function _ensureAdBuffer() {
@@ -935,6 +935,96 @@
         }
         _ktMask = { key: key, w: w, h: h, m: m };
         return _ktMask;
+    }
+    /* Krita's hatching brush, from black-box renders (test/krita/probes/
+     * hatch, hatchp). Lines fixed to the canvas: one through the origin
+     * pixel, then every `sep` px along the normal. Across its minor axis a
+     * line is N = ceil(T) px of solid ink; at 0/45/90 degrees that is all,
+     * elsewhere the run is N + 0.9 (steep) or N + 1.17 (shallow) px wide with
+     * soft ends, and an even N sits half a pixel toward +x/+y. Coverage
+     * scales the grey alpha-darken level, not the dab's alpha: dabs build up
+     * toward opacity * coverage and stop there, so a textured tip fills in
+     * solid (Big Hatches) while a line's soft edge never does.
+     * ponytail: only the single and perpendicular styles; the others and
+     * their crosshatching sensor fall back to single lines. */
+    var _hatchT = 1, _hatchSep = 6;
+    function _hatchFamily(a, sep, T, aa, whole) {
+        var r = a * _PI / 180, dx = _cos(r), dy = _sin(r), nx = -dy, ny = dx;
+        var steep = Math.abs(dy) >= Math.abs(dx) - 1e-9, k = steep ? nx : ny;   // 45 counts as steep
+        var n = _max(1, Math.ceil(T - 1e-9));
+        var q = a / 45, special = Math.abs(q - _round(q)) < 1e-6;
+        /* Subpixel precision off: at 45 degrees the lines land a whole number
+         * of pixels apart, rounded down (4 px -> 5 px across, not 5.66;
+         * probes/hatchsub). Other angles are left alone -- unmeasured. */
+        if (whole && special) sep = _max(1, Math.floor(sep / Math.abs(k) + 1e-6)) * Math.abs(k);
+        return { nx: nx, ny: ny, k: k, sep: sep, n: n, sh: n % 2 ? 0 : 0.5 * k, aa: aa,
+                 special: special,
+                 w: n + (steep ? 0.9 : 1.17) };
+    }
+    function _hatchCov(f, X, Y) {
+        var s = X * f.nx + Y * f.ny - f.sh;
+        s -= f.sep * Math.floor(s / f.sep + 0.5);    // nearest line, -sep/2..sep/2
+        var u = s / f.k, c;
+        if (f.special) return Math.abs(u) < f.n / 2 - 1e-6 ? 1 : 0;
+        c = _clamp(_min(u + 0.5, f.w / 2) - _max(u - 0.5, -f.w / 2), 0, 1);
+        return f.aa ? c : (c >= 0.5 ? 1 : 0);
+    }
+    function _applyHatch(ctx, w, h, ox, oy, p) {
+        var H = p.hatch, T = _hatchT, sep = _hatchSep;
+        var fs = [_hatchFamily(H.angle, sep, T, H.aa, H.whole)];
+        if (H.cross) fs.push(_hatchFamily(H.angle + 90, sep, T, H.aa, H.whole));
+        var img = ctx.getImageData(0, 0, w, h), d = img.data;
+        var bx = _round(ox) - H.ox, by = _round(oy) - H.oy;
+        for (var j = 0; j < h; j++) {
+            for (var i = 0; i < w; i++) {
+                var o = (j * w + i) * 4, a = d[o + 3];
+                if (!a) continue;
+                var c = _hatchCov(fs[0], bx + i, by + j);
+                if (fs.length > 1 && c < 1) c = _max(c, _hatchCov(fs[1], bx + i, by + j));
+                d[o] = d[o] * c; d[o + 1] = d[o + 1] * c; d[o + 2] = d[o + 2] * c;
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+    }
+    /* Krita's grid brush, from the bank's own render (Grid_square_25): the
+     * canvas is cut into gridWidth x gridHeight cells, and every
+     * gridWidth px along the stroke -- from its first point, never at its
+     * last -- the cell under the pen is filled with divisionLevel^2 shapes
+     * inscribed in its sub-cells. A cell is filled once per stroke.
+     * ponytail: ellipse and rectangle only; no borders, colour options or
+     * pressure division (the importer warns). */
+    var _gridSt = null, _gridMask = null;
+    function _gridDab(p, x, y, color) {
+        var G = p.grid, gw = G.w * G.scale, st = _gridSt;
+        if (!st) { st = _gridSt = { x: x, y: y, acc: 0, next: gw, seen: {} }; _gridCell(p, x, y, color); return; }
+        var d = Math.hypot(x - st.x, y - st.y);
+        while (d > 0 && st.acc + d > st.next + 1e-6) {
+            var t = (st.next - st.acc) / d;
+            _gridCell(p, st.x + (x - st.x) * t, st.y + (y - st.y) * t, color);
+            st.next += gw;
+        }
+        st.acc += d; st.x = x; st.y = y;
+    }
+    function _gridCell(p, x, y, color) {
+        var G = p.grid, gw = G.w * G.scale, gh = G.h * G.scale;
+        var cx = Math.floor(x / gw), cy = Math.floor(y / gh), key = cx + ',' + cy;
+        if (_gridSt.seen[key]) return;
+        _gridSt.seen[key] = 1;
+        var mk = gw + ',' + gh + ',' + G.div + ',' + G.shape;
+        if (!_gridMask || _gridMask._key !== mk) {
+            var c = new OffscreenCanvas(_max(1, _ceil(gw)), _max(1, _ceil(gh))), g = c.getContext('2d');
+            var n = _max(1, G.div), sw = gw / n, sh = gh / n;
+            g.fillStyle = '#fff';
+            for (var j = 0; j < n; j++) for (var i = 0; i < n; i++) {
+                if (G.shape === 1) { g.fillRect(i * sw, j * sh, sw, sh); continue; }
+                g.beginPath();
+                g.ellipse(i * sw + sw / 2, j * sh + sh / 2, sw / 2, sh / 2, 0, 0, 2 * _PI);
+                g.fill();
+            }
+            c._cx = 0; c._cy = 0; c._key = mk;
+            _gridMask = c;
+        }
+        _paintDab(_flowCtx, _round(cx * gw), _round(cy * gh), _gridMask, color, _clamp(p.flow / 100, 0, 1), 0);
     }
     function _applyKritaTexture(ctx, w, h, ox, oy, s, p) {
         var t = _kritaTexMask(p);
@@ -1390,6 +1480,11 @@
         }
 
         if (_applyTip2(_scratchCtx, mw, mh, ox, oy, _max(mw, mh), 0)) _tintMask = null;
+        if (_tp.hatch && ad) {
+            ox = _round(ox); oy = _round(oy);    // the lines sit on whole pixels
+            _applyHatch(_scratchCtx, mw, mh, ox, oy, _tp);
+            _tintMask = null;
+        }
 
         /* Wet-blend coverage (W1): punch this dab's own mask by what the
          * stroke has already landed FIRST, then record the leftover as
@@ -2320,7 +2415,7 @@
         var rw = _min(W, _max(ox, sx) + mw) - rx, rh = _min(H, _max(oy, sy) + mh) - ry;
         if (rw <= 0 || rh <= 0) return;
         var c = _clamp(_dyn(p, 'colorRate', p.colorRate, sc, 9), 0, 100) / 100;
-        var s = _clamp(_dyn(p, 'smudgeRate', p.smudgeRate == null ? 100 : p.smudgeRate, sc, 15), 0, 100) / 100;
+        var s = p.smudgeFull ? 1 : _clamp(_dyn(p, 'smudgeRate', p.smudgeRate == null ? 100 : p.smudgeRate, sc, 15), 0, 100) / 100;
         /* The opacity curve scales the whole dab, smear and paint alike, and
          * on colour smudge it acts with its pressure switch off too: a flat
          * 0.5 smudge under a linear opacity curve at pressure 0.5 smeared as
@@ -2337,7 +2432,7 @@
          * pressure 0.6..1 fit this and not the curved rate (smudge4/5/6,
          * mean error 6.1 -> 2.6 levels on smudge4). */
         var sv = (p.smudgeRate == null ? 100 : p.smudgeRate) / 100;
-        if (!p.smudgePure) c *= _max(0.2, 1 - sv) * op;
+        c *= _max(0.2, 1 - sv) * op;
         var rgb = _hexToRgb(colorHex);
         var pr = rgb[0] * c, pg = rgb[1] * c, pb = rgb[2] * c, pa = 255 * c;
         if (app.layerMgr && app.layerMgr.markDirty && ctx === app.ctx) app.layerMgr.markDirty(rx - 1, ry - 1, rw + 2, rh + 2);
@@ -2459,6 +2554,7 @@
         }
 
         var finalColor = _jitterColor(p, colorHex, x, y);
+        if (p.grid) { _gridDab(p, x, y, finalColor); return; }
 
         // Smudge: sample canvas color and mix with brush color
         var rate = _clamp(_dyn(p, 'colorRate', p.colorRate, sc, 9), 0, 100);
@@ -2542,6 +2638,12 @@
             var alpha = _clamp(_dyn(p, 'flow', p.flow / 100, flowSc, 4), 0, 1);
             if (tfInk < 1) alpha = _taperAlpha(alpha, tfInk, sz, p);
 
+            if (p.hatch) {
+                var hv = function (o) { return o.src ? _curveAt(o.curve, _sensor(o.src, sc, 16, p), p.curveSmooth) : o.v; };
+                var H = p.hatch, iv = H.intervals;
+                _hatchT = H.thickness * hv(H.thick);
+                _hatchSep = H.separation * Math.pow(2, Math.floor((iv - 1) / 2) - _clamp(Math.ceil(hv(H.sep) * iv) - 1, 0, iv - 1));
+            }
             if (p.smudgeMode != null) _smudgeDab(p, dx, dy, mask, finalColor, alpha, sc, sz, tex);
             else _paintDab(_flowCtx, dx, dy, mask, finalColor, alpha, tex, p.textureScale, p.textureType, p.wetBlend);
         }
@@ -4067,7 +4169,9 @@
         /* Krita's colour smudge (_smudgeDab): null is our own smudge; 0
          * smears, 1 dulls. smudgeRate is how strongly a dab lays down. */
         smudgeMode: null,
-        smudgePure: false,   // smudge rate switched off in Krita: lays paint unmixed
+        smudgeFull: false,   // Krita's smudge rate switched off: smears at full strength
+        hatch: null,         // Krita's hatching brush: see _applyHatch
+        grid: null,          // Krita's grid brush: see _gridDab
         smudgeRate: 100,
         smudgeRateSrc: 'none', smudgeRateMin: 0, smudgeRateCurve: 1,
         smudgeRadius: 100,
@@ -4549,7 +4653,7 @@
     engine.beginStroke = function (x, y, pressure, color) {
         _strokeSeed = _pinnedSeed == null
             ? Math.floor(Math.random() * 2147483647) : _pinnedSeed;
-        _dabIndex = 0; _mkLast = null;
+        _dabIndex = 0; _mkLast = null; _gridSt = null;
         /* Freeze the params for this stroke (see the getParams seam): a copy,
          * not the pointer — setParam mutates _params in place. Iterates _params
          * itself rather than _paramMeta so saved-override keys outside DEFAULTS
@@ -5111,7 +5215,7 @@
             _lastDabDist = 0;
             // The replay repaints the whole stroke, so the fade sensor has
             // to start counting again with it.
-            _dabIndex = 0; _mkLast = null;
+            _dabIndex = 0; _mkLast = null; _gridSt = null;
             if (pts.length === 1) {
                 _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, _state.lastColor);
             } else {

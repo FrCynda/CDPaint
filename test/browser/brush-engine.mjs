@@ -569,6 +569,51 @@ await withPage(async (page) => {
     })()`, { awaitPromise: true }));
     check('a colour smudge dab is grained by its texture too',
         st.plain > 100 && st.grained < st.plain * 0.75, JSON.stringify(st));
+    /* Krita's hatching brush (test/krita/probes/hatch): lines fixed to the
+     * canvas through the origin pixel, thickness/2 wide, and a line's soft
+     * edge stays soft however many dabs cross it. It used to paint as a
+     * plain round brush, 1.4-3.7x Krita's ink. */
+    const ht = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        const run = (angle) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            for (const [k, v] of Object.entries({ size: 40, hardness: 100, spacing: 5, flowSrc: 'none', sizeSrc: 'none',
+                smoothingMode: 'none', hatch: { angle, separation: 6, thickness: 6, ox: 0, oy: 0, intervals: 2, aa: true,
+                cross: false, whole: false, thick: { v: 0.5 }, sep: { v: 0.5 } } })) b.setParam(k, v);
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(60, 100, 1, '#000000');
+            for (let i = 61; i <= 140; i++) b.moveStroke(i, 100, 1, '#000000');
+            b.endStroke();
+            return Array.from(__B.layer().ctx.getImageData(100, 90, 1, 12).data.filter((_, i) => i % 4 === 3));
+        };
+        const flat = run(0), steep = [];
+        const d = (run(-60), __B.layer().ctx.getImageData(90, 90, 20, 20).data);
+        for (let i = 3; i < d.length; i += 4) steep.push(d[i]);
+        return JSON.stringify({ flat, soft: steep.filter(a => a > 30 && a < 225).length });
+    })()`));
+    check('hatch lines sit on the canvas: rows 5-7 of every 6 inked at 0 degrees',
+        ht.flat.every((a, i) => ((90 + i) % 6 === 5 || (90 + i) % 6 === 0 || (90 + i) % 6 === 1) ? a > 250 : a < 5),
+        JSON.stringify(ht.flat));
+    check("...and a slanted line's soft edge is not filled in by the dabs crossing it",
+        ht.soft > 20, 'soft pixels ' + ht.soft);
+    /* Krita's grid brush (bank: Grid_square_25): every 25 px from the first
+     * point, never at the last, the canvas cell under the pen fills with
+     * 2x2 circles. It used to paint as a round brush (IoU 0.30). */
+    const gr = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 30, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
+            grid: { w: 25, h: 25, scale: 1, div: 2, shape: 0 } })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(40, 50, 1, '#000000');
+        for (let i = 41; i <= 140; i++) b.moveStroke(i, 50, 1, '#000000');
+        b.endStroke();
+        const a = (x, y) => __B.layer().ctx.getImageData(x, y, 1, 1).data[3];
+        // circle centres of cells 25..125 at x + 6.25; the cell of the end point (125) stays empty
+        return JSON.stringify({ first: a(31, 56), last: a(106, 68), end: a(131, 56), gap: a(37, 62) });
+    })()`));
+    check('a grid brush fills the canvas cells it passes, not the cell it ends in',
+        gr.first > 250 && gr.last > 250 && gr.end === 0 && gr.gap < 128, JSON.stringify(gr));
     /* Krita's sketch engine (test/krita/probes/sketch): lines out to earlier
      * points within half the brush, trimmed by the offset. Its first cut
      * only repainted round the newest point, so a fast stroke kept its last

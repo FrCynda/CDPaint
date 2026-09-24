@@ -200,7 +200,8 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
   of the pen's own rate (a trimmed mean of the last 200 event gaps,
   `KisFilteredRollingMean`), and reads the result against 30 px/ms
   (`maxAllowedSpeedValue`). `Node.paintLine` hands Krita no timing, so its
-  speed is 0. `compare.mjs` stops the clock while it draws so ours is 0 too.
+  speed is 0 (confirmed: probes/speed). `compare.mjs` stops the clock while
+  it draws so ours is 0 too.
   Ink-1 went from 0.97× to 1.00× (IoU 1.00).
 - IoU is measured at half of Krita's own darkest pixel, not a fixed 127.
   Pencil-1 never passes 127 on either side, so its IoU read 0; it is 0.92.
@@ -373,6 +374,33 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
     doesn't fix it. Always rounding down scored 6.7, rounding down only
     when fading 2.7, and random rounding lost 2.0 → 4.6 on smudge5.
     Left as is.
+  - `smudge9`, `smudge10`, `speed`, `sensorlist` (the X2F "Smeary"
+    brushes): smudge rate switched off still smears, at full strength, and
+    its slider still sets the mix (ours had read it as plain paint). The
+    size switch is honoured. Speed reads 0 in the harness, as assumed
+    above. A sensor list sharing one curve with none stored runs every
+    input through the LAST child's curve and multiplies them; curveMode
+    changes nothing. That is why X2FA's paint falls as pressure rises: its
+    colour rate is pressure then speed, and speed's curve falls 1 → 0.
+    sensorlist mean 42.3 → 3.95 levels; colour smudge 17 → 19 close.
+  - `hatch`, `hatchp`, `hatchsub` (the hatching brush, which we painted as
+    a round brush): straight lines fixed to the canvas, one through the
+    origin pixel, the next `separation` px on along the normal; direction
+    (cos a, sin a) with y down. Across its minor axis a line is N =
+    ceil(T) px solid, T = thickness × 0.5 with the thickness option off
+    (× its curve on, × 1 on without a curve). At 0/45/90° that is all;
+    elsewhere the run is N + 0.9 px (steep) or N + 1.17 (shallow) with
+    soft ends, and an even N sits half a pixel toward +x (45° counts as
+    steep). The separation option steps in powers of two:
+    sep × 2^(floor((n − 1)/2) − clamp(ceil(v·n) − 1, 0, n − 1)) for n
+    intervals. Subpixel precision off snaps 45° lines to whole pixels
+    apart, rounded down (4 → 5 px across, not 5.66). Dabs build up to
+    opacity × coverage, so a textured tip fills in solid while a line's
+    soft edge stays soft. Krita's slanted lines jitter a few tenths of a
+    pixel row to row, which we do not copy. Not done: the minus/plus and
+    moiré styles (only random-stroke presets use them), aliased slanted
+    lines, and subpixel-off at other angles. The ten scored hatching
+    presets went from all off (ink 1.4–3.7×) to 7 close and 3 near.
   - Still open: very faint build-up (well under one 8-bit level a dab)
     accumulates less in ours than in Krita. X1BB Addition Soft (5% × a
     pressure curve, 64%-peak soft tip) sits at 0.68× ink. The tip, spacing

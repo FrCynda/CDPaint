@@ -406,27 +406,39 @@
         /* "sensorslist" is several inputs multiplied together. We drive one
          * parameter from one input, so take the first we understand rather
          * than reporting a brush we can very nearly reproduce as unreadable. */
+        var shared = params[opt + 'UseSameCurve'] === undefined || _bool(params[opt + 'UseSameCurve']);
+        var common = BrushPack.parseCurve('<curve>' + (params[opt + 'commonCurve'] || '') + '</curve>');
+        var kids = [];
         if (id === 'sensorslist') {
             var ch = /<ChildSensor\s+id="([^"]+)"[\s\S]*?<\/ChildSensor>/g, c;
-            while ((c = ch.exec(raw))) {
-                if (SENSORS[c[1].toLowerCase()]) {
-                    id = c[1].toLowerCase();
-                    raw = c[0];
-                    break;
-                }
-            }
+            while ((c = ch.exec(raw))) kids.push({ id: c[1].toLowerCase(), raw: c[0] });
+            var pick = kids.filter(function (k) { return SENSORS[k.id]; })[0];
+            if (pick) { id = pick.id; raw = pick.raw; }
+            /* Sharing one curve with none stored for it, every input goes
+             * through the LAST child's curve (test/krita/probes/sensorlist:
+             * pressure then a falling speed curve painted 1 - p, the other
+             * order nothing at all). X2FA Smeary Bristle's colour rose with
+             * pressure here and fell in Krita. */
+            if (shared && !common && kids.length) common = BrushPack.parseCurve(kids[kids.length - 1].raw);
         }
-        var len = /length="([0-9.]+)"/.exec(raw);
+        var len = /length="([0-9.]+)"/.exec(raw);
         /* "Share curve across all settings" -- on unless the file says off --
-         * paints every sensor with <opt>commonCurve, not the sensor's own
-         * (KisKritaSensorPack::read, KisCurveOption generateSensors). Revoy's
-         * Mechanical Pencil keeps a straight line in its sensor and a curve
-         * topping out at 0.57 in commonCurve; reading the sensor's drew it
-         * at twice the width. */
-        var curve = BrushPack.parseCurve(raw);
-        if (params[opt + 'UseSameCurve'] === undefined || _bool(params[opt + 'UseSameCurve'])) {
-            curve = BrushPack.parseCurve('<curve>' + (params[opt + 'commonCurve'] || '') + '</curve>') || curve;
-        }
+         * paints every sensor with <opt>commonCurve, not the sensor's own.
+         * Revoy's Mechanical Pencil keeps a straight line in its sensor and a
+         * curve topping out at 0.57 in commonCurve; reading the sensor's drew
+         * it at twice the width. */
+        var curve = (shared && common) || BrushPack.parseCurve(raw);
+        /* The children are multiplied. We drive from one input, so a child
+         * whose resting value we know (speed: 0 in a steady hand and in
+         * Krita's scripted strokes, probes/speed) folds in as a constant.
+         * ponytail: a fast stroke should lower it; two live inputs on one
+         * option would need the engine to multiply sources. */
+        kids.forEach(function (k) {
+            if (k.id !== 'speed' || k.id === id || !curve) return;
+            var kc = (shared && common) || BrushPack.parseCurve(k.raw);
+            var rest = kc ? kc[0][1] : 1;
+            curve = curve.map(function (pt) { return pt.length === 3 ? [pt[0], pt[1] * rest, 1] : [pt[0], pt[1] * rest]; });
+        });
         return { id: id, src: SENSORS[id] || null,
                  length: len ? parseFloat(len[1]) : null,
                  curve: curve };
@@ -867,16 +879,18 @@
              * how much paint goes into what the dab picked up, smudge rate
              * how strongly that is laid down. Measured
              * (test/krita/probes/smudge): colour rate switched off adds no
-             * paint at all, and smudge rate switched off is a plain brush
-             * painting at the colour rate. */
+             * paint at all. Smudge rate switched off still smears, at full
+             * strength: the stroke builds up out of what it picks up exactly
+             * as at smudge rate 1 (test/krita/probes/smudge9). */
             var cr = _num(P.ColorRateValue, 0.5), sr = _num(P.SmudgeRateValue, 0.5);
             var crS = _sensorFor(P, 'ColorRate'), srS = _sensorFor(P, 'SmudgeRate');
             var crOn = _bool(P.PressureColorRate), srOn = _bool(P.PressureSmudgeRate);
             out.smudgeMode = Math.round(_num(P.SmudgeRateMode, 0)) === 1 ? 1 : 0;
             out.colorRate = crOn ? Math.round(cr * 100) : 0;
             out.smudgeRate = srOn ? Math.round(sr * 100) : out.colorRate;
-            if (!srOn) { out.colorRate = 100; out.smudgePure = true; srS = crS; }
-            [['colorRate', crOn && srOn ? crS : null], ['smudgeRate', srS]].forEach(function (e) {
+            // off: smears at full strength, but its slider still sets the mix (probes/sensorlist, plain)
+            if (!srOn) { out.smudgeRate = Math.round(sr * 100); out.smudgeFull = true; srS = null; }
+            [['colorRate', crOn ? crS : null], ['smudgeRate', srS]].forEach(function (e) {
                 var s = e[1];
                 if (!s) return;
                 if (!s.src) { warn.push('colour smudging followed ' + s.id + ', which we have no input for'); return; }
@@ -953,6 +967,51 @@
             }
             if (_bool(P['Sketch/randomRGB'])) warn.push('dropped: the slight colour wobble on its lines');
             if (_bool(P['Sketch/randomOpacity'])) warn.push('dropped: the random opacity on its lines');
+        } else if (preset.paintop === 'gridbrush') {
+            /* See _gridDab in the engine: cells fixed to the canvas, each
+             * filled with divisionLevel^2 shapes. */
+            out.grid = {
+                w: Math.max(1, _num(P['Grid/gridWidth'], 25)), h: Math.max(1, _num(P['Grid/gridHeight'], 25)),
+                scale: Math.max(0.01, _num(P['Grid/scale'], 1)),
+                div: Math.max(1, Math.round(_num(P['Grid/divisionLevel'], 2))),
+                shape: Math.round(_num(P['GridShape/shape'], 0))
+            };
+            if (out.grid.shape > 1) warn.push('dropped: its grid shape ' + out.grid.shape + ', painted as circles');
+            if (_bool(P['Grid/pressureDivision']) || _bool(P['Grid/randomBorder']) ||
+                _num(P['Grid/horizontalBorder'], 0) || _num(P['Grid/verticalBorder'], 0)) {
+                warn.push('dropped: its grid borders and pressure division');
+            }
+            if (['colorPerParticle', 'fillBackground', 'mixBgColor', 'sampleInputColor', 'useRandomHSV', 'useRandomOpacity']
+                    .some(function (k) { return _bool(P['ColorOption/' + k]); })) {
+                warn.push('dropped: its grid colour options');
+            }
+        } else if (preset.paintop === 'hatchingbrush') {
+            /* Measured on Krita's renders (test/krita/probes/hatch, hatchp):
+             * the tip is filled with straight lines fixed to the canvas, not
+             * the stroke -- one passes through the origin pixel, the rest
+             * every `separation` px across. A thickness or separation option
+             * switched off reads 0.5 (the line is thickness/2 wide), on
+             * without its curve reads 1. Separation steps in powers of two
+             * over `separationintervals` bands. */
+            var hsens = function (opt) {
+                if (!_bool(P['Pressure' + opt])) return { v: 0.5 };
+                var hs = _sensorFor(P, opt);
+                return hs && hs.src ? { src: hs.src, curve: hs.curve } : { v: 1 };
+            };
+            out.hatch = {
+                angle: _num(P['Hatching/angle'], -60),
+                separation: Math.max(1, _num(P['Hatching/separation'], 6)),
+                thickness: Math.max(0, _num(P['Hatching/thickness'], 1)),
+                ox: _num(P['Hatching/origin_x'], 50), oy: _num(P['Hatching/origin_y'], 50),
+                intervals: Math.max(1, Math.round(_num(P['Hatching/separationintervals'], 2))),
+                aa: _bool(P['Hatching/bool_antialias']),
+                whole: P['Hatching/bool_subpixelprecision'] !== undefined && !_bool(P['Hatching/bool_subpixelprecision']),
+                cross: _bool(P['Hatching/bool_perpendicular']),
+                thick: hsens('Thickness'), sep: hsens('Separation')
+            };
+            ['minusthenplus', 'plusthenminus', 'moirepattern'].forEach(function (k) {
+                if (_bool(P['Hatching/bool_' + k])) warn.push('dropped: its ' + k + ' cross-hatching, painted as single lines');
+            });
         } else if (preset.paintop && preset.paintop !== 'paintbrush') {
             warn.push('this is a ' + preset.paintop + ', which we paint as an ordinary brush');
         }

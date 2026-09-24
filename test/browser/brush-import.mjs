@@ -781,6 +781,68 @@ await withPage(async (page) => {
     check('...and is no longer in the list of things we dropped',
         !/colour mixing/.test(mix.w.join(' ')), mix.w.join(' | '));
 
+    /* Smudge rate switched off still smears, at full strength, with the
+     * colour rate and its pen curve as they are: Krita's stroke builds up
+     * out of what it picks up (test/krita/probes/smudge9). It used to come
+     * across as plain paint at the colour rate, solid from the first pixel,
+     * and the X2F "Smeary" brushes laid about twice Krita's ink. */
+    const off = await page.eval(`(() => {
+        const t = BrushPack.toPreset({ paintop: 'colorsmudge', name: 'Smeary', params: {
+            ColorRateValue: '0.75', SmudgeRateValue: '0.65',
+            PressureColorRate: 'true', ColorRateUseCurve: 'true', PressureSmudgeRate: 'false',
+            ColorRateSensor: '<params id="pressure"/>'
+        } });
+        return JSON.stringify(t.params);
+    })()`).then(JSON.parse);
+    check('smudge rate switched off smears at full strength, colour rate kept',
+        off.smudgeFull === true && off.smudgeRate === 65 && !off.smudgeRateSrc && off.colorRate === 75 && off.colorRateSrc === 'pressure',
+        JSON.stringify([off.smudgeFull, off.smudgeRate, off.smudgeRateSrc, off.colorRate, off.colorRateSrc]));
+
+    /* Several inputs on one option, sharing one curve with none stored:
+     * Krita runs every input through the LAST one's curve and multiplies
+     * (test/krita/probes/sensorlist). X2FA's pressure-then-speed colour rate
+     * is the speed curve read at the pressure -- 1 - p here -- times that
+     * curve at rest (speed 0). Taking the pressure child's own curve made
+     * its paint rise with pressure where Krita's fell away. */
+    const list = await page.eval(`(() => {
+        const t = BrushPack.toPreset({ paintop: 'colorsmudge', name: 'List', params: {
+            ColorRateValue: '1', SmudgeRateValue: '1', PressureColorRate: 'true', ColorRateUseCurve: 'true',
+            PressureSmudgeRate: 'false',
+            ColorRateSensor: '<params id="sensorslist"> <ChildSensor id="pressure"> <curve>0,0;1,1;</curve> </ChildSensor>' +
+                ' <ChildSensor id="speed"> <curve>0,0.8;1,0;</curve> </ChildSensor> </params>'
+        } });
+        return JSON.stringify(t.params);
+    })()`).then(JSON.parse);
+    check('a sensor list shares its last curve and folds speed in at rest',
+        list.colorRateSrc === 'pressure' && list.colorRateCurve.length === 2 &&
+            Math.abs(list.colorRateCurve[0][1] - 0.64) < 1e-9 && list.colorRateCurve[1][1] === 0,
+        JSON.stringify([list.colorRateSrc, list.colorRateCurve]));
+
+    /* Krita's hatching brush (test/krita/probes/hatch, hatchp): a thickness
+     * option switched off reads 0.5, on without its curve reads 1, on with
+     * one follows the pen. It used to come across as a round brush. */
+    const hat = await page.eval(`(() => {
+        const t = BrushPack.toPreset({ paintop: 'hatchingbrush', name: 'Hatch', params: {
+            'Hatching/angle': '-60', 'Hatching/separation': '6', 'Hatching/thickness': '4',
+            'Hatching/origin_x': '50', 'Hatching/origin_y': '50', 'Hatching/separationintervals': '3',
+            'Hatching/bool_antialias': 'true', 'Hatching/bool_perpendicular': 'true',
+            'Hatching/bool_subpixelprecision': 'false',
+            PressureThickness: 'false', PressureSeparation: 'true', SeparationUseCurve: 'true',
+            SeparationSensor: '<params id="pressure"> <curve>0,0;1,1;</curve> </params>'
+        } });
+        return JSON.stringify({ h: t.params.hatch, w: t.warnings || [] });
+    })()`).then(JSON.parse);
+    const grid = await page.eval(`(() => JSON.stringify(BrushPack.toPreset({ paintop: 'gridbrush', name: 'Grid', params: {
+        'Grid/gridWidth': '25', 'Grid/gridHeight': '20', 'Grid/divisionLevel': '2', 'Grid/scale': '1', 'GridShape/shape': '0'
+    } }).params.grid))()`).then(JSON.parse);
+    check('a grid preset imports its cells, not a round brush',
+        grid && grid.w === 25 && grid.h === 20 && grid.div === 2 && grid.shape === 0, JSON.stringify(grid));
+    check('a hatching preset imports its lines, not a round brush',
+        hat.h && hat.h.angle === -60 && hat.h.separation === 6 && hat.h.thickness === 4 && hat.h.ox === 50 &&
+            hat.h.intervals === 3 && hat.h.cross && hat.h.whole && hat.h.thick.v === 0.5 && hat.h.sep.src === 'pressure' &&
+            !/hatchingbrush/.test(hat.w.join(' ')),
+        JSON.stringify(hat));
+
     /* A Krita tip can be read as coverage, as lightness, as a gradient, or
      * painted as it stands. Three of the four are what the engine does with
      * a tip's pixels; the gradient one has no gradient to read. */
