@@ -462,7 +462,15 @@
         if (!_flowCanvas || _flowCanvas.width < w || _flowCanvas.height < h
             || (_flowCanvas.width > w * 2 && _flowCanvas.width * SHRINK_THRESHOLD > w)) {
             _flowCanvas = new OffscreenCanvas(_max(1, w), _max(1, h));
-            _flowCtx = _flowCanvas.getContext('2d');
+            /* float16: a dab a few 8-bit levels deep rounded to whole levels
+             * on every landing, so faint build-up drifted far from Krita's
+             * and GIMP's (X1BB at pressure 0.5 laid 0.37 of Krita's ink,
+             * GIMP's dither brushes scored 0.06 IoU; test/krita/probes/addop).
+             * The alpha-darken and masking buffers stay 8-bit: there Krita
+             * rounds too, and hard pixel presets lost IoU with float16.
+             * A browser without float16 canvases ignores the option.
+             * ponytail: ~18% slower on a 300px soft brush, nothing at usual sizes. */
+            _flowCtx = _flowCanvas.getContext('2d', { colorType: 'float16' });
             _flowUsed = null;   // a new buffer is already blank
             _adCanvas = null; _adCtx = null; _mkCanvas = null; _mkCtx = null;
         }

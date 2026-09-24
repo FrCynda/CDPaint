@@ -618,6 +618,26 @@ await withPage(async (page) => {
     })()`));
     check('a grid brush fills the canvas cells it passes, not the cell it ends in',
         gr.first > 250 && gr.last > 250 && gr.end === 0 && gr.gap < 128, JSON.stringify(gr));
+    /* Dabs fainter than a few 8-bit levels still add up in Krita
+     * (test/krita/probes/addop: X1BB at pressure 0.5, dabs 2.8 levels deep,
+     * stacked to 17 in Krita and 9 here). The stroke buffer rounded every
+     * dab to 8 bits; it is float16 now. 21 hard dabs of 1.1% (centres x = 80
+     * to 120) cover the middle of this line: 1 - 0.989^21 = 0.207 of full
+     * ink, about 53. The 8-bit buffer rounded each dab to a whole level and
+     * gave 60 here -- too much on a hard tip, too little on X1BB's soft one. */
+    const fz = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 40, hardness: 100, opacity: 100, flow: 1.1, spacing: 5,
+            flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none' })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(40, 100, 1, '#000000');
+        for (let i = 41; i <= 160; i++) b.moveStroke(i, 100, 1, '#000000');
+        b.endStroke();
+        return JSON.stringify(__B.layer().ctx.getImageData(100, 100, 1, 1).data[3]);
+    })()`));
+    check('faint dabs add up as they would in exact arithmetic, not stalled by 8-bit rounding',
+        Math.abs(fz / 255 / 0.207 - 1) < 0.05, String(fz));
     /* A 1px sharp tip draws Krita's pixel line (test/krita/probes/pixel):
      * start snapped, a half rounding down, then one pixel per column with a
      * half across rounding up. Unsnapped, this diagonal sat a row off along

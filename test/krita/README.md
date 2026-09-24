@@ -441,6 +441,44 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
     accumulates less in ours than in Krita. X1BB Addition Soft (5% × a
     pressure curve, 64%-peak soft tip) sits at 0.68× ink. The tip, spacing
     and dab count all match, so it is how the canvas adds sub-level dabs.
+  - `softness` (flow defaults): on the pixel engine a preset with no
+    `FlowUseCurve` key paints as if it were ticked, so flow follows
+    pressure. Whenever a UseCurve key IS stored, the Pressure* flags
+    for opacity and flow are ignored. Round marker, colour smudge, grid
+    and curve have no flow option, so the default does not apply there.
+    Paintbrush close 133 → 145 (Fineliner IoU 0.80 → 0.99).
+  - `gaussrect` (X1CC Flat's soft rectangle): lone soft-rect dabs match
+    Krita. X1CC itself is still off, because its ratio-0.06 tip is about a
+    pixel tall.
+  - `texmode` (texture mode 12, Height; mode numbers follow the manual's
+    list order): ink = clamp(a/u − u − m·0.5/neutral) with u = 1 −
+    strength, a the dab's alpha, m the pattern level, and neutral the
+    neutral point. Flow multiplies afterwards. The pattern is anchored to
+    the canvas origin. deevad c5 IoU 0.77 → 0.94; Textured Crease 0.45 →
+    0.94.
+  - `dullgbr`, `tipdab` (picture tips drawn far below their file size):
+    Krita keeps a shrunk tip's mean ink, which is an exact area average.
+    The browser's own shrink lost the faint speckles (X2DA's 602 px tip
+    laid 0.905 of Krita's ink at 40 px; it lays 0.969 now). The rule
+    applies to Krita imports only, because GIMP lost ink with it
+    (SLOS_lineline). Paintbrush close 145 → 153. Lone dabs of
+    random_particles match Krita within 2%. With a subtract texture on,
+    ours still leaves more faint specks (104 lit pixels against 78).
+    X2DD's first colour-smudge dab is about 1.35× Krita's.
+  - `addop` (X1BB Addition Soft, 0.68× ink): the add blend mode caps
+    like a normal stroke, and ours already matched. The real gap was
+    faint build-up. At pressure 0.5 each of its dabs is 2.8 levels deep;
+    Krita stacks them to 17 and our 8-bit stroke buffer stopped at 9. A
+    float16 stroke buffer lands on 17. Krita close 244 → 250 (X1BB IoU
+    0.56 → 0.92, Rake_bristle_dry 0.70 → 0.90), and GIMP close 138 → 147
+    (dither and square brushes 0.06 → 0.96). The alpha-darken grey buffer
+    stays 8-bit: float16 there cost hard pixel presets IoU (EO Pixel
+    Opacity 0.99 → 0.92), so Krita rounds there.
+  - Probing trap: Krita re-serialises the preset's XML before `xmlSub`
+    runs, and the attribute order changes from session to session.
+    Match `<param [^>]*name="X"` and never rely on attribute order. A
+    substitution that matched nothing shows as `xmlSub '...': 0` in
+    harness.log.
 - Still open:
   - Charcoal's IoU is 0.69 with the texture on. Krita gives the texture a
     random offset per stroke (`isRandomOffsetX/Y`), so the grain can't line
