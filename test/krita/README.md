@@ -505,6 +505,16 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
     diagonal stars. It is the same along x and y and at every size.
     2. Star IoU 0.68 → 0.95. GIMP's pipe counter for incremental
     selection carries across strokes, as ours already did.
+  - GIMP shrinking a picture brush (`probe.mjs`, lone dabs at 30px of 34
+    .gbr files): it halves the image, 2x2 pixels to one, while it stays
+    twice the size wanted (an odd edge averaged against a clear pixel),
+    then samples bilinearly at the true scale rather than stretching to
+    whole pixels. 22 of 34 within 2 levels; the browser's shrink was 46
+    off on SLOS_granules and 50 on Vegetation 01. Doing the halving in 8
+    bits lost SLOS_pentagon 2.5% of its ink. Not solved: Smoke, waves,
+    sphere (79), Manju's Flower (Large) and SLOS_dirty-spot sit half a
+    pixel astray, and nothing tried (padding side, box size, sampling
+    origin) fits them all. GIMP bank 159 → 171 close, 11 → 6 off.
   - Probing trap: Krita re-serialises the preset's XML before `xmlSub`
     runs, and the attribute order changes from session to session.
     Match `<param [^>]*name="X"` and never rely on attribute order. A

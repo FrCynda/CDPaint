@@ -3939,16 +3939,58 @@
         return t._tipId;
     }
 
-    /* A tip shrunk more than twofold, averaged over each pixel's exact
-     * footprint. The browser's own shrink dropped faint ink: X2DA Soft Mix's
-     * 602px speckle tip at 40px kept 0.036 of its area inked where the tip
-     * holds 0.038 and Krita's dab 0.039 (test/krita/probes/dullgbr). */
-    function _shrinkTip(src, w, h) {
-        var W = src.width, H = src.height;
-        // Krita imports only: GIMP's own shrink is not this (SLOS_lineline-2 lost its lines)
-        if (_params.tipShrink !== 'area' || (W < w * 2 && H < h * 2)) return src;
+    /* A shrunk tip. Krita ('area', beyond twofold) averages each pixel's
+     * exact footprint. The browser's own shrink dropped faint ink: X2DA Soft
+     * Mix's 602px speckle tip at 40px kept 0.036 of its area inked where the
+     * tip holds 0.038 and Krita's dab 0.039 (test/krita/probes/dullgbr).
+     * GIMP ('halve') halves the tip, 2x2 pixels to one and an odd edge
+     * against a clear pixel, while it stays twice the size wanted, then
+     * samples that bilinearly at the tip's true scale (kx, ky), not
+     * stretched to whole pixels. Lone dabs at 30px, 34 GIMP brushes: 22
+     * within 2 levels of GIMP's, where the browser's shrink was off by 46 on
+     * SLOS_granules (256px) and by 50 on Vegetation 01 (169x170)
+     * (test/gimp/probe.mjs). Still half a pixel astray, off by 25 to 100:
+     * Smoke, waves, sphere (79), Manju's Flower (Large), SLOS_dirty-spot;
+     * and the 17-20x shrinks of SLOS_smoke-2 and lineline miss. */
+    function _shrinkTip(src, w, h, kx, ky) {
+        var W = src.width, H = src.height, mode = _params.tipShrink;
+        if (mode === 'halve' ? W <= w && H <= h : mode !== 'area' || (W < w * 2 && H < h * 2)) return src;
         var sc = src.getContext ? src : new OffscreenCanvas(W, H);
         if (sc !== src) sc.getContext('2d').drawImage(src, 0, 0);
+        if (mode === 'halve') {
+            // premultiplied floats: 8-bit rounding at every halving lost SLOS_pentagon 2.5% of its ink
+            var hd = sc.getContext('2d').getImageData(0, 0, W, H).data, v = new Float32Array(W * H * 4), n, m = 1;
+            for (n = 0; n < v.length; n += 4) {
+                var al0 = hd[n + 3] / 255;
+                v[n] = hd[n] * al0; v[n + 1] = hd[n + 1] * al0; v[n + 2] = hd[n + 2] * al0; v[n + 3] = hd[n + 3];
+            }
+            while (W >= w * 2 && H >= h * 2) {
+                var W2 = (W + 1) >> 1, H2 = (H + 1) >> 1, v2 = new Float32Array(W2 * H2 * 4);
+                for (var yy = 0; yy < H; yy++) for (var xx = 0; xx < W; xx++) {
+                    var s0 = (yy * W + xx) * 4, o2 = ((yy >> 1) * W2 + (xx >> 1)) * 4;
+                    for (n = 0; n < 4; n++) v2[o2 + n] += v[s0 + n] / 4;
+                }
+                v = v2; W = W2; H = H2; m *= 2;
+            }
+            var hc = new OffscreenCanvas(w, h), hx = hc.getContext('2d'), him = hx.createImageData(w, h), hr = him.data;
+            var px = new Float64Array(4);
+            for (var oy = 0; oy < h; oy++) for (var ox = 0; ox < w; ox++) {
+                var fx = (ox + 0.5) / kx / m - 0.5, fy = (oy + 0.5) / ky / m - 0.5;
+                var x0 = _floor(fx), y0 = _floor(fy), tx = fx - x0, ty = fy - y0;
+                px.fill(0);
+                for (var j = 0; j < 4; j++) {                    // the four neighbours, clear outside
+                    var xi = x0 + (j & 1), yi = y0 + (j >> 1);
+                    if (xi < 0 || yi < 0 || xi >= W || yi >= H) continue;
+                    var wt = ((j & 1) ? tx : 1 - tx) * ((j >> 1) ? ty : 1 - ty), q = (yi * W + xi) * 4;
+                    for (n = 0; n < 4; n++) px[n] += v[q + n] * wt;
+                }
+                var t0 = (oy * w + ox) * 4, al1 = px[3] / 255;
+                if (al1 > 0) { hr[t0] = px[0] / al1; hr[t0 + 1] = px[1] / al1; hr[t0 + 2] = px[2] / al1; }
+                hr[t0 + 3] = px[3];
+            }
+            hx.putImageData(him, 0, 0);
+            return hc;
+        }
         var d = sc.getContext('2d').getImageData(0, 0, W, H).data;
         var sx = W / w, sy = H / h, row = new Float64Array(w * H * 4), x, y, k, i;
         for (y = 0; y < H; y++) for (x = 0; x < w; x++) {       // across: W -> w
@@ -3985,6 +4027,7 @@
         var scale = s / _max(src.width, src.height);
         var w = _max(1, _round(src.width * scale));
         var h = _max(1, _round(src.height * scale));
+        var kx = scale * _min(1, asp), ky = scale / _max(1, asp);   // the true scale, before rounding
         // Squash, never stretch -- same rule as the generated shapes.
         if (asp >= 1) {
             h = _max(1, _round(h / asp));
@@ -4008,10 +4051,10 @@
             bctx.fillStyle = '#fff';
             bctx.fillRect(0, 0, w, h);
             bctx.globalCompositeOperation = 'destination-in';
-            bctx.drawImage(_shrinkTip(src, w, h), 0, 0, w, h);
+            bctx.drawImage(_shrinkTip(src, w, h, kx, ky), 0, 0, w, h);
         } else {
             // The tip's greys (or its colours) are the point -- keep them.
-            bctx.drawImage(_shrinkTip(src, w, h), 0, 0, w, h);
+            bctx.drawImage(_shrinkTip(src, w, h, kx, ky), 0, 0, w, h);
             bctx.globalCompositeOperation = 'destination-in';
         }
 
@@ -7346,8 +7389,8 @@
         }
         var u8 = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
         return BrushPack.tipStrip(u8, filename).then(function (tip) {
-            // A GIMP brush steps GIMP's way (see _stepFor).
-            if (/\.(gbr|gih)$/i.test(filename || '')) { tip.params = tip.params || {}; tip.params.pixelSteps = true; }
+            // A GIMP brush steps and shrinks GIMP's way (see _stepFor, _shrinkTip).
+            if (/\.(gbr|gih)$/i.test(filename || '')) { tip.params = tip.params || {}; tip.params.pixelSteps = true; tip.params.tipShrink = 'halve'; }
             var r = _saveTipAsBrush(tip, _tipBaseName(filename));
             _rebuildNames();
             if (r.ok) _invalidateSwatch(r.name);
