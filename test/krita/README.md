@@ -273,9 +273,23 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
     - square (5x5): IoU 0.84 → 0.98;
     - Pixel (1x1): 0.54 → 0.96;
     - the pixel-art squares are exact to within 2/255.
-  - Still open: GIMP holds a 1px line at 128 where ours builds to 182.
-    GIMP lays its dabs differently along the line (the first dab straddles
-    and the rest don't), and it isn't worked out yet.
+  - GIMP's 1px line (probe `tiny`, `node test/gimp/probe.mjs`, which paints
+    GIMP's own brushes with any strokes, one PNG each): when a brush's
+    spacing is under a pixel, the first dab sits on the start point and
+    every later dab on the next pixel centre along the line's main axis,
+    at least a pixel on. At 0.01 and 0.5 spacing the result is the same.
+    Otherwise dabs stack as ours do: its soft Hardness 050 line is
+    rebuilt exactly from its own lone dab stacked every 3px. A "keep the
+    strongest dab" model was tried and failed on every soft brush. Pixel,
+    dot, SLOS_1-Pixel ink 1.43 → 1.00; SLOS_some-lines and both smoke
+    brushes 0.2–0.5 → 0.65–0.94 IoU.
+  - GIMP's generated round brush (probe `circ`, lone dabs of Circle (01)
+    to (11) and Circle Fuzzy (07), every pixel matched). It is an odd
+    grid, 2·ceil(r − ½) + 1 across. Each pixel's distance is rounded to a
+    quarter and the falloff is averaged at ±⅛ and ±⅜ px around it. The
+    whole mask is then shifted bilinearly to the dab's sub-pixel spot.
+    Circle (03) IoU 0.78 → 0.997; every Circle is at 0.99 or better.
+    GIMP close 147 → 158.
 - Found black-box, from Krita's own renders only. Each probe is a
   `test/krita/probes/<name>/job.mjs` (Krita's side, one fresh Krita per
   variant, written to `test/krita/out/<name>`) plus

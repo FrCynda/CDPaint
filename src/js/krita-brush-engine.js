@@ -194,6 +194,7 @@
         }
         if (kc) return _kritaCircleMask(size, aspect, hardness / 100, phase,
                                         shape.slice(-3) === ':aa', shape.charAt(1) === 'g', ang);
+        if (shape === 'gimp' && aspect === 1) return _gimpCircleMask(size, hardness / 100);
         var canvas, ctx, rx, ry;
 
         if (needRotation) {
@@ -264,6 +265,34 @@
     function _gimpAt(t, hard) {
         var f = _pow(t, 0.4 / _max(4e-7, 1 - hard));
         return f < 0.5 ? 1 - 2 * f * f : 2 * (1 - f) * (1 - f);
+    }
+
+    /* GIMP's generated round brush, pixel for pixel (test/gimp/probe.mjs,
+     * "circ": lone dabs of Circle (01) to (11) and Circle Fuzzy (07), every
+     * pixel matched). An odd grid, 2 * ceil(r - 1/2) + 1 across, centred on
+     * its middle pixel; each pixel's distance from there rounded to a
+     * quarter pixel and the profile averaged at four points round it, an
+     * eighth and three eighths either side -- the quarter levels 64, 128,
+     * 191 on a hard edge. GIMP then shifts the whole mask to the dab's
+     * sub-pixel position bilinearly, which the transparent rim lets
+     * drawImage do: without it a 1px dab at a pixel corner filled one
+     * pixel at 192 where GIMP splits it into four at 64. */
+    function _gimpCircleMask(size, hard) {
+        var r = _max(0.5, size / 2), half = _ceil(r - 0.5 - 1e-9), N = 2 * half + 1;
+        var c = new OffscreenCanvas(N + 2, N + 2), g = c.getContext('2d');
+        var img = g.createImageData(N + 2, N + 2), d = img.data;
+        for (var j = 0; j < N; j++) for (var i = 0; i < N; i++) {
+            var dist = _round(_hypot(i - half, j - half) * 4) / 4, v = 0;
+            for (var k = 0; k < 4; k++) {
+                var t = _abs(dist + (k - 1.5) / 4) / r;
+                if (t < 1) v += _gimpAt(t, hard);
+            }
+            var o = ((j + 1) * (N + 2) + i + 1) * 4;
+            d[o] = d[o + 1] = d[o + 2] = 255;
+            d[o + 3] = _round(v / 4 * 255);
+        }
+        g.putImageData(img, 0, 0);
+        return c;
     }
 
     /* Krita's default circle, pixel for pixel (KisCircleMaskGenerator, and
@@ -3612,6 +3641,18 @@
              * At 1px Ink-1 Precision's 3px dabs, due every 0.45px, stacked to
              * 159 where Krita's reach 225. */
             if (pxLine) { var ar = (ang || 0) * _PI / 180; g = _max(g, 1 / _max(_abs(_cos(ar)), _abs(_sin(ar)))); }
+            /* GIMP below a pixel's spacing (test/gimp/probe.mjs, "tiny"): the
+             * first dab sits on the start point, every later one on the next
+             * pixel centre along the line's main axis at least a pixel on.
+             * Its 1px brushes paint the same at 0.01 and 0.5 spacing: a line
+             * on a pixel boundary is 128 on both rows, one dab per column,
+             * and a slant splits 205/50. Stacked every 0.1px they were 183. */
+            if (p.pixelSteps && sz * spacing < 1 && !(p.autoSpacing > 0)) {
+                var ag = (ang || 0) * _PI / 180, cg = _cos(ag), sg = _sin(ag);
+                var onX = _abs(cg) >= _abs(sg), m = onX ? px : py, dm = onX ? cg : sg;
+                var nx = dm >= 0 ? Math.ceil(m + 0.5 - 1e-6) + 0.5 : _floor(m - 1.5 + 1e-6) + 0.5;
+                g = _abs(nx - m) / _max(1e-6, _abs(dm));
+            }
             return _max(0.5, g);
         }
         var pxLine = p.sharpness > 0 && sz <= 1;
@@ -4235,6 +4276,7 @@
         smudgeMode: null,
         smudgeFull: false,   // Krita's smudge rate switched off: smears at full strength
         hatch: null,         // Krita's hatching brush: see _applyHatch
+        pixelSteps: false,   // GIMP's sub-pixel spacing: one dab per pixel; see _stepFor
         grid: null,          // Krita's grid brush: see _gridDab
         smudgeRate: 100,
         smudgeRateSrc: 'none', smudgeRateMin: 0, smudgeRateCurve: 1,
@@ -7277,6 +7319,7 @@
             ps._tipUrl = _tipStash(got.tip.url);
         }
         var name = engine.PRESETS[want] ? _uniqueName(want) : want;
+        ps.pixelSteps = true;   // a GIMP brush steps GIMP's way; see _stepFor
         _userPresets[name] = ps;
         var err = _commitUsers();
         if (err) { delete _userPresets[name]; return { ok: false, error: 'The browser ran out of storage.' }; }
@@ -7303,6 +7346,8 @@
         }
         var u8 = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
         return BrushPack.tipStrip(u8, filename).then(function (tip) {
+            // A GIMP brush steps GIMP's way (see _stepFor).
+            if (/\.(gbr|gih)$/i.test(filename || '')) { tip.params = tip.params || {}; tip.params.pixelSteps = true; }
             var r = _saveTipAsBrush(tip, _tipBaseName(filename));
             _rebuildNames();
             if (r.ok) _invalidateSwatch(r.name);

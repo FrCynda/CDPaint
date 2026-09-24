@@ -638,6 +638,40 @@ await withPage(async (page) => {
     })()`));
     check('faint dabs add up as they would in exact arithmetic, not stalled by 8-bit rounding',
         Math.abs(fz / 255 / 0.207 - 1) < 0.05, String(fz));
+    /* GIMP's generated round brush and its sub-pixel stepping, against
+     * GIMP's own lone dabs and lines (test/gimp/probe.mjs, "circ" and
+     * "tiny"). Circle (07) centred on a pixel is 0,128,191,255 out from its
+     * middle row's end; a 1px one at a pixel corner is four quarters of
+     * 64; a 1px line along a pixel boundary is 128 on both rows, one dab
+     * per column. Ours were a smooth-edged disc, one pixel at 192, and
+     * 183 from dabs stacked every 0.1px. */
+    const gv = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = () => __B.layer().ctx;
+        const vbr = (n, r) => 'GIMP-VBR\\n1.0\\n' + n + '\\n10.000000\\n' + r + '\\n1.000000\\n1.000000\\n0.000000\\n';
+        const run = (n, r, pts) => {
+            const got = b.importVbr(vbr(n, r), n + '.vbr'); b.loadPreset(got.added[0]);
+            b.setParam('size', r * 2); L().clearRect(0, 0, 200, 200);
+            b.beginStroke(pts[0], pts[1], 1, '#000000');
+            for (let i = 2; i < pts.length; i += 2) b.moveStroke(pts[i], pts[i + 1], 1, '#000000');
+            b.endStroke();
+            b.deleteUserPreset(got.added[0]);
+        };
+        const px = (x, y) => L().getImageData(x, y, 1, 1).data[3];
+        run('cdp-c7', 3.5, [100.5, 50.5]);
+        const c7 = [97, 98, 99, 100].map(x => px(x, 47));
+        run('cdp-c1', 0.5, [100, 50]);
+        const c1 = [px(99, 49), px(100, 49), px(99, 50), px(100, 50), px(101, 50)];
+        const pts = [40, 50]; for (let x = 41; x <= 160; x++) pts.push(x, 50);
+        run('cdp-c1', 0.5, pts);
+        const line = [px(100, 48), px(100, 49), px(100, 50), px(100, 51), px(130, 49)];
+        return JSON.stringify({ c7, c1, line });
+    })()`));
+    check("a GIMP round brush is GIMP's pixel grid: Circle (07)'s top row, quarter levels",
+        JSON.stringify(gv.c7) === '[0,128,191,255]', JSON.stringify(gv.c7));
+    check('...and a 1px GIMP dab at a pixel corner is four quarters, not one pixel',
+        JSON.stringify(gv.c1) === '[64,64,64,64,0]', JSON.stringify(gv.c1));
+    check('...and a 1px GIMP line on a pixel boundary is 128 on both rows, one dab a column',
+        JSON.stringify(gv.line) === '[0,128,128,0,128]', JSON.stringify(gv.line));
     /* A 1px sharp tip draws Krita's pixel line (test/krita/probes/pixel):
      * start snapped, a half rounding down, then one pixel per column with a
      * half across rounding up. Unsnapped, this diagonal sat a row off along
