@@ -562,9 +562,10 @@ await withPage(async (page) => {
     check('the brush keeps the name written in the file',
         vbr['star-ten.vbr'].n === 'a ten-pointed star', vbr['star-ten.vbr'].n);
     /* The size is GIMP's own mask box -- 2 x sqrt(r^2 + (r/aspect)^2) for a
-     * spiked one, made odd -- and the spacing is already a percentage. */
-    check('the size is the box GIMP draws the dab in, spacing comes straight across',
-        vbr['star-ten.vbr'].size === 55 && vbr['star-ten.vbr'].spacing === 50,
+     * spiked one, made odd -- and the spacing is a percentage of the
+     * diameter, so over that 55px box it is 50 x 50/55 (GIMP 2. Star). */
+    check('the size is the box GIMP draws the dab in, spacing steps by the diameter',
+        vbr['star-ten.vbr'].size === 55 && vbr['star-ten.vbr'].spacing === 45.5,
         JSON.stringify(vbr['star-ten.vbr']));
     /* A plain round one needs no picture: that is the brush we already are,
      * and keeping it parametric means it stays sharp at any size. */
