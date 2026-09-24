@@ -74,6 +74,14 @@ edge cases in brushes nobody picked get caught too:
     `wesleycsj/GIMP-pixelart-brushes`, `LinuxBeaver/Gimp_Leaves-Brush-Pack` and
     `vascoalexander/gimp-brush-collection`, cloned as `out/bank/gimp-*`.
 
+`--holdout` (both banks) scores only packs cloned into `out/bank/holdout/`
+after the fixes were made, in their own run folder, as a check the parity
+holds on brushes nobody tuned for. 2026-09-24: GDQuest, Draneria Metallics and
+Toolkit, nylnook, Cazu v2/v3 and vanyossi for Krita; those packs' GIMP tips
+plus LinuxBeaver's butterflies, Osndok's, K-gimp-theme and four small repos
+for GIMP. Krita 33/8/37 of 78 (bank 257/53/55), GIMP 129/14/7 of 150 (bank
+171/7/6).
+
 Each pack renders into a private resource folder (Krita) or profile (GIMP,
 headless `gimp-console`), so the user's own libraries are never touched.
 Every brush paints the same four strips on both sides. Brushes that ask for

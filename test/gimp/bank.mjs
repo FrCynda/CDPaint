@@ -3,6 +3,7 @@
 //   node test/gimp/bank.mjs            score against stored renders
 //   node test/gimp/bank.mjs --render   render them with GIMP first
 //   node test/gimp/bank.mjs --only extras,slos
+//   node test/gimp/bank.mjs --holdout [--render]
 //
 // GIMP 2.10 runs headless (gimp-console, Script-Fu, no window) with a private
 // profile folder, so none of this enters the user's own GIMP. Brushes come
@@ -17,7 +18,10 @@ import path from 'path';
 
 const OUT = path.join(REPO_ROOT, 'test', 'krita', 'out');
 const BANK = path.join(OUT, 'bank');
-const RUN = path.join(OUT, 'gimp-run');
+// --holdout scores only the held-out packs (out/bank/holdout/, cloned after
+// the fixes were made), in a run folder of their own.
+const HOLDOUT = process.argv.includes('--holdout');
+const RUN = path.join(OUT, HOLDOUT ? 'gimp-holdout' : 'gimp-run');
 const GIMP = process.env.GIMP_CONSOLE || 'C:/Program Files/GIMP 2/bin/gimp-console-2.10.exe';
 const GIMP_BRUSHES = process.env.GIMP_BRUSHES || 'C:/Program Files/GIMP 2/share/gimp/2.0/brushes';
 const W = 480, H = 300, MAX_SIZE = 30;
@@ -28,9 +32,10 @@ const BANDS = [[0, 100], [100, 200], [200, 300]];
 
 const argv = process.argv.slice(2);
 const only = argv.includes('--only') ? argv[argv.indexOf('--only') + 1].split(',') : null;
-const sources = [['gimp', GIMP_BRUSHES], ['extras', path.join(BANK, 'gimp-extras', 'brushes')],
+const sources = (HOLDOUT ? fs.readdirSync(path.join(BANK, 'holdout')).map(d => ['ho-' + d, path.join(BANK, 'holdout', d)])
+    : [['gimp', GIMP_BRUSHES], ['extras', path.join(BANK, 'gimp-extras', 'brushes')],
     ['slos', path.join(BANK, 'gimp-SLOS-GIMPainter')], ['pixelart', path.join(BANK, 'gimp-GIMP-pixelart-brushes')],
-    ['leaves', path.join(BANK, 'gimp-Gimp_Leaves-Brush-Pack')], ['vasco', path.join(BANK, 'gimp-gimp-brush-collection')]]
+    ['leaves', path.join(BANK, 'gimp-Gimp_Leaves-Brush-Pack')], ['vasco', path.join(BANK, 'gimp-gimp-brush-collection')]])
     .filter(([, d]) => fs.existsSync(d));
 
 function walk(d) {

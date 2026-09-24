@@ -3,6 +3,7 @@
 //   node test/krita/bank.mjs                 score against stored renders
 //   node test/krita/bank.mjs --render        render the missing packs in Krita first
 //   node test/krita/bank.mjs --packs deevad23,eo-v3
+//   node test/krita/bank.mjs --holdout [--render]
 //
 // The fixed corpus (compare.mjs) tests seventeen brushes by hand; this runs
 // the whole of Krita's own bundles plus the packs downloaded into
@@ -22,7 +23,10 @@ import path from 'path';
 
 const OUT = path.join(REPO_ROOT, 'test', 'krita', 'out');
 const BANK = path.join(OUT, 'bank');
-const RUN = path.join(OUT, 'bank-run');
+// --holdout scores only the held-out packs (out/bank/holdout/, cloned after
+// the fixes were made), in a run folder of their own.
+const HOLDOUT = process.argv.includes('--holdout');
+const RUN = path.join(OUT, HOLDOUT ? 'bank-holdout' : 'bank-run');
 const KRITA_SHARE = process.env.KRITA_SHARE || 'C:/Program Files/Krita (x64)/share/krita';
 const W = 480, H = 300, MAX_SIZE = 30;
 // Three strips: a pressure ramp left to right, a diagonal and an upright at
@@ -37,7 +41,8 @@ const onlyPacks = argv.includes('--packs') ? argv[argv.indexOf('--packs') + 1].s
 // A pack is a .bundle, or a folder of paintoppresets/brushes/patterns (nested
 // any depth) which is flattened into one -- Krita's folder storage does not
 // look into subfolders.
-const packs = [
+const packs = (HOLDOUT ? fs.readdirSync(path.join(BANK, 'holdout')).map(d => ['ho-' + d, path.join(BANK, 'holdout', d)])
+    .filter(([, d]) => walk(d).some(f => /\.kpp$/i.test(f))) : [
     ['krita4', path.join(KRITA_SHARE, 'bundles', 'Krita_4_Default_Resources.bundle')],
     ['krita3', path.join(KRITA_SHARE, 'bundles', 'Krita_3_Default_Resources.bundle')],
     ['rgba', path.join(KRITA_SHARE, 'bundles', 'RGBA_brushes.bundle')],
@@ -48,7 +53,7 @@ const packs = [
     ...(fs.existsSync(path.join(BANK, 'portnov')) ? fs.readdirSync(path.join(BANK, 'portnov'))
         .filter(d => fs.statSync(path.join(BANK, 'portnov', d)).isDirectory() && d !== '.git')
         .map(d => ['portnov-' + d, path.join(BANK, 'portnov', d)]) : []),
-].filter(([id, p]) => fs.existsSync(p) && (!onlyPacks || onlyPacks.includes(id)))
+]).filter(([id, p]) => fs.existsSync(p) && (!onlyPacks || onlyPacks.includes(id)))
     .map(([id, src]) => ({ id, src, folder: fs.statSync(src).isDirectory() }));
 
 function walk(d) {
