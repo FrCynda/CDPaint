@@ -552,6 +552,7 @@
         } else if (bd.filename) {
             out.shape = 'custom';
             out.hardness = 100;      // the image is the shape; do not fade it
+            out.tipShrink = 'area';  // Krita keeps a shrunk tip's ink; see the engine's _shrinkTip
             var scale = _num(bd.scale, 1);
             if (opts.tipSize) out.size = Math.max(1, Math.round(opts.tipSize * scale));
             else { out.size = scale; out.needsTipSize = true; }

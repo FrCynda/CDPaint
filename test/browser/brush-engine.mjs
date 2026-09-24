@@ -2588,6 +2588,33 @@ await withPage(async (page) => {
     check('...and a deform is one undo step like any other stroke',
         dfm.steps === 2, String(dfm.steps));
 
+    /* Krita keeps a shrunk tip's ink; the browser's own shrink lost the
+     * faint part (X2DA Soft Mix's 602px speckle tip laid 0.905 of Krita's
+     * ink at 40px, probes/dullgbr). A 400px tip speckled over 6% of it at
+     * random strengths must lay its own share at 40px: the browser's shrink
+     * kept 0.925 of it. */
+    const shrink = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        __B.doc(200, 200);
+        const c = document.createElement('canvas'); c.width = c.height = 400;
+        const g = c.getContext('2d'), im = g.createImageData(400, 400);
+        let seed = 7, tot = 0;
+        const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+        for (let i = 0; i < 160000; i++) if (rnd() < 0.06) { const a = 40 + (rnd() * 215) | 0; im.data[i * 4 + 3] = a; tot += a; }
+        g.putImageData(im, 0, 0);
+        b.loadCustomTip(c.toDataURL('image/png'), null);
+        await new Promise(r => setTimeout(r, 600));
+        ['texture', 'opacity', 'flow', 'scatter', 'sizeSrc', 'taperStart', 'taperEnd', 'tip2Depth'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        b.setParam('dynamicsMode', 'off'); b.setParam('size', 40); b.setParam('hardness', 100); b.setParam('tipShrink', 'area');
+        b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+        await new Promise(r => setTimeout(r, 200));
+        const d = __B.layer().ctx.getImageData(0, 0, 200, 200).data;
+        let sum = 0; for (let i = 3; i < d.length; i += 4) sum += d[i];
+        return JSON.stringify({ ink: sum / 255, want: tot / 255 / 160000 * 1600 });
+    })()`, { awaitPromise: true }));
+    check("a Krita tip shrunk tenfold keeps its ink, faint as it gets",
+        Math.abs(shrink.ink / shrink.want - 1) <= 0.02, 'ink ' + shrink.ink.toFixed(2) + ' of ' + shrink.want.toFixed(2));
+
     /* Tips are 1024px now rather than 200, and every distinct size, angle
      * and squash of one is baked and kept. A stroke whose size rides the pen
      * asks for a different one per pressure step, so unbounded that cache is

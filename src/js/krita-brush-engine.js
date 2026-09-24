@@ -3890,12 +3890,46 @@
         return t._tipId;
     }
 
+    /* A tip shrunk more than twofold, averaged over each pixel's exact
+     * footprint. The browser's own shrink dropped faint ink: X2DA Soft Mix's
+     * 602px speckle tip at 40px kept 0.036 of its area inked where the tip
+     * holds 0.038 and Krita's dab 0.039 (test/krita/probes/dullgbr). */
+    function _shrinkTip(src, w, h) {
+        var W = src.width, H = src.height;
+        // Krita imports only: GIMP's own shrink is not this (SLOS_lineline-2 lost its lines)
+        if (_params.tipShrink !== 'area' || (W < w * 2 && H < h * 2)) return src;
+        var sc = src.getContext ? src : new OffscreenCanvas(W, H);
+        if (sc !== src) sc.getContext('2d').drawImage(src, 0, 0);
+        var d = sc.getContext('2d').getImageData(0, 0, W, H).data;
+        var sx = W / w, sy = H / h, row = new Float64Array(w * H * 4), x, y, k, i;
+        for (y = 0; y < H; y++) for (x = 0; x < w; x++) {       // across: W -> w
+            var a0 = x * sx, a1 = a0 + sx, o = (y * w + x) * 4;
+            for (i = _floor(a0); i < a1 && i < W; i++) {
+                var f = _min(i + 1, a1) - _max(i, a0), q = (y * W + i) * 4, al = d[q + 3] * f;
+                row[o] += d[q] * al; row[o + 1] += d[q + 1] * al; row[o + 2] += d[q + 2] * al; row[o + 3] += al;
+            }
+        }
+        var out = new OffscreenCanvas(w, h), oc = out.getContext('2d'), img = oc.createImageData(w, h), r = img.data;
+        for (y = 0; y < h; y++) for (x = 0; x < w; x++) {       // down: H -> h
+            var b0 = y * sy, b1 = b0 + sy, acc = [0, 0, 0, 0];
+            for (i = _floor(b0); i < b1 && i < H; i++) {
+                var g = _min(i + 1, b1) - _max(i, b0), p = (i * w + x) * 4;
+                for (k = 0; k < 4; k++) acc[k] += row[p + k] * g;
+            }
+            var t = (y * w + x) * 4;
+            if (acc[3] > 0) { r[t] = acc[0] / acc[3]; r[t + 1] = acc[1] / acc[3]; r[t + 2] = acc[2] / acc[3]; }
+            r[t + 3] = acc[3] / (sx * sy);
+        }
+        oc.putImageData(img, 0, 0);
+        return out;
+    }
+
     function _getCustomTipMask(sz, angleDeg, aspectRatio, hardness) {
         if (!_tipCanvas()) return null;
         var asp = aspectRatio || 1;
         var hard = (hardness != null ? hardness : 100) / 100;
         var mode = _params.tipMode || 'alpha';
-        var key = _tipKey() + '|' + _round(sz) + '|' + _round(angleDeg || 0) + '|' + asp.toFixed(2) + '|' + _round(hardness || 100) + '|' + mode;
+        var key = _tipKey() + '|' + _round(sz) + '|' + _round(angleDeg || 0) + '|' + asp.toFixed(2) + '|' + _round(hardness || 100) + '|' + mode + '|' + (_params.tipShrink || '');
         if (_customTipSizeCache[key]) return _customTipSizeCache[key];
         var src = _tipCanvas();
         var s = _max(1, _round(sz));
@@ -3925,10 +3959,10 @@
             bctx.fillStyle = '#fff';
             bctx.fillRect(0, 0, w, h);
             bctx.globalCompositeOperation = 'destination-in';
-            bctx.drawImage(src, 0, 0, w, h);
+            bctx.drawImage(_shrinkTip(src, w, h), 0, 0, w, h);
         } else {
             // The tip's greys (or its colours) are the point -- keep them.
-            bctx.drawImage(src, 0, 0, w, h);
+            bctx.drawImage(_shrinkTip(src, w, h), 0, 0, w, h);
             bctx.globalCompositeOperation = 'destination-in';
         }
 
@@ -4259,7 +4293,7 @@
         dabOpacitySrc: 'none',   dabOpacityMin: 0, dabOpacityCurve: 1,
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
-        textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
+        tipShrink: '', textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
         textureInvert: false, textureSoft: false, textureCutoff: 0, textureCutoffLo: 0, textureCutoffHi: 255,
         /* Krita presets: curves are splines (_splineAt), and a round tip may
          * carry its own falloff curve (Krita's "soft" generator). */
