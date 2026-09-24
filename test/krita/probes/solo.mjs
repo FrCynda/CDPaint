@@ -11,6 +11,9 @@ for (const n of names) {
     const res = path.join(d, 'kres'); fs.rmSync(res, { recursive: true, force: true });
     fs.mkdirSync(path.join(res, 'paintoppresets'), { recursive: true });
     fs.copyFileSync(j.renders[0].src, path.join(res, 'paintoppresets', path.basename(j.renders[0].src)));
+    // the pack's tips beside the preset (a preset two folders under its pack, as the bank lays them out)
+    const tips = path.join(path.dirname(path.dirname(j.renders[0].src)), 'brushes');
+    if (fs.existsSync(tips)) fs.cpSync(tips, path.join(res, 'brushes'), { recursive: true });
     renderKrita(path.join(d, 'job.json'), { resourceDir: res, timeoutMs: 300000 });
     console.log(n, fs.existsSync(path.join(d, n + '.png')));
 }

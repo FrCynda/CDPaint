@@ -852,6 +852,18 @@ await withPage(async (page) => {
     check("a Krita ratio option drives the tip's aspect from the pen",
         rto.aspectRatioSrc === 'pressure' && rto.aspectRatioCurve && rto.aspectRatioCurve[0][1] === 0.2,
         JSON.stringify([rto.aspectRatioSrc, rto.aspectRatioCurve]));
+    /* A preset from before Krita had a flow option stores no flow keys, and
+     * Krita reads that as flow on pressure (probes/softness: X1CG Fineliner
+     * at p0.1 painted 19 there, 153 here). */
+    const oldFlow = await page.eval(`(() => JSON.stringify(BrushPack.toPreset({ paintop: 'paintbrush', name: 'F', params: {
+        PressureOpacity: 'true', OpacityUseCurve: 'false', FlowValue: '1'
+    } }).params))()`).then(JSON.parse);
+    const markFlow = await page.eval(`(() => JSON.stringify(BrushPack.toPreset({ paintop: 'roundmarker', name: 'M', params: {
+        FlowValue: '1', OpacityValue: '1'
+    } }).params.flowSrc || null))()`).then(JSON.parse);
+    check('a Krita preset with no flow keys takes its flow from pressure (pixel engine only)',
+        oldFlow.flowSrc === 'pressure' && !oldFlow.dabOpacitySrc && (markFlow === null || markFlow === 'none'),
+        JSON.stringify([oldFlow.flowSrc, oldFlow.dabOpacitySrc, markFlow]));
     const grid = await page.eval(`(() => JSON.stringify(BrushPack.toPreset({ paintop: 'gridbrush', name: 'Grid', params: {
         'Grid/gridWidth': '25', 'Grid/gridHeight': '20', 'Grid/divisionLevel': '2', 'Grid/scale': '1', 'GridShape/shape': '0'
     } }).params.grid))()`).then(JSON.parse);

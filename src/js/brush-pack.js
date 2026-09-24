@@ -384,7 +384,7 @@
     /* Which input drives one option, and how it responds. Krita spells the
      * on/off switch "Pressure<Option>" for most options but leaves it out for
      * the ones that are always live, where <Option>UseCurve is the switch. */
-    function _sensorFor(params, opt) {
+    function _sensorFor(params, opt, curveOn) {
         /* Krita reads a sensor only when the option is switched on AND its
          * "use curve" box is ticked (KisCurveOption::computeValueComponents
          * tests m_useCurve); with the box clear the option is a constant.
@@ -393,8 +393,15 @@
         /* Opacity has no off switch: measured on Krita's renders
          * (test/krita/probes/optswitch), its curve box alone decides -- flag off
          * with the box ticked still faded p0.25 to 137 -- and X1BB Addition
-         * Soft's flag-off pressure curve paints in Krita. */
-        if (opt === 'Opacity' && useCurve !== undefined) flag = undefined;
+         * Soft's flag-off pressure curve paints in Krita. Flow is the same,
+         * and a preset that stores no curve box at all gets it ticked: X1CG
+         * Fineliner, written before Krita had a flow option, fades with
+         * pressure there (test/krita/probes/softness: only FlowUseCurve false
+         * stops it; PressureFlow false does not). Only the pixel engine has
+         * that flow option: round marker, colour smudge, grid and curve presets
+         * store no flow keys either and paint flat (bank run 19). */
+        if (useCurve === undefined && curveOn) useCurve = 'true';
+        if ((opt === 'Opacity' || opt === 'Flow') && useCurve !== undefined) flag = undefined;
         var on = (flag === undefined) ? _bool(useCurve)
             : _bool(flag) && (useCurve === undefined || _bool(useCurve));
         if (!on) return null;
@@ -659,7 +666,7 @@
 
         // Size and flow ride their sensors the same way ours do.
         [['Size', 'size'], ['Flow', 'flow'], ['Opacity', 'opacity']].forEach(function (pair) {
-            var s = _sensorFor(P, pair[0]);
+            var s = _sensorFor(P, pair[0], pair[0] === 'Flow' && preset.paintop === 'paintbrush');
             var key = pair[1];
             if (!s) return;
             if (key === 'opacity') {

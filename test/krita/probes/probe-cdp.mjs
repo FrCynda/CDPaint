@@ -22,7 +22,8 @@ const xmls = {}, jobs = {};
 for (const n of names) {
     const j = JSON.parse(fs.readFileSync(path.join(root, n, 'job.json'), 'utf8')), r = j.renders[0];
     jobs[n] = { lines: r.lines || [], paths: r.paths || [], W: j.width, H: j.height, size: r.size || r.maxSize, fill: r.fill, rects: r.rects || [],
-        tip: r.tip ? [path.basename(r.tip), fs.readFileSync(r.tip).toString('base64')] : null };
+        tip: r.tip ? [path.basename(r.tip), fs.readFileSync(r.tip).toString('base64')] : null,
+        pattern: r.pattern ? 'data:image/png;base64,' + fs.readFileSync(r.pattern).toString('base64') : null };   // the pack's pattern file
     const src = r.src ? execFileSync('python', ['-c', KPP_XML, r.src], { encoding: 'utf8' }) : ink1;
     xmls[n] = execFileSync('python', ['-c', SUBS, JSON.stringify(r.xmlSub || [])], { input: src, encoding: 'utf8' });
 }
@@ -32,14 +33,14 @@ await withPage(async (page) => {
         const app = PaintApp, b = app.brush, out = {};
         const jobs = ${JSON.stringify(jobs)};
         for (const [name, xml] of Object.entries(${JSON.stringify({ [one]: xmls[one] })})) {
-            const { lines, paths, W, H, size, fill, rects, tip } = jobs[name];
+            const { lines, paths, W, H, size, fill, rects, tip, pattern } = jobs[name];
             app.layerMgr.collapseToBase({ fresh: true }); app.setSize(W, H); app.config.zoom = 1; app.updateBounds();
             document.getElementById('lsys-add').click(); app.state.selection = null;
             const L = app.layerMgr.layers[app.layerMgr.activeIdx];
             // a picture tip goes through the pack loader's own route
             const pic = tip && await BrushPack.tipStrip(Uint8Array.from(atob(tip[1]), ch => ch.charCodeAt(0)), tip[0], { krita: true });
             const pr = BrushPack.toPreset(BrushPack.parsePresetXml(xml), { tipSize: pic ? pic.size : 0 }), params = pr.params;
-            if (params.texturePatternData) params.texturePattern = params.texturePatternData;   // as the pack loader does
+            if (params.texturePatternData || pattern) params.texturePattern = params.texturePatternData || pattern;   // as the pack loader does
             delete params.texturePatternData; delete params.texturePatternFile;
             b.forgetSaved('Round'); b.loadPreset('Round');
             for (const k in params) b.setParam(k, params[k]);
