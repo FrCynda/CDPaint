@@ -864,6 +864,13 @@ await withPage(async (page) => {
     check('a Krita preset with no flow keys takes its flow from pressure (pixel engine only)',
         oldFlow.flowSrc === 'pressure' && !oldFlow.dabOpacitySrc && (markFlow === null || markFlow === 'none'),
         JSON.stringify([oldFlow.flowSrc, oldFlow.dabOpacitySrc, markFlow]));
+    const hgt = await page.eval(`(() => JSON.stringify(BrushPack.toPreset({ paintop: 'paintbrush', name: 'H', params: {
+        'Texture/Pattern/Enabled': 'true', 'Texture/Pattern/Name': 'rock.png', 'Texture/Pattern/TexturingMode': '12',
+        'Texture/Pattern/NeutralPoint': '0.3'
+    } })))()`).then(JSON.parse);
+    check("Krita's height texture imports as height with its neutral point, not as multiply",
+        hgt.params.textureMode === 'height' && hgt.params.textureNeutral === 0.3 && !(hgt.warnings || []).some(w => /texture/.test(w)),
+        JSON.stringify([hgt.params.textureMode, hgt.params.textureNeutral, hgt.warnings]));
     const grid = await page.eval(`(() => JSON.stringify(BrushPack.toPreset({ paintop: 'gridbrush', name: 'Grid', params: {
         'Grid/gridWidth': '25', 'Grid/gridHeight': '20', 'Grid/divisionLevel': '2', 'Grid/scale': '1', 'GridShape/shape': '0'
     } }).params.grid))()`).then(JSON.parse);

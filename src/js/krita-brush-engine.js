@@ -1038,20 +1038,31 @@
         if (!t) return false;
         s = _clamp(s, 0, 1);
         var img = ctx.getImageData(0, 0, w, h), d = img.data;
-        var x0 = _round(ox), y0 = _round(oy), sub = p.textureMode === 'subtract', soft = !!p.textureSoft;
+        var x0 = _round(ox), y0 = _round(oy);
         for (var j = 0; j < h; j++) {
             var row = (((y0 + j) % t.h) + t.h) % t.h * t.w;
             for (var i = 0; i < w; i++) {
                 var k = (j * w + i) * 4 + 3, a = d[k];
                 if (!a) continue;
-                var m = t.m[row + (((x0 + i) % t.w) + t.w) % t.w] / 255;
-                if (sub) a = soft ? a - m * s * 255 : a - (m + 1 - s) * 255;
-                else a = soft ? a * (m + (1 - s) * (1 - m)) : a * m * s;
+                a = _kritaTexCut(a, t.m[row + (((x0 + i) % t.w) + t.w) % t.w] / 255, s, p);
                 d[k] = a < 0 ? 0 : a;
             }
         }
         ctx.putImageData(img, 0, 0);
         return true;
+    }
+    /* One texel's cut on a dab alpha a (0-255), texture m (0-1), strength s.
+     * Height (mode 12), measured on lone dabs (test/krita/probes/texmode):
+     * with u = 1 - s, a/u - u - m * 0.5/neutral, in 0-1 units -- the tip
+     * rises with strength until the grain can no longer reach it. */
+    function _kritaTexCut(a, m, s, p) {
+        if (p.textureMode === 'height') {
+            var u = 1 - s;
+            if (u <= 0) return a > 0 ? 255 : 0;
+            return (a / 255 / u - u - m * 0.5 / (p.textureNeutral || 0.5)) * 255;
+        }
+        if (p.textureMode === 'subtract') return p.textureSoft ? a - m * s * 255 : a - (m + 1 - s) * 255;
+        return p.textureSoft ? a * (m + (1 - s) * (1 - m)) : a * m * s;
     }
 
     function _texTile(type) {
@@ -2470,7 +2481,7 @@
          * dab (_applyKritaTexture's rule, pinned to the document): smooth,
          * pastel_014 laid 2.1x Krita's ink. */
         var tx = p.textureMode && tex > 0 ? _kritaTexMask(p) : null;
-        var ts = tx ? _clamp(tex / 100, 0, 1) : 0, tsub = p.textureMode === 'subtract', tsoft = !!p.textureSoft;
+        var ts = tx ? _clamp(tex / 100, 0, 1) : 0;
         var locked = _alphaLocked();
         var stencil = null;
         if (_selStencil && !_previewTarget) {
@@ -2481,9 +2492,7 @@
                 var m = ma[j * mw + i];
                 if (!m) continue;
                 if (tx) {
-                    var tm = tx.m[((((oy + j) % tx.h) + tx.h) % tx.h) * tx.w + ((((ox + i) % tx.w) + tx.w) % tx.w)] / 255;
-                    if (tsub) m = tsoft ? m - tm * ts * 255 : m - (tm + 1 - ts) * 255;
-                    else m = tsoft ? m * (tm + (1 - ts) * (1 - tm)) : m * tm * ts;
+                    m = _min(255, _kritaTexCut(m, tx.m[((((oy + j) % tx.h) + tx.h) % tx.h) * tx.w + ((((ox + i) % tx.w) + tx.w) % tx.w)] / 255, ts, p));
                     if (!(m > 0)) continue;
                 }
                 var px = ox + i - rx, py = oy + j - ry;
@@ -4250,7 +4259,7 @@
         dabOpacitySrc: 'none',   dabOpacityMin: 0, dabOpacityCurve: 1,
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
-        textureMode: '', textureBrightness: 0, textureContrast: 1,
+        textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
         textureInvert: false, textureSoft: false, textureCutoff: 0, textureCutoffLo: 0, textureCutoffHi: 255,
         /* Krita presets: curves are splines (_splineAt), and a round tip may
          * carry its own falloff curve (Krita's "soft" generator). */

@@ -804,11 +804,12 @@
                 out.texture = Math.round(_num(P['Texture/Strength/Value'], 1) * 100);
                 /* Krita's own maths, not our grain: measured against Krita,
                  * Chalk Soft's texture removed no ink at all through the
-                 * grey-tint path. Modes past subtract paint colour or use
-                 * blend maths we do not carry; they fall back to multiply. */
+                 * grey-tint path. Height (12) is measured too; the other
+                 * modes paint colour or use blend maths we do not carry, and
+                 * fall back to multiply. */
                 var tm = Math.round(_num(P['Texture/Pattern/TexturingMode'], 0));
-                if (tm > 1) warn.push('texture mode ' + tm + ' painted as multiply');
-                out.textureMode = tm === 1 ? 'subtract' : 'multiply';
+                if (tm > 1 && tm !== 12) warn.push('texture mode ' + tm + ' painted as multiply');
+                out.textureMode = tm === 1 ? 'subtract' : tm === 12 ? 'height' : 'multiply';
                 out.textureScale = _num(P['Texture/Pattern/Scale'], 1);
                 out.textureBrightness = _num(P['Texture/Pattern/Brightness'], 0);
                 out.textureContrast = _num(P['Texture/Pattern/Contrast'], 1);
@@ -822,8 +823,9 @@
                     out.textureCutoffLo = _num(P['Texture/Pattern/CutoffLeft'], 0);
                     out.textureCutoffHi = _num(P['Texture/Pattern/CutoffRight'], 255);
                 }
-                if (_num(P['Texture/Pattern/NeutralPoint'], 0.5) !== 0.5)
-                    warn.push('texture neutral point not carried');
+                var np = _num(P['Texture/Pattern/NeutralPoint'], 0.5);
+                if (tm === 12) out.textureNeutral = np;
+                else if (np !== 0.5) warn.push('texture neutral point not carried');
                 var ts = _sensorFor(P, 'Texture/Strength/');
                 if (ts && ts.src) {
                     out.textureSrc = ts.src;

@@ -537,7 +537,9 @@ await withPage(async (page) => {
         // grey 128 sits below a cutoff range starting at 200: policy 2 fills
         // white AFTER Invert (Krita probe i0p2), so a multiply dab stays solid
         const cut = run('multiply', { textureInvert: true, textureCutoff: 2, textureCutoffLo: 200, textureCutoffHi: 255 });
-        return JSON.stringify({ sub, mul, cut });
+        // Height (probes/texmode): a/u - u - m*0.5/neutral with u = 1 - strength
+        const h30 = run('height', { texture: 30 }), hNp = run('height', { texture: 30, textureNeutral: 0.25 });
+        return JSON.stringify({ sub, mul, cut, h30, hNp });
     })()`, { awaitPromise: true }));
     check("Krita's subtract texture takes ink away, not just tints it",
         Math.abs(kt.sub - 128) <= 6, 'alpha ' + kt.sub);
@@ -545,6 +547,8 @@ await withPage(async (page) => {
         Math.abs(kt.mul - 128) <= 6, 'alpha ' + kt.mul);
     check("a texture's cutoff fill lands after Invert, as Krita's does",
         kt.cut >= 250, 'alpha ' + kt.cut);
+    check("Krita's height texture rises with strength and the neutral point scales the grain",
+        Math.abs(kt.h30 - 58) <= 4 && kt.hNp <= 2, 'alpha ' + kt.h30 + ', ' + kt.hNp);
     /* A colour smudge writes the layer itself, so it has to grain its own
      * dabs: it skipped texture and pastel_014 laid 6x Krita's ink. */
     const st = JSON.parse(await page.eval(`(async () => {
