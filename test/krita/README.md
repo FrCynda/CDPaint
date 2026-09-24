@@ -401,6 +401,42 @@ Results go to `out/bank-run/results.json` and `out/gimp-run/`. A run with
     moiré styles (only random-stroke presets use them), aliased slanted
     lines, and subpixel-off at other angles. The ten scored hatching
     presets went from all off (ink 1.4–3.7×) to 7 close and 3 near.
+  - The grid brush (no probe of its own; the bank's one preset): a cell
+    every grid width along the stroke from its first point, the end
+    point excluded, each snapped to the canvas cell it falls in and
+    painted once per stroke as div × div ellipses at the flow. Ink
+    1.29× → 1.01×, IoU 0.30 → 0.98.
+  - Colour smudge spacing: the pen-driven spacing option holds on a
+    colour smudge as on a paintbrush (it was only taken where measured).
+    Wet_Smear 0.61× → 0.96× ink, both portnov mixbrushes close; colour
+    smudge 19 → 22 close in the bank.
+  - `pixel` (krita3 pixel1, a 1px sharp tip): 32 short lines at quarter-
+    pixel offsets in every direction. The stroke's start snaps to the
+    pixel grid, a half rounding down (40.5 → 40, 50.75 → 51), then the
+    line steps one whole pixel along its major axis, a half across it
+    rounding up, end pixel included: a Bresenham line between snapped
+    ends. That model matches all 1312 pixels; ours had shallow
+    diagonals a row off along half their length (IoU 0.76).
+  - Ratio option: squashes the tip across its short axis by its curve,
+    the way size scales it. It was dropped; EO Pixel Square, Cloud and
+    Soft Cloud went from near to close with it.
+  - `softtip` (EO Pixel Taper's soft tip, type "rct"): Krita reads
+    "rct" as a soft RECTANGLE, far narrower than the soft circle we
+    import it as (a lone dab with a linear curve: 292 units of ink in
+    Krita, 838 in ours). hfade/vfade and anti-alias change nothing on a
+    soft tip. Its level lines are squares (a step curve at 0.5 fills a
+    square half the tip across), and with the curve inverted the tip is
+    empty along both axes, so the axes are multiplied somehow, but no
+    single per-axis model fits the linear, inverted and mid-dip curves
+    at once. Not done: only Pixel Taper (still 1.7x ink) and the
+    tilt-driven Block tilt fill are scored with this tip. Our soft
+    CIRCLE matches Krita's lone dab to a level or two.
+  - Probing trap: within one Krita session a variant that leaves the
+    softness curve alone came back with the PREVIOUS render's curve.
+    Tip-shape variants must run one session each:
+    `node test/krita/probes/solo.mjs <probe> <variant>...`. Also, a
+    stroke shorter than about a pixel paints nothing in Krita, so a
+    lone dab needs a 1.5 px stroke.
   - Still open: very faint build-up (well under one 8-bit level a dab)
     accumulates less in ours than in Krita. X1BB Addition Soft (5% × a
     pressure curve, 64%-peak soft tip) sits at 0.68× ink. The tip, spacing

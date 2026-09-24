@@ -702,6 +702,20 @@
             }
         }
 
+        /* The ratio option squashes the tip across its short axis by its
+         * curve (Krita's ratio is short over long, ours long over short, so
+         * the engine divides). EO Pixel Taper's light strokes are a pixel or
+         * two thick in Krita because of it: a 0.2 ratio at pressure 0.1,
+         * turned along the stroke by its drawing-angle rotation. */
+        var rts = _sensorFor(P, 'Ratio');
+        if (rts && !rts.src) warn.push('Ratio followed ' + rts.id + ', which we have no input for');
+        else if (rts) {
+            out.aspectRatioSrc = rts.src;
+            out.aspectRatioMin = 0;
+            _kritaReach(out, rts);
+            if (rts.curve) out.aspectRatioCurve = rts.curve;
+        }
+
         /* ...and a pressure-driven opacity in build-up scales each dab, which
          * then stacks: the same probe's lone dab at pressure 0.5 was 124 and
          * its line 209, where a ceiling held ours at 128. So it rides flow. */

@@ -994,6 +994,13 @@
      * ponytail: ellipse and rectangle only; no borders, colour options or
      * pressure division (the importer warns). */
     var _gridSt = null, _gridMask = null;
+    /* A 1px sharp tip (Pixel Art's pixel1) draws a pixel line: Krita snaps
+     * the stroke's start to the pixel grid (a half rounds down) and steps a
+     * whole pixel along the stroke's major axis, rounding a half across it
+     * up. Measured (test/krita/probes/pixel), 32 lines at quarter-pixel
+     * offsets, every direction: all match to the pixel. Unsnapped, a
+     * shallow diagonal sat a row off along half its length. */
+    var _pxOff = null;
     function _gridDab(p, x, y, color) {
         var G = p.grid, gw = G.w * G.scale, st = _gridSt;
         if (!st) { st = _gridSt = { x: x, y: y, acc: 0, next: gw, seen: {} }; _gridCell(p, x, y, color); return; }
@@ -1446,8 +1453,9 @@
     function _paintDab(destCtx, x, y, maskCanvas, colorHex, alpha, texture, textureScale, textureType, wetBlend) {
         var mw = maskCanvas.width;
         var mh = maskCanvas.height;
-        var ox = maskCanvas._cx != null ? _round(x - maskCanvas._cx) : x - mw / 2;
-        var oy = maskCanvas._cy != null ? _round(y - maskCanvas._cy) : y - mh / 2;
+        if (_pxOff) { x = _floor(x + 0.5 + 1e-6); y = _floor(y + 0.5 + 1e-6); }
+        var ox = maskCanvas._cx != null ? _round(x - maskCanvas._cx) : _pxOff ? _round(x - mw / 2) : x - mw / 2;
+        var oy = maskCanvas._cy != null ? _round(y - maskCanvas._cy) : _pxOff ? _round(y - mh / 2) : y - mh / 2;
 
         var ad = destCtx === _flowCtx && _alphaDarken(getParams());
         if (ad) { _ensureAdBuffer(); _adColor = colorHex; colorHex = _greyHex(_adO); }
@@ -3586,8 +3594,10 @@
             /* Krita's floor (MIN_DISTANCE_SPACING, kis_distance_information.cpp).
              * At 1px Ink-1 Precision's 3px dabs, due every 0.45px, stacked to
              * 159 where Krita's reach 225. */
+            if (pxLine) { var ar = (ang || 0) * _PI / 180; g = _max(g, 1 / _max(_abs(_cos(ar)), _abs(_sin(ar)))); }
             return _max(0.5, g);
         }
+        var pxLine = p.sharpness > 0 && sz <= 1;
         var step = resume ? resume.step
             : _stepFor(points[startIdx] ? points[startIdx].pressure || 0.5 : 0.5,
                        points[startIdx] ? points[startIdx].x : 0,
@@ -3672,7 +3682,8 @@
                     step = _stepFor(_tp, prev.x, prev.y, _firstAngle);
                 }
             }
-            _renderDab(prev.x, prev.y, _tp, colorHex, _firstAngle,
+            _pxOff = pxLine ? [_ceil(prev.x - 0.5) - prev.x, _ceil(prev.y - 0.5) - prev.y] : null;
+            _renderDab(prev.x + (_pxOff ? _pxOff[0] : 0), prev.y + (_pxOff ? _pxOff[1] : 0), _tp, colorHex, _firstAngle,
                 prev.pressure || 0.5, _tf0);
         }
 
@@ -3718,9 +3729,10 @@
             var nextDist = (next.dist != null) ? next.dist : _lastDabDist + segLen;
             var remaining = nextDist - _lastDabDist;
 
-            if (remaining >= step) {
+            var _eps = pxLine ? 1e-6 : 0;   // a pixel line reaches its end pixel
+            if (remaining >= step - _eps) {
                 var segStartDist = (points[segIdx].dist != null) ? points[segIdx].dist : (nextDist - segLen);
-                while (remaining >= step) {
+                while (remaining >= step - _eps) {
                     /* Frame budget (Item 4): suspend between dabs — never
                      * inside _renderDab's di group, where _dabIndex and _wet
                      * would double-count on re-entry. _paintDeadline is zero
@@ -3736,6 +3748,7 @@
                     var fr = _clamp((dabDist - segStartDist) / (segLen || 1), 0, 1);
                     var ptx = _lerp(prev.x, next.x, fr);
                     var pty = _lerp(prev.y, next.y, fr);
+                    if (_pxOff) { ptx += _pxOff[0]; pty += _pxOff[1]; }
                     var _rawPressure = _lerp(prev.pressure || 0.5, next.pressure || 0.5, fr);
                     _renderDab(ptx, pty, _rawPressure, colorHex, segAngle,
                         _rawPressure, _taperAtDist(dabDist));
@@ -4653,7 +4666,7 @@
     engine.beginStroke = function (x, y, pressure, color) {
         _strokeSeed = _pinnedSeed == null
             ? Math.floor(Math.random() * 2147483647) : _pinnedSeed;
-        _dabIndex = 0; _mkLast = null; _gridSt = null;
+        _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null;
         /* Freeze the params for this stroke (see the getParams seam): a copy,
          * not the pointer — setParam mutates _params in place. Iterates _params
          * itself rather than _paramMeta so saved-override keys outside DEFAULTS
@@ -5215,7 +5228,7 @@
             _lastDabDist = 0;
             // The replay repaints the whole stroke, so the fade sensor has
             // to start counting again with it.
-            _dabIndex = 0; _mkLast = null; _gridSt = null;
+            _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null;
             if (pts.length === 1) {
                 _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, _state.lastColor);
             } else {

@@ -842,6 +842,16 @@ await withPage(async (page) => {
     check("a colour smudge's spacing follows its pen curve",
         smsp.spacingSrc === 'pressure' && smsp.spacingStrength === 1 && smsp.spacingCurve && smsp.spacingCurve[0][1] === 1,
         JSON.stringify([smsp.spacingSrc, smsp.spacingStrength, smsp.spacingCurve]));
+    /* Krita's ratio option squashes the tip by its pen curve (bank: EO Pixel
+     * Square, Cloud and Soft Cloud went from near to close). It used to be
+     * dropped without a word. */
+    const rto = await page.eval(`(() => JSON.stringify(BrushPack.toPreset({ paintop: 'paintbrush', name: 'R', params: {
+        PressureRatio: 'true', RatioUseCurve: 'true', RatioValue: '1',
+        RatioSensor: '<params id="pressure"> <curve>0,0.2;1,1;</curve> </params>'
+    } }).params))()`).then(JSON.parse);
+    check("a Krita ratio option drives the tip's aspect from the pen",
+        rto.aspectRatioSrc === 'pressure' && rto.aspectRatioCurve && rto.aspectRatioCurve[0][1] === 0.2,
+        JSON.stringify([rto.aspectRatioSrc, rto.aspectRatioCurve]));
     const grid = await page.eval(`(() => JSON.stringify(BrushPack.toPreset({ paintop: 'gridbrush', name: 'Grid', params: {
         'Grid/gridWidth': '25', 'Grid/gridHeight': '20', 'Grid/divisionLevel': '2', 'Grid/scale': '1', 'GridShape/shape': '0'
     } }).params.grid))()`).then(JSON.parse);

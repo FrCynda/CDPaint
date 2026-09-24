@@ -614,6 +614,25 @@ await withPage(async (page) => {
     })()`));
     check('a grid brush fills the canvas cells it passes, not the cell it ends in',
         gr.first > 250 && gr.last > 250 && gr.end === 0 && gr.gap < 128, JSON.stringify(gr));
+    /* A 1px sharp tip draws Krita's pixel line (test/krita/probes/pixel):
+     * start snapped, a half rounding down, then one pixel per column with a
+     * half across rounding up. Unsnapped, this diagonal sat a row off along
+     * half its length (pixel1 IoU 0.76). */
+    const px = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = () => __B.layer().ctx;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 1, hardness: 100, falloff: 'krita-gauss', sharpness: 100, sharpSoftness: 0,
+            spacing: 10, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none' })) b.setParam(k, v);
+        L().clearRect(0, 0, 200, 200);
+        b.beginStroke(20.5, 80.5, 1, '#000000');
+        for (let i = 1; i <= 45; i++) b.moveStroke(20.5 + 40 * i / 45, 80.5 - 20 * i / 45, 1, '#000000');
+        b.endStroke();
+        const d = L().getImageData(0, 0, 200, 200).data, on = [];
+        for (let i = 3; i < d.length; i += 4) if (d[i] > 127) on.push([(i >> 2) % 200, (i >> 2) / 200 | 0]);
+        const want = []; for (let k = 0; k <= 40; k++) want.push([20 + k, Math.floor(80 - k / 2 + 0.5)]);
+        return JSON.stringify({ n: on.length, miss: want.filter(([x, y]) => !on.some(p => p[0] === x && p[1] === y)).length });
+    })()`));
+    check('a 1px sharp tip draws a pixel line from its snapped start', px.n === 41 && px.miss === 0, JSON.stringify(px));
     /* Krita's sketch engine (test/krita/probes/sketch): lines out to earlier
      * points within half the brush, trimmed by the offset. Its first cut
      * only repainted round the newest point, so a fast stroke kept its last
