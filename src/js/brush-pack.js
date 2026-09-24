@@ -1238,8 +1238,8 @@
                 var pipe = _readGih(bytes);
                 if (!pipe) throw new Error('unreadable brush pipe');
                 var gc = gimpCells(pipe.cells);
-                /* GIMP steps an in-order pipe BEFORE it paints
-                 * (gimp_brush_pipe_select_brush), so a brush's first dab is
+                /* GIMP steps an in-order pipe BEFORE it paints, so a
+                 * brush's first dab is
                  * cell 1 and cell 0 comes last; ours stamps from the front.
                  * Measured with a numbered five-cell pipe: 1 2 3 4 | 0 1 2 |
                  * 3 4 0 1 2 over three strokes. */
@@ -2058,81 +2058,62 @@
 
     var VBR_SHAPES = { circle: 1, square: 1, diamond: 1 };
 
-    /* GIMP's own generator (app/core/gimpbrushgenerated.c, 2.10), ported
-     * line for line because every approximation of it measured wrong against
-     * a headless GIMP render: a linear falloff put 2.8x the ink into a soft
-     * round, and drawing `spikes` turned copies made a 5-spike star with ten
-     * points where GIMP folds the plane into five wedges.
-     *
-     * The falloff is a lookup table of a not-quite-gauss of
-     * (d / radius)^(0.4 / (1 - hardness)), box-filtered over one pixel at
-     * four samples; d is the shape's own distance (round, square or
-     * diamond) after the pixel is turned by the angle, folded into the first
-     * of `spikes` wedges and squashed by the aspect ratio. The mask is the
-     * odd-sided box GIMP allocates, so the tip is GIMP's size to the pixel. */
-    function _gimpGauss(f) {
-        if (f < -0.5) { f = -1 - f; return 2 * f * f; }
-        if (f < 0.5) return 1 - 2 * f * f;
-        f = 1 - f; return 2 * f * f;
-    }
-
+    /* GIMP's generated brushes, rebuilt from what GIMP 2.10 hands back for
+     * them (test/gimp/mask-probe.mjs reads the masks it makes; nothing here
+     * comes from GIMP's code). What the measurements say:
+     *  - a pixel's value depends only on its distance from the centre in the
+     *    brush's own frame: turned by the angle; for a star, its bearing
+     *    folded into one spike's wedge centred on the axis; then y
+     *    stretched by the aspect. Distance is the plain one for a circle, the larger of
+     *    |x| and |y| for a square, |x| + |y| for a diamond;
+     *  - that distance, over the radius, goes through one soft curve at
+     *    Hardness 0, and Hardness h reads the curve at t^(1 / (1 - h));
+     *  - four samples a quarter pixel apart along the distance are averaged,
+     *    which is why a hard rim comes out at 64, 128 or 191. */
+    // The Hardness 0 curve at sqrt(t) = 0, 1/16 .. 1, fitted to masks of
+    // radius 20 and 60 at hardness 0 to 1: within a level of GIMP's.
+    var GIMP_CURVE = [255, 250, 237, 220, 200, 176, 149, 119, 92, 69, 50, 34, 21, 12, 5, 1, 0];
+    BrushPack.gimpCurve = function (t, hard) {
+        if (!(t < 1)) return 0;
+        if (hard >= 1) return 1;
+        var u = Math.sqrt(Math.pow(t, 1 / (1 - hard))) * 16, i = Math.floor(u);
+        return (GIMP_CURVE[i] + (GIMP_CURVE[i + 1] - GIMP_CURVE[i]) * (u - i)) / 255;
+    };
+    /* The mask's box: odd, each half the reach rounded half down. A round
+     * one reaches as far as its turned ellipse, a square or diamond as its
+     * turned corner, and a star as its spike tips in any direction. */
     function _vbrBox(shape, radius, spikes, aspect, angle) {
-        angle = Math.round(angle * 1000) / 1000;
-        var s = Math.sin(angle * Math.PI / 180), c = Math.cos(angle * Math.PI / 180);
-        var sr = radius / aspect;
-        var xa = [c * radius, -s * radius], ya = [s * sr, c * sr];
-        var hw, hh;
-        if (shape === 'square') { hw = Math.abs(xa[0]) + Math.abs(ya[0]); hh = Math.abs(xa[1]) + Math.abs(ya[1]); }
-        else if (shape === 'diamond') { hw = Math.max(Math.abs(xa[0]), Math.abs(ya[0])); hh = Math.max(Math.abs(xa[1]), Math.abs(ya[1])); }
-        else { hw = Math.hypot(xa[0], ya[0]); hh = Math.hypot(xa[1], ya[1]); }
-        if (spikes > 2) hw = hh = Math.sqrt(radius * radius + sr * sr);
-        var w = Math.max(1, Math.ceil(hw * 2)), h = Math.max(1, Math.ceil(hh * 2));
-        return { w: w | 1, h: h | 1 };
+        var th = angle * Math.PI / 180, hx, hy;
+        if (shape === 'circle' && spikes === 2) {
+            hx = Math.hypot(radius * Math.cos(th), radius / aspect * Math.sin(th));
+            hy = Math.hypot(radius * Math.sin(th), radius / aspect * Math.cos(th));
+        } else {
+            var d = Math.hypot(radius, radius / aspect), a = Math.atan(1 / aspect);
+            hx = spikes > 2 ? d : d * Math.max(Math.abs(Math.cos(th + a)), Math.abs(Math.cos(th - a)));
+            hy = spikes > 2 ? d : d * Math.max(Math.abs(Math.sin(th + a)), Math.abs(Math.sin(th - a)));
+        }
+        return { w: 2 * Math.ceil(hx - 0.5 - 1e-9) + 1, h: 2 * Math.ceil(hy - 0.5 - 1e-9) + 1 };
     }
-
+    // The brush's own mask (as GIMP previews it) for `angle` in degrees.
     function _vbrMask(shape, radius, spikes, hard, aspect, angle) {
-        var OS = 4, x, y, d;
-        angle = Math.round(angle * 1000) / 1000;
-        var s = Math.sin(angle * Math.PI / 180), c = Math.cos(angle * Math.PI / 180);
         var box = _vbrBox(shape, radius, spikes, aspect, angle), w = box.w, h = box.h;
-
-        // gimp_brush_generated_calc_lut
-        var ex = (1 - hard) < 0.0000004 ? 1000000 : 0.4 / (1 - hard);
-        var len = OS * Math.ceil(1 + Math.sqrt(2 * Math.pow(Math.ceil(radius + 1), 2)));
-        var lut = new Float32Array(len), buf = new Float64Array(OS), sum = 0;
-        for (x = 0; x < OS; x++) {
-            d = Math.abs((x + 0.5) / OS - 0.5);
-            buf[x] = d > radius ? 0 : _gimpGauss(Math.pow(d / radius, ex));
-            sum += buf[x];
-        }
-        for (x = 0; (d < radius || sum > 0.00001) && x < len; d += 1 / OS) {
-            sum -= buf[x % OS];
-            buf[x % OS] = d > radius ? 0 : _gimpGauss(Math.pow(d / radius, ex));
-            sum += buf[x % OS];
-            lut[x++] = sum / OS;
-        }
-
-        var cs = Math.cos(-2 * Math.PI / spikes), ss = Math.sin(-2 * Math.PI / spikes);
-        var half_w = w >> 1, half_h = h >> 1, alpha = new Uint8ClampedArray(w * h);
-        for (y = -half_h; y <= half_h; y++) {
-            for (x = -half_w; x <= half_w; x++) {
-                var tx = c * x - s * y, ty = Math.abs(s * x + c * y);
-                if (spikes > 2) {
-                    var an = Math.atan2(ty, tx);
-                    while (an > Math.PI / spikes) {
-                        var sx = tx, sy = ty;
-                        tx = cs * sx - ss * sy;
-                        ty = ss * sx + cs * sy;
-                        an -= 2 * Math.PI / spikes;
-                    }
-                }
-                ty *= aspect;
-                d = shape === 'square' ? Math.max(Math.abs(tx), Math.abs(ty))
-                  : shape === 'diamond' ? Math.abs(tx) + Math.abs(ty)
-                  : Math.sqrt(tx * tx + ty * ty);
-                var i = Math.round(d * OS);
-                alpha[(y + half_h) * w + x + half_w] = d < radius + 1 && i < len ? Math.round(255 * lut[i]) : 0;
+        var alpha = new Uint8Array(w * h), cx = (w - 1) / 2, cy = (h - 1) / 2;
+        var th = -angle * Math.PI / 180, c = Math.cos(th), s = Math.sin(th), wedge = 2 * Math.PI / spikes;
+        for (var j = 0; j < h; j++) for (var i = 0; i < w; i++) {
+            var x = i - cx, y = j - cy;
+            var X = x * c + y * s, Y = y * c - x * s;
+            if (spikes > 2) {
+                var rho = Math.hypot(X, Y), b = Math.atan2(Y, X) + wedge / 2;
+                b = b - Math.floor(b / wedge) * wedge - wedge / 2;
+                X = rho * Math.cos(b); Y = rho * Math.sin(b);
             }
+            Y *= aspect;
+            var d = shape === 'square' ? Math.max(Math.abs(X), Math.abs(Y))
+                : shape === 'diamond' ? Math.abs(X) + Math.abs(Y) : Math.hypot(X, Y);
+            d = Math.round(d * 4) / 4;
+            var v = 0;
+            for (var k = 0; k < 4; k++) v += BrushPack.gimpCurve(Math.abs(d + (k - 1.5) / 4) / radius, hard);
+            alpha[j * w + i] = Math.round(v / 4 * 255);
         }
         return { w: w, h: h, alpha: alpha };
     }
@@ -2179,10 +2160,8 @@
             return { name: name, params: out, tip: null };
         }
         var lim = Math.min(TIP_CAP_PX / 2, 400);
-        /* Minus the angle: GIMP copies the brush's angle into the paint
-         * tool's option, which it stores negated (gimppaintoptions.c, "make
-         * the angle mathematically correct"), so the dab it PAINTS is turned
-         * the other way from the brush's own preview. Measured headless. */
+        /* Minus the angle: the dab GIMP paints is turned the other way from
+         * the brush's own preview. Measured headless. */
         var m = _vbrMask(shape, Math.min(lim, radius), spikes, hard, aspect, -angle);
         var st = _strip([m]);
         out.shape = 'custom';

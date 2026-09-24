@@ -99,8 +99,8 @@ if (argv.includes('--render')) {
     (if (> (car (gimp-context-get-brush-size)) cap) (gimp-context-set-brush-size cap))
     (gimp-context-set-brush-default-spacing)
     (gimp-context-set-brush-default-hardness)
-    ; What picking the brush in GIMP's window does ("link to brush default",
-    ; gimp_paint_options_set_default_brush_aspect_ratio): the tool option
+    ; What picking the brush in GIMP's window does ("link to brush default"):
+    ; the tool option
     ; REPLACES a generated brush's own shape, so it has to carry it.
     (if (= (car (gimp-brush-is-generated name)) 1)
         (begin (gimp-context-set-brush-aspect-ratio (* (- (car (gimp-brush-get-aspect-ratio name)) 1) (/ 20 19)))

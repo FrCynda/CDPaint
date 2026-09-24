@@ -402,12 +402,14 @@ await withPage(async (page) => {
         return JSON.stringify(out);
     })()`, { awaitPromise: true }));
     console.log('  ' + JSON.stringify(gv));
-    /* Before the port: round-soft carried 2.8x GIMP's ink (mean 95 levels
-     * off) and star-ten had ten points where GIMP paints five. The block
-     * keeps a 1px fringe GIMP adds at 21/255, hence its looser mean. */
-    for (const [n, tol] of [['round-soft', 1], ['block-wide', 4], ['star-ten', 1]]) {
+    /* Once round-soft carried 2.8x GIMP's ink (mean 95 levels off) and
+     * star-ten had ten points where GIMP paints five. The masks are now
+     * rebuilt from measurement (test/gimp/mask-probe.mjs): the block's 1px
+     * fringe at 21/255 came right with GIMP's soft curve, and the star only
+     * lands once its spikes are folded before the aspect stretches them. */
+    for (const n of ['round-soft', 'block-wide', 'star-ten']) {
         check(`${n}.vbr paints GIMP's own dab`,
-            near(gv[n].inkRatio, 1, 0.01) && gv[n].meanDiff <= tol, JSON.stringify(gv[n]));
+            near(gv[n].inkRatio, 1, 0.01) && gv[n].meanDiff <= 1, JSON.stringify(gv[n]));
     }
 });
 

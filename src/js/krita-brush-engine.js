@@ -261,13 +261,6 @@
         return _clamp((_erf(t * k + c) - _erf(t * k - c)) / (2 * _erf(c)), 0, 1);
     }
 
-    /* GIMP's generated brush (gimpbrushgenerated.c): its not-quite-gauss
-     * of d^(0.4 / (1 - hardness)). */
-    function _gimpAt(t, hard) {
-        var f = _pow(t, 0.4 / _max(4e-7, 1 - hard));
-        return f < 0.5 ? 1 - 2 * f * f : 2 * (1 - f) * (1 - f);
-    }
-
     /* GIMP's generated round brush, pixel for pixel (test/gimp/probe.mjs,
      * "circ": lone dabs of Circle (01) to (11) and Circle Fuzzy (07), every
      * pixel matched). An odd grid, 2 * ceil(r - 1/2) + 1 across, centred on
@@ -286,7 +279,7 @@
             var dist = _round(_hypot(i - half, j - half) * 4) / 4, v = 0;
             for (var k = 0; k < 4; k++) {
                 var t = _abs(dist + (k - 1.5) / 4) / r;
-                if (t < 1) v += _gimpAt(t, hard);
+                if (t < 1) v += BrushPack.gimpCurve(t, hard);
             }
             var o = ((j + 1) * (N + 2) + i + 1) * 4;
             d[o] = d[o + 1] = d[o + 2] = 255;
@@ -422,7 +415,7 @@
         for (var i = 0; i <= stops; i++) {
             var t = i / stops, a;
             if (kind === 'gauss') a = _gaussAt(t, hard);
-            else if (kind === 'gimp') a = _gimpAt(t, hard);
+            else if (kind === 'gimp') a = BrushPack.gimpCurve(t, hard);
             // Krita's "soft" generator: opacity is the curve at the SQUARED
             // radius (KisCurveCircleMaskGenerator::norme is a*a + b*b).
             else if (kind === 'curve') a = _curveAt(_params.tipCurve, t * t, true);
