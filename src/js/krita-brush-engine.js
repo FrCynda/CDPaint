@@ -4034,8 +4034,9 @@
      * its sub-pixel phase, its corner the whole pixel under cursor minus
      * half its size (KisDabCacheBase). Shrunk to a rounded size and shifted
      * again by the browser, each Light Shine star was resampled twice and
-     * smeared over two rows. Phases to a quarter pixel, and only up to 64px
-     * (x null above): a big dab cannot see them. */
+     * smeared over two rows. Size and phase to a sixteenth of a pixel (a
+     * quarter left Light Shine at IoU 0.90, a sixteenth matches it whole),
+     * and phases only up to 64px (x null above): a big dab cannot see them. */
     var _kLevels = new WeakMap();
     function _kritaTipLevel(src, sc) {
         var W = src.width, H = src.height, L = 1, k = 0;
@@ -4067,14 +4068,14 @@
     }
     function _kritaTipMask(src, sz, ang, asp, x, y) {
         var mode = _params.tipMode || 'alpha';
-        sz = sz < 64 ? _max(0.25, _round(sz * 4) / 4) : _max(1, _round(sz));
+        sz = sz < 64 ? _max(0.25, _round(sz * 16) / 16) : _max(1, _round(sz));
         var sc = sz / _max(src.width, src.height), kx = sc * _min(1, asp), ky = sc / _max(1, asp);
         // the turned tip's bounds: its size, to Krita
         var c = _cos(ang), s = _sin(ang), TW = src.width * kx, TH = src.height * ky;
         var bx = _min(0, TW * c, -TH * s, TW * c - TH * s), by = _min(0, TW * s, TH * c, TW * s + TH * c);
         var bw = _max(0, TW * c, -TH * s, TW * c - TH * s) - bx, bh = _max(0, TW * s, TH * c, TW * s + TH * c) - by;
-        var fx = x == null ? 0 : _round((((x - bw / 2) % 1) + 1) % 1 * 4) / 4 % 1;
-        var fy = x == null ? 0 : _round((((y - bh / 2) % 1) + 1) % 1 * 4) / 4 % 1;
+        var fx = x == null ? 0 : _round((((x - bw / 2) % 1) + 1) % 1 * 16) / 16 % 1;
+        var fy = x == null ? 0 : _round((((y - bh / 2) % 1) + 1) % 1 * 16) / 16 % 1;
         var key = 'k|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + '|' + (x == null ? '' : fx + ',' + fy);
         var hit = _customTipSizeCache[key];
         if (hit) return hit;

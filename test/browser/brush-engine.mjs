@@ -2757,13 +2757,19 @@ await withPage(async (page) => {
         b.setParam('dynamicsMode', 'off'); b.setParam('size', 22); b.setParam('hardness', 100); b.setParam('tipShrink', 'area');
         b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
         await new Promise(r => setTimeout(r, 200));
+        // an eighth of a pixel on: 151 drawn at its own phase, 104 rounded to a quarter
+        b.beginStroke(100.125, 150, 1, '#000000'); b.endStroke();
+        await new Promise(r => setTimeout(r, 200));
         const d = __B.layer().ctx.getImageData(95, 100, 10, 1).data, row = [];
         for (let i = 3; i < d.length; i += 4) row.push(d[i]);
+        row.push(__B.layer().ctx.getImageData(99, 150, 1, 1).data[3]);
         b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
         return JSON.stringify(row);
     })()`, { awaitPromise: true }));
     check("a Krita picture tip is drawn once from its pyramid: a thin line stays one column",
         kp[4] >= 185 && kp[4] <= 205 && kp[3] <= 8 && kp[5] <= 8, JSON.stringify(kp));
+    check('...and at its own sub-pixel phase, not rounded to a quarter pixel',
+        Math.abs(kp[10] - 151) <= 8, 'alpha ' + kp[10] + ', want ~151');
 
     /* Tips are 1024px now rather than 200, and every distinct size, angle
      * and squash of one is baked and kept. A stroke whose size rides the pen
