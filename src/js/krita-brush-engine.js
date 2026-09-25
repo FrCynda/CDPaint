@@ -2313,7 +2313,7 @@
     /* base scaled by its sensor, floored at <param>Min percent. */
     function _dyn(p, key, base, sc, seed) {
         var list = p[key + 'Sensors'], v;
-        if (list) v = _kritaInputs(list, p[key + 'Mode'], sc, seed, p);
+        if (list) v = _kritaInputs(list, p[key + 'Combine'], sc, seed, p);
         else {
             var src = p[key + 'Src'];
             if (!src || src === 'none') return base;
@@ -4392,7 +4392,7 @@
         /* 'curve' (Krita's curve brush) shares sketchWidth for its line. */
         curveHistory: 30, curveConnect: true, curveQuad: true,
         curvesOpacity: 1, curvesOpacitySrc: 'none', curvesOpacityMin: 0, curvesOpacityCurve: 1,
-        sketchWidthSensors: null, sketchWidthMode: 0, curvesOpacitySensors: null, curvesOpacityMode: 0,
+        sketchWidthSensors: null, sketchWidthCombine: 0, curvesOpacitySensors: null, curvesOpacityCombine: 0,
         /* What a deform does to the pixels it finds, and how hard. */
         deformAction: 'move',
         deformAmount: 30,
@@ -4477,7 +4477,7 @@
          * at, not how much each dab adds. See _alphaDarken. */
         dabOpacitySrc: 'none',   dabOpacityMin: 0, dabOpacityCurve: 1,
         // Krita's several inputs on one option (_kritaInputs); null = just <key>Src.
-        sizeSensors: null, sizeMode: 0, colorRateSensors: null, colorRateMode: 0, smudgeRateSensors: null, smudgeRateMode: 0, flowSensors: null, flowMode: 0, dabOpacitySensors: null, dabOpacityMode: 0,
+        sizeSensors: null, sizeCombine: 0, colorRateSensors: null, colorRateCombine: 0, spacingSensors: null, spacingCombine: 0, aspectRatioSensors: null, aspectRatioCombine: 0, textureSensors: null, textureCombine: 0, scatterSensors: null, scatterCombine: 0, smudgeRateSensors: null, smudgeRateCombine: 0, flowSensors: null, flowCombine: 0, dabOpacitySensors: null, dabOpacityCombine: 0,
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
         tipShrink: '', textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,

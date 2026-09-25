@@ -727,7 +727,7 @@
                 out.dabOpacityMin = 0;
                 _kritaReach(out, s);
                 if (s.curve) out.dabOpacityCurve = s.curve;
-                if (s.all) { out.dabOpacitySensors = s.all; out.dabOpacityMode = s.mode; s.all.forEach(function (e) { _kritaReach(out, e); }); }
+                if (s.all) { out.dabOpacitySensors = s.all; out.dabOpacityCombine = s.mode; s.all.forEach(function (e) { _kritaReach(out, e); }); }
                 return;
             }
             if (!s.src) { warn.push(pair[0] + ' followed ' + s.id + ', which we have no input for'); return; }
@@ -735,7 +735,7 @@
             out[key + 'Min'] = 0;
             _kritaReach(out, s);
             if (s.curve) out[key + 'Curve'] = s.curve;
-            if (s.all) { out[key + 'Sensors'] = s.all; out[key + 'Mode'] = s.mode; s.all.forEach(function (e) { _kritaReach(out, e); }); }
+            if (s.all) { out[key + 'Sensors'] = s.all; out[key + 'Combine'] = s.mode; s.all.forEach(function (e) { _kritaReach(out, e); }); }
         });
 
         /* The spacing option multiplies the gap by its strength times its
@@ -753,7 +753,7 @@
             else if (sps) {
                 out.spacingSrc = sps.src;
                 out.spacingMin = 0;
-                _kritaReach(out, sps);
+                _kritaReach(out, sps, 'spacing');
                 if (sps.curve) out.spacingCurve = sps.curve;
             }
         }
@@ -768,7 +768,7 @@
         else if (rts) {
             out.aspectRatioSrc = rts.src;
             out.aspectRatioMin = 0;
-            _kritaReach(out, rts);
+            _kritaReach(out, rts, 'aspectRatio');
             if (rts.curve) out.aspectRatioCurve = rts.curve;
         }
 
@@ -883,7 +883,7 @@
                 if (ts && ts.src) {
                     out.textureSrc = ts.src;
                     out.textureMin = 0;
-                    _kritaReach(out, ts);
+                    _kritaReach(out, ts, 'texture');
                     if (ts.curve) out.textureCurve = ts.curve;
                 }
             } else {
@@ -893,7 +893,11 @@
 
         /* The engine keeps one reach for fade and one for distance, not one
          * per dial, so the first option that asks sets it. */
-        function _kritaReach(out, s) {
+        function _kritaReach(out, s, key) {
+            /* With a key, the option takes Krita's whole input list, each
+             * input keeping its own reach: one brush-wide fade length gave
+             * Watercolor Stroke Dry's scatter the 4000 dabs of its opacity. */
+            if (key && s.all) { out[key + 'Sensors'] = s.all; out[key + 'Combine'] = s.mode; }
             if (s.length == null) return;
             if (s.src === 'fadein' && out.fadeSteps == null) {
                 out.fadeSteps = Math.max(1, Math.round(s.length));
@@ -910,7 +914,7 @@
         if (sc && sc.src) {
             out.scatterSrc = sc.src;
             out.scatterMin = 0;
-            _kritaReach(out, sc);
+            _kritaReach(out, sc, 'scatter');
             if (sc.curve) out.scatterCurve = sc.curve;
         }
 
@@ -978,7 +982,7 @@
                 out[e[0] + 'Src'] = s.src;
                 out[e[0] + 'Min'] = 0;
                 if (s.curve) out[e[0] + 'Curve'] = s.curve;
-                if (s.all) { out[e[0] + 'Sensors'] = s.all; out[e[0] + 'Mode'] = s.mode; }
+                if (s.all) { out[e[0] + 'Sensors'] = s.all; out[e[0] + 'Combine'] = s.mode; }
                 _kritaReach(out, s);
             });
             if (_bool(P.MergedPaint)) warn.push('dropped: picking colour up from every layer rather than this one');
@@ -1045,6 +1049,7 @@
             if (lw && lw.src) {
                 out.sketchWidthSrc = lw.src;
                 out.sketchWidthMin = 0;
+                _kritaReach(out, lw, 'sketchWidth');
                 if (lw.curve) out.sketchWidthCurve = lw.curve;
             }
             if (_bool(P['Sketch/randomRGB'])) warn.push('dropped: the slight colour wobble on its lines');
@@ -1073,7 +1078,7 @@
                 out[e[1] + 'Src'] = s.src;
                 out[e[1] + 'Min'] = 0;
                 if (s.curve) out[e[1] + 'Curve'] = s.curve;
-                if (s.all) { out[e[1] + 'Sensors'] = s.all; out[e[1] + 'Mode'] = s.mode; }
+                if (s.all) { out[e[1] + 'Sensors'] = s.all; out[e[1] + 'Combine'] = s.mode; }
                 _kritaReach(out, s);
                 if (s.all) s.all.forEach(function (x) { _kritaReach(out, x); });
             });
