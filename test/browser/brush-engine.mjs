@@ -1088,6 +1088,20 @@ await withPage(async (page) => {
         b.forgetSaved('Round'); b.loadPreset('Round');
         return a.join();
     })()`);
+    // Krita's round marker: solid to the radius, then a pixel's fade linear in the squared distance
+    const mkRows = await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        b.setParam('size', 11); b.setParam('falloff', 'marker'); b.setParam('hardness', 100); b.setParam('spacing', 400);
+        b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(100.5, 100.5, 1, '#000000'); b.endStroke();
+        const d = __B.layer().ctx.getImageData(100, 80, 1, 40).data, a = [];
+        for (let i = 0; i < 40; i++) if (d[i * 4 + 3]) a.push(d[i * 4 + 3]);
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return a.join();
+    })()`);
+    check("a Krita round marker is a solid disc with a one-pixel fade", mkRows === [132].concat(Array(11).fill(255), [132]).join(), mkRows);
     check("a wide Krita sketch line is hard and a pixel past its width", skRows === Array(9).fill(255).join(), skRows);
     check("a Krita softness option softens the tip with pressure", softK.curve > 25 && softK.curve < 55 && softK.circle > 170 && softK.circle < 220, JSON.stringify(softK));
     /* Krita turns a tip by (1 - strength * sensor) * pi (KisRotationOption),

@@ -193,6 +193,7 @@
             return _kritaGaussRectMask(size, aspect, hardness / 100, (hy ? +hy : hardness) / 100, ang,
                                        shape.charAt(1) === 'l', shape.charAt(6) === 'a', phase);
         }
+        if (shape === 'kmarker') return _kritaMarkerMask(size, phase);
         if (kc) return _kritaCircleMask(size, aspect, hardness / 100, phase,
                                         shape.slice(-3) === ':aa', shape.charAt(1) === 'g', ang);
         if (shape === 'gimp' && aspect === 1) return _gimpCircleMask(size, hardness / 100);
@@ -344,6 +345,24 @@
                 }
                 if (sum) { var k = (j * W + i) * 4; d[k] = d[k + 1] = d[k + 2] = 255; d[k + 3] = _round(sum / (ss * ss) * 255); }
             }
+        }
+        ctx.putImageData(img, 0, 0);
+        return canvas;
+    }
+
+    /* Krita's round marker (KisMarkerPainter::fillFullCircle): solid to
+     * the radius, then a fade over the next pixel that is linear in the
+     * squared distance, cut to a whole level, not rounded. */
+    function _kritaMarkerMask(size, phase) {
+        var r = size / 2, W = _ceil(2 * r) + 5, canvas = new OffscreenCanvas(W, W), c = W / 2;
+        if (phase) { canvas._cx = _floor(c) + phase[0]; canvas._cy = _floor(c) + phase[1]; }
+        var cx = phase ? canvas._cx : c, cy = phase ? canvas._cy : c, k = 1 / (2 * r + 1);
+        var ctx = canvas.getContext('2d'), img = ctx.createImageData(W, W), d = img.data;
+        for (var j = 0; j < W; j++) for (var i = 0; i < W; i++) {
+            var dx = i + 0.5 - cx, dy = j + 0.5 - cy, f = (dx * dx + dy * dy - r * r) * k;
+            if (f > 1) continue;
+            var o = (j * W + i) * 4;
+            d[o] = d[o + 1] = d[o + 2] = 255; d[o + 3] = f > 0 ? _floor((1 - f) * 255) : 255;
         }
         ctx.putImageData(img, 0, 0);
         return canvas;
@@ -3086,6 +3105,7 @@
             // A gauss falloff is its own mask, so its own cache key.
             if (shape === 'circle' && (_params.falloff === 'gauss' || _params.falloff === 'gimp')) shape = _params.falloff;
             if (shape === 'circle' && _isArray(_params.tipCurve)) shape = _tipCurveKey(_tcNow = _softCurve(_params.tipCurve, _softNow));
+            if (shape === 'circle' && _params.falloff === 'marker') shape = 'kmarker';
             var kf = /^krita(-gauss)?(-aa)?$/.exec(_params.falloff || '');
             // a hard square keeps the plain box: it paints its pixel however small (EO Pixel Perfect)
             if (shape === 'square' && kf && (kf[1] || hardness < 100 || (_params.hardnessY != null && _params.hardnessY < 100)))
@@ -3101,7 +3121,7 @@
             // Sharpness snaps dabs to whole pixels in Krita, so it keeps the old path.
             // Krita's own tips only: the built-in brushes keep the look they have.
             if (x != null && sz <= 32 && !(_params.sharpness > 0) &&
-                (/^k(circle|gauss|grect)/.test(shape) || shape.indexOf('curve:') === 0)) {
+                (/^k(circle|gauss|grect|marker)/.test(shape) || shape.indexOf('curve:') === 0)) {
                 /* ponytail: Krita places its plain square (klrect) at its
                  * phase too, but Grease Charcoal's subtract texture fell
                  * 0.823 -> 0.746 with it; open until that texture is. */
