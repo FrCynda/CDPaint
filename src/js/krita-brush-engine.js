@@ -2521,7 +2521,39 @@
     var _smPrev = null;
     var _smMaskA = new WeakMap();
 
-    function _smudgeDab(p, x, y, mask, colorHex, alpha, sc, sz, tex) {
+    /* Krita smudges on a precise copy of the layer kept for the whole stroke
+     * (KisOverlayPaintDeviceWrapper, LazyPreciseMode), so a dab too faint
+     * for 8 bits still adds up: Oil Camel's light end gains 0.03 of a level
+     * a dab, which the layer rounded away every time, and its line stayed
+     * empty for a third of its length. The copy is premultiplied floats in
+     * 64px tiles, made where the stroke reads, alpha -1 until then.
+     * ponytail: float tiles, 64KB each; a stroke over a whole 4k canvas
+     * holds ~256MB, go 16-bit if that ever bites. */
+    var _smT = null, _smF = null;
+    function _smRead(d, rx, ry, rw, rh) {
+        var n = rw * rh * 4;
+        if (!_smF || _smF.length < n) _smF = new Float32Array(n);
+        var f = _smF;
+        for (var j = 0; j < rh; j++) for (var i = 0; i < rw; i++) {
+            var gx = rx + i, gy = ry + j, q = (j * rw + i) * 4;
+            var tl = _smT && _smT.get((gy >> 6) * 65536 + (gx >> 6)), o = ((gy & 63) * 64 + (gx & 63)) * 4;
+            if (tl && tl[o + 3] >= 0) { f[q] = tl[o]; f[q + 1] = tl[o + 1]; f[q + 2] = tl[o + 2]; f[q + 3] = tl[o + 3]; }
+            else { var a = d[q + 3] / 255; f[q] = d[q] * a; f[q + 1] = d[q + 1] * a; f[q + 2] = d[q + 2] * a; f[q + 3] = d[q + 3]; }
+        }
+        return f;
+    }
+    function _smWrite(f, rx, ry, rw, rh) {
+        if (!_smT) _smT = new Map();
+        for (var j = 0; j < rh; j++) for (var i = 0; i < rw; i++) {
+            var gx = rx + i, gy = ry + j, q = (j * rw + i) * 4, key = (gy >> 6) * 65536 + (gx >> 6);
+            var tl = _smT.get(key);
+            if (!tl) { tl = new Float32Array(16384).fill(-1); _smT.set(key, tl); }
+            var o = ((gy & 63) * 64 + (gx & 63)) * 4;
+            tl[o] = f[q]; tl[o + 1] = f[q + 1]; tl[o + 2] = f[q + 2]; tl[o + 3] = f[q + 3];
+        }
+    }
+
+    function _smudgeDab(p, x, y, mask, colorHex, alpha, sc, sz, tex, asp) {
         var ctx = _outCtx();
         if (!ctx) return;
         var ma = _smMaskA.get(mask);
@@ -2536,8 +2568,16 @@
         var mw = mask.width, mh = mask.height;
         var cx = mask._cx != null ? mask._cx : mw / 2, cy = mask._cy != null ? mask._cy : mh / 2;
         var ox = _round(x - cx), oy = _round(y - cy);
+        /* Krita's own rect for this dab (KisDabCacheBase): its corner the
+         * whole pixel under the cursor less half the tip, as wide as the tip
+         * plus that phase, rounded up. Our tip canvases are padded, so the
+         * dulling pick-up below is placed from this, not from them.
+         * ponytail: an unturned tip's size; a turned one's bounds are wider. */
+        var kw = (sz || mw) * _min(1, asp || 1), kh = (sz || mh) / _max(1, asp || 1);
+        var kx = _floor(x - kw / 2), ky = _floor(y - kh / 2);
+        var kW = _max(1, _ceil(x - kw / 2 - kx + kw - 1e-6)), kH = _max(1, _ceil(y - kh / 2 - ky + kh - 1e-6));
         var prev = _smPrev;
-        _smPrev = [x, y];
+        _smPrev = [x, y, kx + kW / 2, ky + kH / 2];
         if (!prev) return;                  // the first dab only loads the brush
         /* How far the pick-up moves: both ends rounded against the SAME
          * half size, so a 1.64px step alternates 1 and 2 as Krita's does.
@@ -2574,23 +2614,28 @@
         if (app.layerMgr && app.layerMgr.markDirty && ctx === app.ctx) app.layerMgr.markDirty(rx - 1, ry - 1, rw + 2, rh + 2);
         var img;
         try { img = ctx.getImageData(rx, ry, rw, rh); } catch (e) { return; }
-        var d = img.data, src = new Float32Array(mw * mh * 4);
+        var d = img.data, f = _smRead(d, rx, ry, rw, rh), src = new Float32Array(mw * mh * 4);
         var i, j, t, u, a, n;
         // What the brush picked up, premultiplied; off the canvas is transparent.
         for (j = 0; j < mh; j++) {
             for (i = 0; i < mw; i++) {
                 var gx = sx + i - rx, gy = sy + j - ry;
                 if (gx < 0 || gy < 0 || gx >= rw || gy >= rh) continue;
-                t = (gy * rw + gx) * 4; u = (j * mw + i) * 4; a = d[t + 3] / 255;
-                src[u] = d[t] * a; src[u + 1] = d[t + 1] * a; src[u + 2] = d[t + 2] * a; src[u + 3] = d[t + 3];
+                t = (gy * rw + gx) * 4; u = (j * mw + i) * 4;
+                src[u] = f[t]; src[u + 1] = f[t + 1]; src[u + 2] = f[t + 2]; src[u + 3] = f[t + 3];
             }
         }
         if (p.smudgeMode === 1) {
-            // Dulling: one colour, the pixel under the previous dab's centre.
-            var qx = _floor(prev[0]) - rx, qy = _floor(prev[1]) - ry, ar = 0, ag = 0, ab = 0, aa = 0;
+            /* Dulling: one colour, the pixel at the centre of the previous
+             * dab's rect -- QRect::center(), which rounds toward the top left,
+             * so a 30px dab at y 60 reads row 59. On a bristle tip one row is
+             * another bristle: under the dab's own centre Oil Camel laid 1.45x
+             * Krita's ink. */
+            var qx = kx + _round(prev[2] - kx - kW / 2) + ((kW - 1) >> 1) - rx;
+            var qy = ky + _round(prev[3] - ky - kH / 2) + ((kH - 1) >> 1) - ry, ar = 0, ag = 0, ab = 0, aa = 0;
             if (qx >= 0 && qy >= 0 && qx < rw && qy < rh) {
-                t = (qy * rw + qx) * 4; a = d[t + 3] / 255;
-                ar = d[t] * a; ag = d[t + 1] * a; ab = d[t + 2] * a; aa = d[t + 3];
+                t = (qy * rw + qx) * 4;
+                ar = f[t]; ag = f[t + 1]; ab = f[t + 2]; aa = f[t + 3];
             }
             for (n = 0; n < ma.length; n++) { u = n * 4; src[u] = ar; src[u + 1] = ag; src[u + 2] = ab; src[u + 3] = aa; }
         }
@@ -2617,19 +2662,20 @@
                 t = (py * rw + px) * 4; u = (j * mw + i) * 4;
                 if (stencil && !stencil[t + 3]) continue;
                 var k = k0 * m / 255, ci = 1 - c;
-                var da = d[t + 3] / 255;
                 // premultiplied: lerp(dst, lerp(pickup, paint, c), s * tip)
-                var oa = d[t + 3] + ((src[u + 3] * ci + pa) - d[t + 3]) * k;
-                var or = d[t] * da + ((src[u] * ci + pr) - d[t] * da) * k;
-                var og = d[t + 1] * da + ((src[u + 1] * ci + pg) - d[t + 1] * da) * k;
-                var ob = d[t + 2] * da + ((src[u + 2] * ci + pb) - d[t + 2] * da) * k;
-                if (oa <= 0) { if (!locked) d[t + 3] = 0; continue; }
+                var oa = f[t + 3] + ((src[u + 3] * ci + pa) - f[t + 3]) * k;
+                var or = f[t] + ((src[u] * ci + pr) - f[t]) * k;
+                var og = f[t + 1] + ((src[u + 1] * ci + pg) - f[t + 1]) * k;
+                var ob = f[t + 2] + ((src[u + 2] * ci + pb) - f[t + 2]) * k;
+                if (oa <= 0) { if (!locked) { d[t + 3] = 0; f[t] = f[t + 1] = f[t + 2] = f[t + 3] = 0; } continue; }
                 var inv = 255 / oa;
                 d[t] = _clamp(or * inv, 0, 255); d[t + 1] = _clamp(og * inv, 0, 255);
                 d[t + 2] = _clamp(ob * inv, 0, 255);
-                if (!locked) d[t + 3] = oa;
+                if (!locked) { d[t + 3] = oa; f[t] = or; f[t + 1] = og; f[t + 2] = ob; f[t + 3] = oa; }
+                else { a = f[t + 3] / 255; f[t] = d[t] * a; f[t + 1] = d[t + 1] * a; f[t + 2] = d[t + 2] * a; }
             }
         }
+        _smWrite(f, rx, ry, rw, rh);
         ctx.putImageData(img, rx, ry);
     }
 
@@ -2784,7 +2830,7 @@
                 _hatchT = H.thickness * hv(H.thick);
                 _hatchSep = H.separation * Math.pow(2, Math.floor((iv - 1) / 2) - _clamp(Math.ceil(hv(H.sep) * iv) - 1, 0, iv - 1));
             }
-            if (p.smudgeMode != null) _smudgeDab(p, dx, dy, mask, finalColor, alpha, sc, sz, tex);
+            if (p.smudgeMode != null) _smudgeDab(p, dx, dy, mask, finalColor, alpha, sc, sz, tex, asp);
             else _paintDab(_flowCtx, dx, dy, mask, finalColor, alpha, tex, p.textureScale, p.textureType, p.wetBlend);
         }
     }
@@ -4995,7 +5041,7 @@
             if (_params.hasOwnProperty(_fk)) _strokeParams[_fk] = _isArray(_params[_fk]) ? _cloneCurve(_params[_fk]) : _params[_fk];
         }
         _wet = [];                // the brush is loaded fresh each stroke
-        _smPrev = null;
+        _smPrev = null; _smT = null;
         _wetPos = [];
         _smoothAngle = NaN;
         _lastDabDist = 0;

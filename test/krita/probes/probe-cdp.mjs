@@ -53,10 +53,12 @@ await withPage(async (page) => {
             if (fill) { L.ctx.fillStyle = 'rgba(' + fill.slice(0, 3).join(',') + ',' + fill[3] / 255 + ')'; L.ctx.fillRect(0, 0, W, H); }
             for (const [x, y, w, h, ...c] of rects) { L.ctx.clearRect(x, y, w, h); L.ctx.fillStyle = 'rgba(' + c.slice(0, 3).join(',') + ',' + c[3] / 255 + ')'; L.ctx.fillRect(x, y, w, h); }
             const clock = performance.now; performance.now = () => 0;
-            const oneSeg = params.engineKind === 'sketch';   // as measure.mjs: Krita hands it the two ends only
+            const oneSeg = /^(sketch|curve)$/.test(params.engineKind);   // as measure.mjs: Krita hands it the two ends only
             for (const [x0, y0, p0, x1, y1, p1] of lines) {
                 const n = oneSeg ? 1 : Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0)));
-                b.beginStroke(x0, y0, p0, '#000000');
+                // as measure.mjs: Node.paintLine's first dab lands half a pixel along the line
+                const len = Math.hypot(x1 - x0, y1 - y0), h = oneSeg || !len ? 0 : 0.5 / len;
+                b.beginStroke(x0 + (x1 - x0) * h, y0 + (y1 - y0) * h, p0 + (p1 - p0) * h, '#000000');
                 for (let i = 1; i <= n; i++) { const t = i / n; b.moveStroke(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, p0 + (p1 - p0) * t, '#000000'); }
                 b.endStroke();
             }

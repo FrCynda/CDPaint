@@ -826,7 +826,12 @@ await withPage(async (page) => {
         run({ colorRate: 100, smudgeRate: 25 }, 90, 100); const short = a(95);
         run({ colorRate: 0, smudgeRate: 50 }, 30, 190, c => { c.fillStyle = '#0000ff'; c.fillRect(0, 0, 60, 200); });
         const drag = [a(80), a(100), a(120)];
-        return JSON.stringify({ dot, off, short, drag, flat, byOp, half });
+        // blue on row 99 only: a dulling dab at y 100 reads it, as Krita's QRect::center() does
+        run({ smudgeMode: 1, colorRate: 0, smudgeRate: 100 }, 30, 190, c => { c.fillStyle = '#0000ff'; c.fillRect(0, 99, 200, 1); });
+        const dull = L().getImageData(120, 110, 1, 1).data[3];
+        // a quarter of a level a dab: Krita's precise stroke copy adds it up, 8 bits rounded it away
+        run({ smudgeMode: 1, colorRate: 0.4, smudgeRate: 50 }, 20, 180); const faint = a(100);
+        return JSON.stringify({ dot, off, short, drag, flat, byOp, half, dull, faint });
     })()`));
     check('a colour smudge dab on its own only picks up, as in Krita', sm.dot === 0, 'alpha ' + sm.dot);
     check('...smudge rate 0 lays nothing down', sm.off === 0, 'alpha ' + sm.off);
@@ -837,6 +842,10 @@ await withPage(async (page) => {
         sm.flat.every((v, i) => Math.abs(v - sm.byOp[i]) <= 3) && sm.flat[0] > 20, sm.flat.join(',') + ' vs ' + sm.byOp.join(','));
     check("...and so does the opacity slider: 50% builds to Krita's 209, not 253 (smudge7)",
         Math.abs(sm.half - 209) <= 12, 'alpha ' + sm.half);
+    check("...and dulling picks its colour up at the previous dab's rect centre, rounded to the top left",
+        sm.dull > 100, 'alpha ' + sm.dull);
+    check('...and dabs too faint for 8 bits still add up over a stroke, as on Krita\'s precise copy',
+        sm.faint >= 4, 'alpha ' + sm.faint);
     /* Measured against a real Krita dab (test/krita): its "soft" tip reads
      * the curve at the SQUARED radius, and its curves are splines. Read at
      * the plain radius, Airbrush Soft came out at 0.59x Krita's ink. And a
