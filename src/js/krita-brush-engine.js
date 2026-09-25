@@ -133,7 +133,7 @@
         }
 
         function _key(shape, size, hardness, angle, aspect, phase) {
-            return shape + '|' + (/^k(circle|gauss)/.test(shape) ? size : _round(size)) + '|' + _round(hardness) + '|'
+            return shape + '|' + (/^k(circle|gauss|grect|lrect)/.test(shape) ? size : _round(size)) + '|' + _round(hardness) + '|'
                 + angle.toFixed(2) + '|' + (aspect || 1).toFixed(2) + (phase ? '|' + phase : '');
         }
 
@@ -191,7 +191,7 @@
         if (shape.indexOf('kgrect') === 0 || shape.indexOf('klrect') === 0) {
             var hy = shape.split(':')[1];
             return _kritaGaussRectMask(size, aspect, hardness / 100, (hy ? +hy : hardness) / 100, ang,
-                                       shape.charAt(1) === 'l', shape.charAt(6) === 'a');
+                                       shape.charAt(1) === 'l', shape.charAt(6) === 'a', phase);
         }
         if (kc) return _kritaCircleMask(size, aspect, hardness / 100, phase,
                                         shape.slice(-3) === ':aa', shape.charAt(1) === 'g', ang);
@@ -361,7 +361,7 @@
      * rows of full ink. Under 10px on a side and anti-aliased it is
      * supersampled from the pixel's corner like the circle (_kritaCircleMask),
      * a third of a pixel up and left: that bar's rows 46,209,254,236,104. */
-    function _kritaGaussRectMask(size, aspect, hard, hardY, ang, lin, aa) {
+    function _kritaGaussRectMask(size, aspect, hard, hardY, ang, lin, aa, phase) {
         var w = size, h = size / aspect;
         if (aspect < 1) { w = size * aspect; h = size; }
         var xf = _max(1e-6, (1 - hard / 2) * w * 0.1), yf = _max(1e-6, (1 - hardY / 2) * h * 0.1);
@@ -370,24 +370,36 @@
         var af = 1 / (4 * _erf(hw * kx) * _erf(hh * ky));
         if (!isFinite(af)) af = 0;
         // even, so the centre is a pixel corner and a whole-pixel dab is not smeared across two
-        var D = 2 * _ceil(_hypot(w, h) / 2) + 2, canvas = new OffscreenCanvas(D, D), c = D / 2;
-        var ca = _cos(ang || 0), sa = -_sin(ang || 0), ss = lin && aa && (w < 10 || h < 10) ? (w < 1 || h < 1 ? 6 : 3) : 1;
+        var D = 2 * _ceil(_hypot(w, h) / 2) + 2, canvas = new OffscreenCanvas(D, D), c = D / 2, cy = c;
+        if (phase) { canvas._cx = c += phase[0]; canvas._cy = cy += phase[1]; }   // at the dab's sub-pixel phase, as the circle
+        var ca = _cos(ang || 0), sa = -_sin(ang || 0), ss = aa && (w < 10 || h < 10) ? (w < 1 || h < 1 ? 6 : 3) : 1;
         var ctx = canvas.getContext('2d'), img = ctx.createImageData(D, D), d = img.data;
         for (var j = 0; j < D; j++) {
             for (var i = 0; i < D; i++) {
                 if (lin) {
                     var v = 0;
                     for (var sy = 0; sy < ss; sy++) for (var sx = 0; sx < ss; sx++) {
-                        var x1 = i + 0.5 - c + sx / ss, y1 = j + 0.5 - c + sy / ss;
+                        var x1 = i + 0.5 - c + sx / ss, y1 = j + 0.5 - cy + sy / ss;
                         var ux = _abs(ca * x1 - sa * y1), uy = _abs(sa * x1 + ca * y1);
                         if (ux < w / 2 && uy < h / 2) v += _min(1, (1 - ux * 2 / w) / _max(1e-6, 1 - hard), (1 - uy * 2 / h) / _max(1e-6, 1 - hardY));
                     }
                     v /= ss * ss;
                 } else {
-                    var x0 = i + 0.5 - c, y0 = j + 0.5 - c;
-                    var x = _abs(ca * x0 - sa * y0), y = _abs(sa * x0 + ca * y0);
-                    if (x > w / 2 || y > h / 2) continue;
-                    var v = af * (_erf((hw + x) * kx) + _erf((hw - x) * kx)) * (_erf((hh + y) * ky) + _erf((hh - y) * ky));
+                    /* Anti-aliased, the gauss square fades its last pixel to
+                     * nothing (KisAntialiasingFadeMaker2D) and is supersampled
+                     * from the pixel's corner under 10px, as the plain one:
+                     * Poska Square's small dabs sat a third of a pixel up and
+                     * left in Krita. */
+                    var v = 0;
+                    for (var sy2 = 0; sy2 < ss; sy2++) for (var sx2 = 0; sx2 < ss; sx2++) {
+                        var x0 = i + 0.5 - c + sx2 / ss, y0 = j + 0.5 - cy + sy2 / ss;
+                        var x = _abs(ca * x0 - sa * y0), y = _abs(sa * x0 + ca * y0);
+                        if (x > w / 2 || y > h / 2) continue;
+                        var g = af * (_erf((hw + x) * kx) + _erf((hw - x) * kx)) * (_erf((hh + y) * ky) + _erf((hh - y) * ky));
+                        if (aa) g *= _min(1, w / 2 - x) * _min(1, h / 2 - y);
+                        v += g;
+                    }
+                    v /= ss * ss;
                 }
                 if (v > 0) { var k = (j * D + i) * 4; d[k] = d[k + 1] = d[k + 2] = 255; d[k + 3] = _round(_min(1, v) * 255); }
             }
@@ -2312,6 +2324,8 @@
 
     /* base scaled by its sensor, floored at <param>Min percent. */
     function _dyn(p, key, base, sc, seed) {
+        // a Krita option's strength scales it, curve or none (KisCurveOption's constant)
+        if (p[key + 'Strength'] != null) base *= p[key + 'Strength'];
         var list = p[key + 'Sensors'], v;
         if (list) v = _kritaInputs(list, p[key + 'Combine'], sc, seed, p);
         else {
@@ -3021,16 +3035,22 @@
             var kf = /^krita(-gauss)?(-aa)?$/.exec(_params.falloff || '');
             // a hard square keeps the plain box: it paints its pixel however small (EO Pixel Perfect)
             if (shape === 'square' && kf && (kf[1] || hardness < 100 || (_params.hardnessY != null && _params.hardnessY < 100)))
-                shape = (kf[1] ? 'kgrect' : 'klrect' + (kf[2] ? 'a' : '')) + (_params.hardnessY != null ? ':' + _params.hardnessY : '');
+                shape = (kf[1] ? 'kgrect' : 'klrect') + (kf[2] ? 'a' : '') + (_params.hardnessY != null ? ':' + _params.hardnessY : '');
             if (shape === 'circle' && kf) {
                 shape = (kf[1] ? 'kgauss' : 'kcircle') + (kf[2] ? ':aa' : '');
                 sz = sz < 16 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);   // its real size, see _kritaCircleMask
             }
+            /* A square too, to an eighth up to 32px: rounded to whole pixels,
+             * Poska Square's line thickened in steps where Krita's tapers. */
+            if (/^k(grect|lrect)/.test(shape)) sz = sz <= 32 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);
             var ph = null;
             // Sharpness snaps dabs to whole pixels in Krita, so it keeps the old path.
             // Krita's own tips only: the built-in brushes keep the look they have.
             if (x != null && sz <= 32 && !(_params.sharpness > 0) &&
-                (/^k(circle|gauss)/.test(shape) || shape.indexOf('curve:') === 0)) {
+                (/^k(circle|gauss|grect)/.test(shape) || shape.indexOf('curve:') === 0)) {
+                /* ponytail: Krita places its plain square (klrect) at its
+                 * phase too, but Grease Charcoal's subtract texture fell
+                 * 0.823 -> 0.746 with it; open until that texture is. */
                 ph = [_round((x % 1) * 16) / 16, _round((y % 1) * 16) / 16];
             } else if (x != null && /^k(circle|gauss)/.test(shape)) {
                 /* Sharpness: Krita rounds the dab's corner (cursor minus half
@@ -3788,7 +3808,7 @@
             /* spacingStrength: a Krita spacing option's own multiplier, which
              * holds when its curve box is clear and can pass 1. */
             if (p.spacingStrength != null || (p.spacingSrc && p.spacingSrc !== 'none')) {
-                g *= _dyn(p, 'spacing', p.spacingStrength == null ? 1 : p.spacingStrength, sc, 10);
+                g *= _dyn(p, 'spacing', 1, sc, 10);
             }
             /* Krita's floor (MIN_DISTANCE_SPACING, kis_distance_information.cpp).
              * At 1px Ink-1 Precision's 3px dabs, due every 0.45px, stacked to
@@ -4649,7 +4669,7 @@
         textureSrc: 'none',      textureMin: 0,    textureCurve: 1,
         colorRateSrc: 'none',    colorRateMin: 0,  colorRateCurve: 1,
         spacingSrc: 'none',      spacingMin: 0,    spacingCurve: 1,
-        spacingStrength: null,
+        spacingStrength: null, sizeStrength: null,
         dabCountSrc: 'none',     dabCountMin: 0,   dabCountCurve: 1,
         offsetSrc: 'none',       offsetMin: 0,     offsetCurve: 1,
         /* How far the two stroke-position sensors reach: dabs for fade, the

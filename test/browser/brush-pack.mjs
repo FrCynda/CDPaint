@@ -422,6 +422,9 @@ await withPage(async (page) => {
                     PressureRotation: 'true', RotationUseCurve: 'true',
                     RotationSensor: '<params lockedAngleMode="1" id="drawingangle" angleOffset="0"> <curve>0,0;1,1;</curve> </params>' } }).params,
                 // GDquest Paint Soft: the drawing angle 98 degrees on.
+                sizeStr: BP.toPreset({ params: { brush_definition: round, PressureSize: 'true', SizeValue: '0.82', SizeUseCurve: 'true',
+                    SizeSensor: '<!DOCTYPE params> <params id="pressure"/> ' } }).params,
+                sizeOff: BP.toPreset({ params: { brush_definition: round, PressureSize: 'false', SizeValue: '0.82' } }).params,
                 penRot: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true', RotationValue: '1',
                     RotationSensor: '<!DOCTYPE params> <params id="rotation"/> ' } }).params,
                 angleOff: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
@@ -443,6 +446,8 @@ await withPage(async (page) => {
          * hard lines out to nearby points, the opacity curve their ink. */
         check('a drawing angle turns the tip by its angle offset on top of the stroke (Paint Soft 98)',
             B.angleOff.angleSrc === 'direction' && B.angleOff.angle === 98, B.angleOff.angleSrc + ' ' + B.angleOff.angle);
+        check("a switched-on size option keeps its strength, and a switched-off one none (Poska Square)",
+            B.sizeStr.sizeStrength === 0.82 && B.sizeOff.sizeStrength == null, B.sizeStr.sizeStrength + ' ' + B.sizeOff.sizeStrength);
         check("pen rotation takes Krita's rotation formula, a half turn on an upright pen (Bear Paw)",
             B.penRot.angleSrc === 'twist' && B.penRot.angleStrength === 1, B.penRot.angleSrc + ' ' + B.penRot.angleStrength);
         const fl = B.fadeList;

@@ -1065,6 +1065,20 @@ await withPage(async (page) => {
         fresh(() => { b.setParam('shape', 'square'); b.setParam('size', 30); b.setParam('falloff', 'krita-gauss'); b.setParam('hardness', 43); });
         stroke([[100, 100]]);
         out.grect = [100, 112].map(x => L().getImageData(x, 100, 1, 1).data[3]);
+        // Poska Square: a 7x4 anti-aliased gauss square is supersampled from the pixel's corner, a third up and left
+        fresh(() => { b.setParam('shape', 'square'); b.setParam('size', 6.9); b.setParam('aspectRatio', 1.67); b.setParam('falloff', 'krita-gauss-aa'); b.setParam('hardness', 90); });
+        stroke([[100, 60]]);
+        { const d = L().getImageData(90, 50, 20, 20).data; let s = 0, sy = 0;
+          for (let i = 3; i < d.length; i += 4) { s += d[i]; sy += d[i] * (50 + ((i - 3) / 4 / 20 | 0) + 0.5); }
+          out.gsmall = sy / s; }
+        // ...at its own size, not the first one cached for that whole pixel: 6.9 after 6.5 is bigger
+        const gink = (sz) => { fresh(() => { b.setParam('shape', 'square'); b.setParam('size', sz); b.setParam('falloff', 'krita-gauss-aa'); b.setParam('hardness', 90); });
+            stroke([[100, 60]]); return L().getImageData(90, 50, 20, 20).data.reduce((n, v, i) => n + (i % 4 === 3 ? v : 0), 0); };
+        out.gsizes = [gink(6.5), gink(6.9)];
+        // ...and its size option's strength scales the dab: 0.82 of 30 is 25 across
+        fresh(() => { b.setParam('size', 30); b.setParam('sizeStrength', 0.82); });
+        stroke([[100, 100]]);
+        out.strength = L().getImageData(70, 100, 60, 1).data.filter((v, i) => i % 4 === 3 && v > 128).length;
         // Grease Charcoal: Krita's default square ramps straight from its fade to the edge.
         fresh(() => { b.setParam('shape', 'square'); b.setParam('size', 30); b.setParam('falloff', 'krita'); b.setParam('hardness', 50); });
         stroke([[100, 100]]);
@@ -1115,6 +1129,10 @@ await withPage(async (page) => {
     /* probes/defrect: it was drawn as a solid box whatever the fade. */
     check("Krita's default square fades linearly from its fade to the edge (Grease Charcoal)",
         bank.lrect[0] > 250 && bank.lrect[1] > 40 && bank.lrect[1] < 140, JSON.stringify(bank.lrect));
+    check("a small anti-aliased gauss square sits a third of a pixel up, as Krita supersamples it from the corner (Poska Square)",
+        bank.gsmall > 59.55 && bank.gsmall < 59.8, 'centre row ' + bank.gsmall.toFixed(3));
+    check('...at its own fractional size, not the first one cached for that whole pixel', bank.gsizes[1] > bank.gsizes[0] * 1.05, bank.gsizes.join(' < '));
+    check("a Krita size option's strength scales the dab (Poska Square's 0.82)", Math.abs(bank.strength - 25) <= 1, bank.strength + 'px');
     check("full sharpness keeps every pixel the tip touches, as Krita's threshold does",
         bank.solid >= 12, `${bank.solid} solid pixels`);
     check("a small Krita round sits at its own sixteenth of a pixel, not the nearest quarter",

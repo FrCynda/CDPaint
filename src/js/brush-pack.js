@@ -711,6 +711,11 @@
             else warn.push('blend mode "' + op + '" has no equivalent; painting normally');
         }
 
+        /* The size option's strength scales the dab whenever the option is
+         * on (KisStandardOption): Nylnook Poska Square's 0.82 laid 1.24x
+         * Krita's ink without it. */
+        if (_bool(P.PressureSize) && _num(P.SizeValue, 1) !== 1) out.sizeStrength = _num(P.SizeValue, 1);
+
         // Size and flow ride their sensors the same way ours do.
         [['Size', 'size'], ['Flow', 'flow'], ['Opacity', 'opacity']].forEach(function (pair) {
             var s = _sensorFor(P, pair[0], pair[0] === 'Flow' && preset.paintop === 'paintbrush');
