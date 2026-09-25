@@ -998,6 +998,24 @@ await withPage(async (page) => {
     })()`);
     // 13 gaps of 11.76 put the last dab's centre at 172.9, 12 of 12.35 at 168.2
     check("a Krita tip's dabs are spaced by its whole-pixel height", whole >= 175 && whole <= 178, 'last inked row ' + whole);
+    /* Krita builds a small round dab at its true size and sub-pixel place;
+     * rounded to a sixteenth, Line Marker's 1px line scored IoU 0.72. Dabs
+     * a hundredth of a pixel or of a size apart must not come out the same. */
+    const exact = await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ hardness: 50, falloff: 'krita', flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none' })) b.setParam(k, v);
+        const dab = (x, sz) => {
+            b.setParam('size', sz);
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(x, 100.53, 1, '#000000'); b.endStroke();
+            return Array.from(__B.layer().ctx.getImageData(95, 95, 10, 10).data).join();
+        };
+        const r = [dab(100.30, 2.54) !== dab(100.31, 2.54), dab(100.30, 2.52) !== dab(100.30, 2.54)];
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return r;
+    })()`);
+    check("a small Krita dab is built at its exact place and size", exact[0] && exact[1], 'place, size differ: ' + exact);
     /* Krita turns a tip by (1 - strength * sensor) * pi (KisRotationOption),
      * so Waterpaint's 0.19 random rotation is a small wobble about a half
      * turn, not the full spin it used to get. A flat 30x4 tip, dabs apart: */

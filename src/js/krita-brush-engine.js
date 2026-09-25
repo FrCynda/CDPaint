@@ -3021,7 +3021,10 @@
      * dab from Krita's 197 to 137 and spread it over three rows instead of
      * two -- Krita works each pixel out at the dab's true position. Small
      * round masks are therefore built at the dab's own sub-pixel phase
-     * (x, y given), to a sixteenth of a pixel; big ones cannot see the difference.
+     * (x, y given), and at their true size, unrounded: Krita's dab cache
+     * reuses a dab only at the same phase (KisDabCacheBase, precision 5),
+     * and a sixteenth left Line Marker's 1px line at IoU 0.72 where
+     * exact is 0.98. Big ones cannot see the difference.
      * Krita-imported tips only (see below). */
     function _maskFor(shape, sz, hardness, angleDeg, aspect, x, y) {
         var mask;
@@ -3038,7 +3041,7 @@
                 shape = (kf[1] ? 'kgrect' : 'klrect') + (kf[2] ? 'a' : '') + (_params.hardnessY != null ? ':' + _params.hardnessY : '');
             if (shape === 'circle' && kf) {
                 shape = (kf[1] ? 'kgauss' : 'kcircle') + (kf[2] ? ':aa' : '');
-                sz = sz < 16 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);   // its real size, see _kritaCircleMask
+                sz = sz < 16 ? _max(0.05, sz) : _round(sz);   // its real size, see _kritaCircleMask
             }
             /* A square too, to an eighth up to 32px: rounded to whole pixels,
              * Poska Square's line thickened in steps where Krita's tapers. */
@@ -3051,7 +3054,7 @@
                 /* ponytail: Krita places its plain square (klrect) at its
                  * phase too, but Grease Charcoal's subtract texture fell
                  * 0.823 -> 0.746 with it; open until that texture is. */
-                ph = [_round((x % 1) * 16) / 16, _round((y % 1) * 16) / 16];
+                ph = [x % 1, y % 1];
             } else if (x != null && /^k(circle|gauss)/.test(shape)) {
                 /* Sharpness: Krita rounds the dab's corner (cursor minus half
                  * its size, at least a pixel) to a whole pixel
