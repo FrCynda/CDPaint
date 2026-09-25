@@ -2660,11 +2660,12 @@
          * dab -- and a stroke is a few thousand dabs. */
         var sc = _scDab;
         sc.x = x; sc.y = y; sc.pressure = _sp; sc.strokeAngle = strokeAngle;
-        /* Krita's locked drawing angle is the first dab's, and with no dab
-         * before it that is measured from the canvas origin
-         * (KisDistanceInformation starts at 0,0). */
+        /* Krita's first dab has no dab before it, so its drawing angle is
+         * measured from the canvas origin (KisDistanceInformation starts at
+         * 0,0), and a locked angle keeps it. Taken along the stroke, Lace's
+         * first dab lay flat where Krita's stands turned. */
         if (_dabIndex === 1) _lockAngle = _atan2(y, x) * 180 / _PI;
-        if (p.angleLocked) sc.strokeAngle = _lockAngle;
+        if (p.angleLocked || (p.originAngle && _dabIndex === 1)) sc.strokeAngle = _lockAngle;
 
         /* Which of the two a taper thins. Krita and CSP both default to the
          * WIDTH — a nib lifting off the paper narrows to a point, it does not
@@ -3701,8 +3702,11 @@
             if (p.autoSpacing > 0 && p.smudgeMode != null && d >= 1) d += 1;
             return p.autoSpacing > 0 ? p.autoSpacing * (d < 1 ? d : Math.sqrt(d)) : d * spacing;
         }
-        function _stepFor(pr, px, py, ang) {
-            var sc = { x: px, y: py, pressure: pr, strokeAngle: ang };
+        /* rot: the dab's own drawing angle where it is not the stroke's
+         * (Krita's first dab, see originAngle): the inputs read it, and the
+         * spacing ellipse turns with the tip it gives. */
+        function _stepFor(pr, px, py, ang, rot) {
+            var sc = { x: px, y: py, pressure: pr, strokeAngle: rot != null ? rot : ang };
             var d = _max(0.5, _dyn(p, 'size', sz, sc, 1));
             var w = d, h = d;
             if (_tipAsp >= 1) h = d / _tipAsp; else w = d * _tipAsp;
@@ -3824,7 +3828,11 @@
                     /* The first gap is along the stroke too: sized for a
                      * left-to-right stroke, GIMP's 532x400 goat went down a
                      * 70px line in 3 dabs where GIMP lays 4. */
-                    step = _stepFor(_tp, prev.x, prev.y, _firstAngle);
+                    /* Krita spaces the second dab by the first one's ellipse,
+                     * and that dab is turned from the origin: taken along the
+                     * stroke, every later Lace dab sat 0.3-1.6px back. */
+                    step = _stepFor(_tp, prev.x, prev.y, _firstAngle,
+                        p.originAngle ? _atan2(prev.y, prev.x) * 180 / _PI : null);
                 }
             }
             _pxOff = pxLine ? [_ceil(prev.x - 0.5) - prev.x, _ceil(prev.y - 0.5) - prev.y] : null;
@@ -4586,7 +4594,7 @@
         fadeSteps: 25,
         distanceLength: 30,
         fadePeriodic: false, distancePeriodic: false,
-        angleLocked: false,
+        angleLocked: false, originAngle: false,
         smoothingBasic: 50,
         smoothingWeighted: 100,
         smoothingRope: 100,

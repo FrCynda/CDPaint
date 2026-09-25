@@ -2741,6 +2741,30 @@ await withPage(async (page) => {
         Math.abs(shrink.ink / shrink.want - 1) <= 0.02, 'ink ' + shrink.ink.toFixed(2) + ' of ' + shrink.want.toFixed(2));
     }
 
+    /* Krita draws a picture tip once from its halving pyramid, bilinear at
+     * the true scale and the dab's sub-pixel phase (KisQImagePyramid): a
+     * 64px tip at 22px comes from its 32px level at 0.69, so a 2px line
+     * lands on one column at 0.77 of full. Averaged straight to 22px and
+     * shifted again it smeared over three (Light Shine's stars, IoU 0.59). */
+    const kp = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        __B.doc(200, 200);
+        const c = document.createElement('canvas'); c.width = c.height = 64;
+        const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(30, 0, 2, 64);
+        b.loadCustomTip(c.toDataURL('image/png'), null);
+        await new Promise(r => setTimeout(r, 400));
+        ['texture', 'opacity', 'flow', 'scatter', 'sizeSrc', 'taperStart', 'taperEnd', 'tip2Depth', 'sharpness'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        b.setParam('dynamicsMode', 'off'); b.setParam('size', 22); b.setParam('hardness', 100); b.setParam('tipShrink', 'area');
+        b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+        await new Promise(r => setTimeout(r, 200));
+        const d = __B.layer().ctx.getImageData(95, 100, 10, 1).data, row = [];
+        for (let i = 3; i < d.length; i += 4) row.push(d[i]);
+        b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
+        return JSON.stringify(row);
+    })()`, { awaitPromise: true }));
+    check("a Krita picture tip is drawn once from its pyramid: a thin line stays one column",
+        kp[4] >= 185 && kp[4] <= 205 && kp[3] <= 8 && kp[5] <= 8, JSON.stringify(kp));
+
     /* Tips are 1024px now rather than 200, and every distinct size, angle
      * and squash of one is baked and kept. A stroke whose size rides the pen
      * asks for a different one per pressure step, so unbounded that cache is
@@ -3156,6 +3180,39 @@ await withPage(async (page) => {
         out.free = await run(() => { oval(); b.setParam('aspectRatio', 3); b.setParam('angleSrc', 'direction'); }, 100, 100, 180, [150]);
         out.locked = await run(() => { oval(); b.setParam('aspectRatio', 3); b.setParam('angleSrc', 'direction');
             b.setParam('angleLocked', true); }, 100, 100, 180, [150]);
+        // Unlocked too, Krita's first dab is turned by the angle from the origin (Lace).
+        const first = async (origin) => {
+            __B.doc(200, 200);
+            ['sizeSrc','flowSrc','angle','angleLocked','sizeSensors','spacing','taperStart','taperEnd','smoothingMode']
+                .forEach(k => b.setParam(k, b.DEFAULTS[k]));
+            oval(); b.setParam('size', 40); b.setParam('aspectRatio', 6); b.setParam('angleSrc', 'direction');
+            b.setParam('originAngle', origin);
+            b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+            await new Promise(r => setTimeout(r, 150));
+            const d = __B.layer().ctx.getImageData(112, 0, 1, 200).data;
+            let top = -1; for (let y = 0; y < 200 && top < 0; y++) if (d[y * 4 + 3] >= 128) top = y;
+            return top;
+        };
+        out.firstFlat = await first(false);
+        out.firstTurned = await first(true);
+        // ...and its ellipse spaces the second dab: turned 45 degrees, 27px on, not 60,
+        // so the gap at 122 between the first dab and the next one fills.
+        const reach = async (origin) => {
+            __B.doc(200, 200);
+            ['sizeSrc','flowSrc','angle','angleLocked','sizeSensors','taperStart','taperEnd','smoothingMode','autoSpacing']
+                .forEach(k => b.setParam(k, b.DEFAULTS[k]));
+            oval(); b.setParam('aspectRatio', 3); b.setParam('spacing', 200); b.setParam('angleSrc', 'direction');
+            b.setParam('originAngle', origin);
+            b.beginStroke(100, 100, 1, '#000000');
+            for (let i = 1; i <= 50; i++) b.moveStroke(100 + i, 100, 1, '#000000');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 150));
+            const d = __B.layer().ctx.getImageData(0, 100, 200, 1).data;
+            return d[122 * 4 + 3];
+        };
+        out.reachPlain = await reach(false);
+        out.reachOrigin = await reach(true);
+        b.setParam('originAngle', false);
         b.loadPreset('Round');
         return JSON.stringify(out);
     })()`, { awaitPromise: true }));
@@ -3166,6 +3223,10 @@ await withPage(async (page) => {
         kr.fade[0] < kr.fade[1] / 2 && kr.fade[1] >= 27, kr.fade.join(' -> '));
     check("a locked drawing angle holds the first dab's turn, measured from the origin",
         kr.free[0] <= 12 && kr.locked[0] >= 18, `free ${kr.free[0]}, locked ${kr.locked[0]}`);
+    check("...and unlocked, Krita's first dab still turns by the angle from the origin",
+        kr.firstFlat >= 95 && kr.firstFlat <= 99 && kr.firstTurned >= 105, `flat ${kr.firstFlat}, turned ${kr.firstTurned}`);
+    check("...and the second dab is spaced by that first dab's turned ellipse",
+        kr.reachPlain === 0 && kr.reachOrigin >= 128, `alpha at 122: plain ${kr.reachPlain}, origin ${kr.reachOrigin}`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -1132,6 +1132,7 @@
         }
 
         out.curveSmooth = true;   // Krita draws every curve as a spline
+        out.originAngle = true;   // and turns its first dab by the angle from the canvas origin
         out.speedMax = 30;        // and reads speed against 30 px/ms (maxAllowedSpeedValue)
 
         /* A Krita option that is switched off holds that dial still. Left
