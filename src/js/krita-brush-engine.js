@@ -2357,7 +2357,7 @@
     function _dynAngle(p, baseAngle, sc) {
         var src = p.angleSrc;
         if (src === 'direction' && sc.strokeAngle != null) return sc.strokeAngle + baseAngle;
-        if (src === 'twist') return baseAngle + (_penTwist % 360);
+        if (src === 'twist' && p.angleStrength == null) return baseAngle + (_penTwist % 360);
         if (src === 'tilt') return baseAngle + _atan2(_penTiltY, _penTiltX) * 180 / _PI;
         /* How far the turn reaches. 180 is a full turn either way, which is
          * what this always did; anything less is a tip that wobbles rather
@@ -2371,8 +2371,12 @@
          * and wobbles from there: Waterpaint's knife turns 160..207 degrees,
          * not a full spin. */
         if (p.angleStrength != null && src && src !== 'none') {
-            var c = _curveAt(p.angleCurve, _sensor(src, sc, 11, p), p.curveSmooth);
-            var v = p.angleStrength * (2 * c - 1) * (src === 'random' ? 1 : -1);
+            /* Pen rotation is additive too, -180..180 read as -1..1
+             * (KisDynamicSensorRotation), so an upright pen is the half turn
+             * alone: Bear Paw's paw stands on its head in Krita. */
+            var tw = src === 'twist' ? 0.5 + (((_penTwist % 360) + 540) % 360 - 180) / 360 : null;
+            var c = _curveAt(p.angleCurve, tw != null ? tw : _sensor(src, sc, 11, p), p.curveSmooth);
+            var v = p.angleStrength * (2 * c - 1) * (src === 'random' || tw != null ? 1 : -1);
             v = ((v + 1) % 2 + 2) % 2 - 1;
             return baseAngle + 180 + 180 * v;
         }

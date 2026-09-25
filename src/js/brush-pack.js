@@ -827,8 +827,9 @@
         /* Inputs that are not themselves an angle go through Krita's own
          * formula: strength and curve kept, and a half turn on top (see
          * _dynAngle). A switched-on option with no input is the half turn
-         * alone. The angle inputs keep pointing the tip as they did. */
-        if (_bool(P.PressureRotation) && !(rot && /^(direction|twist|tilt)$/.test(rot.src || ''))) {
+         * alone. Direction and tilt keep pointing the tip as they
+         * did; pen rotation is an added turn in Krita, so it takes the formula. */
+        if (_bool(P.PressureRotation) && !(rot && /^(direction|tilt)$/.test(rot.src || ''))) {
             if (rot && rot.src) {
                 out.angleStrength = _num(P.RotationValue, 1);
                 if (rot.curve) out.angleCurve = rot.curve;

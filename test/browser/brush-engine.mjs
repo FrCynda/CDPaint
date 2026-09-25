@@ -933,11 +933,11 @@ await withPage(async (page) => {
      * turn, not the full spin it used to get. A flat 30x4 tip, dabs apart: */
     const wob = JSON.parse(await page.eval(`(() => {
         const b = PaintApp.brush;
-        const tall = (strength) => {
+        const tall = (strength, src = 'random') => {
             b.forgetSaved('Round'); b.loadPreset('Round');
             b.setParam('size', 30); b.setParam('aspectRatio', 7.5); b.setParam('spacing', 150);
             b.setParam('hardness', 100); b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
-            b.setParam('angleSrc', 'random'); b.setParam('angleStrength', strength); b.setParam('angleCurve', [[0, 0], [1, 1]]);
+            b.setParam('angleSrc', src); b.setParam('angleStrength', strength); b.setParam('angleCurve', [[0, 0], [1, 1]]);
             __B.layer().ctx.clearRect(0, 0, 200, 200);
             b.beginStroke(20, 100, 1, '#000000');
             for (let x = 21; x <= 180; x++) b.moveStroke(x, 100, 1, '#000000');
@@ -947,8 +947,12 @@ await withPage(async (page) => {
             for (let y = 0; y < 200; y++) for (let x = 0; x < 200; x++) if (d[(y * 200 + x) * 4 + 3] > 60) { top = Math.min(top, y); bot = Math.max(bot, y); }
             return bot - top + 1;
         };
-        return JSON.stringify({ small: tall(0.1), full: tall(1) });
+        // pen rotation is additive in Krita: strength 0.5 at a 90 degree twist is a 225 degree turn, diagonal
+        b.setPenState({ twist: 90 }); const tw = tall(0.5, 'twist'); b.setPenState({ twist: 0 });
+        return JSON.stringify({ small: tall(0.1), full: tall(1), tw });
     })()`));
+    check("...and so does pen rotation, an added turn: strength 0.5 at 90 degrees lies diagonal (Bear Paw)",
+        wob.tw >= 18 && wob.tw <= 26, 'height ' + wob.tw);
     check("a Krita rotation strength keeps the tip's turn to a wobble", wob.small <= 12 && wob.full >= 22, JSON.stringify(wob));
     /* Krita smooths speed over the last few samples (KisSpeedSmoother) and
      * reads it against its own ceiling; with the clock stopped, as in the

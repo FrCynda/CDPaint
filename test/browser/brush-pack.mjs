@@ -422,6 +422,8 @@ await withPage(async (page) => {
                     PressureRotation: 'true', RotationUseCurve: 'true',
                     RotationSensor: '<params lockedAngleMode="1" id="drawingangle" angleOffset="0"> <curve>0,0;1,1;</curve> </params>' } }).params,
                 // GDquest Paint Soft: the drawing angle 98 degrees on.
+                penRot: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true', RotationValue: '1',
+                    RotationSensor: '<!DOCTYPE params> <params id="rotation"/> ' } }).params,
                 angleOff: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
                     RotationSensor: '<params id="drawingangle" fanCornersEnabled="1" angleOffset="98" lockedAngleMode="0" fanCornersStep="90"/>' } }).params,
                 // Natural Media Ink Pen: the curve engine, its width on a fade+pressure list.
@@ -441,6 +443,8 @@ await withPage(async (page) => {
          * hard lines out to nearby points, the opacity curve their ink. */
         check('a drawing angle turns the tip by its angle offset on top of the stroke (Paint Soft 98)',
             B.angleOff.angleSrc === 'direction' && B.angleOff.angle === 98, B.angleOff.angleSrc + ' ' + B.angleOff.angle);
+        check("pen rotation takes Krita's rotation formula, a half turn on an upright pen (Bear Paw)",
+            B.penRot.angleSrc === 'twist' && B.penRot.angleStrength === 1, B.penRot.angleSrc + ' ' + B.penRot.angleStrength);
         const fl = B.fadeList;
         check("a Krita size list keeps every input, fade counting up with its own length, through the shared curve",
             fl.sizeSensors && fl.sizeSensors.length === 2 && fl.sizeSensors[0].src === 'fadein' &&
