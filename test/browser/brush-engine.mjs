@@ -1075,6 +1075,20 @@ await withPage(async (page) => {
         b.forgetSaved('Round'); b.loadPreset('Round');
         return JSON.stringify(r);
     })()`));
+    /* A sketch line wider than a pixel is KisPainter::drawLine: every pixel
+     * within half the width of it, hard -- 9 rows for 8, all solid. */
+    const skRows = await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ engineKind: 'sketch', sketchWidth: 8, flow: 100, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none' })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(40, 100, 1, '#000000'); b.moveStroke(160, 100, 1, '#000000'); b.endStroke();
+        const d = __B.layer().ctx.getImageData(100, 80, 1, 40).data, a = [];
+        for (let i = 0; i < 40; i++) if (d[i * 4 + 3]) a.push(d[i * 4 + 3]);
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return a.join();
+    })()`);
+    check("a wide Krita sketch line is hard and a pixel past its width", skRows === Array(9).fill(255).join(), skRows);
     check("a Krita softness option softens the tip with pressure", softK.curve > 25 && softK.curve < 55 && softK.circle > 170 && softK.circle < 220, JSON.stringify(softK));
     /* Krita turns a tip by (1 - strength * sensor) * pi (KisRotationOption),
      * so Waterpaint's 0.19 random rotation is a small wobble about a half

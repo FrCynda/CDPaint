@@ -4623,7 +4623,7 @@
         engineKind: 'brush',
         shapeWinding: true,
         sketchWidth: 1, sketchWidthSrc: 'none', sketchWidthMin: 0, sketchWidthCurve: 1,
-        sketchOffset: 0.3, sketchProb: 1, sketchMagnet: true, sketchDistDensity: false, sketchDistOpacity: false,
+        sketchOffset: 0.3, sketchProb: 1, sketchMagnet: true, sketchDistDensity: false, sketchDistOpacity: false, sketchAA: false,
         /* 'curve' (Krita's curve brush) shares sketchWidth for its line. */
         curveHistory: 30, curveConnect: true, curveQuad: true,
         curvesOpacity: 1, curvesOpacitySrc: 'none', curvesOpacityMin: 0, curvesOpacityCurve: 1,
@@ -5455,7 +5455,7 @@
         var off = p.sketchOffset == null ? 0.3 : p.sketchOffset, prob = p.sketchProb == null ? 1 : p.sketchProb;
         for (var i = _max(1, from + 1); i <= to; i++) {
             var b = pts[i], sc = { pressure: b.pressure, x: b.x, y: b.y };
-            var w = _max(0.5, _dyn(p, 'sketchWidth', p.sketchWidth || 1, sc, 0));
+            var w = _max(0.9, _dyn(p, 'sketchWidth', p.sketchWidth || 1, sc, 0));   // Krita's floor
             var o = _clamp(_dyn(p, 'flow', p.flow / 100, sc, 0), 0, 1);
             var reach = _dyn(p, 'size', p.size, sc, 0) / 2;
             c.lineWidth = w;
@@ -5696,7 +5696,7 @@
     function _sketchLine(c, a, b, w, o, skipFirst) {
         if (o <= 0) return;
         c.globalAlpha = o;
-        if (w <= 1.5) {
+        if (w === 1) {
             // ends cut to whole pixels (a gap filled from 2.4 to 9.6 in Krita
             // stops on 9), the steps between them rounded
             a = { x: _floor(a.x), y: _floor(a.y) }; b = { x: _floor(b.x), y: _floor(b.y) };
@@ -5708,11 +5708,28 @@
                 c.fillRect(x, y, 1, 1);
                 lx = x; ly = y;
             }
-        } else {
-            c.beginPath();
-            c.moveTo(a.x + 0.5, a.y + 0.5);   // on the pixel, as Krita's line sits
-            c.lineTo(b.x + 0.5, b.y + 0.5);
-            c.stroke();
+            return;
+        }
+        /* Any other width is KisPainter::drawLine: whole-pixel ends, every
+         * pixel within half the width (plus the start's sub-pixel along the
+         * long axis) of the segment, round-ended, hard unless the preset
+         * anti-aliases. A canvas stroke of 8 was a pixel thinner and soft,
+         * inkTrash600 0.91x Krita's ink. */
+        var X1 = _floor(a.x), Y1 = _floor(a.y), X2 = _floor(b.x), Y2 = _floor(b.y);
+        if (X1 === X2 && Y1 === Y2) return;
+        var dX = X2 - X1, dY = Y2 - Y1, uniC = dX * Y1 - dY * X1, pd = 1 / (dX * dX + dY * dY), den = 1 / Math.sqrt(dX * dX + dY * dY);
+        var hw = w * 0.5 + (Math.abs(dX) > Math.abs(dY) ? a.x - X1 : a.y - Y1), W_ = _round(hw) + 1;
+        var x1 = _min(X1, X2), x2 = _max(X1, X2), y1 = _min(Y1, Y2), y2 = _max(Y1, Y2), aa = _params.sketchAA;
+        for (var yy = y1 - W_; yy < y2 + W_; yy++) {
+            for (var xx = x1 - W_; xx < x2 + W_; xx++) {
+                var pr = ((xx - X1) * dX + (yy - Y1) * dY) * pd, sx = X1 + pr * dX, sy = Y1 + pr * dY, d;
+                if (sx < x1 || sx > x2 || sy < y1 || sy > y2)
+                    d = _min(_hypot(xx - X1, yy - Y1), _hypot(xx - X2, yy - Y2));
+                else d = Math.abs(dY * xx - dX * yy + uniC) * den;
+                if (d > hw) continue;
+                c.globalAlpha = aa && d > hw - 1 ? o * _floor((1 - (d - (hw - 1))) * 256) / 255 : o;
+                c.fillRect(xx, yy, 1, 1);
+            }
         }
     }
     /* Krita's curve brush (KisCurvePaintOp::paintLine). Each new input

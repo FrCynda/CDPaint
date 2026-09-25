@@ -1074,6 +1074,7 @@
             out.sketchMagnet = _bool(P['Sketch/magnetify']);
             out.sketchDistDensity = _bool(P['Sketch/distanceDensity']);
             out.sketchDistOpacity = _bool(P['Sketch/distanceOpacity']);
+            out.sketchAA = _bool(P['Sketch/antiAliasing']);
             if (out.dabOpacitySrc) {   // a line has no dabs to cap: the opacity is its ink
                 out.flowSrc = out.dabOpacitySrc;
                 out.flowMin = out.dabOpacityMin;
