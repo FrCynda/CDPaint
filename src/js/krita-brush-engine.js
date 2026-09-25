@@ -983,10 +983,32 @@
             '|' + cut + '|' + lo + '|' + hi;
         if (_ktMask && _ktMask.key === key) return _ktMask;
         var w = _max(2, _round(tile.width * sc)), h = _max(2, _round(tile.height * sc));
-        var c = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true });
-        c.imageSmoothingQuality = 'high';
-        c.drawImage(tile, 0, 0, w, h);
-        var d = c.getImageData(0, 0, w, h).data, m = new Uint8Array(w * h);
+        var c = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true }), d;
+        if (sc > 1) {
+            /* Enlarged, Qt's smooth scale is plain bilinear between pixel
+             * centres, clamped at the edge: a lone Krita dab over
+             * texture_fabric's 1.47 pattern divided by the bare dab is that
+             * to half a grey level; the canvas's own filter is 3.8 off. */
+            var tw = tile.width, th = tile.height;
+            c.drawImage(tile, 0, 0);
+            var s0 = c.getImageData(0, 0, tw, th).data;
+            d = new Uint8ClampedArray(w * h * 4);
+            for (var yy = 0; yy < h; yy++) {
+                var Y = _clamp((yy + 0.5) * th / h - 0.5, 0, th - 1), y0 = _floor(Y), y1 = _min(y0 + 1, th - 1), fy = Y - y0;
+                for (var xx = 0; xx < w; xx++) {
+                    var X = _clamp((xx + 0.5) * tw / w - 0.5, 0, tw - 1), x0 = _floor(X), x1 = _min(x0 + 1, tw - 1), fx = X - x0;
+                    var q00 = (y0 * tw + x0) * 4, q01 = (y0 * tw + x1) * 4, q10 = (y1 * tw + x0) * 4, q11 = (y1 * tw + x1) * 4, o = (yy * w + xx) * 4;
+                    for (var ch = 0; ch < 4; ch++) {
+                        d[o + ch] = (s0[q00 + ch] * (1 - fx) + s0[q01 + ch] * fx) * (1 - fy) + (s0[q10 + ch] * (1 - fx) + s0[q11 + ch] * fx) * fy;
+                    }
+                }
+            }
+        } else {
+            c.imageSmoothingQuality = 'high';
+            c.drawImage(tile, 0, 0, w, h);
+            d = c.getImageData(0, 0, w, h).data;
+        }
+        var m = new Uint8Array(w * h);
         var br = p.textureBrightness || 0, ct = p.textureContrast == null ? 1 : p.textureContrast;
         for (var i = 0; i < m.length; i++) {
             var a = d[i * 4 + 3] / 255;

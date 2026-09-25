@@ -555,6 +555,31 @@ await withPage(async (page) => {
         Math.abs(kt.cutIn - 127) <= 8, 'alpha ' + kt.cutIn);
     check("Krita's height texture rises with strength and the neutral point scales the grain",
         Math.abs(kt.h30 - 58) <= 4 && kt.hNp <= 2, 'alpha ' + kt.h30 + ', ' + kt.hNp);
+    /* Enlarged, Krita's pattern is plain bilinear between pixel centres
+     * (a lone texture_fabric dab over the bare one, to half a grey level):
+     * black/white columns at scale 2 read 0, 64, 191, 191, repeating. */
+    const kb = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        const c = document.createElement('canvas'); c.width = 4; c.height = 1;
+        const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, 4, 1);
+        x.fillStyle = '#000'; x.fillRect(0, 0, 1, 1); x.fillRect(2, 0, 1, 1);
+        const run = () => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            for (const [k, v] of Object.entries({ size: 20, hardness: 100, falloff: 'krita', flowSrc: 'none', sizeSrc: 'none',
+                smoothingMode: 'none', texture: 100, textureMode: 'multiply', textureScale: 2 })) b.setParam(k, v);
+            b.loadTexturePattern(c.toDataURL());
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(20, 100, 1, '#000000'); b.endStroke();
+            const d = __B.layer().ctx.getImageData(16, 100, 4, 1).data;
+            return [d[3], d[7], d[11], d[15]];
+        };
+        run(); await new Promise(r => setTimeout(r, 300));
+        const r = run();
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(r);
+    })()`, { awaitPromise: true }));
+    check("an enlarged Krita texture is bilinear between pixel centres",
+        [0, 64, 191, 191].every((v, i) => Math.abs(kb[i] - v) <= 3), 'columns ' + kb);
     /* Krita's grain is fixed to canvas pixels (probes/gchar). Dabs drawn at
      * fractions slid it half a pixel from dab to dab, so a stroke refilled
      * the columns a 1px striped pattern cuts out. */
