@@ -2945,7 +2945,7 @@
      * dab from Krita's 197 to 137 and spread it over three rows instead of
      * two -- Krita works each pixel out at the dab's true position. Small
      * round masks are therefore built at the dab's own sub-pixel phase
-     * (x, y given), to a quarter pixel; big ones cannot see the difference.
+     * (x, y given), to a sixteenth of a pixel; big ones cannot see the difference.
      * Krita-imported tips only (see below). */
     function _maskFor(shape, sz, hardness, angleDeg, aspect, x, y) {
         var mask;
@@ -2969,7 +2969,7 @@
             // Krita's own tips only: the built-in brushes keep the look they have.
             if (x != null && sz <= 32 && !(_params.sharpness > 0) &&
                 (/^k(circle|gauss)/.test(shape) || shape.indexOf('curve:') === 0)) {
-                ph = [_round((x % 1) * 4) / 4, _round((y % 1) * 4) / 4];
+                ph = [_round((x % 1) * 16) / 16, _round((y % 1) * 16) / 16];
             } else if (x != null && /^k(circle|gauss)/.test(shape)) {
                 /* Sharpness: Krita rounds the dab's corner (cursor minus half
                  * its size, at least a pixel) to a whole pixel
@@ -5375,19 +5375,25 @@
         var N = p.curveHistory || 30;
         for (var i = _max(1, from + 1); i <= to; i++) {
             var b = pts[i], sc = { pressure: b.pressure, x: b.x, y: b.y };
-            var w = _max(0, _dyn(p, 'sketchWidth', p.sketchWidth, sc, 0));
+            /* Krita's line width and curve opacity inputs are held to 0.1..1
+             * of the option (KisLineWidthOptionData's strength range): an
+             * input reading 0 still draws Ink Pen's 11px at 1.1px, where ours
+             * fell to a 1px hairline and 0.9 of Krita's ink. Width 0 is Qt's
+             * cosmetic hairline, and so is anything to 1px (Qt's fast_pen). */
+            var w = p.sketchWidth * _clamp(_dyn(p, 'sketchWidth', 1, sc, 0), 0.1, 1);
             var o = _clamp(_dyn(p, 'flow', p.flow / 100, sc, 0), 0, 1);
-            c.lineWidth = _max(1, w);
+            c.lineWidth = w > 1 ? w : 1;
             // Qt's anti-aliased pen on the points themselves: a hairline on a
             // whole-pixel line lands half in each row, as Krita's does.
             if (p.curveConnect !== false && o > 0) {
                 c.globalAlpha = o;
-                c.beginPath(); c.moveTo(pts[i - 1].x, pts[i - 1].y); c.lineTo(b.x, b.y); c.stroke();
+                if (w > 1) _penLine(c, pts[i - 1].x, pts[i - 1].y, b.x, b.y, w);
+                else { c.beginPath(); c.moveTo(pts[i - 1].x, pts[i - 1].y); c.lineTo(b.x, b.y); c.stroke(); }
             }
             var M = w + 2, r = { x1: _min(pts[i - 1].x, b.x) - M, y1: _min(pts[i - 1].y, b.y) - M,
                 x2: _max(pts[i - 1].x, b.x) + M + 1, y2: _max(pts[i - 1].y, b.y) + M + 1 };
             if (i >= N) {
-                var h0 = i - N + 1, co = o * _clamp(_dyn(p, 'curvesOpacity', p.curvesOpacity, sc, 0), 0, 1);
+                var h0 = i - N + 1, co = o * _clamp(p.curvesOpacity * _clamp(_dyn(p, 'curvesOpacity', 1, sc, 0), 0.1, 1), 0, 1);
                 if (co > 0) {
                     c.globalAlpha = co;
                     c.beginPath();
@@ -5408,6 +5414,30 @@
             _flowUsed = _unionRect(_flowUsed, r);
         }
         c.restore();
+    }
+    /* Qt's pen, square caps, at the area it covers of each pixel. Chrome
+     * strokes to a quarter pixel across the line: 1.1px drew as 1, and Ink
+     * Pen's diagonal carried 0.84 of Krita's ink. Exact on straight lines. */
+    var _penCv = null, _penImg = null;
+    function _penLine(c, x0, y0, x1, y1, w) {
+        var dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
+        if (len < 1e-6) return;
+        var ux = dx / len, uy = dy / len, h = w / 2;
+        var bx = _floor(_min(x0, x1) - h - 1), by = _floor(_min(y0, y1) - h - 1);
+        var bw = _ceil(_max(x0, x1) + h + 1) - bx, bh = _ceil(_max(y0, y1) + h + 1) - by;
+        if (!_penImg || _penImg.width < bw || _penImg.height < bh) {
+            _penCv = new OffscreenCanvas(_max(bw, _penImg ? _penImg.width : 0), _max(bh, _penImg ? _penImg.height : 0));
+            _penImg = new ImageData(_penCv.width, _penCv.height);
+        }
+        var d = _penImg.data, W = _penImg.width, rgb = _hexToRgb(_state.lastColor || '#000000');
+        for (var j = 0; j < bh; j++) for (var k = 0; k < bw; k++) {
+            var rx = bx + k + 0.5 - x0, ry = by + j + 0.5 - y0, al = rx * ux + ry * uy, ac = ry * ux - rx * uy;
+            var a = _max(0, _min(ac + 0.5, h) - _max(ac - 0.5, -h)) * _max(0, _min(al + 0.5, len + h) - _max(al - 0.5, -h));
+            var q = (j * W + k) * 4;
+            d[q] = rgb[0]; d[q + 1] = rgb[1]; d[q + 2] = rgb[2]; d[q + 3] = _round(_min(1, a) * 255);
+        }
+        _penCv.getContext('2d').putImageData(_penImg, 0, 0, 0, 0, bw, bh);
+        c.drawImage(_penCv, 0, 0, bw, bh, bx, by, bw, bh);
     }
     function _unionRect(a, b) {
         return !a ? { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 }

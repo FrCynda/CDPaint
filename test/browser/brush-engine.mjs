@@ -769,16 +769,30 @@ await withPage(async (page) => {
         run([[20, 40], [180, 40]]);
         const a = L().getImageData(100, 38, 1, 4).data;
         const hair = [a[3], a[7], a[11], a[15]];
+        // An 11px line whose width input reads 0 (a fade at its first step) is 1.1px, not a hairline.
+        run([[20, 40], [180, 40]], { sketchWidth: 11,
+            sketchWidthSensors: [{ src: 'fadein', curve: [[0, 0], [1, 1]], kind: 'scale', length: 20, periodic: false }] });
+        const f = L().getImageData(100, 36, 1, 8).data; let floor = 0;
+        for (let i = 3; i < f.length; i += 4) floor += f[i];
+        b.setParam('sketchWidthSensors', null);
+        // ...but 1px is still Qt's thin line (fast_pen): one pixel of ink a column on a diagonal, not 1.12.
+        run([[20, 150], [180, 70]], { sketchWidth: 1 });
+        const g = L().getImageData(100, 100, 1, 20).data; let one = 0;
+        for (let i = 3; i < g.length; i += 4) one += g[i];
         // a V: the curve from the first history point through the middle one to the last
         run([[20, 150], [60, 150], [100, 100], [140, 150]], { curveConnect: false });
         const mid = L().getImageData(90, 100, 20, 40).data; let curve = 0;
         for (let i = 3; i < mid.length; i += 4) if (mid[i]) curve++;
         b.forgetSaved('Round'); b.loadPreset('Round');
-        return JSON.stringify({ hair, curve, kind: b.getParams().engineKind });
+        return JSON.stringify({ hair, floor, one, curve, kind: b.getParams().engineKind });
     })()`));
     check('a curve-brush hairline on a whole-pixel line lands half in each row, as Qt draws it',
         cv.hair[0] === 0 && cv.hair[1] > 100 && cv.hair[1] < 160 && cv.hair[2] > 100 && cv.hair[2] < 160 && cv.hair[3] === 0,
         JSON.stringify(cv.hair));
+    check("...a width input reading 0 holds at a tenth of the width, as Krita's does",
+        cv.floor >= 270 && cv.floor <= 292, 'column ink ' + cv.floor + ', 1.1px is 280');
+    check('...and a 1px line keeps the thin line, one pixel of ink a column',
+        cv.one >= 245 && cv.one <= 265, 'column ink ' + cv.one);
     check('...a full history draws its curve, with no connecting lines asked for', cv.curve > 20, cv.curve + ' px');
     check('...and the engine does not leak into the next preset', cv.kind === 'brush', cv.kind);
     /* Krita's colour smudge (test/krita/probes/smudge, smudge2). Ours mixed
@@ -1020,6 +1034,10 @@ await withPage(async (page) => {
         fresh(() => { b.setParam('size', 5); b.setParam('falloff', 'krita'); b.setParam('hardness', 0); b.setParam('sharpness', 100); });
         stroke([[100, 100]]);
         out.solid = L().getImageData(90, 90, 20, 20).data.filter((v, i) => i % 4 === 3 && v > 200).length;
+        // Concept Line Marker: a 3px Krita round an eighth of a pixel on is not the one a quarter on.
+        const edge = (x) => { fresh(() => { b.setParam('size', 3); b.setParam('falloff', 'krita'); b.setParam('hardness', 50); });
+            stroke([[x, 100]]); return L().getImageData(101, 100, 1, 1).data[3]; };
+        out.eighth = [edge(100.125), edge(100.25)];
         // Splats 02: a pipe stepped in order starts over when the brush is picked again.
         const gbr = (a) => { const n = new TextEncoder().encode('c\\0'), h = 28 + n.length, px = new Uint8Array(16); for (let y = 0; y < 4; y++) px[y * 4 + a] = 255;
             const u = new Uint8Array(h + 16), dv = new DataView(u.buffer);
@@ -1060,6 +1078,8 @@ await withPage(async (page) => {
         bank.lrect[0] > 250 && bank.lrect[1] > 40 && bank.lrect[1] < 140, JSON.stringify(bank.lrect));
     check("full sharpness keeps every pixel the tip touches, as Krita's threshold does",
         bank.solid >= 12, `${bank.solid} solid pixels`);
+    check("a small Krita round sits at its own sixteenth of a pixel, not the nearest quarter",
+        bank.eighth[0] < bank.eighth[1], JSON.stringify(bank.eighth));
     check('a GIMP pipe starts over from its first cell when the brush is picked again',
         bank.cycle[0] === bank.cycle[2] && bank.cycle[0] !== bank.cycle[1], JSON.stringify(bank.cycle));
     check('a 1px tip at a whole coordinate straddles four pixels, as GIMP places it',
