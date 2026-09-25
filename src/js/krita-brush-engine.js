@@ -2356,7 +2356,10 @@
      * its sensor directly rather than through _dyn. */
     function _dynAngle(p, baseAngle, sc) {
         var src = p.angleSrc;
-        if (src === 'direction' && sc.strokeAngle != null) return sc.strokeAngle + baseAngle;
+        /* The lock is the rotation sensor's own: a size list reading the
+         * drawing angle unlocked beside it still follows the stroke (Poska
+         * Triangle G). */
+        if (src === 'direction' && sc.strokeAngle != null) return (p.angleLocked ? _lockAngle : sc.strokeAngle) + baseAngle;
         if (src === 'twist' && p.angleStrength == null) return baseAngle + (_penTwist % 360);
         if (src === 'tilt') return baseAngle + _atan2(_penTiltY, _penTiltX) * 180 / _PI;
         /* How far the turn reaches. 180 is a full turn either way, which is
@@ -2715,7 +2718,7 @@
          * 0,0), and a locked angle keeps it. Taken along the stroke, Lace's
          * first dab lay flat where Krita's stands turned. */
         if (_dabIndex === 1) _lockAngle = _atan2(y, x) * 180 / _PI;
-        if (p.angleLocked || (p.originAngle && _dabIndex === 1)) sc.strokeAngle = _lockAngle;
+        if (p.originAngle && _dabIndex === 1) sc.strokeAngle = _lockAngle;
 
         /* Which of the two a taper thins. Krita and CSP both default to the
          * WIDTH — a nib lifting off the paper narrows to a point, it does not

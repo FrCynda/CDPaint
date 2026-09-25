@@ -951,9 +951,26 @@ await withPage(async (page) => {
         b.setPenState({ twist: 90 }); const tw = tall(0.5, 'twist'); b.setPenState({ twist: 0 });
         return JSON.stringify({ small: tall(0.1), full: tall(1), tw });
     })()`));
+    check("a Krita rotation strength keeps the tip's turn to a wobble", wob.small <= 12 && wob.full >= 22, JSON.stringify(wob));
     check("...and so does pen rotation, an added turn: strength 0.5 at 90 degrees lies diagonal (Bear Paw)",
         wob.tw >= 18 && wob.tw <= 26, 'height ' + wob.tw);
-    check("a Krita rotation strength keeps the tip's turn to a wobble", wob.small <= 12 && wob.full >= 22, JSON.stringify(wob));
+    /* A locked drawing angle belongs to the rotation that asked for it: a
+     * size list reading the angle unlocked still follows the stroke
+     * (Poska Triangle G's 13px bottom line came out 8). */
+    const lockW = await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 30, hardness: 100, spacing: 5, flowSrc: 'none', smoothingMode: 'none', sizeMin: 0,
+            angleSrc: 'direction', angleLocked: true, sizeSensors: [{ kind: 'abs', curve: [[0, 0.3], [0.5, 1], [1, 0.3]] }] })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(20, 100, 1, '#000000');
+        for (let x = 21; x <= 180; x++) b.moveStroke(x, 100, 1, '#000000');
+        b.endStroke();
+        let n = 0;
+        for (let y = 60; y < 140; y++) if (__B.layer().ctx.getImageData(100, y, 1, 1).data[3] > 128) n++;
+        return n;
+    })()`);
+    check("a rotation's locked angle leaves an unlocked size input following the stroke", lockW >= 18, lockW + 'px');
     /* Krita smooths speed over the last few samples (KisSpeedSmoother) and
      * reads it against its own ceiling; with the clock stopped, as in the
      * headless Krita render, speed is 0. */
