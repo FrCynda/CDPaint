@@ -385,6 +385,9 @@ await withPage(async (page) => {
                     OpacitySensor: '<params id="pressure"><curve>0,0;1,1;</curve></params>' } }).params,
                 opFlag: BP.toPreset({ params: { brush_definition: round, PressureOpacity: 'true', OpacityUseCurve: 'false',
                     OpacitySensor: '<params id="pressure"><curve>0,0;1,1;</curve></params>' } }).params,
+                // speedpencil600: a bare pressure sensor takes the older CurveOpacity.
+                opLegacy: BP.toPreset({ params: { brush_definition: round, PressureOpacity: 'true', CustomOpacity: 'true',
+                    CurveOpacity: '0,0;0.5,1;', OpacitySensor: '<!DOCTYPE params> <params id="pressure"/> ' } }).params,
                 // mixbrush bis: a smudge preset carrying build up and a spacing option.
                 smudgeBuild: BP.toPreset({ paintop: 'colorsmudge', params: { brush_definition: round, PaintOpAction: '1',
                     OpacityUseCurve: 'true', OpacitySensor: '<params id="pressure"><curve>0,0;1,1;</curve></params>',
@@ -502,6 +505,8 @@ await withPage(async (page) => {
         check("Krita's opacity curve paints whenever its box is ticked, flag or no flag",
             B.opBox.dabOpacitySrc === 'pressure' && !B.opFlag.dabOpacitySrc,
             `${B.opBox.dabOpacitySrc} / ${B.opFlag.dabOpacitySrc}`);
+        check("a Krita sensor stored with no curve takes the older Custom curve",
+            JSON.stringify(B.opLegacy.dabOpacityCurve) === '[[0,0],[0.5,1]]', JSON.stringify(B.opLegacy.dabOpacityCurve));
         /* A smudge preset's build-up and spacing keys are leftovers: taking
          * them painted mixbrush bis solid black where Krita paints it grey. */
         // ...and its spacing option, as Wet_Smear measured

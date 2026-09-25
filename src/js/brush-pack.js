@@ -433,6 +433,14 @@
          * than reporting a brush we can very nearly reproduce as unreadable. */
         var shared = params[opt + 'UseSameCurve'] === undefined || _bool(params[opt + 'UseSameCurve']);
         var common = BrushPack.parseCurve('<curve>' + (params[opt + 'commonCurve'] || '') + '</curve>');
+        /* A sensor stored with no curve takes the older Curve<Option> when
+         * Custom<Option> is on, every input alike (KisKritaSensorPack::read):
+         * speedpencil600's "0,0;0.5,1" is full ink from half pressure, and
+         * read as a straight line its half-pressure strokes came out half. */
+        if (!common && raw.indexOf('curve') < 0 && _bool(params['Custom' + opt])) {
+            common = BrushPack.parseCurve('<curve>' + (params['Curve' + opt] || '') + '</curve>');
+            if (common) shared = true;
+        }
         var kids = [];
         if (id === 'sensorslist') {
             /* A child may close itself (<ChildSensor id="pressure"/>) and may
