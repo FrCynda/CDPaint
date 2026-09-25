@@ -434,7 +434,7 @@
             else if (kind === 'gimp') a = BrushPack.gimpCurve(t, hard);
             // Krita's "soft" generator: opacity is the curve at the SQUARED
             // radius (KisCurveCircleMaskGenerator::norme is a*a + b*b).
-            else if (kind === 'curve') a = _curveAt(_params.tipCurve, t * t, true);
+            else if (kind === 'curve') a = _curveAt(_tcNow || _params.tipCurve, t * t, true);
             else a = t <= hard ? 1 : _clamp((1 - t * t) / _max(1e-6, 1 - hard * hard), 0, 1);
             grad.addColorStop(t, 'rgba(255,255,255,' + a.toFixed(4) + ')');
         }
@@ -2799,6 +2799,11 @@
         }
 
         var hard = _clamp(_dyn(p, 'hardness', p.hardness, sc, 6), 0, 100);
+        /* Softness (see _softCurve): Krita's plain circle and square divide
+         * their fade coefficients by it, which is their hardness times it.
+         * ponytail: a square's separate end fade (hardnessY) is not scaled. */
+        _softNow = p.softnessSrc !== 'none' || p.softnessStrength != null ? _clamp(_dyn(p, 'softness', 1, sc, 18), 0.1, 1) : 1;
+        if (_softNow < 1 && /^krita(-aa)?$/.test(p.falloff || '')) hard *= _softNow;
         /* All four other programs call this roundness, not aspect, and their
          * dynamics make a tip FLATTER as the sensor falls. Ours is the
          * reciprocal, so the sensor scales the roundness and the aspect is
@@ -3038,6 +3043,24 @@
     /* Which tip to stamp. Shared by the single-dab and bristle paths so a
      * bristle brush honours shape, hardness and custom tips like any other. */
     var _tcKeys = new WeakMap();
+    /* Krita's softness option (KisSoftnessOption, 0.1..1) reshapes the tip
+     * per dab. The soft generator scales its curve's inner points by it
+     * (KisCurveCircleMaskGenerator::transformCurveForSoftness, a middle point
+     * added to a bare two-point curve); at low pressure Watercolor Stroke
+     * Dry's dab is faint enough that its subtract texture leaves only the
+     * cracks. _tcNow is the curve the mask being built draws. */
+    var _softNow = 1, _tcNow = null, _scCache = new Map();
+    function _softCurve(c, s) {
+        if (s >= 1) return c;
+        s = _round(s * 256) / 256;
+        var k = _tipCurveKey(c) + '@' + s, r = _scCache.get(k);
+        if (r) return r;
+        r = c.map(function (pt) { return pt.slice(); });
+        if (r.length === 2) r.splice(1, 0, [(r[0][0] + r[1][0]) / 2, (r[0][1] + r[1][1]) / 2]);
+        for (var i = 1; i < r.length - 1; i++) r[i][1] = _clamp(r[i][1] * s, 0, 1);
+        _scCache.set(k, r);
+        return r;
+    }
     function _tipCurveKey(c) {
         var k = _tcKeys.get(c);
         if (!k) { k = 'curve:' + JSON.stringify(c); _tcKeys.set(c, k); }
@@ -3062,7 +3085,7 @@
         } else {
             // A gauss falloff is its own mask, so its own cache key.
             if (shape === 'circle' && (_params.falloff === 'gauss' || _params.falloff === 'gimp')) shape = _params.falloff;
-            if (shape === 'circle' && _isArray(_params.tipCurve)) shape = _tipCurveKey(_params.tipCurve);
+            if (shape === 'circle' && _isArray(_params.tipCurve)) shape = _tipCurveKey(_tcNow = _softCurve(_params.tipCurve, _softNow));
             var kf = /^krita(-gauss)?(-aa)?$/.exec(_params.falloff || '');
             // a hard square keeps the plain box: it paints its pixel however small (EO Pixel Perfect)
             if (shape === 'square' && kf && (kf[1] || hardness < 100 || (_params.hardnessY != null && _params.hardnessY < 100)))
@@ -4714,6 +4737,7 @@
         textureSrc: 'none',      textureMin: 0,    textureCurve: 1,
         colorRateSrc: 'none',    colorRateMin: 0,  colorRateCurve: 1,
         spacingSrc: 'none',      spacingMin: 0,    spacingCurve: 1,
+        softnessSrc: 'none',     softnessMin: 0,   softnessCurve: 1, softnessStrength: null,
         spacingStrength: null, sizeStrength: null,
         dabCountSrc: 'none',     dabCountMin: 0,   dabCountCurve: 1,
         offsetSrc: 'none',       offsetMin: 0,     offsetCurve: 1,

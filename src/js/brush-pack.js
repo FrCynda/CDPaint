@@ -778,6 +778,20 @@
             if (rts.curve) out.aspectRatioCurve = rts.curve;
         }
 
+        /* Softness eases the tip's fade: its strength times its curve,
+         * 0.1..1 (the engine's _softCurve). Image tips ignore it in Krita. */
+        if (_bool(P.PressureSoftness)) {
+            if (_num(P.SoftnessValue, 1) !== 1) out.softnessStrength = _num(P.SoftnessValue, 1);
+            var sfs = _sensorFor(P, 'Softness');
+            if (sfs && !sfs.src) warn.push('Softness followed ' + sfs.id + ', which we have no input for');
+            else if (sfs) {
+                out.softnessSrc = sfs.src;
+                out.softnessMin = 0;
+                _kritaReach(out, sfs, 'softness');
+                if (sfs.curve) out.softnessCurve = sfs.curve;
+            }
+        }
+
         /* ...and a pressure-driven opacity in build-up scales each dab, which
          * then stacks: the same probe's lone dab at pressure 0.5 was 124 and
          * its line 209, where a ceiling held ours at 128. So it rides flow. */

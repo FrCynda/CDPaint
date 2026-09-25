@@ -1058,6 +1058,24 @@ await withPage(async (page) => {
         return a;
     })()`);
     check("a Krita dab caps at the stroke's running opacity when pressure falls", avgOp > 90, 'alpha after the drop ' + avgOp);
+    /* Krita's softness option scales a soft tip's inner curve points, and
+     * its plain circle's hardness, by the sensor (Watercolor Stroke Dry
+     * 1.49x ink -> 0.88x at light pressure). One dab at pressure 0.3, 0.5: */
+    const softK = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        const dab = (o, pr, x) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            for (const [k, v] of Object.entries(Object.assign({ size: 40, spacing: 10, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
+                softnessSrc: 'pressure', softnessMin: 0, softnessCurve: [[0, 0], [1, 1]] }, o))) b.setParam(k, v);
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(100, 100, pr, '#000000'); b.endStroke();
+            return __B.layer().ctx.getImageData(x, 100, 1, 1).data[3];
+        };
+        const r = { curve: dab({ tipCurve: [[0, 0.5], [1, 0.5]] }, 0.3, 114), circle: dab({ falloff: 'krita', hardness: 80 }, 0.5, 112) };
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(r);
+    })()`));
+    check("a Krita softness option softens the tip with pressure", softK.curve > 25 && softK.curve < 55 && softK.circle > 170 && softK.circle < 220, JSON.stringify(softK));
     /* Krita turns a tip by (1 - strength * sensor) * pi (KisRotationOption),
      * so Waterpaint's 0.19 random rotation is a small wobble about a half
      * turn, not the full spin it used to get. A flat 30x4 tip, dabs apart: */
