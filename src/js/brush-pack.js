@@ -1139,6 +1139,30 @@
             ['minusthenplus', 'plusthenminus', 'moirepattern'].forEach(function (k) {
                 if (_bool(P['Hatching/bool_' + k])) warn.push('dropped: its ' + k + ' cross-hatching, painted as single lines');
             });
+        } else if (preset.paintop === 'hairybrush') {
+            // see _paintHairy in the engine; Krita's own defaults
+            out.engineKind = 'hairy';
+            var hk = function (k, d) { return _num(P['HairyInk/' + k], d); };
+            out.hairy = {
+                density: _num(P['HairyBristle/density'], 100) / 100, random: _num(P['HairyBristle/random'], 2),
+                scale: _num(P['HairyBristle/scale'], 2), shear: _num(P['HairyBristle/shear'], 0),
+                threshold: _bool(P['HairyBristle/threshold']), aa: _bool(P['HairyBristle/antialias']),
+                comp: _bool(P['HairyBristle/useCompositing']), connected: _bool(P['HairyBristle/isConnected']),
+                inkOn: _bool(P['HairyInk/enabled']), inkAmount: Math.max(2, Math.round(hk('inkAmount', 1024))),
+                inkCurve: BrushPack.parseCurve('<curve>' + (P['HairyInk/inkDepletionCurve'] || '0,0;1,1;') + '</curve>'),
+                useOpacity: P['HairyInk/useOpacity'] === undefined || _bool(P['HairyInk/useOpacity']),
+                useWeights: _bool(P['HairyInk/useWeights']),
+                pw: hk('pressureWeights', 50) / 100, blw: hk('bristleLengthWeights', 50) / 100,
+                biw: hk('bristleInkAmountWeight', 50) / 100, idw: hk('inkDepletionWeight', 50)   // not a percentage in Krita
+            };
+            if (out.dabOpacitySrc) {   // no dabs to cap: the opacity is the pass's
+                out.flowSrc = out.dabOpacitySrc;
+                out.flowMin = out.dabOpacityMin;
+                if (out.dabOpacityCurve) out.flowCurve = out.dabOpacityCurve;
+                delete out.dabOpacitySrc; delete out.dabOpacityMin; delete out.dabOpacityCurve;
+            }
+            if (_bool(P['HairyInk/useSaturation']) || _bool(P['HairyInk/soak'])) warn.push('dropped: its bristles taking colour from the canvas');
+            if (_bool(P['HairyBristle/useMousePressure'])) warn.push('dropped: its pressure from mouse speed');
         } else if (preset.paintop === 'particlebrush') {
             // see _paintParticle in the engine; Krita's own defaults
             out.engineKind = 'particle';

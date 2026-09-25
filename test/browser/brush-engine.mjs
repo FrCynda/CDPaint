@@ -769,6 +769,37 @@ await withPage(async (page) => {
         return JSON.stringify({ n, far });
     })()`));
     check('a particle stroke is a short streak from its start', pt.n > 5 && pt.far === 0, JSON.stringify(pt));
+    /* Krita's hairy brush: the tip made into bristles, each drawn as a line
+     * from where it sat to where it sits, spread by the bristle scale. It
+     * was painted as a round brush -- one 18px band where Krita lays a comb
+     * of hairlines 90px across (Oil Bristle Hairy: IoU 0.016 -> 1). The
+     * opacity goes into the dab's bytes as Krita rounds it: a canvas
+     * globalAlpha put 254 at half opacity to 128, not Krita's 127. */
+    const hr = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = __B.layer().ctx;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ engineKind: 'hairy', smoothingMode: 'none', size: 18, sizeSrc: 'none',
+            flowSrc: 'pressure', flowCurve: [[0, 0], [1, 1]], tipCurve: [[0, 1], [1, 0]], hardness: 0,
+            hairy: { density: 1, random: 0, scale: 5, shear: 0, threshold: false, aa: true, comp: true, connected: false,
+                inkOn: false, inkAmount: 2, inkCurve: [[0, 0], [1, 1]], useOpacity: true, useWeights: false, pw: 0.5, blw: 0.5, biw: 0.5, idw: 50 } }))
+            b.setParam(k, v);
+        L.clearRect(0, 0, 200, 200);
+        b.beginStroke(20, 100, 0.5, '#000000'); b.moveStroke(180, 100, 0.5, '#000000'); b.endStroke();
+        const col = L.getImageData(100, 0, 1, 200).data; let runs = 0, top = 200, bot = 0, max = 0;
+        for (let y = 0; y < 200; y++) {
+            const a = col[y * 4 + 3]; max = Math.max(max, a);
+            if (a) { top = Math.min(top, y); bot = Math.max(bot, y); if (!col[(y - 1) * 4 + 3]) runs++; }
+        }
+        // one bristle at 254 (a 1px tip, its curve topping out there), on whole pixels
+        b.setParam('size', 1); b.setParam('tipCurve', [[0, 254 / 255], [1, 0]]);
+        L.clearRect(0, 0, 200, 200);
+        b.beginStroke(20, 100, 0.5, '#000000'); b.moveStroke(180, 100, 0.5, '#000000'); b.endStroke();
+        max = L.getImageData(100, 100, 1, 1).data[3];
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify({ runs, span: bot - top + 1, max });
+    })()`));
+    check('a hairy stroke is a comb of bristle lines spread by its scale', hr.runs >= 10 && hr.span > 70, JSON.stringify(hr));
+    check("...and a 254 bristle at half opacity is Krita's 127, not 128", hr.max === 127, 'alpha ' + hr.max);
     /* Krita's curve brush (KisCurvePaintOp): no dabs, a line per input
      * segment on Qt's anti-aliased pen, a curve through the history once it
      * is full. It was painted as a round brush: 10x Krita's ink on Ink Pen. */

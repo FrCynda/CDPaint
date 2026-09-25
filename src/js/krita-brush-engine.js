@@ -4583,6 +4583,7 @@
         pixelSteps: false,   // GIMP's sub-pixel spacing: one dab per pixel; see _stepFor
         grid: null,          // Krita's grid brush: see _gridDab
         particle: null,      // Krita's particle brush: see _paintParticle
+        hairy: null,         // Krita's hairy brush: see _paintHairy
         smudgeRate: 100,
         smudgeRateSrc: 'none', smudgeRateMin: 0, smudgeRateCurve: 1,
         smudgeRadius: 100,
@@ -5422,10 +5423,10 @@
      * No spacing: one pass per input point, so a scripted Krita line is one.
      *
      * ponytail: a canvas-sized alpha array while the stroke lasts. */
-    var _ptSt = null, _ptA = null, _ptCv = null;
+    var _ptSt = null, _ptA = null;
     function _paintParticle(pts, from, to) {
-        var p = getParams(), c = _flowCtx, pc = p.particle;
-        if (!c || !pc) return;
+        var p = getParams(), pc = p.particle;
+        if (!_flowCtx || !pc) return;
         var W = _flowCanvas.width, H = _flowCanvas.height, n = pc.count, it = pc.iterations;
         if (from === 0 || !_ptSt || _ptSt.x.length !== n) {
             _ptSt = { x: new Float64Array(n), y: new Float64Array(n), vx: new Float64Array(n), vy: new Float64Array(n) };
@@ -5451,24 +5452,175 @@
                     if (ix + 1 > x2) x2 = ix + 1; if (iy + 1 > y2) y2 = iy + 1;
                 }
             }
-            if (x2 < x1) continue;
-            var bw = x2 - x1 + 1, bh = y2 - y1 + 1, im = new ImageData(bw, bh), d = im.data;
-            for (var yy = 0; yy < bh; yy++) {
-                for (var xx = 0, q = (y1 + yy) * W + x1; xx < bw; xx++, q++) { d[(yy * bw + xx) * 4 + 3] = A[q]; A[q] = 0; }
-            }
-            if (!_ptCv || _ptCv.width < bw || _ptCv.height < bh) _ptCv = new OffscreenCanvas(_max(bw, _ptCv ? _ptCv.width : 0), _max(bh, _ptCv ? _ptCv.height : 0));
-            var pctx = _ptCv.getContext('2d');
-            pctx.clearRect(0, 0, bw, bh);
-            pctx.putImageData(im, 0, 0);
-            pctx.globalCompositeOperation = 'source-in';
-            pctx.fillStyle = _state.lastColor; pctx.fillRect(0, 0, bw, bh);
-            pctx.globalCompositeOperation = 'source-over';
-            c.drawImage(_ptCv, 0, 0, bw, bh, x1, y1, bw, bh);
-            var r = { x1: x1, y1: y1, x2: x2 + 1, y2: y2 + 1 };
-            _dirtyRect = _unionRect(_dirtyRect, r);
-            _clearBounds = _unionRect(_clearBounds, r);
-            _flowUsed = _unionRect(_flowUsed, r);
+            if (x2 >= x1) _blitAlpha(A, W, x1, y1, x2, y2, 1);
         }
+    }
+    /* An alpha array's box, in the stroke colour, over the flow buffer at
+     * `o`: how a Krita paintop that builds its own dab (particle, hairy)
+     * hands it to the painter. Clears the box for the next pass. The
+     * opacity goes into the bytes, rounded as Krita's float over rounds:
+     * a canvas globalAlpha of 0.5 made 254 into 127.5, not 127, and a
+     * bristle row a grey level too dark. */
+    var _ptCv = null;
+    function _blitAlpha(A, W, x1, y1, x2, y2, o) {
+        var c = _flowCtx, bw = x2 - x1 + 1, bh = y2 - y1 + 1, im = new ImageData(bw, bh), d = im.data;
+        for (var yy = 0; yy < bh; yy++) {
+            for (var xx = 0, q = (y1 + yy) * W + x1; xx < bw; xx++, q++) { d[(yy * bw + xx) * 4 + 3] = A[q] * o; A[q] = 0; }
+        }
+        if (!_ptCv || _ptCv.width < bw || _ptCv.height < bh) _ptCv = new OffscreenCanvas(_max(bw, _ptCv ? _ptCv.width : 0), _max(bh, _ptCv ? _ptCv.height : 0));
+        var pctx = _ptCv.getContext('2d');
+        pctx.clearRect(0, 0, bw, bh);
+        pctx.putImageData(im, 0, 0);
+        pctx.globalCompositeOperation = 'source-in';
+        pctx.fillStyle = _state.lastColor; pctx.fillRect(0, 0, bw, bh);
+        pctx.globalCompositeOperation = 'source-over';
+        c.drawImage(_ptCv, 0, 0, bw, bh, x1, y1, bw, bh);
+        var r = { x1: x1, y1: y1, x2: x2 + 1, y2: y2 + 1 };
+        _dirtyRect = _unionRect(_dirtyRect, r);
+        _clearBounds = _unionRect(_clearBounds, r);
+        _flowUsed = _unionRect(_flowUsed, r);
+    }
+
+    /* Krita's seeded random numbers (boost's taus88, KisRandomSource(seed)),
+     * as 0..1: the hairy brush thins its bristles with one seeded at 0, so
+     * the same bristles go every stroke. */
+    function _taus88(seed) {
+        var z1 = seed >>> 0, z2 = z1, z3 = z1;
+        if (z1 < 2) z1 += 2; if (z2 < 8) z2 += 8; if (z3 < 16) z3 += 16;
+        return function () {
+            z1 = (((z1 & 0xFFFFFFFE) << 12) ^ ((((z1 << 13) ^ z1) >>> 0) >>> 19)) >>> 0;
+            z2 = (((z2 & 0xFFFFFFF8) << 4) ^ ((((z2 << 2) ^ z2) >>> 0) >>> 25)) >>> 0;
+            z3 = (((z3 & 0xFFFFFFF0) << 17) ^ ((((z3 << 3) ^ z3) >>> 0) >>> 11)) >>> 0;
+            return ((z1 ^ z2 ^ z3) >>> 0) / 4294967295;
+        };
+    }
+
+    /* Krita's hairy brush (KisHairyPaintOp): the tip, at its own size, is
+     * made once into bristles -- one per inked pixel, as long as its alpha,
+     * `density` of them kept. Each input segment then draws every bristle
+     * as a line from where it sat to where it now sits, the tip scaled by
+     * the size option times `scale`, sheared by twice the pressure times
+     * `shear`; with `threshold` a bristle shorter than 1 - pressure lifts
+     * off. A line is 1px steps along its long axis, each a bilinear 2x2
+     * (anti-aliased) laid over the pass's dab, which the opacity option then
+     * paints down.
+     *
+     * ponytail: bristle colour is the stroke's -- soak ink and saturation
+     * depletion (colours from the layer) are not modelled; the rotation
+     * option and mouse pressure neither. */
+    var _hrSt = null, _hrA = null;
+    function _hairyTip(p) {
+        var hs = p.size, asp = p.aspectRatio || 1, W, H, a;
+        if (_isArray(p.tipCurve) && (p.shape || 'circle') === 'circle') {
+            /* KisCurveCircleMaskGenerator's vector path: the curve at the
+             * squared radius, sampled at pixel centres round the tip's
+             * middle, rounded. Its table is 4 entries a pixel plus 2 but is
+             * read at 4 a pixel, so the curve runs 1/73rd (at 18px) short. */
+            var w = hs, h = hs / asp, res = _round(_max(w, h) * 4), lut = new Float64Array(res + 2);
+            for (var li = 0; li < res + 2; li++) lut[li] = _curveAt(p.tipCurve, li / (res + 1), true);
+            W = _max(1, _ceil(w)); H = _max(1, _ceil(h)); a = new Uint8Array(W * H);
+            for (var y = 0; y < H; y++) {
+                for (var x = 0; x < W; x++) {
+                    var X = (x + 0.5 - w / 2) * 2 / w, Y = (y + 0.5 - h / 2) * 2 / h, d2 = X * X + Y * Y;
+                    if (d2 > 1) continue;
+                    var v = d2 * res, i0 = _floor(v), f = v - i0;
+                    a[y * W + x] = _round(_clamp((1 - f) * lut[i0] + f * lut[i0 + 1], 0, 1) * 255);
+                }
+            }
+            return { W: W, H: H, a: a, cx: _floor(W * 0.5), cy: _floor(H * 0.5) };
+        }
+        var m = _maskFor(p.shape || 'circle', hs, p.hardness, p.angle || 0, asp, 0, 0);
+        W = m.width; H = m.height;
+        var dd = m.getContext('2d').getImageData(0, 0, W, H).data;
+        a = new Uint8Array(W * H);
+        for (var i = 0; i < W * H; i++) a[i] = dd[i * 4 + 3];
+        return { W: W, H: H, a: a, cx: _floor(m._cx != null ? m._cx : W / 2), cy: _floor(m._cy != null ? m._cy : H / 2) };
+    }
+    function _paintHairy(pts, from, to) {
+        var p = getParams(), hr = p.hairy;
+        if (!_flowCtx || !hr) return;
+        var W = _flowCanvas.width, H = _flowCanvas.height;
+        if (from === 0 || !_hrSt) {
+            var t = _hairyTip(p), rnd = _taus88(0), bx = [], by = [], bl = [];
+            for (var y = 0; y < t.H; y++) {
+                for (var x = 0; x < t.W; x++) {
+                    var al = t.a[y * t.W + x];
+                    if (!al || !(hr.density >= 1 || rnd() <= hr.density)) continue;
+                    bx.push(x - t.cx); by.push(y - t.cy); bl.push(al / 255);
+                }
+            }
+            var n = bx.length, dep = new Float64Array(hr.inkAmount);   // KisCubicCurve::floatTransfer
+            for (var di = 0; di < dep.length; di++) dep[di] = _curveAt(hr.inkCurve, di / (dep.length - 1), true);
+            _hrSt = { dep: dep, x: bx, y: by, len: bl, px: new Float64Array(n), py: new Float64Array(n),
+                      ink: new Float64Array(n), cnt: new Int32Array(n), first: true };
+        }
+        if (!_hrA || _hrA.length !== W * H) _hrA = new Uint8ClampedArray(W * H);
+        var S = _hrSt, A = _hrA, nb = S.x.length, dep = S.dep;
+        for (var i = _max(1, from + 1); i <= to; i++) {
+            var a0 = pts[i - 1], b0 = pts[i], pr = b0.pressure == null ? 1 : b0.pressure;
+            _dabIndex = i - 1;
+            var sc = { pressure: pr, x: b0.x, y: b0.y };
+            var scale = _dyn(p, 'size', 1, sc, 0) * hr.scale, shear = pr * 2 * hr.shear, press = pr * 2;
+            var x1 = W, y1 = H, x2 = -1, y2 = -1;
+            for (var j = 0; j < nb; j++) {
+                var rx = hr.random ? (_dabRand(i, j, 31) * 2 - 1) * hr.random : 0;
+                var ry = hr.random ? (_dabRand(i, j, 37) * 2 - 1) * hr.random : 0;
+                // QTransform: shear, then the random nudge, then scale
+                var ex = (S.x[j] + shear * S.y[j] + rx) * scale, ey = (S.y[j] + shear * S.x[j] + ry) * scale;
+                var fx1 = S.first || !hr.connected ? ex : S.px[j], fy1 = S.first || !hr.connected ? ey : S.py[j];
+                S.px[j] = ex; S.py[j] = ey;
+                if (hr.threshold && S.len[j] < 1 - pr) continue;
+                fx1 += a0.x; fy1 += a0.y;
+                var fx2 = ex + b0.x, fy2 = ey + b0.y;
+                // Krita's getLinearTrajectory: the start, 1px steps on the long axis, the end
+                var xd = fx2 - fx1, yd = fy2 - fy1, m = yd / xd, steps, sx, sy;
+                if (_abs(m) > 1) { steps = _abs(Math.trunc(fy2) - Math.trunc(fy1)); sy = yd > 0 ? 1 : -1; sx = sy / m; }
+                else { steps = _abs(Math.trunc(fx2) - Math.trunc(fx1)); sx = xd > 0 ? 1 : -1; sy = sx * m; }
+                var np = steps + 2 - (hr.aa ? 1 : 0);
+                for (var k = 0; k < np; k++) {
+                    var qx = k === steps + 1 ? fx2 : fx1 + sx * k, qy = k === steps + 1 ? fy2 : fy1 + sy * k;
+                    var d = 0, op;
+                    if (hr.inkOn) {
+                        d = dep[_min(S.cnt[j], dep.length - 1)];
+                        op = !hr.useOpacity ? S.len[j] : _clamp(hr.useWeights
+                            ? press * hr.pw + S.len[j] * hr.blw + S.ink[j] * hr.biw + (1 - d) * hr.idw
+                            : S.len[j] * S.ink[j], 0, 1);
+                    } else op = S.len[j];
+                    var o8 = _round(op * 255);
+                    if (hr.aa) {
+                        var ix = Math.trunc(qx), iy = Math.trunc(qy), gx = _abs(qx - ix), gy = _abs(qy - iy);
+                        if (ix >= 0 && iy >= 0 && ix < W - 1 && iy < H - 1) {
+                            var q = iy * W + ix;
+                            _hairyInk(A, q, _round((1 - gx) * (1 - gy) * o8), hr.comp);
+                            _hairyInk(A, q + 1, _round(gx * (1 - gy) * o8), hr.comp);
+                            _hairyInk(A, q + W, _round((1 - gx) * gy * o8), hr.comp);
+                            _hairyInk(A, q + W + 1, _round(gx * gy * o8), hr.comp);
+                            if (ix < x1) x1 = ix; if (iy < y1) y1 = iy;
+                            if (ix + 1 > x2) x2 = ix + 1; if (iy + 1 > y2) y2 = iy + 1;
+                        }
+                    } else {
+                        var jx = _round(qx), jy = _round(qy);
+                        if (jx >= 0 && jy >= 0 && jx < W && jy < H) {
+                            var q2 = jy * W + jx;
+                            if (hr.comp) _hairyInk(A, q2, o8, true); else if (A[q2] < o8) A[q2] = o8;
+                            if (jx < x1) x1 = jx; if (jy < y1) y1 = jy;
+                            if (jx > x2) x2 = jx; if (jy > y2) y2 = jy;
+                        }
+                    }
+                    S.ink[j] = 1 - d;
+                    S.cnt[j]++;
+                }
+            }
+            S.first = false;
+            if (x2 >= x1) _blitAlpha(A, W, x1, y1, x2, y2, _clamp(_dyn(p, 'flow', p.flow / 100, sc, 0), 0, 1));
+        }
+    }
+    /* Over (useCompositing), rounded as Krita's u8 over rounds -- the gap
+     * to full times the new ink, so 254 under 128 more reaches 255 -- or
+     * added up to full. */
+    function _hairyInk(A, q, v, over) {
+        if (!v) return;
+        A[q] = over ? A[q] + (255 - A[q]) * v / 255 : A[q] + v;
     }
     /* One sketch line. A hairline is hard pixel steps, as Krita's is --
      * smoothed, each pixel split over two and the probe's zigzag lost a
@@ -5714,11 +5866,11 @@
             return;
         }
         var ekf = getParams().engineKind;
-        if (ekf === 'sketch' || ekf === 'curve' || ekf === 'particle') {
+        if (ekf === 'sketch' || ekf === 'curve' || ekf === 'particle' || ekf === 'hairy') {
             var kp = _state.strokePoints;
             if (kp.length < 2 || !_state.lastColor) return;
             _dirtyRect = null;
-            (ekf === 'curve' ? _paintCurveOp : ekf === 'particle' ? _paintParticle : _paintSketch)(kp, _state.lastProcessedIdx, kp.length - 1);
+            (ekf === 'curve' ? _paintCurveOp : ekf === 'particle' ? _paintParticle : ekf === 'hairy' ? _paintHairy : _paintSketch)(kp, _state.lastProcessedIdx, kp.length - 1);
             _state.lastProcessedIdx = kp.length - 1;
             _state.started = true;
             _hintFlushRect(final);
@@ -5810,7 +5962,7 @@
             var pts = _state.strokePoints;
             if (pts.length < 2 || !_state.lastColor) return;
             var ek = getParams().engineKind;
-            if (ek === 'shape' || ek === 'deform' || ek === 'sketch' || ek === 'curve' || ek === 'particle') { _flushPending(false); return; }
+            if (ek === 'shape' || ek === 'deform' || ek === 'sketch' || ek === 'curve' || ek === 'particle' || ek === 'hairy') { _flushPending(false); return; }
             var startIdx = _state.started ? _state.lastProcessedIdx : 0;
             var endIdx = pts.length - 1;
             if (startIdx < endIdx) {
