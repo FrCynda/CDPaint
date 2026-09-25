@@ -1016,6 +1016,23 @@ await withPage(async (page) => {
         return r;
     })()`);
     check("a small Krita dab is built at its exact place and size", exact[0] && exact[1], 'place, size differ: ' + exact);
+    /* Krita caps a dab at the stroke's running opacity, which eases down a
+     * tenth at a time when pressure falls: after a drop from 1 to 0.3 the
+     * ink stacks past 0.3 (Nylnook Airbrush 0.88 -> 0.99). */
+    const avgOp = await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 20, spacing: 10, hardness: 100, falloff: 'krita', dabOpacitySrc: 'pressure', dabOpacityMin: 0,
+            flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none' })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(30, 100, 1, '#000000');
+        for (let x = 31; x <= 170; x++) b.moveStroke(x, 100, x <= 150 ? 1 : 0.3, '#000000');
+        b.endStroke();
+        const a = __B.layer().ctx.getImageData(174, 100, 1, 1).data[3];
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return a;
+    })()`);
+    check("a Krita dab caps at the stroke's running opacity when pressure falls", avgOp > 90, 'alpha after the drop ' + avgOp);
     /* Krita turns a tip by (1 - strength * sensor) * pi (KisRotationOption),
      * so Waterpaint's 0.19 random rotation is a small wobble about a half
      * turn, not the full spin it used to get. A flat 30x4 tip, dabs apart: */

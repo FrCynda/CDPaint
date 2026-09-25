@@ -549,9 +549,14 @@
      * why only presets with a per-dab opacity sensor take this path.
      *
      * ponytail: one colour per stroke (the last dab's); colour jitter or
-     * smudge on such a preset would flatten. Krita's averageOpacity branch
-     * (falling pressure) is not modelled either. */
-    var _adCanvas = null, _adCtx = null, _adO = 1, _adColor = '#000000';
+     * smudge on such a preset would flatten.
+     *
+     * Falling pressure: Krita caps the dab at the stroke's running opacity
+     * instead, which jumps up with the dab's and eases a tenth of the way
+     * down toward a lower one (KisPainter::blendAverageOpacity, from 0 each
+     * stroke). Its alpha darken then reads a + (avg - a) * mask * flow * o/avg,
+     * the same lighten at grey avg, the dab thinned by o/avg. */
+    var _adCanvas = null, _adCtx = null, _adO = 1, _adAvg = 0, _adColor = '#000000';
     function _alphaDarken(p) {
         return !!((p.dabOpacitySrc && p.dabOpacitySrc !== 'none') || p.maskOp || p.hatch)
             && p.engineKind !== 'shape' && p.engineKind !== 'deform';
@@ -1537,7 +1542,7 @@
         var oy = maskCanvas._cy != null ? _round(y - maskCanvas._cy) : _pxOff ? _round(y - mh / 2) : y - mh / 2;
 
         var ad = destCtx === _flowCtx && _alphaDarken(getParams());
-        if (ad) { _ensureAdBuffer(); _adColor = colorHex; colorHex = _greyHex(_adO); }
+        if (ad) { _ensureAdBuffer(); _adColor = colorHex; colorHex = _greyHex(_adAvg); if (_adAvg > 0) alpha *= _adO / _adAvg; }
 
         if (_tintMask !== maskCanvas || _tintColor !== colorHex) {
             _colorizeMask(maskCanvas, colorHex);
@@ -2751,6 +2756,7 @@
         // draws as a clean 1px line.
         if (sz < (/^krita/.test(p.falloff) ? 0.01 : 0.5)) return;
         _adO = _dyn(p, 'dabOpacity', 1, sc, 14);
+        _adAvg = _adAvg < _adO ? _adO : 0.1 * _adO + 0.9 * _adAvg;
         if (p.maskOp && _flowCanvas) _maskStrokeDab(p, x, y, sc);
 
         // Bristle mode: render multiple fiber dabs
@@ -5084,7 +5090,7 @@
     engine.beginStroke = function (x, y, pressure, color) {
         _strokeSeed = _pinnedSeed == null
             ? Math.floor(Math.random() * 2147483647) : _pinnedSeed;
-        _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null;
+        _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null; _adAvg = 0;
         /* Freeze the params for this stroke (see the getParams seam): a copy,
          * not the pointer — setParam mutates _params in place. Iterates _params
          * itself rather than _paramMeta so saved-override keys outside DEFAULTS
@@ -5939,7 +5945,7 @@
             _lastDabDist = 0;
             // The replay repaints the whole stroke, so the fade sensor has
             // to start counting again with it.
-            _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null;
+            _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null; _adAvg = 0;
             if (pts.length === 1) {
                 _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, _state.lastColor);
             } else {
