@@ -416,6 +416,11 @@ await withPage(async (page) => {
                 vbrStar: BP.readVbr('GIMP-VBR\n1.5\n2. Star\ndiamond\n50.000000\n25.000000\n5\n1.000000\n2.500000\n17.500000\n').params,
                 vbrRound: BP.readVbr('GIMP-VBR\n1.0\n2. Hardness 100\n10.000000\n25.000000\n1.000000\n1.000000\n0.000000\n').params,
                 vbrSmall: BP.readVbr('GIMP-VBR\n1.0\nCircle (11)\n20.000000\n5.500000\n1.000000\n1.000000\n0.000000\n').params,
+                // Ink Calligraphic: fade and pressure multiplied through one shared curve; Charlie G: a locked angle.
+                fadeList: BP.toPreset({ params: { brush_definition: round, PressureSize: 'true', SizeUseCurve: 'true',
+                    SizeSensor: '<params id="sensorslist"> <ChildSensor periodic="0" length="100" id="fade"> <curve>0,1;1,0;</curve> </ChildSensor> <ChildSensor id="pressure"> <curve>0,0;0.3,0.56;1,1;</curve> </ChildSensor> </params>',
+                    PressureRotation: 'true', RotationUseCurve: 'true',
+                    RotationSensor: '<params lockedAngleMode="1" id="drawingangle" angleOffset="0"> <curve>0,0;1,1;</curve> </params>' } }).params,
                 // Sketch chrome: Krita's sketch engine, build up, opacity on a pressure curve.
                 sketch: BP.toPreset({ paintop: 'sketchbrush', params: { brush_definition: round, PaintOpAction: '1',
                     PressureOpacity: 'true', OpacityUseCurve: 'true', OpacitySensor: '<params id="pressure"><curve>0,0;0.5,0.49;</curve></params>',
@@ -427,6 +432,13 @@ await withPage(async (page) => {
         /* Krita's sketch engine was painted as a round brush: 34x Krita's
          * ink on Sketch chrome. Measured (test/krita/probes/sketch) it is
          * hard lines out to nearby points, the opacity curve their ink. */
+        const fl = B.fadeList;
+        check("a Krita size list keeps every input, fade counting up with its own length, through the shared curve",
+            fl.sizeSensors && fl.sizeSensors.length === 2 && fl.sizeSensors[0].src === 'fadein' &&
+            fl.sizeSensors[1].src === 'pressure' && fl.fadeSteps === 100 && fl.fadePeriodic === false &&
+            JSON.stringify(fl.sizeSensors[0].curve) === JSON.stringify(fl.sizeSensors[1].curve) &&
+            fl.sizeSensors[0].curve[1][1] === 0.56 && fl.angleSrc === 'direction' && fl.angleLocked === true,
+            JSON.stringify([fl.sizeSensors, fl.fadeSteps, fl.angleLocked]));
         const sk = B.sketch.params;
         check('a Krita sketch preset comes in as the sketch engine, its lines and their ink carried',
             sk.engineKind === 'sketch' && sk.sketchWidth === 3 && sk.sketchOffset === 0.2 && sk.sketchProb === 1 &&

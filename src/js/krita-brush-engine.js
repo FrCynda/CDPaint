@@ -309,7 +309,11 @@
     function _kritaCircleMask(size, aspect, hard, phase, aa, gauss, ang) {
         var rx = size / 2, ry = size / aspect / 2;
         if (aspect < 1) { rx = size * aspect / 2; ry = size / 2; }
-        var W = _ceil(rx * 2) + 3, H = _ceil(ry * 2) + 3;
+        // Sized for the TURNED oval: sized for the upright one, a turned
+        // Ink Calligraphic lost both ends of its long axis.
+        var c0 = _cos(ang || 0), s0 = _sin(ang || 0);
+        var W = _ceil(2 * Math.sqrt(rx * rx * c0 * c0 + ry * ry * s0 * s0)) + 3;
+        var H = _ceil(2 * Math.sqrt(rx * rx * s0 * s0 + ry * ry * c0 * c0)) + 3;
         var canvas = new OffscreenCanvas(W, H), cx = W / 2, cy = H / 2;
         if (phase) { canvas._cx = cx = _floor(W / 2) + phase[0]; canvas._cy = cy = _floor(H / 2) + phase[1]; }
         var ss = aa && (rx < 5 || ry < 5) ? (rx < 0.5 || ry < 0.5 ? 6 : 3) : 1, e = aa ? 1 : 0;
@@ -2131,7 +2135,8 @@
     var _isArray = Array.isArray;
     function _cloneCurve(c) {
         var out = [];
-        for (var i = 0; i < c.length; i++) out.push(c[i].slice(0, 3));   // [x, y, corner?]
+        // [x, y, corner?]; a list of inputs (sizeSensors) holds objects instead
+        for (var i = 0; i < c.length; i++) out.push(_isArray(c[i]) ? c[i].slice(0, 3) : JSON.parse(JSON.stringify(c[i])));
         return out;
     }
 
@@ -2219,8 +2224,13 @@
             case 'random':   return _dabRand(sc.x, sc.y, seed);
             case 'fade':
                 return _clamp(1 - _dabIndex / _max(1, (p && p.fadeSteps) || 25), 0, 1);
+            // Krita's fade counts dabs UP from 0 (the first dab), holding at 1 or wrapping.
+            case 'fadein':
+                var fn = _max(1, (p && p.fadeSteps) || 25), fk = _max(0, _dabIndex - 1);
+                return (p && p.fadePeriodic ? fk % fn : _min(fk, fn)) / fn;
             case 'distance':
-                return _clamp((_lastDabDist || 0) / _max(1, (p && p.distanceLength) || 30), 0, 1);
+                var dn = _max(1, (p && p.distanceLength) || 30), dd = _lastDabDist || 0;
+                return p && p.distancePeriodic ? (dd % dn) / dn : _clamp(dd / dn, 0, 1);
             default:         return 1;
         }
     }
@@ -2301,11 +2311,44 @@
 
     /* base scaled by its sensor, floored at <param>Min percent. */
     function _dyn(p, key, base, sc, seed) {
-        var src = p[key + 'Src'];
-        if (!src || src === 'none') return base;
-        var v = _curveAt(p[key + 'Curve'], _sensor(src, sc, seed, p), p.curveSmooth);
+        var list = p[key + 'Sensors'], v;
+        if (list) v = _kritaInputs(list, p[key + 'Mode'], sc, seed, p);
+        else {
+            var src = p[key + 'Src'];
+            if (!src || src === 'none') return base;
+            v = _curveAt(p[key + 'Curve'], _sensor(src, sc, seed, p), p.curveSmooth);
+        }
         var lo = (p[key + 'Min'] != null ? p[key + 'Min'] : 0) / 100;
         return base * (lo + (1 - lo) * v);
+    }
+
+    /* Several Krita inputs on one size-like option: the plain ones combine
+     * by the option's mode (0 multiply, 1 add, 2 max, 3 min, 4 difference),
+     * then a drawing angle multiplies in as an offset and rotations add in
+     * on a -1..1 scale. The angle is 0.5 at a left-to-right stroke, and it
+     * and its curve's output are both turned half a lap (wrapped into 0..1):
+     * a curve reading 0.75 there scales the size by 0.25. */
+    function _wrap1(x) { x %= 1; return x < 0 ? x + 1 : x; }
+    function _kritaInputs(list, mode, sc, seed, p) {
+        var n = 0, prod = 1, sum = 0, mx = 0, mn = 1, abs = 1, add = 0, hasAdd = false;
+        for (var i = 0; i < list.length; i++) {
+            var e = list[i], v;
+            if (e.kind === 'const') v = e.v;
+            else if (e.kind === 'abs') {
+                v = 0.5 + ((e.locked ? _lockAngle : sc.strokeAngle) || 0) / 360 + (e.offset || 0) / 360;
+                if (v > 1) v -= 1;
+                abs = _wrap1(_curveAt(e.curve, _wrap1(v + 0.5), p.curveSmooth) + 0.5);
+                continue;
+            } else if (e.kind === 'add') {
+                var r = ((_penTwist % 360) + 540) % 360 - 180;       // -180..180, 0 upright
+                add += 2 * _curveAt(e.curve, 0.5 * (1 + r / 180), p.curveSmooth) - 1;
+                hasAdd = true;
+                continue;
+            } else v = _curveAt(e.curve, _sensor(e.src, sc, seed, p), p.curveSmooth);
+            n++; prod *= v; sum += v; mx = _max(mx, v); mn = _min(mn, v);
+        }
+        var scale = !n ? 1 : mode === 1 ? sum : mode === 2 ? mx : mode === 3 ? mn : mode === 4 ? mx - mn : prod;
+        return _clamp(scale * abs * (hasAdd ? 0.5 * (1 + add) : 1), 0, 1);
     }
 
     /* Angle is degrees added to the tip, not a factor scaling it, so it reads
@@ -2616,6 +2659,11 @@
          * dab -- and a stroke is a few thousand dabs. */
         var sc = _scDab;
         sc.x = x; sc.y = y; sc.pressure = _sp; sc.strokeAngle = strokeAngle;
+        /* Krita's locked drawing angle is the first dab's, and with no dab
+         * before it that is measured from the canvas origin
+         * (KisDistanceInformation starts at 0,0). */
+        if (_dabIndex === 1) _lockAngle = _atan2(y, x) * 180 / _PI;
+        if (p.angleLocked) sc.strokeAngle = _lockAngle;
 
         /* Which of the two a taper thins. Krita and CSP both default to the
          * WIDTH — a nib lifting off the paper narrows to a point, it does not
@@ -4151,6 +4199,7 @@
     var _strokeSeed = 0, _pinnedSeed = null;
     // How many dabs into the stroke we are, for the `fade` sensor.
     var _dabIndex = 0;
+    var _lockAngle = 0;
 
     /* The stroke in flight paints with frozen params: getParams() returns the
      * beginStroke snapshot while a stroke is open, so a mid-stroke slider drag
@@ -4422,6 +4471,8 @@
         /* Krita's per-dab opacity: the level a stroke's ink stops building
          * at, not how much each dab adds. See _alphaDarken. */
         dabOpacitySrc: 'none',   dabOpacityMin: 0, dabOpacityCurve: 1,
+        // Krita's several inputs on one option (_kritaInputs); null = just <key>Src.
+        sizeSensors: null, sizeMode: 0, flowSensors: null, flowMode: 0, dabOpacitySensors: null, dabOpacityMode: 0,
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
         tipShrink: '', textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
@@ -4451,6 +4502,8 @@
          * way Photoshop counts, and pixels for distance, the way Krita does. */
         fadeSteps: 25,
         distanceLength: 30,
+        fadePeriodic: false, distancePeriodic: false,
+        angleLocked: false,
         smoothingBasic: 50,
         smoothingWeighted: 100,
         smoothingRope: 100,

@@ -349,7 +349,7 @@
          * sensor tag -- pixels for distance, dabs for fade -- so the reach
          * travels with the source instead of being guessed. */
         distance: 'distance',
-        fade: 'fade'
+        fade: 'fadein'
     };
 
     /* Features Krita has and we do not. Reported by name when a preset
@@ -467,9 +467,34 @@
             var rest = kc ? kc[0][1] : 1;
             curve = curve.map(function (pt) { return pt.length === 3 ? [pt[0], pt[1] * rest, 1] : [pt[0], pt[1] * rest]; });
         });
+        /* Every input at once, for the engine to combine as Krita does:
+         * plain ones by the option's curveMode (multiply unless the file
+         * says add / max / min / difference), drawing angle as a wrapped
+         * offset multiplied in whatever the mode, rotation added. Only
+         * built where it matters -- two or more inputs, or one angle --
+         * so the single-sensor path stays as it was. */
+        var all = null;
+        var list = kids.length ? kids : [{ id: id, raw: raw }];
+        if (kids.length > 1 || list.some(function (k) { return k.id === 'drawingangle' || k.id === 'rotation'; })) {
+            all = [];
+            list.forEach(function (k) {
+                var kc = (shared && common) || BrushPack.parseCurve(k.raw);
+                if (k.id === 'speed') { all.push({ kind: 'const', v: kc ? kc[0][1] : 1 }); return; }
+                if (!SENSORS[k.id]) return;
+                var e = { src: SENSORS[k.id], curve: kc,
+                          kind: k.id === 'drawingangle' ? 'abs' : k.id === 'rotation' ? 'add' : 'scale' };
+                var off = /angleOffset="(-?[0-9.]+)"/.exec(k.raw);
+                if (off) e.offset = parseFloat(off[1]);
+                if (/lockedAngleMode="1"/.test(k.raw)) e.locked = true;
+                var kl = /length="([0-9.]+)"/.exec(k.raw);
+                if (kl) { e.length = parseFloat(kl[1]); e.periodic = /periodic="1"/.test(k.raw); }
+                all.push(e);
+            });
+        }
         return { id: id, src: SENSORS[id] || null,
                  length: len ? parseFloat(len[1]) : null,
-                 curve: curve };
+                 periodic: /periodic="1"/.test(raw),
+                 curve: curve, all: all, mode: parseInt(params[opt + 'curveMode'], 10) || 0 };
     }
 
     /* Turns one Krita preset into the parameters our engine takes.
@@ -702,6 +727,7 @@
                 out.dabOpacityMin = 0;
                 _kritaReach(out, s);
                 if (s.curve) out.dabOpacityCurve = s.curve;
+                if (s.all) { out.dabOpacitySensors = s.all; out.dabOpacityMode = s.mode; s.all.forEach(function (e) { _kritaReach(out, e); }); }
                 return;
             }
             if (!s.src) { warn.push(pair[0] + ' followed ' + s.id + ', which we have no input for'); return; }
@@ -709,6 +735,7 @@
             out[key + 'Min'] = 0;
             _kritaReach(out, s);
             if (s.curve) out[key + 'Curve'] = s.curve;
+            if (s.all) { out[key + 'Sensors'] = s.all; out[key + 'Mode'] = s.mode; s.all.forEach(function (e) { _kritaReach(out, e); }); }
         });
 
         /* The spacing option multiplies the gap by its strength times its
@@ -787,6 +814,7 @@
              * turn it through a full circle across their range, which is what
              * Krita's pressure-driven rotation does. Only an input we cannot
              * read at all is still refused. */
+            if (rot.src === 'direction' && /lockedAngleMode="1"/.test(rsRaw)) out.angleLocked = true;
             if (rot.src) { out.angleSrc = rot.src; _kritaReach(out, rot); }
             else warn.push('the tip turned with ' + rot.id + ', which we cannot turn it with');
         }
@@ -867,10 +895,12 @@
          * per dial, so the first option that asks sets it. */
         function _kritaReach(out, s) {
             if (s.length == null) return;
-            if (s.src === 'fade' && out.fadeSteps == null) {
-                out.fadeSteps = Math.max(1, Math.min(200, Math.round(s.length)));
+            if (s.src === 'fadein' && out.fadeSteps == null) {
+                out.fadeSteps = Math.max(1, Math.min(1000, Math.round(s.length)));
+                out.fadePeriodic = s.periodic;
             } else if (s.src === 'distance' && out.distanceLength == null) {
                 out.distanceLength = Math.max(1, Math.min(500, Math.round(s.length)));
+                out.distancePeriodic = s.periodic;
             }
         }
 

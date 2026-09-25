@@ -3088,6 +3088,49 @@ await withPage(async (page) => {
         gaps.flat === 0, `${gaps.flat} bare px`);
     check('auto spacing is coeff * sqrt(size) and overrides the percentage',
         gaps.auto === 0, `${gaps.auto} bare px`);
+    console.log('== Krita inputs: fade, locked angle, turned ovals ==');
+    const kr = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        // Inked rows down each column of one horizontal stroke.
+        const run = async (set, x0, y0, x1, cols) => {
+            __B.doc(200, 200);
+            ['sizeSrc','sizeMin','sizeCurve','flowSrc','angleSrc','aspectRatio','angle','fadeSteps',
+             'angleLocked','sizeSensors','falloff','shape','spacing','taperStart','taperEnd','smoothingMode']
+                .forEach(k => b.setParam(k, b.DEFAULTS[k]));
+            b.setParam('hardness', 100); b.setParam('flowSrc', 'none');
+            set();
+            const L = __B.layer();
+            b.beginStroke(x0, y0, 1, '#000000');
+            for (let i = 1; i <= 40; i++) b.moveStroke(x0 + (x1 - x0) * i / 40, y0, 1, '#000000');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 150));
+            return cols.map(x => { let n = 0;
+                for (let y = 0; y < 200; y++) if (L.ctx.getImageData(x, y, 1, 1).data[3] >= 128) n++;
+                return n; });
+        };
+        const oval = () => { b.setParam('falloff', 'krita'); b.setParam('shape', 'circle');
+            b.setParam('size', 30); b.setParam('aspectRatio', 2); b.setParam('spacing', 5); };
+        const out = {};
+        // Turned a quarter, the oval's long axis stands across the stroke.
+        out.turned = await run(() => { oval(); b.setParam('angle', 90); }, 40, 100, 160, [100]);
+        // Krita's fade grows 0 -> 1 over fadeSteps dabs, then holds.
+        out.fade = await run(() => { b.setParam('size', 30); b.setParam('spacing', 5);
+            b.setParam('sizeSrc', 'fadein'); b.setParam('sizeMin', 0); b.setParam('sizeCurve', 1);
+            b.setParam('fadeSteps', 40); }, 20, 100, 180, [25, 170]);
+        // Locked: the first dab's angle, measured from the canvas origin (45 degrees here).
+        out.free = await run(() => { oval(); b.setParam('aspectRatio', 3); b.setParam('angleSrc', 'direction'); }, 100, 100, 180, [150]);
+        out.locked = await run(() => { oval(); b.setParam('aspectRatio', 3); b.setParam('angleSrc', 'direction');
+            b.setParam('angleLocked', true); }, 100, 100, 180, [150]);
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(kr));
+    check('a Krita oval turned upright is not clipped to its unturned height',
+        kr.turned[0] >= 27, `${kr.turned[0]} rows, want ~30`);
+    check("Krita's fade grows a stroke from nothing rather than shrinking it",
+        kr.fade[0] < kr.fade[1] / 2 && kr.fade[1] >= 27, kr.fade.join(' -> '));
+    check("a locked drawing angle holds the first dab's turn, measured from the origin",
+        kr.free[0] <= 12 && kr.locked[0] >= 18, `free ${kr.free[0]}, locked ${kr.locked[0]}`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
