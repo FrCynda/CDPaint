@@ -31,7 +31,7 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         // A sketch or curve brush remembers every point it is handed and joins back to
         // them; Krita's paintLine hands it the two ends and nothing between
         // (test/krita/probes/sketch), so it gets the same here.
-        const oneSeg = /^(sketch|curve)$/.test(b.getParams().engineKind);
+        const oneSeg = /^(sketch|curve|particle)$/.test(b.getParams().engineKind);
         for (const [x0, y0, p0, x1, y1, p1] of ${JSON.stringify(c.lines)}) {
             const n = oneSeg ? 1 : Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0)));
             /* Node.paintLine starts from a blank KisSpacingInformation, whose

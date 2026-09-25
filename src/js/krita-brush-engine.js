@@ -4582,6 +4582,7 @@
         hatch: null,         // Krita's hatching brush: see _applyHatch
         pixelSteps: false,   // GIMP's sub-pixel spacing: one dab per pixel; see _stepFor
         grid: null,          // Krita's grid brush: see _gridDab
+        particle: null,      // Krita's particle brush: see _paintParticle
         smudgeRate: 100,
         smudgeRateSrc: 'none', smudgeRateMin: 0, smudgeRateCurve: 1,
         smudgeRadius: 100,
@@ -5412,6 +5413,63 @@
         }
         c.restore();
     }
+    /* Krita's particle brush: `count` particles start on the stroke's first
+     * point, their velocity seeded with that point itself, and each new input
+     * point pulls them `iterations` times -- particle j with the force
+     * (j + iterations) / 2, damped by gravity, moved 0.00003 of the velocity
+     * a step. Every step lays a bilinear 2x2 of weight * 255, added up to
+     * full within the point's pass; passes then stack as ordinary paint.
+     * No spacing: one pass per input point, so a scripted Krita line is one.
+     *
+     * ponytail: a canvas-sized alpha array while the stroke lasts. */
+    var _ptSt = null, _ptA = null, _ptCv = null;
+    function _paintParticle(pts, from, to) {
+        var p = getParams(), c = _flowCtx, pc = p.particle;
+        if (!c || !pc) return;
+        var W = _flowCanvas.width, H = _flowCanvas.height, n = pc.count, it = pc.iterations;
+        if (from === 0 || !_ptSt || _ptSt.x.length !== n) {
+            _ptSt = { x: new Float64Array(n), y: new Float64Array(n), vx: new Float64Array(n), vy: new Float64Array(n) };
+            for (var j = 0; j < n; j++) { _ptSt.x[j] = _ptSt.vx[j] = pts[0].x; _ptSt.y[j] = _ptSt.vy[j] = pts[0].y; }
+        }
+        if (!_ptA || _ptA.length !== W * H) _ptA = new Uint8ClampedArray(W * H);
+        var X = _ptSt.x, Y = _ptSt.y, VX = _ptSt.vx, VY = _ptSt.vy, A = _ptA;
+        var g = pc.gravity, sx = pc.scaleX, sy = pc.scaleY, wt = 255 * pc.weight;
+        for (var i = _max(1, from + 1); i <= to; i++) {
+            var tx = pts[i].x, ty = pts[i].y, x1 = W, y1 = H, x2 = -1, y2 = -1;
+            for (var k = 0; k < it; k++) {
+                for (j = 0; j < n; j++) {
+                    var acc = (j + it) * 0.5;
+                    VX[j] = (VX[j] + (tx - X[j]) * sx * acc) * g;
+                    VY[j] = (VY[j] + (ty - Y[j]) * sy * acc) * g;
+                    X[j] += VX[j] * 0.000030; Y[j] += VY[j] * 0.000030;
+                    var ix = _floor(X[j]), iy = _floor(Y[j]);
+                    if (!(ix >= 0 && iy >= 0 && ix < W - 1 && iy < H - 1)) continue;
+                    var fx = X[j] - ix, fy = Y[j] - iy, o = iy * W + ix;
+                    A[o] += _round((1 - fx) * (1 - fy) * wt); A[o + 1] += _round(fx * (1 - fy) * wt);
+                    A[o + W] += _round((1 - fx) * fy * wt); A[o + W + 1] += _round(fx * fy * wt);
+                    if (ix < x1) x1 = ix; if (iy < y1) y1 = iy;
+                    if (ix + 1 > x2) x2 = ix + 1; if (iy + 1 > y2) y2 = iy + 1;
+                }
+            }
+            if (x2 < x1) continue;
+            var bw = x2 - x1 + 1, bh = y2 - y1 + 1, im = new ImageData(bw, bh), d = im.data;
+            for (var yy = 0; yy < bh; yy++) {
+                for (var xx = 0, q = (y1 + yy) * W + x1; xx < bw; xx++, q++) { d[(yy * bw + xx) * 4 + 3] = A[q]; A[q] = 0; }
+            }
+            if (!_ptCv || _ptCv.width < bw || _ptCv.height < bh) _ptCv = new OffscreenCanvas(_max(bw, _ptCv ? _ptCv.width : 0), _max(bh, _ptCv ? _ptCv.height : 0));
+            var pctx = _ptCv.getContext('2d');
+            pctx.clearRect(0, 0, bw, bh);
+            pctx.putImageData(im, 0, 0);
+            pctx.globalCompositeOperation = 'source-in';
+            pctx.fillStyle = _state.lastColor; pctx.fillRect(0, 0, bw, bh);
+            pctx.globalCompositeOperation = 'source-over';
+            c.drawImage(_ptCv, 0, 0, bw, bh, x1, y1, bw, bh);
+            var r = { x1: x1, y1: y1, x2: x2 + 1, y2: y2 + 1 };
+            _dirtyRect = _unionRect(_dirtyRect, r);
+            _clearBounds = _unionRect(_clearBounds, r);
+            _flowUsed = _unionRect(_flowUsed, r);
+        }
+    }
     /* One sketch line. A hairline is hard pixel steps, as Krita's is --
      * smoothed, each pixel split over two and the probe's zigzag lost a
      * third of its match. `skipFirst` leaves the start pixel to the line
@@ -5656,11 +5714,11 @@
             return;
         }
         var ekf = getParams().engineKind;
-        if (ekf === 'sketch' || ekf === 'curve') {
+        if (ekf === 'sketch' || ekf === 'curve' || ekf === 'particle') {
             var kp = _state.strokePoints;
             if (kp.length < 2 || !_state.lastColor) return;
             _dirtyRect = null;
-            (ekf === 'curve' ? _paintCurveOp : _paintSketch)(kp, _state.lastProcessedIdx, kp.length - 1);
+            (ekf === 'curve' ? _paintCurveOp : ekf === 'particle' ? _paintParticle : _paintSketch)(kp, _state.lastProcessedIdx, kp.length - 1);
             _state.lastProcessedIdx = kp.length - 1;
             _state.started = true;
             _hintFlushRect(final);
@@ -5752,7 +5810,7 @@
             var pts = _state.strokePoints;
             if (pts.length < 2 || !_state.lastColor) return;
             var ek = getParams().engineKind;
-            if (ek === 'shape' || ek === 'deform' || ek === 'sketch' || ek === 'curve') { _flushPending(false); return; }
+            if (ek === 'shape' || ek === 'deform' || ek === 'sketch' || ek === 'curve' || ek === 'particle') { _flushPending(false); return; }
             var startIdx = _state.started ? _state.lastProcessedIdx : 0;
             var endIdx = pts.length - 1;
             if (startIdx < endIdx) {

@@ -53,7 +53,7 @@ await withPage(async (page) => {
             if (fill) { L.ctx.fillStyle = 'rgba(' + fill.slice(0, 3).join(',') + ',' + fill[3] / 255 + ')'; L.ctx.fillRect(0, 0, W, H); }
             for (const [x, y, w, h, ...c] of rects) { L.ctx.clearRect(x, y, w, h); L.ctx.fillStyle = 'rgba(' + c.slice(0, 3).join(',') + ',' + c[3] / 255 + ')'; L.ctx.fillRect(x, y, w, h); }
             const clock = performance.now; performance.now = () => 0;
-            const oneSeg = /^(sketch|curve)$/.test(params.engineKind);   // as measure.mjs: Krita hands it the two ends only
+            const oneSeg = /^(sketch|curve|particle)$/.test(params.engineKind);   // as measure.mjs: Krita hands it the two ends only
             for (const [x0, y0, p0, x1, y1, p1] of lines) {
                 const n = oneSeg ? 1 : Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0)));
                 // as measure.mjs: Node.paintLine's first dab lands half a pixel along the line

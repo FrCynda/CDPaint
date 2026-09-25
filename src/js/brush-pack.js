@@ -603,7 +603,7 @@
             if (opts.tipSize) out.size = Math.max(1, Math.round(opts.tipSize * scale));
             else { out.size = scale; out.needsTipSize = true; }
         } else if (preset.paintop !== 'experimentbrush' &&
-                   preset.paintop !== 'deformbrush' && preset.paintop !== 'curvebrush') {
+                   preset.paintop !== 'deformbrush' && preset.paintop !== 'curvebrush' && preset.paintop !== 'particlebrush') {
             warn.push('no tip definition; falling back to a round brush');
             out.shape = 'circle';
             out.size = 20;
@@ -1139,6 +1139,15 @@
             ['minusthenplus', 'plusthenminus', 'moirepattern'].forEach(function (k) {
                 if (_bool(P['Hatching/bool_' + k])) warn.push('dropped: its ' + k + ' cross-hatching, painted as single lines');
             });
+        } else if (preset.paintop === 'particlebrush') {
+            // see _paintParticle in the engine; Krita's own defaults
+            out.engineKind = 'particle';
+            out.particle = {
+                count: Math.max(1, Math.round(_num(P['Particle/count'], 50))),
+                iterations: Math.max(1, Math.round(_num(P['Particle/iterations'], 10))),
+                gravity: _num(P['Particle/gravity'], 0.989), weight: _num(P['Particle/weight'], 0.2),
+                scaleX: _num(P['Particle/scaleX'], 0.3), scaleY: _num(P['Particle/scaleY'], 0.3)
+            };
         } else if (preset.paintop && preset.paintop !== 'paintbrush') {
             warn.push('this is a ' + preset.paintop + ', which we paint as an ordinary brush');
         }

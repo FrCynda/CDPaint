@@ -752,6 +752,23 @@ await withPage(async (page) => {
     check('...joins across a gap inside half the brush', sk.near > 200, 'alpha ' + sk.near);
     check('...and not across one beyond it', sk.far === 0, 'alpha ' + sk.far);
     check("...and one preset's line-width sensor does not leak into the next", sk.leak === 'none', sk.leak);
+    /* Krita's particle brush: particles pulled from the stroke's start
+     * toward each new point, a pass per point. Painted as a round brush, a
+     * 400px one-move line ran end to end where Krita's is a short streak
+     * (X3CH Ribbon: IoU 0.015 -> 1). */
+    const pt = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = __B.layer().ctx;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ engineKind: 'particle', smoothingMode: 'none',
+            particle: { count: 10, iterations: 10, gravity: 0.985, weight: 1, scaleX: 1, scaleY: 0.6 } })) b.setParam(k, v);
+        L.clearRect(0, 0, 480, 100);
+        b.beginStroke(40, 50, 1, '#000000'); b.moveStroke(440, 50, 1, '#000000'); b.endStroke();
+        const d = L.getImageData(0, 0, 480, 100).data; let n = 0, far = 0;
+        for (let i = 3; i < d.length; i += 4) if (d[i]) { n++; if ((i >> 2) % 480 > 60) far++; }
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify({ n, far });
+    })()`));
+    check('a particle stroke is a short streak from its start', pt.n > 5 && pt.far === 0, JSON.stringify(pt));
     /* Krita's curve brush (KisCurvePaintOp): no dabs, a line per input
      * segment on Qt's anti-aliased pen, a curve through the history once it
      * is full. It was painted as a round brush: 10x Krita's ink on Ink Pen. */
