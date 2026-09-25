@@ -1050,52 +1050,157 @@
         _ktMask = { key: key, w: w, h: h, m: m };
         return _ktMask;
     }
-    /* Krita's hatching brush, from black-box renders (test/krita/probes/
-     * hatch, hatchp). Lines fixed to the canvas: one through the origin
-     * pixel, then every `sep` px along the normal. Across its minor axis a
-     * line is N = ceil(T) px of solid ink; at 0/45/90 degrees that is all,
-     * elsewhere the run is N + 0.9 (steep) or N + 1.17 (shallow) px wide with
-     * soft ends, and an even N sits half a pixel toward +x/+y. Coverage
-     * scales the grey alpha-darken level, not the dab's alpha: dabs build up
-     * toward opacity * coverage and stop there, so a textured tip fills in
-     * solid (Big Hatches) while a line's soft edge never does.
+    /* Krita's hatching brush (HatchingBrush::hatch). Each dab draws its own
+     * lines across its own box -- Krita's dab rect: the cursor less half the
+     * size, floored, and as wide as that fraction plus the size, rounded up
+     * -- one every `sep` px along the normal from the line through the
+     * origin, edge to edge. A line's ends are rounded to whole pixels and it
+     * is drawn with KisPainter::drawThickLine (anti-aliased) or drawLine,
+     * each pixel composited over the last in 8 bits. The dab's mask then cuts
+     * the box, and the lines are the dab's alpha: every dab's line rounds its
+     * ends a little differently, and alpha darken builds each one's soft edge
+     * toward the full opacity, so a 1px line lands about 2px solid (low01).
      * ponytail: only the single and perpendicular styles; the others and
      * their crosshatching sensor fall back to single lines. */
-    var _hatchT = 1, _hatchSep = 6;
-    function _hatchFamily(a, sep, T, aa, whole) {
-        var r = a * _PI / 180, dx = _cos(r), dy = _sin(r), nx = -dy, ny = dx;
-        var steep = Math.abs(dy) >= Math.abs(dx) - 1e-9, k = steep ? nx : ny;   // 45 counts as steep
-        var n = _max(1, _round(T));   // HatchingBrush: qMax(1, qRound(thickness)), 3.15 is 3 px
-        var q = a / 45, special = Math.abs(q - _round(q)) < 1e-6;
-        /* Subpixel precision off: at 45 degrees the lines land a whole number
-         * of pixels apart, rounded down (4 px -> 5 px across, not 5.66;
-         * probes/hatchsub). Other angles are left alone -- unmeasured. */
-        if (whole && special) sep = _max(1, Math.floor(sep / Math.abs(k) + 1e-6)) * Math.abs(k);
-        return { nx: nx, ny: ny, k: k, sep: sep, n: n, sh: n % 2 ? 0 : 0.5 * k, aa: aa,
-                 special: special,
-                 w: n + (steep ? 0.9 : 1.17) };
+    var _hatchT = 1, _hatchSep = 6, _hatchD = 1, _hatchAsp = 1, _hatchBuf = new Uint8Array(4096);
+    function _hq(v) { return _floor(v + 0.5); }   // qRound
+    function _hput(W, H, x, y, a) {   // COMPOSITE_OVER, one pixel, 8 bits
+        if (x < 0 || y < 0 || x >= W || y >= H) return;
+        var i = y * W + x, d = _hatchBuf[i], t = a * d + 0x80;
+        _hatchBuf[i] = a + d - (((t >> 8) + t) >> 8);
     }
-    function _hatchCov(f, X, Y) {
-        var s = X * f.nx + Y * f.ny - f.sh;
-        s -= f.sep * Math.floor(s / f.sep + 0.5);    // nearest line, -sep/2..sep/2
-        var u = s / f.k, c;
-        if (f.special) return Math.abs(u) < f.n / 2 - 1e-6 ? 1 : 0;
-        c = _clamp(_min(u + 0.5, f.w / 2) - _max(u - 0.5, -f.w / 2), 0, 1);
-        return f.aa ? c : (c >= 0.5 ? 1 : 0);
+    function _hmix(W, H, x, y, b) {   // opacity b over what is there, as drawThickLine blends it
+        if (x < 0 || y < 0 || x >= W || y >= H) return;
+        _hput(W, H, x, y, _clamp(_hq(Math.fround(b + (1 - b) * _hatchBuf[y * W + x] / 255) * 255), 0, 255));
     }
-    function _applyHatch(ctx, w, h, ox, oy, p) {
-        var H = p.hatch, T = _hatchT, sep = _hatchSep;
-        var fs = [_hatchFamily(H.angle, sep, T, H.aa, H.whole)];
-        if (H.cross) fs.push(_hatchFamily(H.angle + 90, sep, T, H.aa, H.whole));
+    function _hThick(W, H, sx, sy, ex, ey, T) {
+        var f = Math.fround, i, t;
+        var tp = T >> 1, tn = (T >> 1) - (T % 2 ? 0 : 1), thin = T === 1;
+        var x0 = _hq(sx), y0 = _hq(sy), x1 = _hq(ex), y1 = _hq(ey);
+        var hor = _abs(x1 - x0) > _abs(y1 - y0);
+        var x0a = x0, y0a = y0, x0b = x0, y0b = y0, x1a = x1, y1a = y1, x1b = x1, y1b = y1;
+        if (hor) { y0a -= tn; y0b += tp; y1a -= tn; y1b += tp; }
+        else { x0a -= tn; x0b += tp; x1a -= tn; x1b += tp; }
+        if (hor) {
+            for (i = y0a; i <= y0b; i++) _hput(W, H, x0, i, 255);
+            for (i = y1a; i <= y1b; i++) _hput(W, H, x1, i, 255);
+        } else {
+            for (i = x0a; i <= x0b; i++) _hput(W, H, i, y0, 255);
+            for (i = x1a; i <= x1b; i++) _hput(W, H, i, y1, 255);
+        }
+        if (x1 !== x0 && y1 !== y0) {
+            if (hor) { _hmix(W, H, x0a, y0a - 1, 0.25); _hmix(W, H, x1b, y1b + 1, 0.25); }
+            else { _hmix(W, H, x0a - 1, y0a, 0.25); _hmix(W, H, x1b + 1, y1b, 0.25); }
+        }
+        var ga, gb, fa, fb, k, lo, hi;
+        if (hor) {
+            ga = f((y1a - y0a) / (x1a - x0a)); gb = f((y1b - y0b) / (x1b - x0b));
+            if (x1 < x0) { t = x0; x0 = x1; x1 = t; y0a = y1a; y0b = y1b; }
+            fa = f(y0a + ga); fb = f(y0b + gb);
+            for (k = x0 + 1; k <= x1 - 1; k++) {
+                lo = _floor(fa); hi = _floor(fb);
+                _hmix(W, H, k, lo, 1 - (fa - lo));
+                if (!thin) _hmix(W, H, k, hi, 1 - (fb - hi));
+                if (ga !== 0 && ga !== 1) _hmix(W, H, k, lo + 1, fa - lo);
+                if (gb !== 0 && gb !== 1 && !thin) _hmix(W, H, k, hi + 1, fb - hi);
+                if (!thin) {
+                    if (fa < fb) for (i = lo + 1; i <= hi; i++) _hput(W, H, k, i, 255);
+                    else for (i = lo + 1; i >= hi; i--) _hput(W, H, k, i, 255);
+                }
+                fa = f(fa + ga); fb = f(fb + gb);
+            }
+        } else {
+            ga = f((x1a - x0a) / (y1a - y0a)); gb = f((x1b - x0b) / (y1b - y0b));
+            if (y1 < y0) { t = y0; y0 = y1; y1 = t; x0a = x1a; x0b = x1b; }
+            fa = f(x0a + ga); fb = f(x0b + gb);
+            for (k = y0 + 1; k <= y1 - 1; k++) {
+                lo = _floor(fa); hi = _floor(fb);
+                _hmix(W, H, lo, k, 1 - (fa - lo));
+                if (!thin) _hmix(W, H, hi, k, 1 - (fb - hi));
+                if (ga !== 0 && ga !== 1) _hmix(W, H, lo + 1, k, fa - lo);
+                if (gb !== 0 && gb !== 1 && !thin) _hmix(W, H, hi + 1, k, fb - hi);
+                if (!thin) {
+                    if (fa < fb) for (i = lo + 1; i <= hi; i++) _hput(W, H, i, k, 255);
+                    else for (i = hi; i <= lo + 1; i++) _hput(W, H, i, k, 255);
+                }
+                fa = f(fa + ga); fb = f(fb + gb);
+            }
+        }
+    }
+    function _hLine(W, H, sx, sy, ex, ey, w) {   // KisPainter::drawLine, not anti-aliased
+        var x1 = _floor(sx), y1 = _floor(sy), x2 = _floor(ex), y2 = _floor(ey);
+        if (x1 === x2 && y1 === y2) return;
+        var dX = x2 - x1, dY = y2 - y1, uni = dX * y1 - dY * x1, pd = 1 / (dX * dX + dY * dY);
+        var hw = w * 0.5 + (_abs(dX) > _abs(dY) ? sx - x1 : sy - y1), R = _hq(hw) + 1, den = 1 / Math.sqrt(dX * dX + dY * dY);
+        var lx = _min(x1, x2), hx = _max(x1, x2), ly = _min(y1, y2), hy = _max(y1, y2);
+        for (var y = ly - R; y < hy + R; y++) for (var x = lx - R; x < hx + R; x++) {
+            var pr = ((x - x1) * dX + (y - y1) * dY) * pd, qx = x1 + pr * dX, qy = y1 + pr * dY;
+            var dd = qx < lx || qx > hx || qy < ly || qy > hy
+                ? _min(_hypot(x - x1, y - y1), _hypot(x - x2, y - y2)) : _abs(dY * x - dX * y + uni) * den;
+            if (dd <= hw) _hput(W, H, x, y, 255);
+        }
+    }
+    var _hXs = [], _hYs = [];
+    function _hRound(v) { return v - _floor(v) >= 0.5 ? _ceil(v) : _floor(v); }   // myround
+    function _hSpin(a, spin) {   // KisHatchingPaintOp::spinAngle
+        var t = a + spin, s = t < 0 ? -1 : 1;
+        t = _abs(t % 180);
+        return t <= 90 ? s * t : s * -(180 - t);
+    }
+    function _hatchInto(W, H, x, y, ang, sep, T, P) {
+        var draw = function (ax, ay, bx, by) { if (P.aa) _hThick(W, H, ax, ay, bx, by, T); else _hLine(W, H, ax, ay, bx, by, T); };
+        var run;
+        if (ang === 90 || ang === -90) {
+            var hot = (P.ox - x) % sep;
+            run = function (fwd, idx, one) {
+                for (; ; idx++) {
+                    var v = fwd ? hot + sep * idx : hot - sep * idx, yd = H;
+                    if (v < 0 || v > W) break;
+                    if (P.whole) { v = _hRound(v); yd = _hRound(yd); }
+                    draw(v, 0, v, yd);
+                    if (one) break;
+                }
+            };
+        } else {
+            var sl = Math.tan(ang * _PI / 180), dy = _abs(sep / _cos(ang * _PI / 180));
+            if (P.whole) dy = Math.trunc(dy);
+            var hotI = ((P.oy - sl * P.ox) - (y - sl * x)) % dy;
+            run = function (fwd, idx, one) {
+                for (; ; idx++) {
+                    var b = fwd ? hotI + dy * idx : hotI - dy * idx, xs = _hXs, ys = _hYs;
+                    xs.length = ys.length = 0;
+                    if (b >= 0 && b <= H) { xs.push(0); ys.push(b); }
+                    if (sl * W + b <= H && sl * W + b >= 0) { xs.push(W); ys.push(b + sl * W); }
+                    if (-b / sl > 0 && -b / sl < W) { xs.push(-b / sl); ys.push(0); }
+                    if ((H - b) / sl > 0 && (H - b) / sl < W) { xs.push((H - b) / sl); ys.push(H); }
+                    if (!xs.length) break;
+                    if (xs.length !== 2) continue;   // a corner, or worse: Krita skips it
+                    if (P.whole) { xs[0] = _hRound(xs[0]); xs[1] = _hRound(xs[1]); ys[0] = _hRound(ys[0]); ys[1] = _hRound(ys[1]); }
+                    draw(xs[0], ys[0], xs[1], ys[1]);
+                    if (one) break;
+                }
+            };
+        }
+        run(true, 1, false); run(true, 0, true); run(false, 1, false);
+    }
+    function _applyHatch(ctx, w, h, ox, oy, p, cx, cy) {
+        var P = p.hatch, T = _max(1, _hq(_hatchT));
+        var dw = _max(1, _hatchD), dh = _max(1, _hatchD / _hatchAsp);
+        if (_hatchAsp < 1) { dw = _max(1, _hatchD * _hatchAsp); dh = _max(1, _hatchD); }
+        var px = cx - dw / 2, py = cy - dh / 2, bx = _floor(px), by = _floor(py);
+        var W = _max(1, _ceil(px - bx + dw - 1e-6)), H = _max(1, _ceil(py - by + dh - 1e-6));
+        if (_hatchBuf.length < W * H) _hatchBuf = new Uint8Array(W * H * 2);
+        _hatchBuf.fill(0, 0, W * H);
+        if (P.cross) _hatchInto(W, H, bx, by, _hSpin(P.angle, 90), _hatchSep, T, P);
+        _hatchInto(W, H, bx, by, P.angle, _hatchSep, T, P);
         var img = ctx.getImageData(0, 0, w, h), d = img.data;
-        var bx = _round(ox) - H.ox, by = _round(oy) - H.oy;
         for (var j = 0; j < h; j++) {
+            var yy = oy + j - by;
             for (var i = 0; i < w; i++) {
-                var o = (j * w + i) * 4, a = d[o + 3];
-                if (!a) continue;
-                var c = _hatchCov(fs[0], bx + i, by + j);
-                if (fs.length > 1 && c < 1) c = _max(c, _hatchCov(fs[1], bx + i, by + j));
-                d[o] = d[o] * c; d[o + 1] = d[o + 1] * c; d[o + 2] = d[o + 2] * c;
+                var o = (j * w + i) * 4;
+                if (!d[o + 3]) continue;
+                var xx = ox + i - bx, c = xx >= 0 && yy >= 0 && xx < W && yy < H ? _hatchBuf[yy * W + xx] / 255 : 0;
+                d[o + 3] = _round(d[o + 3] * c);
             }
         }
         ctx.putImageData(img, 0, 0);
@@ -1637,7 +1742,7 @@
         if (_applyTip2(_scratchCtx, mw, mh, ox, oy, _max(mw, mh), 0)) _tintMask = null;
         if (_tp.hatch && ad) {
             ox = _round(ox); oy = _round(oy);    // the lines sit on whole pixels
-            _applyHatch(_scratchCtx, mw, mh, ox, oy, _tp);
+            _applyHatch(_scratchCtx, mw, mh, ox, oy, _tp, x, y);
             _tintMask = null;
         }
 
@@ -2910,6 +3015,7 @@
                 var hv = function (o) { return o.src ? _curveAt(o.curve, _sensor(o.src, sc, 16, p), p.curveSmooth) : o.v; };
                 var H = p.hatch, iv = H.intervals;
                 _hatchT = H.thickness * hv(H.thick);
+                _hatchD = sz; _hatchAsp = asp || 1;
                 _hatchSep = H.separation * Math.pow(2, Math.floor((iv - 1) / 2) - _clamp(Math.ceil(hv(H.sep) * iv) - 1, 0, iv - 1));
             }
             if (p.smudgeMode != null) _smudgeDab(p, dx, dy, mask, finalColor, alpha, sc, sz, tex, asp);

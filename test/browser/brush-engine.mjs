@@ -633,8 +633,8 @@ await withPage(async (page) => {
     check('a colour smudge dab is grained by its texture too',
         st.plain > 100 && st.grained < st.plain * 0.75, JSON.stringify(st));
     /* Krita's hatching brush (test/krita/probes/hatch): lines fixed to the
-     * canvas through the origin pixel, thickness/2 wide, and a line's soft
-     * edge stays soft however many dabs cross it. It used to paint as a
+     * canvas through the origin pixel, thickness/2 wide, drawn afresh in
+     * every dab (HatchingBrush::hatch). It used to paint as a
      * plain round brush, 1.4-3.7x Krita's ink. */
     const ht = JSON.parse(await page.eval(`(() => {
         const b = PaintApp.brush;
@@ -654,14 +654,16 @@ await withPage(async (page) => {
         for (let i = 3; i < d.length; i += 4) steep.push(d[i]);
         // Krita rounds the width to whole pixels: 6.3 / 2 is 3 rows, not 4 (Hatching Lines: 1.31x the ink)
         const odd = run(0, 6.3).filter(a => a > 128).length;
-        return JSON.stringify({ flat, odd, soft: steep.filter(a => a > 30 && a < 225).length });
+        run(-60, 2);
+        const row = Array.from(__B.layer().ctx.getImageData(90, 100, 21, 1).data.filter((_, i) => i % 4 === 3));
+        return JSON.stringify({ flat, odd, solid: row.filter(a => a > 250).length, row });
     })()`));
     check('hatch lines sit on the canvas: rows 5-7 of every 6 inked at 0 degrees',
         ht.flat.every((a, i) => ((90 + i) % 6 === 5 || (90 + i) % 6 === 0 || (90 + i) % 6 === 1) ? a > 250 : a < 5),
         JSON.stringify(ht.flat));
     check("...a fractional thickness rounds to whole pixels, as Krita's qRound does", ht.odd === 6, ht.odd + ' of 12 rows');
-    check("...and a slanted line's soft edge is not filled in by the dabs crossing it",
-        ht.soft > 20, 'soft pixels ' + ht.soft);
+    check("...and a slanted 1px line's dabs build its soft edges up to about 2px solid, as Krita's alpha darken does",
+        ht.solid >= 5, JSON.stringify(ht.row));
     /* Krita's grid brush (bank: Grid_square_25): every 25 px from the first
      * point, never at the last, the canvas cell under the pen fills with
      * 2x2 circles. It used to paint as a round brush (IoU 0.30). */
