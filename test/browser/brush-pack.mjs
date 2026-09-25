@@ -421,6 +421,9 @@ await withPage(async (page) => {
                     SizeSensor: '<params id="sensorslist"> <ChildSensor periodic="0" length="100" id="fade"> <curve>0,1;1,0;</curve> </ChildSensor> <ChildSensor id="pressure"> <curve>0,0;0.3,0.56;1,1;</curve> </ChildSensor> </params>',
                     PressureRotation: 'true', RotationUseCurve: 'true',
                     RotationSensor: '<params lockedAngleMode="1" id="drawingangle" angleOffset="0"> <curve>0,0;1,1;</curve> </params>' } }).params,
+                // GDquest Paint Soft: the drawing angle 98 degrees on.
+                angleOff: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
+                    RotationSensor: '<params id="drawingangle" fanCornersEnabled="1" angleOffset="98" lockedAngleMode="0" fanCornersStep="90"/>' } }).params,
                 // Natural Media Ink Pen: the curve engine, its width on a fade+pressure list.
                 curve: BP.toPreset({ paintop: 'curvebrush', params: { 'Curve/lineWidth': '11', 'Curve/strokeHistorySize': '40',
                     'Curve/makeConnection': 'true', 'Curve/smoothing': 'true', 'Curve/curvesOpacity': '1', 'PressureLine width': 'true',
@@ -436,6 +439,8 @@ await withPage(async (page) => {
         /* Krita's sketch engine was painted as a round brush: 34x Krita's
          * ink on Sketch chrome. Measured (test/krita/probes/sketch) it is
          * hard lines out to nearby points, the opacity curve their ink. */
+        check('a drawing angle turns the tip by its angle offset on top of the stroke (Paint Soft 98)',
+            B.angleOff.angleSrc === 'direction' && B.angleOff.angle === 98, B.angleOff.angleSrc + ' ' + B.angleOff.angle);
         const fl = B.fadeList;
         check("a Krita size list keeps every input, fade counting up with its own length, through the shared curve",
             fl.sizeSensors && fl.sizeSensors.length === 2 && fl.sizeSensors[0].src === 'fadein' &&

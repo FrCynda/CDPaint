@@ -815,6 +815,12 @@
              * Krita's pressure-driven rotation does. Only an input we cannot
              * read at all is still refused. */
             if (rot.src === 'direction' && /lockedAngleMode="1"/.test(rsRaw)) out.angleLocked = true;
+            /* The drawing angle sensor reads 0.5 + angle/2pi + angleOffset/360
+             * (KisDynamicSensorDrawingAngle): the offset turns the tip on top
+             * of the stroke's direction. Dropped, GDquest Paint Soft laid its
+             * cloud tip along the line instead of 98 degrees across it. */
+            var dOff = rot.src === 'direction' && /angleOffset="(-?[0-9.]+)"/.exec(rsRaw);
+            if (dOff) out.angle = (((out.angle || 0) + parseFloat(dOff[1])) % 360 + 360) % 360;
             if (rot.src) { out.angleSrc = rot.src; _kritaReach(out, rot); }
             else warn.push('the tip turned with ' + rot.id + ', which we cannot turn it with');
         }
