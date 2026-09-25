@@ -1019,7 +1019,7 @@
     function _hatchFamily(a, sep, T, aa, whole) {
         var r = a * _PI / 180, dx = _cos(r), dy = _sin(r), nx = -dy, ny = dx;
         var steep = Math.abs(dy) >= Math.abs(dx) - 1e-9, k = steep ? nx : ny;   // 45 counts as steep
-        var n = _max(1, Math.ceil(T - 1e-9));
+        var n = _max(1, _round(T));   // HatchingBrush: qMax(1, qRound(thickness)), 3.15 is 3 px
         var q = a / 45, special = Math.abs(q - _round(q)) < 1e-6;
         /* Subpixel precision off: at 45 degrees the lines land a whole number
          * of pixels apart, rounded down (4 px -> 5 px across, not 5.66;

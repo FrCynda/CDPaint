@@ -613,10 +613,10 @@ await withPage(async (page) => {
      * plain round brush, 1.4-3.7x Krita's ink. */
     const ht = JSON.parse(await page.eval(`(() => {
         const b = PaintApp.brush;
-        const run = (angle) => {
+        const run = (angle, thickness = 6) => {
             b.forgetSaved('Round'); b.loadPreset('Round');
             for (const [k, v] of Object.entries({ size: 40, hardness: 100, spacing: 5, flowSrc: 'none', sizeSrc: 'none',
-                smoothingMode: 'none', hatch: { angle, separation: 6, thickness: 6, ox: 0, oy: 0, intervals: 2, aa: true,
+                smoothingMode: 'none', hatch: { angle, separation: 6, thickness, ox: 0, oy: 0, intervals: 2, aa: true,
                 cross: false, whole: false, thick: { v: 0.5 }, sep: { v: 0.5 } } })) b.setParam(k, v);
             __B.layer().ctx.clearRect(0, 0, 200, 200);
             b.beginStroke(60, 100, 1, '#000000');
@@ -627,11 +627,14 @@ await withPage(async (page) => {
         const flat = run(0), steep = [];
         const d = (run(-60), __B.layer().ctx.getImageData(90, 90, 20, 20).data);
         for (let i = 3; i < d.length; i += 4) steep.push(d[i]);
-        return JSON.stringify({ flat, soft: steep.filter(a => a > 30 && a < 225).length });
+        // Krita rounds the width to whole pixels: 6.3 / 2 is 3 rows, not 4 (Hatching Lines: 1.31x the ink)
+        const odd = run(0, 6.3).filter(a => a > 128).length;
+        return JSON.stringify({ flat, odd, soft: steep.filter(a => a > 30 && a < 225).length });
     })()`));
     check('hatch lines sit on the canvas: rows 5-7 of every 6 inked at 0 degrees',
         ht.flat.every((a, i) => ((90 + i) % 6 === 5 || (90 + i) % 6 === 0 || (90 + i) % 6 === 1) ? a > 250 : a < 5),
         JSON.stringify(ht.flat));
+    check("...a fractional thickness rounds to whole pixels, as Krita's qRound does", ht.odd === 6, ht.odd + ' of 12 rows');
     check("...and a slanted line's soft edge is not filled in by the dabs crossing it",
         ht.soft > 20, 'soft pixels ' + ht.soft);
     /* Krita's grid brush (bank: Grid_square_25): every 25 px from the first
