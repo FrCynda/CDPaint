@@ -7,7 +7,7 @@
 // packVar: page expression holding the pack's bytes; packName its filename.
 // importExpr: page expression for any other import ({ ok, added: [name] }).
 // Imported presets are deleted again, so a long run never fills storage.
-export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr }) {
+export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true }) {
     return JSON.parse(await page.eval(`(async () => {
         const app = PaintApp, b = app.brush, W = ${W}, H = ${H};
         const imp = ${importExpr || `await b.importBrushPack(${packVar}, ${JSON.stringify(packName)},
@@ -37,8 +37,9 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
             /* Node.paintLine starts from a blank KisSpacingInformation, whose
              * spacing 0 is floored to MIN_DISTANCE_SPACING: Krita's first dab
              * lands half a pixel along the line, not on its start (every
-             * Light Shine star sat 0.5px down the stroke from ours). */
-            const len = Math.hypot(x1 - x0, y1 - y0), h = oneSeg || !len ? 0 : 0.5 / len;
+             * Light Shine star sat 0.5px down the stroke from ours). GIMP's
+             * lands on the start, so its bank turns this off. */
+            const len = Math.hypot(x1 - x0, y1 - y0), h = !${kritaStart} || oneSeg || !len ? 0 : 0.5 / len;
             b.beginStroke(x0 + (x1 - x0) * h, y0 + (y1 - y0) * h, p0 + (p1 - p0) * h, '#000000');
             for (let i = 1; i <= n; i++) {
                 const t = i / n;

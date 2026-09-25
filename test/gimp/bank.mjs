@@ -151,7 +151,7 @@ await withPage(async (page) => {
             : `await b.importBrushTip(Uint8Array.from(atob(${JSON.stringify(bytes.toString('base64'))}), c => c.charCodeAt(0)), ${JSON.stringify(fname)})
                 .then(r => ({ ok: r.ok, added: r.ok ? [r.name] : [], error: r.error }))`;
         const r = await measureCase(page, { preset: e.name, size: row.size, lines: LINES, bands: BANDS },
-            { importExpr, refB64: fs.readFileSync(path.join(refDir, e.key + '.png')).toString('base64'), W, H });
+            { importExpr, refB64: fs.readFileSync(path.join(refDir, e.key + '.png')).toString('base64'), W, H, kritaStart: false });
         if (r.error) { row.status = 'CDPaint could not import it'; row.why = [r.error]; continue; }
         if (!r.krita.ink) { row.status = 'GIMP painted nothing'; continue; }
         fs.writeFileSync(path.join(RUN, e.key + '.png'), Buffer.from(r.png, 'base64'));
