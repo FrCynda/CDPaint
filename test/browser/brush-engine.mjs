@@ -775,6 +775,9 @@ await withPage(async (page) => {
         const f = L().getImageData(100, 36, 1, 8).data; let floor = 0;
         for (let i = 3; i < f.length; i += 4) floor += f[i];
         b.setParam('sketchWidthSensors', null);
+        // Draw Curve: 11px on a whole-pixel line leaves its edge rows half covered, which Qt makes 127.
+        run([[20, 40], [180, 40]], { sketchWidth: 11 });
+        const half = L().getImageData(100, 34, 1, 1).data[3];
         // ...but 1px is still Qt's thin line (fast_pen): one pixel of ink a column on a diagonal, not 1.12.
         run([[20, 150], [180, 70]], { sketchWidth: 1 });
         const g = L().getImageData(100, 100, 1, 20).data; let one = 0;
@@ -784,13 +787,14 @@ await withPage(async (page) => {
         const mid = L().getImageData(90, 100, 20, 40).data; let curve = 0;
         for (let i = 3; i < mid.length; i += 4) if (mid[i]) curve++;
         b.forgetSaved('Round'); b.loadPreset('Round');
-        return JSON.stringify({ hair, floor, one, curve, kind: b.getParams().engineKind });
+        return JSON.stringify({ hair, floor, one, half, curve, kind: b.getParams().engineKind });
     })()`));
     check('a curve-brush hairline on a whole-pixel line lands half in each row, as Qt draws it',
         cv.hair[0] === 0 && cv.hair[1] > 100 && cv.hair[1] < 160 && cv.hair[2] > 100 && cv.hair[2] < 160 && cv.hair[3] === 0,
         JSON.stringify(cv.hair));
     check("...a width input reading 0 holds at a tenth of the width, as Krita's does",
         cv.floor >= 270 && cv.floor <= 292, 'column ink ' + cv.floor + ', 1.1px is 280');
+    check("...a half-covered edge pixel truncates to 127, as Qt's does", cv.half === 127, 'alpha ' + cv.half);
     check('...and a 1px line keeps the thin line, one pixel of ink a column',
         cv.one >= 245 && cv.one <= 265, 'column ink ' + cv.one);
     check('...a full history draws its curve, with no connecting lines asked for', cv.curve > 20, cv.curve + ' px');

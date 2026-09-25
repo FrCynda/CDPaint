@@ -5417,7 +5417,8 @@
     }
     /* Qt's pen, square caps, at the area it covers of each pixel. Chrome
      * strokes to a quarter pixel across the line: 1.1px drew as 1, and Ink
-     * Pen's diagonal carried 0.84 of Krita's ink. Exact on straight lines. */
+     * Pen's diagonal carried 0.84 of Krita's ink. Exact on straight lines.
+     * Qt truncates coverage: a half-covered edge is 127, not 128. */
     var _penCv = null, _penImg = null;
     function _penLine(c, x0, y0, x1, y1, w) {
         var dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
@@ -5434,7 +5435,7 @@
             var rx = bx + k + 0.5 - x0, ry = by + j + 0.5 - y0, al = rx * ux + ry * uy, ac = ry * ux - rx * uy;
             var a = _max(0, _min(ac + 0.5, h) - _max(ac - 0.5, -h)) * _max(0, _min(al + 0.5, len + h) - _max(al - 0.5, -h));
             var q = (j * W + k) * 4;
-            d[q] = rgb[0]; d[q + 1] = rgb[1]; d[q + 2] = rgb[2]; d[q + 3] = _round(_min(1, a) * 255);
+            d[q] = rgb[0]; d[q + 1] = rgb[1]; d[q + 2] = rgb[2]; d[q + 3] = _floor(_min(1, a) * 255 + 1e-6);
         }
         _penCv.getContext('2d').putImageData(_penImg, 0, 0, 0, 0, bw, bh);
         c.drawImage(_penCv, 0, 0, bw, bh, bx, by, bw, bh);
