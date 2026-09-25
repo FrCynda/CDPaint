@@ -34,7 +34,12 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         const oneSeg = /^(sketch|curve)$/.test(b.getParams().engineKind);
         for (const [x0, y0, p0, x1, y1, p1] of ${JSON.stringify(c.lines)}) {
             const n = oneSeg ? 1 : Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0)));
-            b.beginStroke(x0, y0, p0, '#000000');
+            /* Node.paintLine starts from a blank KisSpacingInformation, whose
+             * spacing 0 is floored to MIN_DISTANCE_SPACING: Krita's first dab
+             * lands half a pixel along the line, not on its start (every
+             * Light Shine star sat 0.5px down the stroke from ours). */
+            const len = Math.hypot(x1 - x0, y1 - y0), h = oneSeg || !len ? 0 : 0.5 / len;
+            b.beginStroke(x0 + (x1 - x0) * h, y0 + (y1 - y0) * h, p0 + (p1 - p0) * h, '#000000');
             for (let i = 1; i <= n; i++) {
                 const t = i / n;
                 b.moveStroke(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, p0 + (p1 - p0) * t, '#000000');

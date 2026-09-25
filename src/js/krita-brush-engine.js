@@ -2949,7 +2949,7 @@
     function _maskFor(shape, sz, hardness, angleDeg, aspect, x, y) {
         var mask;
         if (shape === 'custom' && _tipCanvas()) {
-            mask = _getCustomTipMask(sz, angleDeg, aspect, hardness) ||
+            mask = _getCustomTipMask(sz, angleDeg, aspect, hardness, _params.sharpness > 0 ? null : x, y) ||
                    _dabCache.get('circle', sz, hardness, 0, aspect);
         } else {
             // A gauss falloff is its own mask, so its own cache key.
@@ -4019,6 +4019,82 @@
             ? (_tipCycle++ % n)
             : _min(n - 1, _floor(_dabRand(x, y, 23) * n));
     }
+    /* Krita's picture tips (KisQImagePyramid). The tip is kept at halving
+     * sizes, each averaged down from the original to W/2^k, rounded; a dab
+     * takes the smallest level still at or over its scale and is drawn from
+     * it once, bilinear, at its true unrounded scale and turn, already at
+     * its sub-pixel phase, its corner the whole pixel under cursor minus
+     * half its size (KisDabCacheBase). Shrunk to a rounded size and shifted
+     * again by the browser, each Light Shine star was resampled twice and
+     * smeared over two rows. Phases to a quarter pixel, and only up to 64px
+     * (x null above): a big dab cannot see them. */
+    var _kLevels = new WeakMap();
+    function _kritaTipLevel(src, sc) {
+        var W = src.width, H = src.height, L = 1, k = 0;
+        while (0.5 * L > sc - 1e-6 && _round(W * L / 2) > 0 && _round(H * L / 2) > 0) { L /= 2; k++; }
+        var lv = _kLevels.get(src);
+        if (!lv) _kLevels.set(src, lv = []);
+        if (lv[k]) return lv[k];
+        var cv = src.getContext ? src : new OffscreenCanvas(W, H);
+        if (cv !== src) cv.getContext('2d').drawImage(src, 0, 0);
+        var d = cv.getContext('2d').getImageData(0, 0, W, H).data;
+        // premultiplied floats, across then down, each pixel its exact footprint
+        var w = _round(W * L), h = _round(H * L), sx = W / w, sy = H / h;
+        var row = new Float32Array(w * H * 4), v = new Float32Array(w * h * 4), x, y, i, n;
+        for (y = 0; y < H; y++) for (x = 0; x < w; x++) {
+            var a0 = x * sx, a1 = a0 + sx, o = (y * w + x) * 4;
+            for (i = _floor(a0); i < a1 && i < W; i++) {
+                var f = (_min(i + 1, a1) - _max(i, a0)) / sx, q = (y * W + i) * 4, al = d[q + 3] * f / 255;
+                row[o] += d[q] * al; row[o + 1] += d[q + 1] * al; row[o + 2] += d[q + 2] * al; row[o + 3] += d[q + 3] * f;
+            }
+        }
+        for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+            var b0 = y * sy, b1 = b0 + sy, t = (y * w + x) * 4;
+            for (i = _floor(b0); i < b1 && i < H; i++) {
+                var g = (_min(i + 1, b1) - _max(i, b0)) / sy, p = (i * w + x) * 4;
+                for (n = 0; n < 4; n++) v[t + n] += row[p + n] * g;
+            }
+        }
+        return (lv[k] = { w: w, h: h, v: v });
+    }
+    function _kritaTipMask(src, sz, ang, asp, x, y) {
+        var mode = _params.tipMode || 'alpha';
+        sz = sz < 64 ? _max(0.25, _round(sz * 4) / 4) : _max(1, _round(sz));
+        var sc = sz / _max(src.width, src.height), kx = sc * _min(1, asp), ky = sc / _max(1, asp);
+        // the turned tip's bounds: its size, to Krita
+        var c = _cos(ang), s = _sin(ang), TW = src.width * kx, TH = src.height * ky;
+        var bx = _min(0, TW * c, -TH * s, TW * c - TH * s), by = _min(0, TW * s, TH * c, TW * s + TH * c);
+        var bw = _max(0, TW * c, -TH * s, TW * c - TH * s) - bx, bh = _max(0, TW * s, TH * c, TW * s + TH * c) - by;
+        var fx = x == null ? 0 : _round((((x - bw / 2) % 1) + 1) % 1 * 4) / 4 % 1;
+        var fy = x == null ? 0 : _round((((y - bh / 2) % 1) + 1) % 1 * 4) / 4 % 1;
+        var key = 'k|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + '|' + (x == null ? '' : fx + ',' + fy);
+        var hit = _customTipSizeCache[key];
+        if (hit) return hit;
+        var lv = _kritaTipLevel(src, _max(kx, ky)), v = lv.v, LW = lv.w, LH = lv.h;
+        var ax = kx * src.width / LW, ay = ky * src.height / LH;
+        var dw = _max(1, _ceil(fx + bw - 1e-6)), dh = _max(1, _ceil(fy + bh - 1e-6));
+        var out = new OffscreenCanvas(dw, dh), oc = out.getContext('2d'), img = oc.createImageData(dw, dh), r = img.data;
+        for (var j = 0; j < dh; j++) for (var i = 0; i < dw; i++) {
+            var qx = i + 0.5 - fx + bx, qy = j + 0.5 - fy + by;
+            var lx = (qx * c + qy * s) / ax - 0.5, ly = (qy * c - qx * s) / ay - 0.5;
+            var x0 = _floor(lx), y0 = _floor(ly), tx = lx - x0, ty = ly - y0, R = 0, G = 0, B = 0, A = 0;
+            for (var k = 0; k < 4; k++) {                   // the four neighbours, clear outside
+                var xi = x0 + (k & 1), yi = y0 + (k >> 1);
+                if (xi < 0 || yi < 0 || xi >= LW || yi >= LH) continue;
+                var wt = ((k & 1) ? tx : 1 - tx) * ((k >> 1) ? ty : 1 - ty), q = (yi * LW + xi) * 4;
+                R += v[q] * wt; G += v[q + 1] * wt; B += v[q + 2] * wt; A += v[q + 3] * wt;
+            }
+            var t = (j * dw + i) * 4;
+            if (A > 0) {
+                if (mode === 'alpha') r[t] = r[t + 1] = r[t + 2] = 255;
+                else { r[t] = R * 255 / A; r[t + 1] = G * 255 / A; r[t + 2] = B * 255 / A; }
+            }
+            r[t + 3] = A;
+        }
+        oc.putImageData(img, 0, 0);
+        if (x != null) { out._cx = bw / 2 + fx; out._cy = bh / 2 + fy; }
+        return _tipCacheKeep(key, out);
+    }
     function _tipKey() {
         var t = _tipCanvas();
         if (!t) return 'none';
@@ -4102,9 +4178,11 @@
         return out;
     }
 
-    function _getCustomTipMask(sz, angleDeg, aspectRatio, hardness) {
+    function _getCustomTipMask(sz, angleDeg, aspectRatio, hardness, x, y) {
         if (!_tipCanvas()) return null;
         var asp = aspectRatio || 1;
+        if (_params.tipShrink === 'area' && (hardness == null || hardness >= 99))
+            return _kritaTipMask(_tipCanvas(), sz, (angleDeg || 0) * _PI / 180, asp, sz <= 64 ? x : null, y);
         var hard = (hardness != null ? hardness : 100) / 100;
         var mode = _params.tipMode || 'alpha';
         var key = _tipKey() + '|' + _round(sz) + '|' + _round(angleDeg || 0) + '|' + asp.toFixed(2) + '|' + _round(hardness || 100) + '|' + mode + '|' + (_params.tipShrink || '');
