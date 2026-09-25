@@ -560,6 +560,7 @@
             // A generated tip: numbers all the way down, which is our own case.
             out.shape = (String(mask.type || '').indexOf('rect') === 0) ? 'square' : 'circle';
             out.size = Math.max(1, Math.round(_num(mask.diameter, 20)));
+            out.spacingWhole = true;   // see _stepFor
             /* Krita's ratio is the short axis over the long one, so it is our
              * aspect upside down -- and ours squashes rather than stretches,
              * which is the same convention once inverted. */

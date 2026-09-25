@@ -979,6 +979,25 @@ await withPage(async (page) => {
         return runs;
     })()`);
     check("dabs are spaced by the box around the turned tip, as Krita's are", boxRuns >= 6 && boxRuns <= 9, 'runs of ink ' + boxRuns);
+    /* Krita keeps a generated tip's width and height as whole pixels and
+     * spaces by them: 30 at ratio 0.28 is 30x8, so an upright line's dabs
+     * fall 8 * 1.47 = 11.8 apart, not 12.4 (special_shadow 0.72 -> 0.96). */
+    const whole = await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 30, aspectRatio: 3.57, spacing: 147, hardness: 100, falloff: 'krita',
+            spacingWhole: true, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none' })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(100, 20, 1, '#000000');
+        for (let y = 21; y <= 180; y++) b.moveStroke(100, y, 1, '#000000');
+        b.endStroke();
+        const d = __B.layer().ctx.getImageData(100, 0, 1, 200).data;
+        let last = 0; for (let y = 0; y < 200; y++) if (d[y * 4 + 3] > 128) last = y;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return last;
+    })()`);
+    // 13 gaps of 11.76 put the last dab's centre at 172.9, 12 of 12.35 at 168.2
+    check("a Krita tip's dabs are spaced by its whole-pixel height", whole >= 175 && whole <= 178, 'last inked row ' + whole);
     /* Krita turns a tip by (1 - strength * sensor) * pi (KisRotationOption),
      * so Waterpaint's 0.19 random rotation is a small wobble about a half
      * turn, not the full spin it used to get. A flat 30x4 tip, dabs apart: */

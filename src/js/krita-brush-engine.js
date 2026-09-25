@@ -3794,6 +3794,17 @@
             if (_tipAsp >= 1) h = d / _tipAsp; else w = d * _tipAsp;
             var asp = p.aspectRatio || 1;
             if (asp >= 1) h /= asp; else w *= asp;
+            /* Krita builds a generated tip at the brush's size and keeps its
+             * width and height as whole pixels (KisBrush::setWidth takes an
+             * int), and spaces by those: 30 at ratio 0.28 is 30x8, not 30x8.4
+             * -- special_shadow's upright line laid its dabs 12.4 apart
+             * where Krita's are 11.8. The 0.02 absorbs the importer's
+             * two-decimal aspect. A tip under a pixel is built a pixel wide
+             * and scaled by the size option alone (EO Pixel Perfect's 0.01). */
+            if (p.spacingWhole && sz > 0) {
+                var ks = _dyn(p, 'size', 1, sc, 1);
+                w = _max(1, _floor(sz * w / d + 0.02)) * ks; h = _max(1, _floor(sz * h / d + 0.02)) * ks;
+            }
             var t0 = (p.angle || 0) * _PI / 180, c0 = _abs(_cos(t0)), s0 = _abs(_sin(t0));
             var bw = w * c0 + h * s0, bh = w * s0 + h * c0;
             w = bw; h = bh;
@@ -4532,6 +4543,7 @@
         /* Krita's "isotropic spacing": gap from the tip's longest side in
          * every direction, rather than from its width along the stroke. */
         spacingIsotropic: false,
+        spacingWhole: false,  // Krita's generated tip: spaced by its whole-pixel size, see _stepFor
         hardness: 80,
         hardnessY: null,   // Krita's squares only: the ends' fade when it differs from the sides'
         shape: 'circle',
