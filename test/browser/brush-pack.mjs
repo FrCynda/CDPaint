@@ -421,6 +421,10 @@ await withPage(async (page) => {
                     SizeSensor: '<params id="sensorslist"> <ChildSensor periodic="0" length="100" id="fade"> <curve>0,1;1,0;</curve> </ChildSensor> <ChildSensor id="pressure"> <curve>0,0;0.3,0.56;1,1;</curve> </ChildSensor> </params>',
                     PressureRotation: 'true', RotationUseCurve: 'true',
                     RotationSensor: '<params lockedAngleMode="1" id="drawingangle" angleOffset="0"> <curve>0,0;1,1;</curve> </params>' } }).params,
+                // Natural Media Ink Pen: the curve engine, its width on a fade+pressure list.
+                curve: BP.toPreset({ paintop: 'curvebrush', params: { 'Curve/lineWidth': '11', 'Curve/strokeHistorySize': '40',
+                    'Curve/makeConnection': 'true', 'Curve/smoothing': 'true', 'Curve/curvesOpacity': '1', 'PressureLine width': 'true',
+                    'Line widthUseCurve': 'true', 'Line widthSensor': '<params id="sensorslist"> <ChildSensor periodic="0" length="20" id="fade"> <curve>0,1;1,0;</curve> </ChildSensor> <ChildSensor id="pressure"> <curve>0,0;1,1;</curve> </ChildSensor> </params>' } }),
                 // Sketch chrome: Krita's sketch engine, build up, opacity on a pressure curve.
                 sketch: BP.toPreset({ paintop: 'sketchbrush', params: { brush_definition: round, PaintOpAction: '1',
                     PressureOpacity: 'true', OpacityUseCurve: 'true', OpacitySensor: '<params id="pressure"><curve>0,0;0.5,0.49;</curve></params>',
@@ -439,6 +443,12 @@ await withPage(async (page) => {
             JSON.stringify(fl.sizeSensors[0].curve) === JSON.stringify(fl.sizeSensors[1].curve) &&
             fl.sizeSensors[0].curve[1][1] === 0.56 && fl.angleSrc === 'direction' && fl.angleLocked === true,
             JSON.stringify([fl.sizeSensors, fl.fadeSteps, fl.angleLocked]));
+        const cvp = B.curve.params;
+        check('a Krita curve preset comes in as the curve engine, its width on every input of its list',
+            cvp.engineKind === 'curve' && cvp.sketchWidth === 11 && cvp.curveHistory === 40 && cvp.curveConnect && cvp.curveQuad &&
+            cvp.sketchWidthSensors && cvp.sketchWidthSensors.length === 2 && cvp.sketchWidthSensors[0].length === 20 &&
+            !B.curve.warnings.some(w => /ordinary brush|tip definition/.test(w)),
+            JSON.stringify([cvp.engineKind, cvp.sketchWidth, cvp.curveHistory, cvp.sketchWidthSensors, B.curve.warnings]));
         const sk = B.sketch.params;
         check('a Krita sketch preset comes in as the sketch engine, its lines and their ink carried',
             sk.engineKind === 'sketch' && sk.sketchWidth === 3 && sk.sketchOffset === 0.2 && sk.sketchProb === 1 &&

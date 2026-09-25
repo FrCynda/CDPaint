@@ -978,12 +978,13 @@
             /* Cutoff, measured on Krita's renders of a grey ramp
              * (test/krita/probes/texture): outside [lo, hi] of the pattern's
              * grey, policy 1 reads it as black and 2 as white; inside, and
-             * under policy 0, nothing changes. The range tests the raw grey
-             * but the fill lands after Invert (probe i0p1/i0p2).
+             * under policy 0, nothing changes. The range tests the grey
+             * after Invert (KisTextureMaskInfo): tested before it, Natural
+             * Media Pastel's inverted paper cut every pixel and painted nothing.
              * ponytail: brightness/contrast against the cutoff unmeasured. */
             if (p.textureInvert) v = 1 - v;
             if (cut) {
-                var gv = (g * a + 1 - a) * 255;
+                var gv = v * 255;
                 if (gv < lo || gv > hi) v = cut === 1 ? 0 : 1;
             }
             m[i] = _round(v * 255);
@@ -2212,7 +2213,7 @@
      * every one of its `bVTy = 1` dynamics means; Krita measures pixels
      * travelled instead and ramps up rather than down. Both are here because
      * both are common in real files, and neither can be faked with pressure. */
-    function _sensor(src, sc, seed, p) {
+    function _sensor(src, sc, seed, p, e) {
         switch (src) {
             case 'pressure': return _clamp(sc.pressure, 0, 1);
             case 'tilt':     return _tiltAmount();
@@ -2226,11 +2227,11 @@
                 return _clamp(1 - _dabIndex / _max(1, (p && p.fadeSteps) || 25), 0, 1);
             // Krita's fade counts dabs UP from 0 (the first dab), holding at 1 or wrapping.
             case 'fadein':
-                var fn = _max(1, (p && p.fadeSteps) || 25), fk = _max(0, _dabIndex - 1);
-                return (p && p.fadePeriodic ? fk % fn : _min(fk, fn)) / fn;
+                var fn = _max(1, (e && e.length) || (p && p.fadeSteps) || 25), fk = _max(0, _dabIndex - 1);
+                return ((e && e.length ? e.periodic : p && p.fadePeriodic) ? fk % fn : _min(fk, fn)) / fn;
             case 'distance':
-                var dn = _max(1, (p && p.distanceLength) || 30), dd = _lastDabDist || 0;
-                return p && p.distancePeriodic ? (dd % dn) / dn : _clamp(dd / dn, 0, 1);
+                var dn = _max(1, (e && e.length) || (p && p.distanceLength) || 30), dd = _lastDabDist || 0;
+                return (e && e.length ? e.periodic : p && p.distancePeriodic) ? (dd % dn) / dn : _clamp(dd / dn, 0, 1);
             default:         return 1;
         }
     }
@@ -2344,7 +2345,7 @@
                 add += 2 * _curveAt(e.curve, 0.5 * (1 + r / 180), p.curveSmooth) - 1;
                 hasAdd = true;
                 continue;
-            } else v = _curveAt(e.curve, _sensor(e.src, sc, seed, p), p.curveSmooth);
+            } else v = _curveAt(e.curve, _sensor(e.src, sc, seed, p, e), p.curveSmooth);
             n++; prod *= v; sum += v; mx = _max(mx, v); mn = _min(mn, v);
         }
         var scale = !n ? 1 : mode === 1 ? sum : mode === 2 ? mx : mode === 3 ? mn : mode === 4 ? mx - mn : prod;
@@ -4388,6 +4389,10 @@
         shapeWinding: true,
         sketchWidth: 1, sketchWidthSrc: 'none', sketchWidthMin: 0, sketchWidthCurve: 1,
         sketchOffset: 0.3, sketchProb: 1, sketchMagnet: true, sketchDistDensity: false, sketchDistOpacity: false,
+        /* 'curve' (Krita's curve brush) shares sketchWidth for its line. */
+        curveHistory: 30, curveConnect: true, curveQuad: true,
+        curvesOpacity: 1, curvesOpacitySrc: 'none', curvesOpacityMin: 0, curvesOpacityCurve: 1,
+        sketchWidthSensors: null, sketchWidthMode: 0, curvesOpacitySensors: null, curvesOpacityMode: 0,
         /* What a deform does to the pixels it finds, and how hard. */
         deformAction: 'move',
         deformAmount: 30,
@@ -4472,7 +4477,7 @@
          * at, not how much each dab adds. See _alphaDarken. */
         dabOpacitySrc: 'none',   dabOpacityMin: 0, dabOpacityCurve: 1,
         // Krita's several inputs on one option (_kritaInputs); null = just <key>Src.
-        sizeSensors: null, sizeMode: 0, flowSensors: null, flowMode: 0, dabOpacitySensors: null, dabOpacityMode: 0,
+        sizeSensors: null, sizeMode: 0, colorRateSensors: null, colorRateMode: 0, smudgeRateSensors: null, smudgeRateMode: 0, flowSensors: null, flowMode: 0, dabOpacitySensors: null, dabOpacityMode: 0,
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
         tipShrink: '', textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
@@ -5264,6 +5269,59 @@
             c.stroke();
         }
     }
+    /* Krita's curve brush (KisCurvePaintOp::paintLine). Each new input
+     * point is a segment: a line from the point before, lineWidth wide
+     * (Qt's pen: square ends, and width 0 a one-pixel hairline), and, once
+     * `curveHistory` points are remembered -- the stroke's first point is
+     * never one of them -- a curve from the oldest through the middle one
+     * (a cubic through the thirds without smoothing) to the newest, at the
+     * curves' own opacity. Krita's scripted line is one segment, so its
+     * renders are the bare connection line.
+     * ponytail: both drawn straight onto the buffer; Krita composes them
+     * in a scratch dab first, so where they cross they stack here. */
+    function _paintCurveOp(pts, from, to) {
+        var p = getParams(), c = _flowCtx;
+        if (!c) return;
+        c.save();
+        c.fillStyle = c.strokeStyle = _state.lastColor;
+        c.lineCap = 'square';
+        var N = p.curveHistory || 30;
+        for (var i = _max(1, from + 1); i <= to; i++) {
+            var b = pts[i], sc = { pressure: b.pressure, x: b.x, y: b.y };
+            var w = _max(0, _dyn(p, 'sketchWidth', p.sketchWidth, sc, 0));
+            var o = _clamp(_dyn(p, 'flow', p.flow / 100, sc, 0), 0, 1);
+            c.lineWidth = _max(1, w);
+            // Qt's anti-aliased pen on the points themselves: a hairline on a
+            // whole-pixel line lands half in each row, as Krita's does.
+            if (p.curveConnect !== false && o > 0) {
+                c.globalAlpha = o;
+                c.beginPath(); c.moveTo(pts[i - 1].x, pts[i - 1].y); c.lineTo(b.x, b.y); c.stroke();
+            }
+            var M = w + 2, r = { x1: _min(pts[i - 1].x, b.x) - M, y1: _min(pts[i - 1].y, b.y) - M,
+                x2: _max(pts[i - 1].x, b.x) + M + 1, y2: _max(pts[i - 1].y, b.y) + M + 1 };
+            if (i >= N) {
+                var h0 = i - N + 1, co = o * _clamp(_dyn(p, 'curvesOpacity', p.curvesOpacity, sc, 0), 0, 1);
+                if (co > 0) {
+                    c.globalAlpha = co;
+                    c.beginPath();
+                    c.moveTo(pts[h0].x, pts[h0].y);
+                    if (p.curveQuad !== false) {
+                        var q = pts[h0 + (N >> 1)];
+                        c.quadraticCurveTo(q.x, q.y, b.x, b.y);
+                    } else {
+                        var t = (N / 3) | 0, q1 = pts[h0 + t], q2 = pts[h0 + t + t];
+                        c.bezierCurveTo(q1.x, q1.y, q2.x, q2.y, b.x, b.y);
+                    }
+                    c.stroke();
+                }
+                for (var k = h0; k < i; k++) r = _unionRect(r, { x1: pts[k].x - M, y1: pts[k].y - M, x2: pts[k].x + M + 1, y2: pts[k].y + M + 1 });
+            }
+            _dirtyRect = _unionRect(_dirtyRect, r);
+            _clearBounds = _unionRect(_clearBounds, r);
+            _flowUsed = _unionRect(_flowUsed, r);
+        }
+        c.restore();
+    }
     function _unionRect(a, b) {
         return !a ? { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 }
             : { x1: _min(a.x1, b.x1), y1: _min(a.y1, b.y1), x2: _max(a.x2, b.x2), y2: _max(a.y2, b.y2) };
@@ -5397,11 +5455,12 @@
             }
             return;
         }
-        if (getParams().engineKind === 'sketch') {
+        var ekf = getParams().engineKind;
+        if (ekf === 'sketch' || ekf === 'curve') {
             var kp = _state.strokePoints;
             if (kp.length < 2 || !_state.lastColor) return;
             _dirtyRect = null;
-            _paintSketch(kp, _state.lastProcessedIdx, kp.length - 1);
+            (ekf === 'curve' ? _paintCurveOp : _paintSketch)(kp, _state.lastProcessedIdx, kp.length - 1);
             _state.lastProcessedIdx = kp.length - 1;
             _state.started = true;
             _hintFlushRect(final);
@@ -5493,7 +5552,7 @@
             var pts = _state.strokePoints;
             if (pts.length < 2 || !_state.lastColor) return;
             var ek = getParams().engineKind;
-            if (ek === 'shape' || ek === 'deform' || ek === 'sketch') { _flushPending(false); return; }
+            if (ek === 'shape' || ek === 'deform' || ek === 'sketch' || ek === 'curve') { _flushPending(false); return; }
             var startIdx = _state.started ? _state.lastProcessedIdx : 0;
             var endIdx = pts.length - 1;
             if (startIdx < endIdx) {

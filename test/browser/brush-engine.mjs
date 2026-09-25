@@ -537,9 +537,13 @@ await withPage(async (page) => {
         // grey 128 sits below a cutoff range starting at 200: policy 2 fills
         // white AFTER Invert (Krita probe i0p2), so a multiply dab stays solid
         const cut = run('multiply', { textureInvert: true, textureCutoff: 2, textureCutoffLo: 200, textureCutoffHi: 255 });
+        // ...and the range itself is tested after Invert (KisTextureMaskInfo): grey 128
+        // inverted is 127, inside 0..130, so policy 1 keeps it. Tested on the raw grey,
+        // Natural Media Pastel's inverted paper was cut away whole.
+        const cutIn = run('multiply', { textureInvert: true, textureCutoff: 1, textureCutoffLo: 0, textureCutoffHi: 130 });
         // Height (probes/texmode): a/u - u - m*0.5/neutral with u = 1 - strength
         const h30 = run('height', { texture: 30 }), hNp = run('height', { texture: 30, textureNeutral: 0.25 });
-        return JSON.stringify({ sub, mul, cut, h30, hNp });
+        return JSON.stringify({ sub, mul, cut, cutIn, h30, hNp });
     })()`, { awaitPromise: true }));
     check("Krita's subtract texture takes ink away, not just tints it",
         Math.abs(kt.sub - 128) <= 6, 'alpha ' + kt.sub);
@@ -547,6 +551,8 @@ await withPage(async (page) => {
         Math.abs(kt.mul - 128) <= 6, 'alpha ' + kt.mul);
     check("a texture's cutoff fill lands after Invert, as Krita's does",
         kt.cut >= 250, 'alpha ' + kt.cut);
+    check("...and its cutoff range reads the inverted grey",
+        Math.abs(kt.cutIn - 127) <= 8, 'alpha ' + kt.cutIn);
     check("Krita's height texture rises with strength and the neutral point scales the grain",
         Math.abs(kt.h30 - 58) <= 4 && kt.hNp <= 2, 'alpha ' + kt.h30 + ', ' + kt.hNp);
     /* Krita's grain is fixed to canvas pixels (probes/gchar). Dabs drawn at
@@ -746,6 +752,35 @@ await withPage(async (page) => {
     check('...joins across a gap inside half the brush', sk.near > 200, 'alpha ' + sk.near);
     check('...and not across one beyond it', sk.far === 0, 'alpha ' + sk.far);
     check("...and one preset's line-width sensor does not leak into the next", sk.leak === 'none', sk.leak);
+    /* Krita's curve brush (KisCurvePaintOp): no dabs, a line per input
+     * segment on Qt's anti-aliased pen, a curve through the history once it
+     * is full. It was painted as a round brush: 10x Krita's ink on Ink Pen. */
+    const cv = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = () => __B.layer().ctx;
+        const run = (pts, more) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            for (const [k, v] of Object.entries({ engineKind: 'curve', size: 30, flowSrc: 'none', sizeSrc: 'none',
+                smoothingMode: 'none', sketchWidth: 0, curveHistory: 3, curvesOpacity: 1, ...more })) b.setParam(k, v);
+            L().clearRect(0, 0, 200, 200);
+            b.beginStroke(pts[0][0], pts[0][1], 1, '#000000');
+            for (const [x, y] of pts.slice(1)) b.moveStroke(x, y, 1, '#000000');
+            b.endStroke();
+        };
+        run([[20, 40], [180, 40]]);
+        const a = L().getImageData(100, 38, 1, 4).data;
+        const hair = [a[3], a[7], a[11], a[15]];
+        // a V: the curve from the first history point through the middle one to the last
+        run([[20, 150], [60, 150], [100, 100], [140, 150]], { curveConnect: false });
+        const mid = L().getImageData(90, 100, 20, 40).data; let curve = 0;
+        for (let i = 3; i < mid.length; i += 4) if (mid[i]) curve++;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify({ hair, curve, kind: b.getParams().engineKind });
+    })()`));
+    check('a curve-brush hairline on a whole-pixel line lands half in each row, as Qt draws it',
+        cv.hair[0] === 0 && cv.hair[1] > 100 && cv.hair[1] < 160 && cv.hair[2] > 100 && cv.hair[2] < 160 && cv.hair[3] === 0,
+        JSON.stringify(cv.hair));
+    check('...a full history draws its curve, with no connecting lines asked for', cv.curve > 20, cv.curve + ' px');
+    check('...and the engine does not leak into the next preset', cv.kind === 'brush', cv.kind);
     /* Krita's colour smudge (test/krita/probes/smudge, smudge2). Ours mixed
      * one picked-up colour into an opaque dab, so on an empty layer it drew
      * solid black where Krita draws nothing or a diluted ramp, and a pure

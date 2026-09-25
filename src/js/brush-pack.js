@@ -475,7 +475,7 @@
          * so the single-sensor path stays as it was. */
         var all = null;
         var list = kids.length ? kids : [{ id: id, raw: raw }];
-        if (kids.length > 1 || list.some(function (k) { return k.id === 'drawingangle' || k.id === 'rotation'; })) {
+        if (kids.length > 1 || list.some(function (k) { return k.id === 'drawingangle' || k.id === 'rotation' || /length="/.test(k.raw); })) {
             all = [];
             list.forEach(function (k) {
                 var kc = (shared && common) || BrushPack.parseCurve(k.raw);
@@ -603,7 +603,7 @@
             if (opts.tipSize) out.size = Math.max(1, Math.round(opts.tipSize * scale));
             else { out.size = scale; out.needsTipSize = true; }
         } else if (preset.paintop !== 'experimentbrush' &&
-                   preset.paintop !== 'deformbrush') {
+                   preset.paintop !== 'deformbrush' && preset.paintop !== 'curvebrush') {
             warn.push('no tip definition; falling back to a round brush');
             out.shape = 'circle';
             out.size = 20;
@@ -896,7 +896,7 @@
         function _kritaReach(out, s) {
             if (s.length == null) return;
             if (s.src === 'fadein' && out.fadeSteps == null) {
-                out.fadeSteps = Math.max(1, Math.min(1000, Math.round(s.length)));
+                out.fadeSteps = Math.max(1, Math.round(s.length));
                 out.fadePeriodic = s.periodic;
             } else if (s.src === 'distance' && out.distanceLength == null) {
                 out.distanceLength = Math.max(1, Math.min(500, Math.round(s.length)));
@@ -978,6 +978,7 @@
                 out[e[0] + 'Src'] = s.src;
                 out[e[0] + 'Min'] = 0;
                 if (s.curve) out[e[0] + 'Curve'] = s.curve;
+                if (s.all) { out[e[0] + 'Sensors'] = s.all; out[e[0] + 'Mode'] = s.mode; }
                 _kritaReach(out, s);
             });
             if (_bool(P.MergedPaint)) warn.push('dropped: picking colour up from every layer rather than this one');
@@ -1048,6 +1049,34 @@
             }
             if (_bool(P['Sketch/randomRGB'])) warn.push('dropped: the slight colour wobble on its lines');
             if (_bool(P['Sketch/randomOpacity'])) warn.push('dropped: the random opacity on its lines');
+        } else if (preset.paintop === 'curvebrush') {
+            /* Krita's curve brush: no dabs. Each new input point is joined to
+             * the last by a line lineWidth wide, and once strokeHistorySize
+             * points have gone by, a curve runs from the oldest of them
+             * through the middle one to the newest (see _paintCurveOp). It
+             * never counts dabs, so a fade sensor reads its start throughout. */
+            out.engineKind = 'curve';
+            out.sketchWidth = Math.max(0, _num(P['Curve/lineWidth'], 1));
+            out.curveHistory = Math.max(1, Math.round(_num(P['Curve/strokeHistorySize'], 30)));
+            out.curveConnect = _bool(P['Curve/makeConnection']);
+            out.curveQuad = _bool(P['Curve/smoothing']);
+            out.curvesOpacity = Math.max(0, Math.min(1, _num(P['Curve/curvesOpacity'], 1)));
+            if (out.dabOpacitySrc) {   // a line has no dabs to cap: the opacity is its ink
+                out.flowSrc = out.dabOpacitySrc;
+                out.flowMin = out.dabOpacityMin;
+                if (out.dabOpacityCurve) out.flowCurve = out.dabOpacityCurve;
+                delete out.dabOpacitySrc; delete out.dabOpacityMin; delete out.dabOpacityCurve;
+            }
+            [['Line width', 'sketchWidth'], ['Curves opacity', 'curvesOpacity']].forEach(function (e) {
+                var s = _bool(P['Pressure' + e[0]]) && _sensorFor(P, e[0]);
+                if (!s || !s.src) return;
+                out[e[1] + 'Src'] = s.src;
+                out[e[1] + 'Min'] = 0;
+                if (s.curve) out[e[1] + 'Curve'] = s.curve;
+                if (s.all) { out[e[1] + 'Sensors'] = s.all; out[e[1] + 'Mode'] = s.mode; }
+                _kritaReach(out, s);
+                if (s.all) s.all.forEach(function (x) { _kritaReach(out, x); });
+            });
         } else if (preset.paintop === 'gridbrush') {
             /* See _gridDab in the engine: cells fixed to the canvas, each
              * filled with divisionLevel^2 shapes. */
