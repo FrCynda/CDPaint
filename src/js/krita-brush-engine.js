@@ -2811,6 +2811,15 @@
                 dy += _sin(scatterAngle) * scatterDist;
             }
 
+            /* A smearing smudge lays its dab on whole pixels: Krita turns the
+             * sub-pixel phase off (KisColorSmudgeOp, bug 327235), so the dab
+             * sits at floor(pos - half) + half. Under a pressure-sized tip the
+             * half changes along the stroke, and Basic Soft Wet's line steps a
+             * pixel where Krita's does. */
+            if (p.smudgeMode === 0) {
+                var hw = _max(1, sz * _min(1, asp || 1)) / 2, hh = _max(1, sz / _max(1, asp || 1)) / 2;
+                dx = _floor(dx - hw) + hw; dy = _floor(dy - hh) + hh;
+            }
             if (p.shape === 'custom') _pickTipCell(p, dx, dy);
             var mask = _maskFor(p.shape, sz, hard, effAngle, asp, dx, dy);
 

@@ -805,14 +805,14 @@ await withPage(async (page) => {
      * smear never let go of what it carried. Numbers are Krita's. */
     const sm = JSON.parse(await page.eval(`(() => {
         const b = PaintApp.brush, L = () => __B.layer().ctx;
-        const run = (set, x0, x1, prep, pr = 1) => {
+        const run = (set, x0, x1, prep, pr = 1, y = 100) => {
             b.forgetSaved('Round'); b.loadPreset('Round');
             for (const [k, v] of Object.entries({ smudgeMode: 0, size: 30, hardness: 100, falloff: 'krita-gauss',
                 autoSpacing: 0.3, flowSrc: 'none', sizeSrc: 'none', colorRateSrc: 'none', smoothingMode: 'none', ...set })) b.setParam(k, v);
             L().clearRect(0, 0, 200, 200);
             if (prep) prep(L());
-            b.beginStroke(x0, 100, pr, '#000000');
-            for (let x = x0 + 1; x <= x1; x++) b.moveStroke(x, 100, pr, '#000000');
+            b.beginStroke(x0, y, pr, '#000000');
+            for (let x = x0 + 1; x <= x1; x++) b.moveStroke(x, y, pr, '#000000');
             b.endStroke();
         };
         const a = (x) => L().getImageData(x, 100, 1, 1).data[3];
@@ -831,7 +831,10 @@ await withPage(async (page) => {
         const dull = L().getImageData(120, 110, 1, 1).data[3];
         // a quarter of a level a dab: Krita's precise stroke copy adds it up, 8 bits rounded it away
         run({ smudgeMode: 1, colorRate: 0.4, smudgeRate: 50 }, 20, 180); const faint = a(100);
-        return JSON.stringify({ dot, off, short, drag, flat, byOp, half, dull, faint });
+        // a smear at y 100.7 sits on whole pixels, centred on 100 as Krita's is
+        run({ colorRate: 100, smudgeRate: 50 }, 20, 180, null, 1, 100.7);
+        const col = y => L().getImageData(100, y, 1, 1).data[3], snap = [col(85), col(114)];
+        return JSON.stringify({ dot, off, short, drag, flat, byOp, half, dull, faint, snap });
     })()`));
     check('a colour smudge dab on its own only picks up, as in Krita', sm.dot === 0, 'alpha ' + sm.dot);
     check('...smudge rate 0 lays nothing down', sm.off === 0, 'alpha ' + sm.off);
@@ -846,6 +849,8 @@ await withPage(async (page) => {
         sm.dull > 100, 'alpha ' + sm.dull);
     check('...and dabs too faint for 8 bits still add up over a stroke, as on Krita\'s precise copy',
         sm.faint >= 4, 'alpha ' + sm.faint);
+    check('...and a smear lays its dabs on whole pixels, as Krita turns its sub-pixel phase off (Basic Soft Wet)',
+        sm.snap[0] > 20 && Math.abs(sm.snap[0] - sm.snap[1]) <= 3, sm.snap.join(','));
     /* Measured against a real Krita dab (test/krita): its "soft" tip reads
      * the curve at the SQUARED radius, and its curves are splines. Read at
      * the plain radius, Airbrush Soft came out at 0.59x Krita's ink. And a
