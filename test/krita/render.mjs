@@ -70,6 +70,9 @@ export function renderKrita(jobFile, { timeoutMs = 180000, resourceDir } = {}) {
         return text;
     } finally {
         for (const f of created) fs.rmSync(f, { recursive: true, force: true });
+        // Krita fills the private folder with its own resources (~180 MB a
+        // run) and nothing reads it afterwards; 158 left behind came to 18 GB.
+        if (resourceDir) fs.rmSync(resourceDir, { recursive: true, force: true });
         for (const [f, b] of saved) fs.copyFileSync(b, f);
         fs.rmSync(bak, { recursive: true, force: true });
     }
