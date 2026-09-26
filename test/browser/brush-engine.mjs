@@ -3144,6 +3144,35 @@ await withPage(async (page) => {
     check('...and at its own sub-pixel phase, not rounded to a quarter pixel',
         Math.abs(kp[10] - 151) <= 8, 'alpha ' + kp[10] + ', want ~151');
 
+    /* A tip Krita keeps as grey paper is shrunk by Qt, which drops the grey's
+     * fraction: ink rounds up. One faint pixel in every 2x2 of a 64px tip
+     * averages to a quarter level at 32px and keeps a whole one, which a 22px
+     * dab shows where a quarter rounds away; FX_splat_starfield's stars lost
+     * 15% of Krita's ink without it. */
+    const paper = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, out = [];
+        const c = document.createElement('canvas'); c.width = c.height = 64;
+        const g = c.getContext('2d'), im = g.createImageData(64, 64);
+        for (let y = 0; y < 64; y += 2) for (let x = 0; x < 64; x += 2) im.data[(y * 64 + x) * 4 + 3] = 1;
+        g.putImageData(im, 0, 0);
+        b.loadCustomTip(c.toDataURL('image/png'), null);
+        await new Promise(r => setTimeout(r, 400));
+        ['texture', 'opacity', 'flow', 'scatter', 'sizeSrc', 'taperStart', 'taperEnd', 'tip2Depth', 'sharpness'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        b.setParam('dynamicsMode', 'off'); b.setParam('size', 22); b.setParam('hardness', 100); b.setParam('tipShrink', 'area');
+        for (const on of [false, true]) {
+            __B.doc(200, 200); b.setParam('tipPaper', on);
+            b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+            await new Promise(r => setTimeout(r, 200));
+            const d = __B.layer().ctx.getImageData(0, 0, 200, 200).data;
+            let s = 0; for (let i = 3; i < d.length; i += 4) s += d[i];
+            out.push(s);
+        }
+        b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check("a Krita paper tip's faint ink rounds up as Qt shrinks it (FX_splat_starfield)",
+        paper[0] === 0 && paper[1] > 100, JSON.stringify(paper));
+
     /* Tips are 1024px now rather than 200, and every distinct size, angle
      * and squash of one is baked and kept. A stroke whose size rides the pen
      * asks for a different one per pressure step, so unbounded that cache is

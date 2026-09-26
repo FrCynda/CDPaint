@@ -4463,9 +4463,9 @@
     function _kritaTipLevel(src, sc) {
         var W = src.width, H = src.height, L = 1, k = 0;
         while (0.5 * L > sc - 1e-6 && _round(W * L / 2) > 0 && _round(H * L / 2) > 0) { L /= 2; k++; }
-        var lv = _kLevels.get(src);
-        if (!lv) _kLevels.set(src, lv = []);
-        if (lv[k]) return lv[k];
+        var lv = _kLevels.get(src), lk = _params.tipPaper && k ? 'p' + k : k;
+        if (!lv) _kLevels.set(src, lv = {});
+        if (lv[lk]) return lv[lk];
         var cv = src.getContext ? src : new OffscreenCanvas(W, H);
         if (cv !== src) cv.getContext('2d').drawImage(src, 0, 0);
         var d = cv.getContext('2d').getImageData(0, 0, W, H).data;
@@ -4486,7 +4486,11 @@
                 for (n = 0; n < 4; n++) v[t + n] += row[p + n] * g;
             }
         }
-        return (lv[k] = { w: w, h: h, v: v });
+        /* Qt shrinks a paper tip's grey and drops the fraction (qSmoothScaleImage),
+         * so ink rounds up: each star of FX_splat_starfield keeps a faint ring
+         * that held 15% of Krita's ink. The drawn original is never rounded. */
+        if (k && _params.tipPaper) for (i = 3; i < v.length; i += 4) v[i] = _ceil(v[i] - 1e-3);
+        return (lv[lk] = { w: w, h: h, v: v });
     }
     function _kritaTipMask(src, sz, ang, asp, x, y) {
         var mode = _params.tipMode || 'alpha';
@@ -4498,7 +4502,7 @@
         var bw = _max(0, TW * c, -TH * s, TW * c - TH * s) - bx, bh = _max(0, TW * s, TH * c, TW * s + TH * c) - by;
         var fx = x == null ? 0 : _round((((x - bw / 2) % 1) + 1) % 1 * 16) / 16 % 1;
         var fy = x == null ? 0 : _round((((y - bh / 2) % 1) + 1) % 1 * 16) / 16 % 1;
-        var key = 'k|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + '|' + (x == null ? '' : fx + ',' + fy);
+        var key = 'k|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + (_params.tipPaper ? 'p' : '') + '|' + (x == null ? '' : fx + ',' + fy);
         var hit = _customTipSizeCache[key];
         if (hit) return hit;
         var lv = _kritaTipLevel(src, _max(kx, ky)), v = lv.v, LW = lv.w, LH = lv.h;
@@ -4993,7 +4997,7 @@
         angleSensors: null, angleCombine: 0, angleReach: null, sizeSensors: null, sizeCombine: 0, colorRateSensors: null, colorRateCombine: 0, spacingSensors: null, spacingCombine: 0, aspectRatioSensors: null, aspectRatioCombine: 0, textureSensors: null, textureCombine: 0, scatterSensors: null, scatterCombine: 0, smudgeRateSensors: null, smudgeRateCombine: 0, flowSensors: null, flowCombine: 0, dabOpacitySensors: null, dabOpacityCombine: 0,
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
-        tipShrink: '', textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
+        tipShrink: '', tipPaper: false, textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
         textureInvert: false, textureSoft: false, textureCutoff: 0, textureCutoffLo: 0, textureCutoffHi: 255, textureOffsetX: 0, textureOffsetY: 0,
         /* Krita presets: curves are splines (_splineAt), and a round tip may
          * carry its own falloff curve (Krita's "soft" generator). */
@@ -8122,6 +8126,7 @@
                             }
                             ps._tipUrl = _tipStash(tip.url);
                             if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = tip.pick; }
+                            if (tip.params && tip.params.tipPaper) ps.tipPaper = true;
                         }
                         // Never overwrite: an import that quietly replaced a
                         // brush the user had tuned would be unrecoverable.

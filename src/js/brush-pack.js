@@ -1405,9 +1405,16 @@
         /* A colour .gbr/.gih on its own is a GIMP brush, and GIMP stamps its
          * picture through its alpha (Pepper, GEGL goat). Inside a Krita
          * preset the same file is a dark-is-ink mask, as above. */
+        /* Krita keeps a tip with no transparency as grey paper, ink its
+         * darkness, and shrinks that grey (see the engine's _kritaTipLevel). */
+        function _paper(cells) {
+            return opts && opts.krita && cells.every(function (c) {
+                return c.clear ? c.clear.every(function (v) { return v === 255; }) : c.opaque !== false;
+            }) ? { tipPaper: true } : null;
+        }
         function gimpCells(cells) {
             var color = !(opts && opts.krita) && cells.some(function (c) { return c.rgb; });
-            return { color: color, cells: cells.map(function (c) {
+            return { color: color, params: color ? { tipMode: 'color' } : _paper(cells), cells: cells.map(function (c) {
                 return color && c.rgb ? { w: c.w, h: c.h, alpha: c.clear, rgb: c.rgb }
                                       : { w: c.w, h: c.h, alpha: c.alpha };
             }) };
@@ -1425,15 +1432,14 @@
                 if (!(opts && opts.krita) && pipe.pick === 'cycle') gc.cells.push(gc.cells.shift());
                 var st = _strip(gc.cells);
                 return Promise.resolve({ url: st.url, size: st.size,
-                    cells: pipe.cells.length, pick: pipe.pick, spacing: pipe.spacing,
-                    params: gc.color ? { tipMode: 'color' } : null });
+                    cells: pipe.cells.length, pick: pipe.pick, spacing: pipe.spacing, params: gc.params });
             }
             if (/\.gbr$/i.test(name)) {
                 var one = _readGbr(bytes, 0);
                 if (!one) throw new Error('unreadable brush file');
                 var gc1 = gimpCells([one]), st1 = _strip(gc1.cells);
                 return Promise.resolve({ url: st1.url, size: st1.size, cells: 1, pick: 'random',
-                    spacing: one.spacing, params: gc1.color ? { tipMode: 'color' } : null });
+                    spacing: one.spacing, params: gc1.params });
             }
         } catch (e) { return Promise.reject(e); }
 
@@ -1511,7 +1517,7 @@
                 rgb[i * 3] = d[i * 4]; rgb[i * 3 + 1] = d[i * 4 + 1]; rgb[i * 3 + 2] = d[i * 4 + 2];
             }
             bmp.close && bmp.close();
-            return { w: c.width, h: c.height, alpha: a, rgb: rgb };
+            return { w: c.width, h: c.height, alpha: a, rgb: rgb, opaque: !clear };
         });
         }
 
@@ -1519,7 +1525,7 @@
         return Promise.all(many.map(_decode)).then(function (cells) {
             var st2 = _strip(cells);
             return { url: st2.url, size: st2.size,
-                     cells: cells.length, pick: 'random' };
+                     cells: cells.length, pick: 'random', params: _paper(cells) };
         });
     };
 
