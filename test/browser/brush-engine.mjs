@@ -1149,6 +1149,35 @@ await withPage(async (page) => {
         return n;
     })()`);
     check("a Krita soft square keeps only the middle its curve leaves (Block tilt fill)", csq >= 6 && csq <= 12, csq + 'px solid');
+    // A curve that ends above nothing still stops at the rim, not the tip's box (Bold_marker)
+    const cc = await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 40, hardness: 0, spacing: 400, flowSrc: 'none', sizeSrc: 'none',
+            smoothingMode: 'none', tipCurve: [[0, 0.4], [1, 0.4]] })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+        const L = __B.layer().ctx, r = { corner: L.getImageData(84, 84, 1, 1).data[3], mid: L.getImageData(100, 100, 1, 1).data[3] };
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(r);
+    })()`);
+    check("a curved circle leaves its box corners clear (Bold_marker)", /"corner":0,/.test(cc) && !/"mid":0}/.test(cc), cc);
+
+    // Krita's soft circle, pixel for pixel: at 8px Layout_circle_soft's curve holds 14.2 of ink
+    // (its bank line matches Krita within 2%); drawn as a gradient it held 13.0
+    const scs = await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 8, hardness: 0, spacing: 400, flowSrc: 'none', sizeSrc: 'none',
+            smoothingMode: 'none', tipCurve: [[0, 1], [0.317269, 0.337662], [1, 0]], falloff: 'krita-soft-aa' })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+        const d = __B.layer().ctx.getImageData(90, 90, 20, 20).data; let s = 0;
+        for (let i = 3; i < d.length; i += 4) s += d[i];
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return s / 255;
+    })()`);
+    check("a soft circle keeps all of Krita's ink at 8px (Layout_circle_soft)", scs > 13.8 && scs < 14.6, scs);
     check("a Krita round marker is a solid disc with a one-pixel fade", mkRows === [132].concat(Array(11).fill(255), [132]).join(), mkRows);
     check("a wide Krita sketch line is hard and a pixel past its width", skRows === Array(9).fill(255).join(), skRows);
     check("a Krita softness option softens the tip with pressure", softK.curve > 25 && softK.curve < 55 && softK.circle > 170 && softK.circle < 220, JSON.stringify(softK));

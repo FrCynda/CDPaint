@@ -195,6 +195,7 @@
         }
         if (shape === 'kmarker') return _kritaMarkerMask(size, phase);
         if (shape.indexOf('rcurve') === 0) return _kritaCurveRectMask(size, aspect, ang, _tcNow, shape.charAt(6) === 'a', phase);
+        if (shape.indexOf('ccurve') === 0) return _kritaCurveCircleMask(size, aspect, ang, _tcNow, shape.charAt(6) === 'a', phase);
         if (kc) return _kritaCircleMask(size, aspect, hardness / 100, phase,
                                         shape.slice(-3) === ':aa', shape.charAt(1) === 'g', ang);
         if (shape === 'gimp' && aspect === 1) return _gimpCircleMask(size, hardness / 100);
@@ -439,6 +440,42 @@
         return canvas;
     }
 
+    /* Krita's "soft" circle (KisCurveCircleMaskGenerator), pixel for pixel:
+     * opacity is the curve at the squared radius, read from a table of
+     * 4x the tip's size plus 2 samples by a lookup that runs one sample
+     * short of its end, so the rim reads the curve a little inside 1.
+     * Anti-aliased, it fades linearly in the squared radius from
+     * ((w/2 - 1) / (w/2))^2 to nothing at the rim, and under 10px it is
+     * supersampled from the pixel's corner like _kritaCircleMask. Drawn as
+     * a gradient, Layout_circle_soft's 8px line lost an eighth of its ink. */
+    function _kritaCurveCircleMask(size, aspect, ang, curve, aa, phase) {
+        var w = size, h = size / aspect;
+        if (aspect < 1) { w = size * aspect; h = size; }
+        var R = _round(_max(w, h) * 4), lut = new Float64Array(R + 2);
+        for (var li = 0; li <= R + 1; li++) lut[li] = _clamp(_curveAt(curve, li / (R + 1), true), 0, 1);
+        var tr = function (dist) { var q = dist * R, k = q | 0, f = q - k; return _floor((1 - ((1 - f) * lut[k] + f * lut[_min(R + 1, k + 1)])) * 255); };
+        var xc = 2 / w, yc = 2 / h, fs = _pow(0.5 * (_max(0, 1 - xc) + _max(0, 1 - yc)), 2);
+        var f0 = tr(fs), fk = _max(0, 255 - f0) / (1 - fs);
+        var D = 2 * _ceil(_max(w, h) / 2) + 3, canvas = new OffscreenCanvas(D, D), c = D / 2, cy = c;
+        if (phase) { canvas._cx = c = _floor(c) + phase[0]; canvas._cy = cy = _floor(D / 2) + phase[1]; }
+        var ca = _cos(ang || 0), sa = -_sin(ang || 0), ss = aa && (w < 10 || h < 10) ? (w < 1 || h < 1 ? 6 : 3) : 1;
+        var ctx = canvas.getContext('2d'), img = ctx.createImageData(D, D), d = img.data;
+        for (var j = 0; j < D; j++) {
+            for (var i = 0; i < D; i++) {
+                var t = 0;
+                for (var sy = 0; sy < ss; sy++) for (var sx = 0; sx < ss; sx++) {
+                    var x0 = i + 0.5 - c + sx / ss, y0 = j + 0.5 - cy + sy / ss;
+                    var x = (ca * x0 - sa * y0) * xc, y = (sa * x0 + ca * y0) * yc, dist = x * x + y * y;
+                    t += dist > 1 ? 255 : aa && dist > fs ? _min(255, _floor(f0 + (dist - fs) * fk)) : tr(dist);
+                }
+                var a = 255 - _floor(t / (ss * ss));
+                if (a > 0) { var k = (j * D + i) * 4; d[k] = d[k + 1] = d[k + 2] = 255; d[k + 3] = a; }
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+        return canvas;
+    }
+
     /* Krita's "soft" square (KisCurveRectangleMaskGenerator): the drawn
      * curve c read on each axis as c(t) (1 - c(1 - t)), multiplied, the
      * curve a table of 4 entries a pixel read at the nearest. A curve that
@@ -506,7 +543,12 @@
         // The circle's knee, which falls between stops at most hardnesses.
         if (!kind) grad.addColorStop(hard, '#fff');
         ctx.fillStyle = grad;
-        ctx.fillRect(-r, -r, r * 2, r * 2);
+        /* the disc, not its box: past the rim a gradient keeps its last stop,
+         * and a curve can end above nothing (Bold_marker's 0.38 filled the
+         * corners, squaring its ends); Krita's mask is clear there */
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, _PI * 2);
+        ctx.fill();
         ctx.restore();
     }
 
@@ -3311,6 +3353,8 @@
         } else {
             // A gauss falloff is its own mask, so its own cache key.
             if (shape === 'circle' && (_params.falloff === 'gauss' || _params.falloff === 'gimp')) shape = _params.falloff;
+            if (shape === 'circle' && _isArray(_params.tipCurve) && /^krita-soft/.test(_params.falloff || ''))
+                shape = 'ccurve' + (/-aa$/.test(_params.falloff) ? 'a' : '') + _tipCurveKey(_tcNow = _softCurve(_params.tipCurve, _softNow));
             if (shape === 'circle' && _isArray(_params.tipCurve)) shape = _tipCurveKey(_tcNow = _softCurve(_params.tipCurve, _softNow));
             if (shape === 'circle' && _params.falloff === 'marker') shape = 'kmarker';
             if (shape === 'square' && _isArray(_params.tipCurve))
@@ -3325,12 +3369,12 @@
             }
             /* A square too, to an eighth up to 32px: rounded to whole pixels,
              * Poska Square's line thickened in steps where Krita's tapers. */
-            if (/^(k(grect|lrect)|rcurve)/.test(shape)) sz = sz <= 32 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);
+            if (/^(k(grect|lrect)|[rc]curve)/.test(shape)) sz = sz <= 32 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);
             var ph = null;
             // Sharpness snaps dabs to whole pixels in Krita, so it keeps the old path.
             // Krita's own tips only: the built-in brushes keep the look they have.
             if (x != null && sz <= 32 && !(_params.sharpness > 0) &&
-                /^(k(circle|gauss|grect|marker)|r?curve)/.test(shape)) {
+                /^(k(circle|gauss|grect|marker)|[rc]?curve)/.test(shape)) {
                 /* ponytail: Krita places its plain square (klrect) at its
                  * phase too, but with it the two Grease Charcoals swap: the
                  * auto-spaced one 0.90 -> 0.98, the 0.05-spaced one 0.98 ->
