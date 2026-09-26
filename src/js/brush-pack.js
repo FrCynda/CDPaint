@@ -487,7 +487,10 @@
             all = [];
             list.forEach(function (k) {
                 var kc = (shared && common) || BrushPack.parseCurve(k.raw);
-                if (k.id === 'speed') { all.push({ kind: 'const', v: kc ? kc[0][1] : 1 }); return; }
+                /* Speed is 0 in a steady hand and Krita's scripted strokes
+                 * (probes/speed); tangential pressure is 0 from a mouse, a
+                 * script and any pen without a wheel. */
+                if (k.id === 'speed' || k.id === 'tangentialpressure') { all.push({ kind: 'const', v: kc ? kc[0][1] : k.id === 'speed' ? 1 : 0 }); return; }
                 if (!SENSORS[k.id]) return;
                 var e = { src: SENSORS[k.id], curve: kc,
                           kind: k.id === 'drawingangle' ? 'abs' : k.id === 'rotation' ? 'add' : 'scale' };
@@ -856,6 +859,11 @@
             if (rot.src) { out.angleSrc = rot.src; _kritaReach(out, rot); }
             else warn.push('the tip turned with ' + rot.id + ', which we cannot turn it with');
         }
+        // several inputs: the engine takes Krita's whole formula (_dynAngle)
+        if (_bool(P.PressureRotation) && rot && rot.src && rot.all && rot.all.length > 1) {
+            out.angleSensors = rot.all; out.angleCombine = rot.mode;
+            out.angleStrength = _num(P.RotationValue, 1);
+        }
         /* Inputs that are not themselves an angle go through Krita's own
          * formula: strength and curve kept, and a half turn on top (see
          * _dynAngle). A switched-on option with no input is the half turn
@@ -903,6 +911,12 @@
                 if (tm > 1 && tm !== 12) warn.push('texture mode ' + tm + ' painted as multiply');
                 out.textureMode = tm === 1 ? 'subtract' : tm === 12 ? 'height' : 'multiply';
                 out.textureScale = _num(P['Texture/Pattern/Scale'], 1);
+                // its offset, in canvas pixels; a random one is per stroke
+                if (_bool(P['Texture/Pattern/isRandomOffsetX']) || _bool(P['Texture/Pattern/isRandomOffsetY'])) warn.push('texture random offset not carried');
+                else {
+                    if (_num(P['Texture/Pattern/OffsetX'], 0)) out.textureOffsetX = Math.round(_num(P['Texture/Pattern/OffsetX'], 0));
+                    if (_num(P['Texture/Pattern/OffsetY'], 0)) out.textureOffsetY = Math.round(_num(P['Texture/Pattern/OffsetY'], 0));
+                }
                 out.textureBrightness = _num(P['Texture/Pattern/Brightness'], 0);
                 out.textureContrast = _num(P['Texture/Pattern/Contrast'], 1);
                 out.textureInvert = _bool(P['Texture/Pattern/Invert']);

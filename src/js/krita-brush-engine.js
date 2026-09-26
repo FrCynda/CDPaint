@@ -1257,7 +1257,8 @@
         if (!t) return false;
         s = _clamp(s, 0, 1);
         var img = ctx.getImageData(0, 0, w, h), d = img.data;
-        var x0 = _round(ox), y0 = _round(oy);
+        // KisTextureOption::apply reads the pattern at the canvas less its offset
+        var x0 = _round(ox) - (p.textureOffsetX || 0), y0 = _round(oy) - (p.textureOffsetY || 0);
         for (var j = 0; j < h; j++) {
             var row = (((y0 + j) % t.h) + t.h) % t.h * t.w;
             for (var i = 0; i < w; i++) {
@@ -2521,6 +2522,34 @@
      * its sensor directly rather than through _dyn. */
     function _dynAngle(p, baseAngle, sc) {
         var src = p.angleSrc;
+        /* Several inputs: Krita's rotationLikeValue whole. The drawing angle
+         * is an offset, pen twist and random add, the rest combine by the
+         * option's mode and turn the other way; wrap(2 off + strength *
+         * (add - (2 scale - 1))) is a turn in halves, minus ours. A list
+         * with Krita's tangential pressure in it multiplies by its 0, so
+         * Bristle_frottis0017's tip lies a half turn from the stroke. */
+        if (p.angleSensors) {
+            var L = p.angleSensors, off = 0, add = 0, hasAdd = false, n = 0, prod = 1, sum = 0, mx = 0, mn = 1;
+            for (var i = 0; i < L.length; i++) {
+                var e = L[i], v;
+                if (e.kind === 'abs') {
+                    v = _wrap1(0.5 + ((e.locked ? _lockAngle : sc.strokeAngle) || 0) / 360 + (e.offset || 0) / 360);
+                    off = _wrap1(_curveAt(e.curve, _wrap1(v + 0.5), p.curveSmooth) + 0.5);
+                    continue;
+                }
+                if (e.kind === 'add' || e.src === 'random') {
+                    var r = e.kind === 'add' ? 0.5 + (((_penTwist % 360) + 540) % 360 - 180) / 360 : _sensor(e.src, sc, 11, p, e);
+                    add += 2 * _curveAt(e.curve, r, p.curveSmooth) - 1; hasAdd = true;
+                    continue;
+                }
+                v = e.kind === 'const' ? e.v : _curveAt(e.curve, _sensor(e.src, sc, 11, p, e), p.curveSmooth);
+                n++; prod *= v; sum += v; mx = _max(mx, v); mn = _min(mn, v);
+            }
+            var m = p.angleCombine, scl = m === 1 ? sum : m === 2 ? mx : m === 3 ? mn : m === 4 ? mx - mn : prod;
+            var w = 2 * off + (p.angleStrength == null ? 1 : p.angleStrength) * ((n ? -(2 * scl - 1) : 0) + (hasAdd ? add : 0));
+            w = ((w + 1) % 2 + 2) % 2 - 1;
+            return baseAngle + 180 * (w - 1);
+        }
         /* The lock is the rotation sensor's own: a size list reading the
          * drawing angle unlocked beside it still follows the stroke (Poska
          * Triangle G). */
@@ -2826,7 +2855,7 @@
                 var m = ma[j * mw + i];
                 if (!m) continue;
                 if (tx) {
-                    m = _min(255, _kritaTexCut(m, tx.m[((((oy + j) % tx.h) + tx.h) % tx.h) * tx.w + ((((ox + i) % tx.w) + tx.w) % tx.w)] / 255, ts, p));
+                    m = _min(255, _kritaTexCut(m, tx.m[((((oy + j - (p.textureOffsetY || 0)) % tx.h) + tx.h) % tx.h) * tx.w + ((((ox + i - (p.textureOffsetX || 0)) % tx.w) + tx.w) % tx.w)] / 255, ts, p));
                     if (!(m > 0)) continue;
                 }
                 var px = ox + i - rx, py = oy + j - ry;
@@ -4840,11 +4869,11 @@
          * at, not how much each dab adds. See _alphaDarken. */
         dabOpacitySrc: 'none',   dabOpacityMin: 0, dabOpacityCurve: 1,
         // Krita's several inputs on one option (_kritaInputs); null = just <key>Src.
-        sizeSensors: null, sizeCombine: 0, colorRateSensors: null, colorRateCombine: 0, spacingSensors: null, spacingCombine: 0, aspectRatioSensors: null, aspectRatioCombine: 0, textureSensors: null, textureCombine: 0, scatterSensors: null, scatterCombine: 0, smudgeRateSensors: null, smudgeRateCombine: 0, flowSensors: null, flowCombine: 0, dabOpacitySensors: null, dabOpacityCombine: 0,
+        angleSensors: null, angleCombine: 0, sizeSensors: null, sizeCombine: 0, colorRateSensors: null, colorRateCombine: 0, spacingSensors: null, spacingCombine: 0, aspectRatioSensors: null, aspectRatioCombine: 0, textureSensors: null, textureCombine: 0, scatterSensors: null, scatterCombine: 0, smudgeRateSensors: null, smudgeRateCombine: 0, flowSensors: null, flowCombine: 0, dabOpacitySensors: null, dabOpacityCombine: 0,
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
         tipShrink: '', textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
-        textureInvert: false, textureSoft: false, textureCutoff: 0, textureCutoffLo: 0, textureCutoffHi: 255,
+        textureInvert: false, textureSoft: false, textureCutoff: 0, textureCutoffLo: 0, textureCutoffHi: 255, textureOffsetX: 0, textureOffsetY: 0,
         /* Krita presets: curves are splines (_splineAt), and a round tip may
          * carry its own falloff curve (Krita's "soft" generator). */
         curveSmooth: false, tipCurve: null,

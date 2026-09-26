@@ -588,9 +588,9 @@ await withPage(async (page) => {
         const c = document.createElement('canvas'); c.width = c.height = 2;
         const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 2, 2); x.fillStyle = '#fff'; x.fillRect(1, 0, 1, 2);
         const url = c.toDataURL();
-        const run = () => {
+        const run = (off = 0) => {
             b.forgetSaved('Round'); b.loadPreset('Round');
-            b.setParam('size', 20); b.setParam('spacing', 7); b.setParam('hardness', 100);
+            b.setParam('size', 20); b.setParam('spacing', 7); b.setParam('hardness', 100); b.setParam('textureOffsetX', off);
             b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
             b.setParam('texture', 100); b.setParam('textureMode', 'subtract'); b.setParam('textureScale', 1);
             b.loadTexturePattern(url);
@@ -603,11 +603,14 @@ await withPage(async (page) => {
             return a;
         };
         run(); await new Promise(r => setTimeout(r, 300));   // the pattern decodes async
-        const a = run();
-        return JSON.stringify({ black: Math.min(...a.filter((_, i) => i % 2 === 0)), white: Math.max(...a.filter((_, i) => i % 2 === 1)) });
+        const a = run(), o = run(1);
+        return JSON.stringify({ black: Math.min(...a.filter((_, i) => i % 2 === 0)), white: Math.max(...a.filter((_, i) => i % 2 === 1)),
+            offBlack: Math.min(...o.filter((_, i) => i % 2 === 1)), offWhite: Math.max(...o.filter((_, i) => i % 2 === 0)) });
     })()`, { awaitPromise: true }));
     check("Krita's grain stays on its canvas pixels down a stroke, not smeared from dab to dab",
         ks.black > 250 && ks.white < 5, JSON.stringify(ks));
+    check("...and its offset moves the grain across the canvas (KisTextureOption: Bristle_frottis0797)",
+        ks.offBlack > 250 && ks.offWhite < 5, JSON.stringify(ks));
     /* A colour smudge writes the layer itself, so it has to grain its own
      * dabs: it skipped texture and pastel_014 laid 6x Krita's ink. */
     const st = JSON.parse(await page.eval(`(async () => {
@@ -1127,11 +1130,17 @@ await withPage(async (page) => {
         };
         // pen rotation is additive in Krita: strength 0.5 at a 90 degree twist is a 225 degree turn, diagonal
         b.setPenState({ twist: 90 }); const tw = tall(0.5, 'twist'); b.setPenState({ twist: 0 });
-        return JSON.stringify({ small: tall(0.1), full: tall(1), tw });
+        // drawing angle x pressure x tangential pressure (0 without a wheel): the list's scaling part is -1
+        const list = (() => { const orig = b.setParam.bind(b); b.setParam = (k, v) => { orig(k, v); if (k === 'angleCurve') {
+            orig('angleSensors', [{ src: 'direction', kind: 'abs', curve: [[0, 0], [1, 1]] }, { src: 'pressure', kind: 'scale' }, { kind: 'const', v: 0 }]); } };
+            try { return tall(0.5, 'direction'); } finally { b.setParam = orig; } })();
+        return JSON.stringify({ small: tall(0.1), full: tall(1), tw, list });
     })()`));
     check("a Krita rotation strength keeps the tip's turn to a wobble", wob.small <= 12 && wob.full >= 22, JSON.stringify(wob));
     check("...and so does pen rotation, an added turn: strength 0.5 at 90 degrees lies diagonal (Bear Paw)",
         wob.tw >= 18 && wob.tw <= 26, 'height ' + wob.tw);
+    check("...and a list of inputs takes Krita's whole formula: a zero tangential pressure turns a flat tip a quarter off the stroke at strength 0.5 (Bristle_frottis0017)",
+        wob.list >= 26, 'height ' + wob.list);
     /* A locked drawing angle belongs to the rotation that asked for it: a
      * size list reading the angle unlocked still follows the stroke
      * (Poska Triangle G's 13px bottom line came out 8). */
