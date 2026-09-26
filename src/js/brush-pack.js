@@ -233,7 +233,7 @@
         g.translate(N / 2, N / 2);
         if (ratio > 0 && ratio < 1) g.scale(1, ratio);
         g.translate(-N / 2, -N / 2);
-        if (String(mask.type || '').indexOf('rect') === 0) {
+        if (String(mask.type || 'circle') !== 'circle') {
             g.fillStyle = 'rgba(0,0,0,1)';
             g.fillRect(0, 0, N, N);
         } else {
@@ -569,7 +569,8 @@
         var mask = bd.mask;
         if (mask) {
             // A generated tip: numbers all the way down, which is our own case.
-            out.shape = (String(mask.type || '').indexOf('rect') === 0) ? 'square' : 'circle';
+            // Anything Krita does not read as "circle" is its rectangle (KisMaskGenerator::fromXML): EO Pixel Taper says "rct".
+            out.shape = String(mask.type || 'circle') === 'circle' ? 'circle' : 'square';
             out.size = Math.max(1, Math.round(_num(mask.diameter, 20)));
             out.spacingWhole = true;   // see _stepFor
             /* Krita's ratio is the short axis over the long one, so it is our

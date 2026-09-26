@@ -413,6 +413,8 @@ await withPage(async (page) => {
                 listFan: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
                     RotationSensor: '<!DOCTYPE params> <params id="sensorslist"> <ChildSensor fanCornersStep="30" fanCornersEnabled="0" angleOffset="0" id="drawingangle"> <curve>0,0;1,1;</curve> </ChildSensor> <ChildSensor id="pressure"/> </params> ' } }),
                 // RGBA_06_Rock: the same without the Custom flag.
+                // EO Pixel Taper: Krita reads any type but "circle" as its rectangle.
+                rct: BP.toPreset({ params: { brush_definition: bd('default', 'rct', 1, 1) } }).params,
                 ascBareNew: BP.toPreset({ params: { brush_definition: round, PressureRotation: 'true', RotationUseCurve: 'true',
                     RotationSensor: '<!DOCTYPE params>\n<params id="ascension"/>\n' } }).params,
                 // GIMP's 2. Star and Hardness 100, spaced by diameter over mask box
@@ -527,6 +529,7 @@ await withPage(async (page) => {
          * is the spacing times the diameter, at the scale that fits the mask
          * box to the size -- 0.909 of the size for 2. Star, 0.98 for Hardness
          * 100, exactly the size for Circle (11). It was the size throughout. */
+        check('a Krita tip typed "rct" is a square, as anything but "circle" is in Krita', B.rct.shape === 'square', B.rct.shape);
         check('a GIMP generated brush spaces its dabs by diameter, not by box',
             B.vbrStar.spacing === 45.5 && B.vbrRound.spacing === 9.8 && B.vbrSmall.spacing === 20,
             `${B.vbrStar.spacing} ${B.vbrRound.spacing} ${B.vbrSmall.spacing}`);
