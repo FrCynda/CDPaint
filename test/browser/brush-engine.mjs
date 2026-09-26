@@ -1313,6 +1313,12 @@ await withPage(async (page) => {
         fresh(() => { b.setParam('shape', 'square'); b.setParam('size', 30); b.setParam('falloff', 'krita'); b.setParam('hardness', 50); });
         stroke([[100, 100]]);
         out.lrect = [100, 112].map(x => L().getImageData(x, 100, 1, 1).data[3]);
+        // ...and anti-aliased, its fade reaches a pixel further in, so a 4.5px bar thins right through (Grease Charcoal)
+        fresh(() => { b.setParam('shape', 'square'); b.setParam('size', 30); b.setParam('aspectRatio', 6.67); b.setParam('falloff', 'krita-aa');
+                      b.setParam('hardness', 100); b.setParam('hardnessY', 31); });
+        stroke([[100, 100]]);
+        out.lrectAA = [97, 98, 99, 100, 101, 102].map(y => L().getImageData(100, y, 1, 1).data[3]);
+        b.setParam('hardnessY', null);
         // PixelArt_Round: full sharpness keeps every pixel a cone tip touches.
         fresh(() => { b.setParam('size', 5); b.setParam('falloff', 'krita'); b.setParam('hardness', 0); b.setParam('sharpness', 100); });
         stroke([[100, 100]]);
@@ -1366,6 +1372,10 @@ await withPage(async (page) => {
     /* probes/defrect: it was drawn as a solid box whatever the fade. */
     check("Krita's default square fades linearly from its fade to the edge (Grease Charcoal)",
         bank.lrect[0] > 250 && bank.lrect[1] > 40 && bank.lrect[1] < 140, JSON.stringify(bank.lrect));
+    // KisRectangleMaskGenerator's column integrates to 652 of 255ths; a plain ramp keeps 752
+    { const sum = bank.lrectAA.reduce((a, v) => a + v, 0);
+      check("an anti-aliased Krita square clears its thin side a pixel further in (Grease Charcoal)",
+          Math.abs(sum - 652) <= 15, sum + ' ' + JSON.stringify(bank.lrectAA)); }
     check("a small anti-aliased gauss square sits a third of a pixel up, as Krita supersamples it from the corner (Poska Square)",
         bank.gsmall > 59.55 && bank.gsmall < 59.8, 'centre row ' + bank.gsmall.toFixed(3));
     check('...at its own fractional size, not the first one cached for that whole pixel', bank.gsizes[1] > bank.gsizes[0] * 1.05, bank.gsizes.join(' < '));

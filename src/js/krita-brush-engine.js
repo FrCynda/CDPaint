@@ -393,6 +393,13 @@
         var D = 2 * _ceil(_hypot(w, h) / 2) + 2, canvas = new OffscreenCanvas(D, D), c = D / 2, cy = c;
         if (phase) { canvas._cx = c += phase[0]; canvas._cy = cy += phase[1]; }   // at the dab's sub-pixel phase, as the circle
         var ca = _cos(ang || 0), sa = -_sin(ang || 0), ss = aa && (w < 10 || h < 10) ? (w < 1 || h < 1 ? 6 : 3) : 1;
+        /* The plain square (KisRectangleMaskGenerator::valueAt): per axis,
+         * n = 2|x|/w and F = |x| * 2/(fade w) (1 at no fade), clear by
+         * n(F - 1)/(F - n) once F passes 1, the more-cleared axis winning.
+         * Unsmoothed that is a straight ramp from the fade to the edge;
+         * anti-aliased |x| is a pixel further out in F alone, which clears
+         * a thin tip right through its middle: Grease Charcoal's 4px bar. */
+        var tfx = hard > 0 ? 2 / (hard * w) : 1, tfy = hardY > 0 ? 2 / (hardY * h) : 1, ea = aa ? 1 : 0;
         var ctx = canvas.getContext('2d'), img = ctx.createImageData(D, D), d = img.data;
         for (var j = 0; j < D; j++) {
             for (var i = 0; i < D; i++) {
@@ -401,7 +408,11 @@
                     for (var sy = 0; sy < ss; sy++) for (var sx = 0; sx < ss; sx++) {
                         var x1 = i + 0.5 - c + sx / ss, y1 = j + 0.5 - cy + sy / ss;
                         var ux = _abs(ca * x1 - sa * y1), uy = _abs(sa * x1 + ca * y1);
-                        if (ux < w / 2 && uy < h / 2) v += _min(1, (1 - ux * 2 / w) / _max(1e-6, 1 - hard), (1 - uy * 2 / h) / _max(1e-6, 1 - hardY));
+                        var nx = ux * 2 / w, ny = uy * 2 / h;
+                        if (nx > 1 || ny > 1) continue;
+                        var Fx = (ux + ea) * tfx, Fy = (uy + ea) * tfy;
+                        var cx = Fx > 1 ? nx * (Fx - 1) / _max(1e-9, Fx - nx) : 0, cy2 = Fy > 1 ? ny * (Fy - 1) / _max(1e-9, Fy - ny) : 0;
+                        v += _clamp(1 - _max(cx, cy2), 0, 1);
                     }
                     v /= ss * ss;
                 } else {
