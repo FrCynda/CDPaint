@@ -2209,6 +2209,7 @@
             // same unrotated drawing), and it's the difference between
             // recomputing the expensive getImageData/erosion pass on nearly
             // every frame of a direction-driven brush versus never.
+            _sharpNow = p.sharpness;   // the tip at rest, not the last dab's pressure
             mask = _maskFor(p.shape, sz, hard, 0, asp);
         } finally {
             _tipCell = _savedTipCell;
@@ -3016,6 +3017,7 @@
          * ponytail: a square's separate end fade (hardnessY) is not scaled. */
         _softNow = p.softnessSrc !== 'none' || p.softnessStrength != null ? _clamp(_dyn(p, 'softness', 1, sc, 18), 0.1, 1) : 1;
         if (_softNow < 1 && /^krita(-aa)?$/.test(p.falloff || '')) hard *= _softNow;
+        _sharpNow = p.sharpness > 0 && (p.sharpnessSensors || p.sharpnessSrc !== 'none') ? _dyn(p, 'sharpness', p.sharpness, sc, 19) : p.sharpness;
         /* All four other programs call this roundness, not aspect, and their
          * dynamics make a tip FLATTER as the sensor falls. Ours is the
          * reciprocal, so the sensor scales the roundness and the aspect is
@@ -3262,7 +3264,7 @@
      * added to a bare two-point curve); at low pressure Watercolor Stroke
      * Dry's dab is faint enough that its subtract texture leaves only the
      * cracks. _tcNow is the curve the mask being built draws. */
-    var _softNow = 1, _tcNow = null, _scCache = new Map();
+    var _softNow = 1, _sharpNow = 0, _tcNow = null, _scCache = new Map();
     function _softCurve(c, s) {
         if (s >= 1) return c;
         s = _round(s * 256) / 256;
@@ -3334,8 +3336,8 @@
             }
             mask = _dabCache.get(shape, sz, hardness, angleDeg, aspect, ph);
         }
-        var sh = _params.sharpness;
-        if (sh > 0) mask = _sharpenMask(mask, sh, _params.sharpSoftness);
+        // the option is on whatever its sensor reads: at 0 the threshold keeps nothing
+        if (_params.sharpness > 0) mask = _sharpenMask(mask, _sharpNow, _params.sharpSoftness);
         return mask;
     }
 
@@ -4877,6 +4879,7 @@
         textureType: 'grain',
         sharpness: 0,
         sharpSoftness: 0,
+        sharpnessSrc: 'none', sharpnessMin: 0, sharpnessCurve: 1, sharpnessSensors: null, sharpnessCombine: 0,
         texturePattern: '',
         /* Watercolour edge: the dark ring pooled paint leaves at the ink
          * boundary. edgeWidth is the band in px (CSP Radius), edgeDensity
@@ -5813,6 +5816,7 @@
             }
             return { W: W, H: H, a: a, cx: _floor(W * 0.5), cy: _floor(H * 0.5) };
         }
+        _sharpNow = p.sharpness;
         var m = _maskFor(p.shape || 'circle', hs, p.hardness, p.angle || 0, asp, 0, 0);
         W = m.width; H = m.height;
         var dd = m.getContext('2d').getImageData(0, 0, W, H).data;

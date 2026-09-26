@@ -310,6 +310,12 @@ await withPage(async (page) => {
             RotationSensor: '<params periodic="1" length="130" id="distance"><curve>0,0;1,0.49;</curve></params>',
             PressureSize: 'true', SizeUseCurve: 'true', SizeValue: '1',
             SizeSensor: '<params periodic="1" length="200" id="distance"><curve>0,0.05;0.5,1;1,0.07;</curve></params>' } }).params)`));
+        const rock = JSON.parse(await page.eval(`JSON.stringify(BrushPack.toPreset({ params: {
+            brush_definition: '<Brush type="auto_brush" angle="0" spacing="0.03"><MaskGenerator id="gauss" type="rect" diameter="36" ratio="0.12" hfade="0.88" vfade="0.5"/></Brush>',
+            PressureSharpness: 'true', SharpnessUseCurve: 'true', SharpnessValue: '1',
+            SharpnessSensor: '<params id="pressure"/>' } }).params)`));
+        check("a Krita sharpness keeps its pressure sensor (Rock_flat)",
+            rock.sharpness === 100 && rock.sharpnessSrc === 'pressure', JSON.stringify([rock.sharpness, rock.sharpnessSrc]));
         check('a Krita rotation read off distance keeps its own length',
             doodle.angleReach && doodle.angleReach.length === 130 && doodle.angleReach.periodic === true,
             JSON.stringify(doodle.angleReach));

@@ -995,6 +995,17 @@
             if (soft > 1) soft = soft / 100;
             out.sharpness = Math.round(_num(P.SharpnessValue, 1) * 100);
             out.sharpSoftness = Math.round(Math.min(1, Math.max(0, soft)) * 100);
+            /* ...its threshold is strength times its sensors
+             * (KisSharpnessOption::applyThreshold): Rock_flat's cut-out
+             * keeps only the tip's core at light pressure. */
+            var shs = _sensorFor(P, 'Sharpness');
+            if (shs && !shs.src) warn.push('Sharpness followed ' + shs.id + ', which we have no input for');
+            else if (shs) {
+                out.sharpnessSrc = shs.src; out.sharpnessMin = 0;
+                _kritaReach(out, shs);
+                if (shs.curve) out.sharpnessCurve = shs.curve;
+                if (shs.all) { out.sharpnessSensors = shs.all; out.sharpnessCombine = shs.mode; shs.all.forEach(function (e) { _kritaReach(out, e); }); }
+            }
         }
 
         /* Krita's airbrush keeps dabbing while the pen is held still, which

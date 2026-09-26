@@ -1317,6 +1317,13 @@ await withPage(async (page) => {
         fresh(() => { b.setParam('size', 5); b.setParam('falloff', 'krita'); b.setParam('hardness', 0); b.setParam('sharpness', 100); });
         stroke([[100, 100]]);
         out.solid = L().getImageData(90, 90, 20, 20).data.filter((v, i) => i % 4 === 3 && v > 200).length;
+        // Rock_flat: the threshold follows pressure, so a light dab keeps only its core
+        const sharpDab = (pr) => { fresh(() => { b.setParam('size', 30); b.setParam('falloff', 'krita'); b.setParam('hardness', 0);
+                b.setParam('sharpness', 100); b.setParam('sharpnessSrc', 'pressure'); b.setParam('sharpnessMin', 0); });
+            L().clearRect(0, 0, 200, 200); b.beginStroke(100, 100, pr, '#000000'); b.endStroke();
+            return L().getImageData(80, 80, 40, 40).data.filter((v, i) => i % 4 === 3 && v > 0).length; };
+        out.sharpPress = [sharpDab(0.3), sharpDab(1)];
+        b.setParam('sharpnessSrc', 'none');
         // Concept Line Marker: a 3px Krita round an eighth of a pixel on is not the one a quarter on.
         const edge = (x) => { fresh(() => { b.setParam('size', 3); b.setParam('falloff', 'krita'); b.setParam('hardness', 50); });
             stroke([[x, 100]]); return L().getImageData(101, 100, 1, 1).data[3]; };
@@ -1365,6 +1372,8 @@ await withPage(async (page) => {
     check("a Krita size option's strength scales the dab (Poska Square's 0.82)", Math.abs(bank.strength - 25) <= 1, bank.strength + 'px');
     check("full sharpness keeps every pixel the tip touches, as Krita's threshold does",
         bank.solid >= 12, `${bank.solid} solid pixels`);
+    check("Krita's sharpness follows its sensor: a light dab keeps only the core (Rock_flat)",
+        bank.sharpPress[0] > 0 && bank.sharpPress[0] < bank.sharpPress[1] * 0.6, bank.sharpPress.join(' < '));
     check("a small Krita round sits at its own sixteenth of a pixel, not the nearest quarter",
         bank.eighth[0] < bank.eighth[1], JSON.stringify(bank.eighth));
     check('a GIMP pipe starts over from its first cell when the brush is picked again',
