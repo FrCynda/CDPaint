@@ -40,6 +40,9 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
              * Light Shine star sat 0.5px down the stroke from ours). GIMP's
              * lands on the start, so its bank turns this off. */
             const len = Math.hypot(x1 - x0, y1 - y0), h = !${kritaStart} || oneSeg || !len ? 0 : 0.5 / len;
+            // ...and its distance is counted from the canvas origin (a blank
+            // KisDistanceInformation's lastPosition is 0,0): X3CD Doodle.
+            b.distanceFrom = ${kritaStart} ? Math.hypot(x0 + (x1 - x0) * h, y0 + (y1 - y0) * h) : 0;
             b.beginStroke(x0 + (x1 - x0) * h, y0 + (y1 - y0) * h, p0 + (p1 - p0) * h, '#000000');
             for (let i = 1; i <= n; i++) {
                 const t = i / n;
@@ -49,7 +52,8 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         }
         performance.now = clock;
         await new Promise(res => setTimeout(res, 250));
-        const ours = L.ctx.getImageData(0, 0, W, H).data;
+        b.distanceFrom = 0;
+        const ours =L.ctx.getImageData(0, 0, W, H).data;
         const params = JSON.parse(JSON.stringify(b.getParams(), (k, v) =>
             typeof v === 'string' && v.length > 80 ? v.slice(0, 40) + '...' : v));
         if (!${keep}) for (const n of imp.added) b.deleteUserPreset(n);

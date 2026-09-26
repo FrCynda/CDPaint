@@ -2449,7 +2449,11 @@
                 var fn = _max(1, (e && e.length) || (p && p.fadeSteps) || 25), fk = _max(0, _dabIndex - 1);
                 return ((e && e.length ? e.periodic : p && p.fadePeriodic) ? fk % fn : _min(fk, fn)) / fn;
             case 'distance':
-                var dn = _max(1, (e && e.length) || (p && p.distanceLength) || 30), dd = _lastDabDist || 0;
+                /* engine.distanceFrom is for the Krita bank only: Node.paintLine's
+                 * distance starts at the canvas origin, so every dab after the
+                 * first has already travelled |start| (X3CD Doodle). */
+                var dn = _max(1, (e && e.length) || (p && p.distanceLength) || 30),
+                    dd = (_lastDabDist || 0) + (_dabIndex > 1 && engine.distanceFrom || 0);
                 return (e && e.length ? e.periodic : p && p.distancePeriodic) ? (dd % dn) / dn : _clamp(dd / dn, 0, 1);
             default:         return 1;
         }
@@ -2627,7 +2631,7 @@
              * (KisDynamicSensorRotation), so an upright pen is the half turn
              * alone: Bear Paw's paw stands on its head in Krita. */
             var tw = src === 'twist' ? 0.5 + (((_penTwist % 360) + 540) % 360 - 180) / 360 : null;
-            var c = _curveAt(p.angleCurve, tw != null ? tw : _sensor(src, sc, 11, p), p.curveSmooth);
+            var c = _curveAt(p.angleCurve, tw != null ? tw : _sensor(src, sc, 11, p, p.angleReach), p.curveSmooth);
             var v = p.angleStrength * (2 * c - 1) * (src === 'random' || tw != null ? 1 : -1);
             v = ((v + 1) % 2 + 2) % 2 - 1;
             return baseAngle + 180 + 180 * v;
@@ -2640,7 +2644,7 @@
          * those sources rather than set one the engine would ignore in
          * silence. Handling them here is the fix for both halves. */
         if (src && src !== 'none') {
-            return baseAngle + _sensor(src, sc, 11, p) * range * 2;
+            return baseAngle + _sensor(src, sc, 11, p, p.angleReach) * range * 2;
         }
         return baseAngle;
     }
@@ -4927,7 +4931,7 @@
          * at, not how much each dab adds. See _alphaDarken. */
         dabOpacitySrc: 'none',   dabOpacityMin: 0, dabOpacityCurve: 1,
         // Krita's several inputs on one option (_kritaInputs); null = just <key>Src.
-        angleSensors: null, angleCombine: 0, sizeSensors: null, sizeCombine: 0, colorRateSensors: null, colorRateCombine: 0, spacingSensors: null, spacingCombine: 0, aspectRatioSensors: null, aspectRatioCombine: 0, textureSensors: null, textureCombine: 0, scatterSensors: null, scatterCombine: 0, smudgeRateSensors: null, smudgeRateCombine: 0, flowSensors: null, flowCombine: 0, dabOpacitySensors: null, dabOpacityCombine: 0,
+        angleSensors: null, angleCombine: 0, angleReach: null, sizeSensors: null, sizeCombine: 0, colorRateSensors: null, colorRateCombine: 0, spacingSensors: null, spacingCombine: 0, aspectRatioSensors: null, aspectRatioCombine: 0, textureSensors: null, textureCombine: 0, scatterSensors: null, scatterCombine: 0, smudgeRateSensors: null, smudgeRateCombine: 0, flowSensors: null, flowCombine: 0, dabOpacitySensors: null, dabOpacityCombine: 0,
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
         tipShrink: '', textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,

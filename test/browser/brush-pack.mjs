@@ -303,6 +303,16 @@ await withPage(async (page) => {
         check("Krita's rotation keeps its strength and curve, and an unticked mirror stays off",
             wpRot.angleSrc === 'random' && wpRot.angleStrength === 0.19 && wpRot.angleCurve.length === 2 && !wpRot.tipMirror,
             JSON.stringify([wpRot.angleSrc, wpRot.angleStrength, wpRot.angleCurve, wpRot.tipMirror]));
+        // X3CD Doodle: the rotation turns every 130px while the size grows every 200
+        const doodle = JSON.parse(await page.eval(`JSON.stringify(BrushPack.toPreset({ params: {
+            brush_definition: '<Brush type="auto_brush" angle="0" spacing="0.02"><MaskGenerator id="default" type="circle" diameter="110" ratio="0.49" hfade="1" vfade="1"/></Brush>',
+            PressureRotation: 'true', RotationUseCurve: 'true', RotationValue: '1',
+            RotationSensor: '<params periodic="1" length="130" id="distance"><curve>0,0;1,0.49;</curve></params>',
+            PressureSize: 'true', SizeUseCurve: 'true', SizeValue: '1',
+            SizeSensor: '<params periodic="1" length="200" id="distance"><curve>0,0.05;0.5,1;1,0.07;</curve></params>' } }).params)`));
+        check('a Krita rotation read off distance keeps its own length',
+            doodle.angleReach && doodle.angleReach.length === 130 && doodle.angleReach.periodic === true,
+            JSON.stringify(doodle.angleReach));
         /* Krita's oil_knife.png is dark on opaque white, bar eleven pixels
          * at alpha 192; trusting the alpha stamped the whole white square. */
         const knife = await page.eval(`(async () => {

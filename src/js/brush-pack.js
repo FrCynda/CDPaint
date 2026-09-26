@@ -858,7 +858,11 @@
              * cloud tip along the line instead of 98 degrees across it. */
             var dOff = rot.src === 'direction' && /angleOffset="(-?[0-9.]+)"/.exec(rsRaw);
             if (dOff) out.angle = (((out.angle || 0) + parseFloat(dOff[1])) % 360 + 360) % 360;
-            if (rot.src) { out.angleSrc = rot.src; _kritaReach(out, rot); }
+            if (rot.src) {
+                out.angleSrc = rot.src; _kritaReach(out, rot);
+                // its own reach: X3CD Doodle turns every 130px and grows every 200
+                if (rot.length != null) out.angleReach = { length: rot.length, periodic: rot.periodic };
+            }
             else warn.push('the tip turned with ' + rot.id + ', which we cannot turn it with');
         }
         // several inputs: the engine takes Krita's whole formula (_dynAngle)

@@ -2721,6 +2721,20 @@ await withPage(async (page) => {
         L = await line(b => { b.setParam('sizeSrc', 'distance'); b.setParam('sizeMin', 10);
                               b.setParam('distanceLength', 300); });
         out.dist = [thick(L, 40), thick(L, 360)];
+        // Krita's bank line counts its distance from the canvas origin
+        b.distanceFrom = 150;
+        L = await line(b => { b.setParam('sizeSrc', 'distance'); b.setParam('sizeMin', 10);
+                              b.setParam('distanceLength', 300); });
+        b.distanceFrom = 0;
+        out.distFrom = thick(L, 40);
+        // a turn read off distance keeps its own reach, not the size's (X3CD Doodle)
+        const turn = (reach) => line(b => { b.setParam('aspectRatio', 3); b.setParam('angleSrc', 'distance');
+            b.setParam('distanceLength', 1000); b.setParam('angleReach', reach); });
+        L = await turn({ length: 120, periodic: false });
+        out.reach = thick(L, 60);
+        L = await turn(null);
+        out.noReach = thick(L, 60);
+        b.setParam('angleReach', null);
         // Roundness dynamics squash the tip; ours is the reciprocal, so a
         // driven aspect has to get FLATTER as the sensor falls, not rounder.
         L = await line(b => { b.setParam('aspectRatio', 1); b.setParam('aspectRatioSrc', 'fade');
@@ -2741,6 +2755,10 @@ await withPage(async (page) => {
         b3.fade[0] > b3.fade[1] * 2, b3.fade.join(' -> '));
     check('a distance-driven dial does the opposite',
         b3.dist[1] > b3.dist[0] * 2, b3.dist.join(' -> '));
+    check('a distance counted from the canvas origin starts that far along (Krita bank)',
+        b3.distFrom > b3.dist[0] * 1.5, b3.dist[0] + ' -> ' + b3.distFrom);
+    check('a turn read off distance keeps its own reach (X3CD Doodle)',
+        b3.reach > b3.noReach * 1.5, b3.noReach + ' -> ' + b3.reach);
     check('driven roundness flattens the tip rather than rounding it',
         b3.round[1] < b3.round[0], b3.round.join(' -> '));
     check('spacing can follow a sensor too',
