@@ -833,11 +833,12 @@
          * multiplies its inputs, so where in it the tilt sits is no matter
          * (Bristle_frottis001111 puts pressure first). */
         var rsRaw = _sensorRaw(P, 'Rotation');
-        var ascKid = /<ChildSensor\b[^>]*?\bid="ascension"[^>]*?(?:\/>|>[\s\S]*?<\/ChildSensor>)/;
+        var ascKid = /<ChildSensor\b[^>]*?\bid="ascension"[^>]*?(?:\/>|>[\s\S]*?<\/ChildSensor>)/, ascList = false;
         if (rot && (rot.id === 'ascension' || ascKid.test(rsRaw))) {
             var rest = rsRaw.replace(ascKid, '');
             out.angle = ((out.angle || 0) + 90) % 360;
             if (rest !== rsRaw && /<ChildSensor\b/.test(rest)) {
+                ascList = true;
                 var P2 = {}; for (var pk in P) P2[pk] = P[pk];
                 P2.RotationSensor = rest;
                 rot = _sensorFor(P2, 'Rotation');
@@ -873,6 +874,12 @@
             if (rot && rot.src) {
                 out.angleStrength = _num(P.RotationValue, 1);
                 if (rot.curve) out.angleCurve = rot.curve;
+                /* Tilt direction's quarter is -0.5 added inside Krita's
+                 * formula, 180 (w - 1): beside other inputs that is a
+                 * quarter the other way, a half turn from the lone tilt's.
+                 * Thin rects cannot tell; Large Chalk's one-sided sponge
+                 * lay upside down. */
+                if (ascList) out.angle = (out.angle + 180) % 360;
             } else if (!rot) {
                 out.angle = (out.angle + 180) % 360;
             }

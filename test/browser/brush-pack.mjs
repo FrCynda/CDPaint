@@ -518,8 +518,8 @@ await withPage(async (page) => {
          * adds that quarter on top of the pressure turn. */
         check('tilt direction with no tilt turns the tip a quarter turn',
             B.asc.angle === 90 && B.asc.angleSrc === 'tilt', `${B.asc.angle} ${B.asc.angleSrc}`);
-        check('...and alongside pressure, pressure turns it from there',
-            B.ascList.angle === 90 && B.ascList.angleSrc === 'pressure', `${B.ascList.angle} ${B.ascList.angleSrc}`);
+        check('...and alongside pressure, the formula lays it a quarter the other way, and pressure turns it from there (Large Chalk)',
+            B.ascList.angle === 270 && B.ascList.angleSrc === 'pressure', `${B.ascList.angle} ${B.ascList.angleSrc}`);
         /* Measured (test/krita/probes/frottis): the same input stored with no
          * curve turns with pressure too -- upright near 0.75 -- and stops once
          * a curve is written in. It was painted fixed at the quarter turn. */
@@ -531,12 +531,12 @@ await withPage(async (page) => {
             B.vbrStar.spacing === 45.5 && B.vbrRound.spacing === 9.8 && B.vbrSmall.spacing === 20,
             `${B.vbrStar.spacing} ${B.vbrRound.spacing} ${B.vbrSmall.spacing}`);
         check('tilt direction with no curve brings pressure in with it',
-            B.ascBare.angle === 90 && B.ascBare.angleSrc === 'pressure' && B.ascBare.angleStrength === 1,
+            B.ascBare.angle === 270 && B.ascBare.angleSrc === 'pressure' && B.ascBare.angleStrength === 1,
             `${B.ascBare.angle} ${B.ascBare.angleSrc} ${B.ascBare.angleStrength}`);
         /* Both lists were read as no input at all: the child pattern wanted
          * <ChildSensor id="..."> ... </ChildSensor> and nothing else. */
         check('a list of self-closing inputs is read (pressure, then tilt direction)',
-            B.listShort.angle === 90 && B.listShort.angleSrc === 'pressure', `${B.listShort.angle} ${B.listShort.angleSrc}`);
+            B.listShort.angle === 270 && B.listShort.angleSrc === 'pressure', `${B.listShort.angle} ${B.listShort.angleSrc}`);
         check('...and an input with its settings before its id',
             B.listFan.params.angleSrc === 'direction' && !B.listFan.warnings.some(w => /turned/.test(w)),
             `${B.listFan.params.angleSrc} ${JSON.stringify(B.listFan.warnings)}`);
