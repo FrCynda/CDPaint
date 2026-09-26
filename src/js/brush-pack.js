@@ -601,10 +601,10 @@
              * there (KisCurveCircleMaskGenerator::valueAt) and the fades play
              * no part. Airbrush Soft peaks at 40% in the middle; read as a
              * rough third of the fade it painted a solid-cored disc. The
-             * square one keeps the rough third. */
-            var sc0 = gen === 'soft' && out.shape === 'circle' &&
+             * square reads it on both axes (the engine's _kritaCurveRectMask). */
+            var sc0 = gen === 'soft' && (out.shape === 'circle' || out.shape === 'square') &&
                 BrushPack.parseCurve('<curve>' + (mask.softness_curve || '') + '</curve>');
-            if (sc0) { out.tipCurve = sc0; out.hardness = 0; }
+            if (sc0) { out.tipCurve = sc0; out.hardness = 0; if (out.shape === 'square') out.falloff = 'krita-soft' + aa; }
             else if (gen === 'soft') out.hardness = Math.round(out.hardness * 0.3);
             if (_num(mask.spikes, 2) > 2) warn.push('a star-shaped tip became a plain one');
         } else if (bd.filename) {

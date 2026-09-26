@@ -1106,6 +1106,20 @@ await withPage(async (page) => {
         b.forgetSaved('Round'); b.loadPreset('Round');
         return a.join();
     })()`);
+    // Krita's soft square reads its curve as c(t) (1 - c(1 - t)) on each axis: a late fall keeps only the middle
+    const csq = await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ shape: 'square', size: 40, hardness: 0, falloff: 'krita-soft', spacing: 400, flowSrc: 'none', sizeSrc: 'none',
+            smoothingMode: 'none', tipCurve: [[0, 1], [0.73, 0.877], [0.767, 0.412], [1, 0]] })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+        const d = __B.layer().ctx.getImageData(70, 100, 60, 1).data;
+        let n = 0; for (let i = 0; i < 60; i++) if (d[i * 4 + 3] > 128) n++;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return n;
+    })()`);
+    check("a Krita soft square keeps only the middle its curve leaves (Block tilt fill)", csq >= 6 && csq <= 12, csq + 'px solid');
     check("a Krita round marker is a solid disc with a one-pixel fade", mkRows === [132].concat(Array(11).fill(255), [132]).join(), mkRows);
     check("a wide Krita sketch line is hard and a pixel past its width", skRows === Array(9).fill(255).join(), skRows);
     check("a Krita softness option softens the tip with pressure", softK.curve > 25 && softK.curve < 55 && softK.circle > 170 && softK.circle < 220, JSON.stringify(softK));

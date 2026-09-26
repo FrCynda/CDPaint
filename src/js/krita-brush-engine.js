@@ -194,6 +194,7 @@
                                        shape.charAt(1) === 'l', shape.charAt(6) === 'a', phase);
         }
         if (shape === 'kmarker') return _kritaMarkerMask(size, phase);
+        if (shape.indexOf('rcurve') === 0) return _kritaCurveRectMask(size, aspect, ang, _tcNow, shape.charAt(6) === 'a', phase);
         if (kc) return _kritaCircleMask(size, aspect, hardness / 100, phase,
                                         shape.slice(-3) === ':aa', shape.charAt(1) === 'g', ang);
         if (shape === 'gimp' && aspect === 1) return _gimpCircleMask(size, hardness / 100);
@@ -420,6 +421,40 @@
                     }
                     v /= ss * ss;
                 }
+                if (v > 0) { var k = (j * D + i) * 4; d[k] = d[k + 1] = d[k + 2] = 255; d[k + 3] = _round(_min(1, v) * 255); }
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+        return canvas;
+    }
+
+    /* Krita's "soft" square (KisCurveRectangleMaskGenerator): the drawn
+     * curve c read on each axis as c(t) (1 - c(1 - t)), multiplied, the
+     * curve a table of 4 entries a pixel read at the nearest. A curve that
+     * falls away late keeps only the middle: Block tilt fill's 26px bar
+     * paints a few pixels. Supersampled and edge-faded as the gauss one. */
+    function _kritaCurveRectMask(size, aspect, ang, curve, aa, phase) {
+        var w = size, h = size / aspect;
+        if (aspect < 1) { w = size * aspect; h = size; }
+        var N = _round(_max(w, h) * 4), lut = new Float64Array(N + 1);
+        for (var li = 0; li <= N; li++) lut[li] = _clamp(_curveAt(curve, li / N, true), 0, 1);
+        var D = 2 * _ceil(_hypot(w, h) / 2) + 2, canvas = new OffscreenCanvas(D, D), c = D / 2, cy = c;
+        if (phase) { canvas._cx = c += phase[0]; canvas._cy = cy += phase[1]; }
+        var ca = _cos(ang || 0), sa = -_sin(ang || 0), ss = aa && (w < 10 || h < 10) ? (w < 1 || h < 1 ? 6 : 3) : 1;
+        var ctx = canvas.getContext('2d'), img = ctx.createImageData(D, D), d = img.data;
+        for (var j = 0; j < D; j++) {
+            for (var i = 0; i < D; i++) {
+                var v = 0;
+                for (var sy = 0; sy < ss; sy++) for (var sx = 0; sx < ss; sx++) {
+                    var x0 = i + 0.5 - c + sx / ss, y0 = j + 0.5 - cy + sy / ss;
+                    var x = _abs(ca * x0 - sa * y0), y = _abs(sa * x0 + ca * y0);
+                    if (x > w / 2 || y > h / 2) continue;
+                    var si = _round(x * 2 / w * N), ti = _round(y * 2 / h * N);
+                    var g = lut[si] * (1 - lut[N - si]) * lut[ti] * (1 - lut[N - ti]);
+                    if (aa) g *= _min(1, w / 2 - x) * _min(1, h / 2 - y);
+                    v += g;
+                }
+                v /= ss * ss;
                 if (v > 0) { var k = (j * D + i) * 4; d[k] = d[k + 1] = d[k + 2] = 255; d[k + 3] = _round(_min(1, v) * 255); }
             }
         }
@@ -3241,6 +3276,8 @@
             if (shape === 'circle' && (_params.falloff === 'gauss' || _params.falloff === 'gimp')) shape = _params.falloff;
             if (shape === 'circle' && _isArray(_params.tipCurve)) shape = _tipCurveKey(_tcNow = _softCurve(_params.tipCurve, _softNow));
             if (shape === 'circle' && _params.falloff === 'marker') shape = 'kmarker';
+            if (shape === 'square' && _isArray(_params.tipCurve))
+                shape = 'rcurve' + (/-aa$/.test(_params.falloff || '') ? 'a' : '') + _tipCurveKey(_tcNow = _softCurve(_params.tipCurve, _softNow));
             var kf = /^krita(-gauss)?(-aa)?$/.exec(_params.falloff || '');
             // a hard square keeps the plain box: it paints its pixel however small (EO Pixel Perfect)
             if (shape === 'square' && kf && (kf[1] || hardness < 100 || (_params.hardnessY != null && _params.hardnessY < 100)))
@@ -3251,12 +3288,12 @@
             }
             /* A square too, to an eighth up to 32px: rounded to whole pixels,
              * Poska Square's line thickened in steps where Krita's tapers. */
-            if (/^k(grect|lrect)/.test(shape)) sz = sz <= 32 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);
+            if (/^(k(grect|lrect)|rcurve)/.test(shape)) sz = sz <= 32 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);
             var ph = null;
             // Sharpness snaps dabs to whole pixels in Krita, so it keeps the old path.
             // Krita's own tips only: the built-in brushes keep the look they have.
             if (x != null && sz <= 32 && !(_params.sharpness > 0) &&
-                (/^k(circle|gauss|grect|marker)/.test(shape) || shape.indexOf('curve:') === 0)) {
+                /^(k(circle|gauss|grect|marker)|r?curve)/.test(shape)) {
                 /* ponytail: Krita places its plain square (klrect) at its
                  * phase too, but Grease Charcoal's subtract texture fell
                  * 0.823 -> 0.746 with it; open until that texture is. */
