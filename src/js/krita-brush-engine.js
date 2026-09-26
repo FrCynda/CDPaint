@@ -1057,8 +1057,28 @@
                     }
                 }
             }
+        } else if (sc < 1) {
+            /* Shrunk, Qt's smooth scale averages each pixel's footprint
+             * (area, not the canvas's own filter), one axis then the other. */
+            var tw2 = tile.width, th2 = tile.height;
+            c.canvas.width = tw2; c.canvas.height = th2;
+            c.drawImage(tile, 0, 0);
+            var s1 = c.getImageData(0, 0, tw2, th2).data, t = new Float32Array(w * th2 * 4);
+            var box = function (n, N, i, f) {   // footprint of i in 0..n over 0..N, f(index, weight)
+                var a = i * N / n, b = (i + 1) * N / n;
+                for (var k = _floor(a); k < b && k < N; k++) f(k, (_min(b, k + 1) - _max(a, k)) * n / N);
+            };
+            for (var ry = 0; ry < th2; ry++) for (var cx = 0; cx < w; cx++) {
+                var o1 = (ry * w + cx) * 4;
+                box(w, tw2, cx, function (k, wt) { var q = (ry * tw2 + k) * 4; for (var ch = 0; ch < 4; ch++) t[o1 + ch] += s1[q + ch] * wt; });
+            }
+            d = new Uint8ClampedArray(w * h * 4);
+            for (var cy2 = 0; cy2 < h; cy2++) for (var cx2 = 0; cx2 < w; cx2++) {
+                var o2 = (cy2 * w + cx2) * 4, acc = [0, 0, 0, 0];
+                box(h, th2, cy2, function (k, wt) { var q = (k * w + cx2) * 4; for (var ch = 0; ch < 4; ch++) acc[ch] += t[q + ch] * wt; });
+                for (var ch2 = 0; ch2 < 4; ch2++) d[o2 + ch2] = _round(acc[ch2]);
+            }
         } else {
-            c.imageSmoothingQuality = 'high';
             c.drawImage(tile, 0, 0, w, h);
             d = c.getImageData(0, 0, w, h).data;
         }

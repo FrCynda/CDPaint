@@ -611,6 +611,30 @@ await withPage(async (page) => {
         ks.black > 250 && ks.white < 5, JSON.stringify(ks));
     check("...and its offset moves the grain across the canvas (KisTextureOption: Bristle_frottis0797)",
         ks.offBlack > 250 && ks.offWhite < 5, JSON.stringify(ks));
+    // Shrunk, Qt's smooth scale averages each pixel's footprint: 1 black + 2 white of 6 at a third is 170, alpha 85 left
+    const kd = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        const c = document.createElement('canvas'); c.width = 6; c.height = 6;
+        const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, 6, 6); x.fillStyle = '#000'; x.fillRect(0, 0, 1, 6);
+        const url = c.toDataURL();
+        const run = () => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            for (const [k, v] of Object.entries({ size: 20, spacing: 400, hardness: 100, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
+                texture: 100, textureMode: 'subtract', textureScale: 1 / 3 })) b.setParam(k, v);
+            b.loadTexturePattern(url);
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+            const d = __B.layer().ctx.getImageData(96, 100, 8, 1).data, a = [];
+            for (let i = 3; i < d.length; i += 4) a.push(d[i]);
+            return a;
+        };
+        run(); await new Promise(r => setTimeout(r, 300));
+        const r = run();
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(r);
+    })()`, { awaitPromise: true }));
+    check("a shrunk Krita texture averages each pixel's footprint, as Qt's smooth scale (Grease Pencil)",
+        Math.min(...kd) <= 2 && Math.abs(Math.max(...kd) - 85) <= 3, 'columns ' + kd);
     /* A colour smudge writes the layer itself, so it has to grain its own
      * dabs: it skipped texture and pastel_014 laid 6x Krita's ink. */
     const st = JSON.parse(await page.eval(`(async () => {
