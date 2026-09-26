@@ -3318,12 +3318,13 @@
                  * phase too, but Grease Charcoal's subtract texture fell
                  * 0.823 -> 0.746 with it; open until that texture is. */
                 ph = [x % 1, y % 1];
-            } else if (x != null && /^k(circle|gauss)/.test(shape)) {
+            } else if (x != null && (/^k(circle|gauss)/.test(shape) || _params.sharpness > 0 && /^(k(grect|lrect)|rcurve)/.test(shape))) {
                 /* Sharpness: Krita rounds the dab's corner (cursor minus half
                  * its size, at least a pixel) to a whole pixel
                  * (KisSharpnessOption::apply), so the centre's phase is that
                  * half size's. Centred on the cursor, a 1px Pixel Art dab
-                 * straddled four pixels and the threshold kept none. */
+                 * straddled four pixels and the threshold kept none; a square
+                 * too, whatever its shape (EO Pixel Perfect painted nothing). */
                 var hs = (_max(1, sz) / 2) % 1;
                 ph = [hs, hs];
             }

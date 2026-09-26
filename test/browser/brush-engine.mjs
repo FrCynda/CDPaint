@@ -769,8 +769,9 @@ await withPage(async (page) => {
      * half its length (pixel1 IoU 0.76). */
     const px = JSON.parse(await page.eval(`(() => {
         const b = PaintApp.brush, L = () => __B.layer().ctx;
+        const run = (shape) => {
         b.forgetSaved('Round'); b.loadPreset('Round');
-        for (const [k, v] of Object.entries({ size: 1, hardness: 100, falloff: 'krita-gauss', sharpness: 100, sharpSoftness: 0,
+        for (const [k, v] of Object.entries({ shape, size: 1, hardness: 100, falloff: 'krita-gauss', sharpness: 100, sharpSoftness: 0,
             spacing: 10, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none' })) b.setParam(k, v);
         L().clearRect(0, 0, 200, 200);
         b.beginStroke(20.5, 80.5, 1, '#000000');
@@ -779,9 +780,13 @@ await withPage(async (page) => {
         const d = L().getImageData(0, 0, 200, 200).data, on = [];
         for (let i = 3; i < d.length; i += 4) if (d[i] > 127) on.push([(i >> 2) % 200, (i >> 2) / 200 | 0]);
         const want = []; for (let k = 0; k <= 40; k++) want.push([20 + k, Math.floor(80 - k / 2 + 0.5)]);
-        return JSON.stringify({ n: on.length, miss: want.filter(([x, y]) => !on.some(p => p[0] === x && p[1] === y)).length });
+        return { n: on.length, miss: want.filter(([x, y]) => !on.some(p => p[0] === x && p[1] === y)).length };
+        };
+        const r = run('circle'); r.square = run('square'); b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(r);
     })()`));
     check('a 1px sharp tip draws a pixel line from its snapped start', px.n === 41 && px.miss === 0, JSON.stringify(px));
+    check('...and so does a 1px sharp square, snapped the same (EO Pixel Perfect)', px.square.n === 41 && px.square.miss === 0, JSON.stringify(px.square));
     /* Krita's sketch engine (test/krita/probes/sketch): lines out to earlier
      * points within half the brush, trimmed by the offset. Its first cut
      * only repainted round the newest point, so a fast stroke kept its last
