@@ -21,6 +21,9 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         b.loadPreset(imp.added[0]);
         ${c.size != null ? `b.setParam('size', ${c.size});` : ''}
         ${Object.entries(c.params || {}).map(([k, v]) => `b.setParam(${JSON.stringify(k)}, ${JSON.stringify(v)});`).join(' ')}   // the same edit xmlSub made in Krita
+        // Node.paintLine takes no eraser toggle from the preset (a) Eraser_Textured paints ink
+        // there); a true erase blend leaves Krita's canvas blank and is never scored.
+        if (b.getParams().blendMode === 'erase') b.setParam('blendMode', 'normal');
         await new Promise(res => setTimeout(res, 600));          // let the tip load
         L.ctx.clearRect(0, 0, W, H);
         // Krita's paintLine interpolates pressure along the line; a
