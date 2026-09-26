@@ -1163,6 +1163,23 @@ await withPage(async (page) => {
     })()`);
     check("a curved circle leaves its box corners clear (Bold_marker)", /"corner":0,/.test(cc) && !/"mid":0}/.test(cc), cc);
 
+    // Krita's alpha darken in its own 8 bits: at 3% flow (8 levels) a step under half a level is lost,
+    // so a line at opacity 128 stalls about 16 levels under it, at 112 (Basic Paint); the browser's lighten sat at 97
+    const stall = await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 20, hardness: 100, spacing: 5, flow: 3, flowSrc: 'none', sizeSrc: 'none',
+            dabOpacitySrc: 'pressure', dabOpacityCurve: [[0, 0], [1, 1]], smoothingMode: 'none', falloff: 'krita-aa' })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(20, 100, 0.5, '#000000');
+        for (let i = 1; i <= 3200; i++) { const t = i % 320; b.moveStroke(20 + (t < 160 ? t : 320 - t), 100, 0.5, '#000000'); }   // ten times over
+        b.endStroke();
+        const a = __B.layer().ctx.getImageData(100, 100, 1, 1).data[3];
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return a;
+    })()`);
+    check("a low-flow line stalls short of its opacity, as Krita's 8 bits do (Basic Paint)", stall >= 108 && stall <= 116, stall);
+
     // Krita's soft circle, pixel for pixel: at 8px Layout_circle_soft's curve holds 14.2 of ink
     // (its bank line matches Krita within 2%); drawn as a gradient it held 13.0
     const scs = await page.eval(`(() => {

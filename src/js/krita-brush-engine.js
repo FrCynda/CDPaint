@@ -668,6 +668,27 @@
         return !!((p.dabOpacitySrc && p.dabOpacitySrc !== 'none') || p.maskOp || p.hatch)
             && p.engineKind !== 'shape' && p.engineKind !== 'deform';
     }
+    /* A dab on whole pixels takes Krita's alpha darken as its 8-bit RGBA
+     * does it (KoOptimizedCompositeOpAlphaDarken32, creamy): in floats from
+     * the stored level, rounded once. At Basic Paint's 3% flow a step under
+     * half a level is lost, so the stroke stalls about 16 levels short of
+     * its opacity and steps up as the pressure does; the browser's lighten
+     * rounds its own way (Basic Paint IoU 0.897 -> 0.952). */
+    function _adDab(ox, oy, mw, mh, flow) {
+        var x0 = _max(0, ox), y0 = _max(0, oy), x1 = _min(_adCanvas.width, ox + mw), y1 = _min(_adCanvas.height, oy + mh);
+        if (x1 <= x0 || y1 <= y0) return;
+        var w = x1 - x0, h = y1 - y0, m = _scratchCtx.getImageData(x0 - ox, y0 - oy, w, h).data;
+        var img = _adCtx.getImageData(x0, y0, w, h), d = img.data;
+        var o = _adO, f = _clamp(flow, 0, 1), av = _adAvg;
+        for (var i = 0; i < d.length; i += 4) {
+            if (!m[i + 3]) continue;
+            var mk = m[i + 3] / 255, dst = d[i] / 255, full;
+            if (av > o) full = av > dst ? mk * o + (av - mk * o) * dst / av : dst;
+            else full = o > dst ? dst + (o - dst) * mk : dst;
+            d[i] = d[i + 1] = d[i + 2] = _round((dst + (full - dst) * f) * 255);
+        }
+        _adCtx.putImageData(img, x0, y0);
+    }
     function _ensureAdBuffer() {
         if (_adCanvas && _adCanvas.width === _flowCanvas.width && _adCanvas.height === _flowCanvas.height) return;
         _adCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);
@@ -1797,6 +1818,7 @@
         var oy = maskCanvas._cy != null ? _round(y - maskCanvas._cy) : _pxOff ? _round(y - mh / 2) : y - mh / 2;
 
         var ad = destCtx === _flowCtx && _alphaDarken(getParams());
+        var adFlow = alpha;
         if (ad) { _ensureAdBuffer(); _adColor = colorHex; colorHex = _greyHex(_adAvg); if (_adAvg > 0) alpha *= _adO / _adAvg; }
 
         if (_tintMask !== maskCanvas || _tintColor !== colorHex) {
@@ -1899,6 +1921,8 @@
          * only filtering is the subpixel shift -- where the expensive filter
          * buys nothing visible and cost a fifth of the stroke. */
         var dc = ad ? _adCtx : destCtx;
+        if (ad && ox === _floor(ox) && oy === _floor(oy)) _adDab(ox, oy, mw, mh, adFlow);
+        else {
         if (ad) dc.globalCompositeOperation = 'lighten';
         dc.globalAlpha = _clamp(alpha, 0, 1);
         dc.imageSmoothingEnabled = true;
@@ -1906,6 +1930,7 @@
         dc.drawImage(_scratchCanvas, 0, 0, mw, mh, ox, oy, mw, mh);
         dc.globalAlpha = 1;
         if (ad) dc.globalCompositeOperation = 'source-over';
+        }
 
         var AA_MARGIN = 1;
         if (!_dirtyRect) {
