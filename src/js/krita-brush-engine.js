@@ -3332,8 +3332,9 @@
             if (x != null && sz <= 32 && !(_params.sharpness > 0) &&
                 /^(k(circle|gauss|grect|marker)|r?curve)/.test(shape)) {
                 /* ponytail: Krita places its plain square (klrect) at its
-                 * phase too, but Grease Charcoal's subtract texture fell
-                 * 0.823 -> 0.746 with it; open until that texture is. */
+                 * phase too, but with it the two Grease Charcoals swap: the
+                 * auto-spaced one 0.90 -> 0.98, the 0.05-spaced one 0.98 ->
+                 * 0.90 (grain holes fill). Open until Krita's dab origin is. */
                 ph = [x % 1, y % 1];
             } else if (x != null && (/^k(circle|gauss)/.test(shape) || _params.sharpness > 0 && /^(k(grect|lrect)|rcurve)/.test(shape))) {
                 /* Sharpness: Krita rounds the dab's corner (cursor minus half
