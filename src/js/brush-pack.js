@@ -852,6 +852,12 @@
              * Krita's pressure-driven rotation does. Only an input we cannot
              * read at all is still refused. */
             if (rot.src === 'direction' && /lockedAngleMode="1"/.test(rsRaw)) out.angleLocked = true;
+            // fan corners: a sharp turn filled a step at a time (KisRotationOption)
+            else {
+                var fanTag = (/<params[^>]*id="drawingangle"[^>]*>/.exec(rsRaw) || [''])[0];
+                if (_bool(P.PressureRotation) && /fanCornersEnabled="1"/.test(fanTag) && /^(paintbrush|colorsmudge)$/.test(preset.paintop))
+                    out.fanStep = _num((/fanCornersStep="([0-9.]+)"/.exec(fanTag) || [])[1], 20);
+            }
             /* The drawing angle sensor reads 0.5 + angle/2pi + angleOffset/360
              * (KisDynamicSensorDrawingAngle): the offset turns the tip on top
              * of the stroke's direction. Dropped, GDquest Paint Soft laid its

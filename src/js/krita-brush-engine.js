@@ -4285,6 +4285,7 @@
             _pxOff = pxLine ? [_ceil(prev.x - 0.5) - prev.x, _ceil(prev.y - 0.5) - prev.y] : null;
             _renderDab(prev.x + (_pxOff ? _pxOff[0] : 0), prev.y + (_pxOff ? _pxOff[1] : 0), _tp, colorHex, _firstAngle,
                 prev.pressure || 0.5, _tf0);
+            _fan = { a: p.originAngle ? _atan2(prev.y, prev.x) * 180 / _PI : (_firstAngle || 0), x: prev.x, y: prev.y, p: _tp };
         }
 
         while (segIdx < endIdx) {
@@ -4350,8 +4351,23 @@
                     var pty = _lerp(prev.y, next.y, fr);
                     if (_pxOff) { ptx += _pxOff[0]; pty += _pxOff[1]; }
                     var _rawPressure = _lerp(prev.pressure || 0.5, next.pressure || 0.5, fr);
+                    /* Krita's fan corners (KisPaintOpUtils::paintFan): a turn
+                     * sharper than the step is filled with dabs turned a step
+                     * at a time, laid from the last dab toward this one. A
+                     * stroke's first turn is from the canvas origin's angle,
+                     * so Wood_Fiber's rake fans out where each line starts. */
+                    if (p.fanStep > 0 && _fan) {
+                        var fa = _fan.a, fd = ((segAngle - fa) % 360 + 540) % 360 - 180, fi = 0;
+                        while (_abs(((segAngle - fa) % 360 + 540) % 360 - 180) > p.fanStep) {
+                            fa += fd > 0 ? p.fanStep : -p.fanStep;
+                            var ft = p.fanStep * fi++ / _abs(fd);
+                            _renderDab(_lerp(_fan.x, ptx, ft), _lerp(_fan.y, pty, ft), _lerp(_fan.p, _rawPressure, ft), colorHex, fa,
+                                _lerp(_fan.p, _rawPressure, ft), _taperAtDist(dabDist));
+                        }
+                    }
                     _renderDab(ptx, pty, _rawPressure, colorHex, segAngle,
                         _rawPressure, _taperAtDist(dabDist));
+                    if (_fan) { _fan.a = segAngle; _fan.x = ptx; _fan.y = pty; _fan.p = _rawPressure; }
                     _lastDabDist = dabDist;
                     _dabsThisPass++;
                     step = _stepFor(_rawPressure, ptx, pty, segAngle);
@@ -4738,7 +4754,7 @@
     var _strokeSeed = 0, _pinnedSeed = null;
     // How many dabs into the stroke we are, for the `fade` sensor.
     var _dabIndex = 0;
-    var _lockAngle = 0;
+    var _lockAngle = 0, _fan = null;
 
     /* The stroke in flight paints with frozen params: getParams() returns the
      * beginStroke snapshot while a stroke is open, so a mid-stroke slider drag
@@ -5051,7 +5067,7 @@
         fadeSteps: 25,
         distanceLength: 30,
         fadePeriodic: false, distancePeriodic: false,
-        angleLocked: false, originAngle: false,
+        angleLocked: false, originAngle: false, fanStep: 0,
         smoothingBasic: 50,
         smoothingWeighted: 100,
         smoothingRope: 100,

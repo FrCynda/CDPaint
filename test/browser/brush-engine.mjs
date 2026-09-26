@@ -1163,6 +1163,27 @@ await withPage(async (page) => {
     })()`);
     check("a curved circle leaves its box corners clear (Bold_marker)", /"corner":0,/.test(cc) && !/"mid":0}/.test(cc), cc);
 
+    // Krita's fan corners: a turn sharper than the step is filled a step at a time, and a stroke's first
+    // turn is from the canvas origin's angle, so a thin bar drawn leftward fans up where it starts (Wood_Fiber)
+    const fanc = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, out = [];
+        for (const fanStep of [0, 10]) {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            for (const [k, v] of Object.entries({ size: 20, hardness: 100, shape: 'square', aspectRatio: 10, spacing: 10, flowSrc: 'none',
+                sizeSrc: 'none', smoothingMode: 'none', angleSrc: 'direction', originAngle: true, fanStep })) b.setParam(k, v);
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(150, 100, 1, '#000000');
+            for (let x = 149; x >= 50; x--) b.moveStroke(x, 100, 1, '#000000');
+            b.endStroke();
+            const d = __B.layer().ctx.getImageData(140, 88, 20, 8).data;
+            let s = 0; for (let i = 3; i < d.length; i += 4) s += d[i];
+            out.push(s);
+        }
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    check("a fanned brush turns through its corners, from the origin's angle at the start (Wood_Fiber)", fanc[1] > 4 * fanc[0], JSON.stringify(fanc));
+
     // Krita's alpha darken in its own 8 bits: at 3% flow (8 levels) a step under half a level is lost,
     // so a line at opacity 128 stalls about 16 levels under it, at 112 (Basic Paint); the browser's lighten sat at 97
     const stall = await page.eval(`(() => {
