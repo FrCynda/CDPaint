@@ -964,6 +964,7 @@ await withPage(async (page) => {
             if (prep) prep(L());
             b.beginStroke(x0, y, pr, '#000000');
             for (let x = x0 + 1; x <= x1; x++) b.moveStroke(x, y, pr, '#000000');
+            if ((x1 - x0) % 1) b.moveStroke(x1, y, pr, '#000000');
             b.endStroke();
         };
         const a = (x) => L().getImageData(x, 100, 1, 1).data[3];
@@ -974,7 +975,8 @@ await withPage(async (page) => {
         run({ colorRate: 100, smudgeRate: 100, opacity: 50 }, 20, 180); const half = a(100);
         run({ colorRate: 100, smudgeRate: 25 }, 80, 80); const dot = a(80);
         run({ colorRate: 100, smudgeRate: 0 }, 20, 180); const off = a(100);
-        run({ colorRate: 100, smudgeRate: 25 }, 90, 100); const short = a(95);
+        // Node.paintLine's first dab lands half a pixel in (see probe-cdp.mjs): five dabs, not six
+        run({ colorRate: 100, smudgeRate: 25 }, 90.5, 100); const short = a(95);
         run({ colorRate: 0, smudgeRate: 50 }, 30, 190, c => { c.fillStyle = '#0000ff'; c.fillRect(0, 0, 60, 200); });
         const drag = [a(80), a(100), a(120)];
         // blue on row 99 only: a dulling dab at y 100 reads it, as Krita's QRect::center() does
@@ -985,11 +987,15 @@ await withPage(async (page) => {
         // a smear at y 100.7 sits on whole pixels, centred on 100 as Krita's is
         run({ colorRate: 100, smudgeRate: 50 }, 20, 180, null, 1, 100.7);
         const col = y => L().getImageData(100, y, 1, 1).data[3], snap = [col(85), col(114)];
-        return JSON.stringify({ dot, off, short, drag, flat, byOp, half, dull, faint, snap });
+        // auto spacing 1.5 at 30: dabs every 8.2px to 119, not every 8.35 (the old extra pixel) to 112
+        run({ colorRate: 100, smudgeRate: 25, autoSpacing: 1.5 }, 20.5, 120);
+        let reach = 0; for (let x = 100; x < 160; x++) if (a(x) > 0) reach = x;
+        return JSON.stringify({ dot, off, short, drag, flat, byOp, half, dull, faint, snap, reach });
     })()`));
     check('a colour smudge dab on its own only picks up, as in Krita', sm.dot === 0, 'alpha ' + sm.dot);
     check('...smudge rate 0 lays nothing down', sm.off === 0, 'alpha ' + sm.off);
     check("...a short stroke on an empty layer builds to Krita's 165, not solid", Math.abs(sm.short - 165) <= 12, 'alpha ' + sm.short);
+    check('...and its auto gap is the dab size alone, no pixel wider (paint_dull_giant_blurry)', sm.reach >= 131, 'reach ' + sm.reach);
     check('...and a pure smear lets go of what it carries (Krita 212, 41, 0)',
         Math.abs(sm.drag[0] - 212) <= 20 && Math.abs(sm.drag[1] - 41) <= 20 && sm.drag[2] <= 5, sm.drag.join(','));
     check('...and the opacity curve scales the smear: 0.5 at half pressure smears as a flat 0.25 (smudge6)',

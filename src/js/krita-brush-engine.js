@@ -4184,10 +4184,6 @@
             _tipAsp = _tc.width / _max(1, _tc.height);
         }
         function _gap(d) {
-            /* The colour smudge's auto gap is measured one pixel wider: a
-             * 10px stroke at size 30 lays five dabs in Krita, not six
-             * (test/krita/probes/smudge2). Only checked there, so only there. */
-            if (p.autoSpacing > 0 && p.smudgeMode != null && d >= 1) d += 1;
             return p.autoSpacing > 0 ? p.autoSpacing * (d < 1 ? d : Math.sqrt(d)) : d * spacing;
         }
         /* rot: the dab's own drawing angle where it is not the stroke's
