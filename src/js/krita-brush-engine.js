@@ -4500,7 +4500,7 @@
      * smeared over two rows. Size and phase to a sixteenth of a pixel (a
      * quarter left Light Shine at IoU 0.90, a sixteenth matches it whole),
      * and phases only up to 64px (x null above): a big dab cannot see them. */
-    var _kLevels = new WeakMap();
+    var _kLevels = new WeakMap(), _kReuse = null;
     function _kritaTipLevel(src, sc) {
         var W = src.width, H = src.height, L = 1, k = 0;
         while (0.5 * L > sc - 1e-6 && _round(W * L / 2) > 0 && _round(H * L / 2) > 0) { L /= 2; k++; }
@@ -4544,8 +4544,23 @@
         var fx = x == null ? 0 : _round((((x - bw / 2) % 1) + 1) % 1 * 16) / 16 % 1;
         var fy = x == null ? 0 : _round((((y - bh / 2) % 1) + 1) % 1 * 16) / 16 % 1;
         var key = 'k|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + (_params.tipPaper ? 'p' : '') + '|' + (x == null ? '' : fx + ',' + fy);
+        /* Krita's precision 1-3 (KisDabCacheBase, precisionLevels) keeps the
+         * last dab while the next one is within a degree and 5, 1 or 0
+         * percent of its size, whatever its sub-pixel: the kept dab lands on
+         * the new dab's whole pixel with the old one's fraction, so a thin
+         * line steps a pixel at a time (Pencil-5 Tilted). */
+        var pl = _params.kPrecision, dw0 = _ceil(fx + bw - 1e-6), dh0 = _ceil(fy + bh - 1e-6);
+        if (x != null && pl >= 1 && pl <= 3) {
+            var kr = _kReuse, sf = [0.05, 0.01, 0][pl - 1], id = _tipKey() + '|' + _tipCell + '|' + mode;
+            if (kr && _dabIndex > 1 && kr.id === id && _abs(kr.ang - ang) <= _PI / 180 && _abs(kr.asp - asp) <= _max(sf, 1e-6) &&
+                _abs(kr.dw - dw0) <= _floor(sf * dw0) && _abs(kr.dh - dh0) <= _floor(sf * dh0)) {
+                kr.mask._cx = x - _floor(x - bw / 2); kr.mask._cy = y - _floor(y - bh / 2);
+                return kr.mask;
+            }
+            _kReuse = { id: id, ang: ang, asp: asp, dw: dw0, dh: dh0, mask: null };
+        }
         var hit = _customTipSizeCache[key];
-        if (hit) return hit;
+        if (hit) { if (_kReuse && x != null && pl >= 1 && pl <= 3) { _kReuse.mask = hit; hit._cx = bw / 2 + fx; hit._cy = bh / 2 + fy; } return hit; }
         var lv = _kritaTipLevel(src, _max(kx, ky)), v = lv.v, LW = lv.w, LH = lv.h;
         var ax = kx * src.width / LW, ay = ky * src.height / LH;
         var dw = _max(1, _ceil(fx + bw - 1e-6)), dh = _max(1, _ceil(fy + bh - 1e-6));
@@ -4569,6 +4584,7 @@
         }
         oc.putImageData(img, 0, 0);
         if (x != null) { out._cx = bw / 2 + fx; out._cy = bh / 2 + fy; }
+        if (_kReuse && x != null && pl >= 1 && pl <= 3) _kReuse.mask = out;
         return _tipCacheKeep(key, out);
     }
     function _tipKey() {
@@ -5067,7 +5083,7 @@
         fadeSteps: 25,
         distanceLength: 30,
         fadePeriodic: false, distancePeriodic: false,
-        angleLocked: false, originAngle: false, fanStep: 0,
+        angleLocked: false, originAngle: false, fanStep: 0, kPrecision: 5,
         smoothingBasic: 50,
         smoothingWeighted: 100,
         smoothingRope: 100,

@@ -3211,6 +3211,35 @@ await withPage(async (page) => {
     check("a Krita paper tip's faint ink rounds up as Qt shrinks it (FX_splat_starfield)",
         paper[0] === 0 && paper[1] > 100, JSON.stringify(paper));
 
+    /* At precision 1-3 Krita reuses the last dab while the next is close
+     * enough, sub-pixel phase and all, just moved to the new whole pixel. A
+     * one-column tip stepped 33.3px spreads the same three alphas on every
+     * dab; drawn afresh, each dab's phase spreads its own. Pencil-5 Tilted's
+     * hatching came out 0.84 like Krita without it. */
+    const reuse = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, out = [];
+        const c = document.createElement('canvas'); c.width = c.height = 10;
+        const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(5, 0, 1, 10);
+        b.loadCustomTip(c.toDataURL('image/png'), null);
+        await new Promise(r => setTimeout(r, 400));
+        ['texture', 'opacity', 'flow', 'scatter', 'sizeSrc', 'taperStart', 'taperEnd', 'tip2Depth', 'sharpness'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        b.setParam('dynamicsMode', 'off'); b.setParam('size', 10); b.setParam('hardness', 100); b.setParam('spacing', 333); b.setParam('smoothingMode', 'none'); b.setParam('tipShrink', 'area');
+        for (const pl of [5, 1]) {
+            __B.doc(200, 200); b.setParam('kPrecision', pl);
+            b.beginStroke(20.5, 100, 1, '#000000');
+            for (let x = 21.5; x < 180; x++) b.moveStroke(x, 100, 1, '#000000');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 200));
+            const d = __B.layer().ctx.getImageData(0, 100, 200, 1).data;
+            const v = new Set(); for (let i = 3; i < d.length; i += 4) if (d[i]) v.add(d[i]);
+            out.push(v.size);
+        }
+        b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check("a low-precision Krita dab is reused at its old sub-pixel phase (Pencil-5 Tilted)",
+        reuse[0] > 5 && reuse[1] === 3, JSON.stringify(reuse) + ' distinct alphas');
+
     /* Tips are 1024px now rather than 200, and every distinct size, angle
      * and squash of one is baked and kept. A stroke whose size rides the pen
      * asks for a different one per pressure step, so unbounded that cache is

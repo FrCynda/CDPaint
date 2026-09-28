@@ -1254,6 +1254,11 @@
         out.curveSmooth = true;   // Krita draws every curve as a spline
         out.originAngle = true;   // and turns its first dab by the angle from the canvas origin
         out.speedMax = 30;        // and reads speed against 30 px/ms (maxAllowedSpeedValue)
+        /* A dab's precision (KisPrecisionOption): 1-3 reuse the last dab
+         * while the next is close enough (see the engine's _kritaTipMask).
+         * ponytail: auto precision is taken as 5, its level under 30px or
+         * without scatter; 3 above that is unmodelled. */
+        if (!_bool(P['KisPrecisionOption/AutoPrecisionEnabled'])) out.kPrecision = Math.round(_num(P['KisPrecisionOption/precisionLevel'], 5));
 
         /* A Krita option that is switched off holds that dial still. Left
          * unset, ours falls back to the engine's defaults -- size down to
