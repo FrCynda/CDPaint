@@ -990,12 +990,16 @@ await withPage(async (page) => {
         // auto spacing 1.5 at 30: dabs every 8.2px to 119, not every 8.35 (the old extra pixel) to 112
         run({ colorRate: 100, smudgeRate: 25, autoSpacing: 1.5 }, 20.5, 120);
         let reach = 0; for (let x = 100; x < 160; x++) if (a(x) > 0) reach = x;
-        return JSON.stringify({ dot, off, short, drag, flat, byOp, half, dull, faint, snap, reach });
+        // the old engine's dulling averages its radius (i) Wet Textured Soft): 1px stripes mix to half, not a stripe's 0 or 255
+        run({ smudgeMode: 1, colorRate: 0, smudgeRate: 100, smudgeSample: 1 }, 30, 190, c => { c.fillStyle = '#0000ff'; for (let x = 0; x < 200; x += 2) c.fillRect(x, 0, 1, 200); });
+        const avg = [a(100), a(101), a(102), a(103), a(140), a(141)];
+        return JSON.stringify({ dot, off, short, drag, flat, byOp, half, dull, faint, snap, reach, avg });
     })()`));
     check('a colour smudge dab on its own only picks up, as in Krita', sm.dot === 0, 'alpha ' + sm.dot);
     check('...smudge rate 0 lays nothing down', sm.off === 0, 'alpha ' + sm.off);
     check("...a short stroke on an empty layer builds to Krita's 165, not solid", Math.abs(sm.short - 165) <= 12, 'alpha ' + sm.short);
     check('...and its auto gap is the dab size alone, no pixel wider (paint_dull_giant_blurry)', sm.reach >= 131, 'reach ' + sm.reach);
+    check("...and dulling with a radius picks up the patch's mix, not one pixel (Wet Textured Soft)", sm.avg.every(v => v > 60 && v < 200), sm.avg.join(','));
     check('...and a pure smear lets go of what it carries (Krita 212, 41, 0)',
         Math.abs(sm.drag[0] - 212) <= 20 && Math.abs(sm.drag[1] - 41) <= 20 && sm.drag[2] <= 5, sm.drag.join(','));
     check('...and the opacity curve scales the smear: 0.5 at half pressure smears as a flat 0.25 (smudge6)',

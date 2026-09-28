@@ -1057,7 +1057,13 @@
             out.smudgeRate = srOn ? Math.round(sr * 100) : out.colorRate;
             // off: smears at full strength, but its slider still sets the mix (probes/sensorlist, plain)
             if (!srOn) { out.smudgeRate = Math.round(sr * 100); out.smudgeFull = true; srS = null; }
-            [['colorRate', crOn ? crS : null], ['smudgeRate', srS]].forEach(function (e) {
+            /* Smudge radius: how much of the last dab dulling averages (0 its
+             * centre pixel, 1 all of it; the old engine reaches to 3). Its
+             * first version stored percent (KisSmudgeRadiusOptionData). */
+            var rdOn = _bool(P.PressureSmudgeRadius), rdS = rdOn ? _sensorFor(P, 'SmudgeRadius') : null;
+            if (rdOn) out.smudgeSample = Math.min(_bool(P.SmudgeRateUseNewEngine) ? 1 : 3,
+                _num(P.SmudgeRadiusValue, 0) / (_num(P.SmudgeRadiusVersion, 1) < 2 ? 100 : 1));
+            [['colorRate', crOn ? crS : null], ['smudgeRate', srS], ['smudgeSample', rdS]].forEach(function (e) {
                 var s = e[1];
                 if (!s) return;
                 if (!s.src) { warn.push('colour smudging followed ' + s.id + ', which we have no input for'); return; }

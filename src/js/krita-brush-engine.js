@@ -2902,6 +2902,49 @@
         }
     }
 
+    /* Krita's averaged dulling sample (KisColorSmudgeSampleUtils::sampleColor
+     * with AveragedSampleWrapper), into _smB as straight 8-bit RGBA: pixels
+     * of the patch q = [x, y, w, h] in Halton order (bases 2 and 3, so some
+     * twice and some never), at least min(n, 64) of them, then 16 at a time
+     * until the mix moves by 2 or less (KoLcmsColorSpace::differenceA). */
+    var _smL = new Float64Array(4);
+    function _smAvg(g, rx, ry, rw, rh, q) {
+        var w = q[2], h = q[3], n = w * h, first = _min(n, _max(64, _round(0.02 * n)));
+        var hn = 0, hd = 1, vn = 0, vd = 1, sr = 0, sg = 0, sb = 0, sa = 0, k, y, i;
+        for (i = 1; i <= n; i++) {
+            k = hd - hn;                        // KisAlgebra2D::HaltonSequenceGenerator
+            if (k === 1) { hn = 1; hd *= 2; } else { y = _floor(hd / 2); while (k <= y) y = _floor(y / 2); hn = 3 * y - k; }
+            k = vd - vn;
+            if (k === 1) { vn = 1; vd *= 3; } else { y = _floor(vd / 3); while (k <= y) y = _floor(y / 3); vn = 4 * y - k; }
+            var gx = q[0] + _floor((hn * (w - 1) + (hd >> 1)) / hd) - rx, gy = q[1] + _floor((vn * (h - 1) + (vd >> 1)) / vd) - ry;
+            if (gx >= 0 && gy >= 0 && gx < rw && gy < rh) {
+                var t = (gy * rw + gx) * 4;
+                sr += g[t]; sg += g[t + 1]; sb += g[t + 2]; sa += g[t + 3];
+            }
+            if (i < first || (i < n && (i - first) % 16)) continue;
+            _smB[0] = sa > 0 ? _round(sr * 255 / sa) : 0; _smB[1] = sa > 0 ? _round(sg * 255 / sa) : 0;
+            _smB[2] = sa > 0 ? _round(sb * 255 / sa) : 0; _smB[3] = _round(sa / i);
+            if (i > first && _labDiff(_smB, _smL) <= 2) return;
+            _smL.set(_smB);
+        }
+    }
+    function _labOf(c, o) {
+        var r = _lin(c[0]), gg = _lin(c[1]), b = _lin(c[2]);   // sRGB, D50 (lcms's Lab)
+        var fx = _labF((0.4360747 * r + 0.3850649 * gg + 0.1430804 * b) / 0.9642);
+        var fy = _labF(0.2225045 * r + 0.7168786 * gg + 0.0606169 * b);
+        var fz = _labF((0.0139322 * r + 0.0971045 * gg + 0.7141733 * b) / 0.8249);
+        o[0] = 116 * fy - 16; o[1] = 500 * (fx - fy); o[2] = 200 * (fy - fz);
+    }
+    function _lin(v) { v /= 255; return v <= 0.04045 ? v / 12.92 : _pow((v + 0.055) / 1.055, 2.4); }
+    function _labF(t) { return t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116; }
+    var _labA = [0, 0, 0], _labB = [0, 0, 0];
+    function _labDiff(a, b) {
+        if (!a[3] || !b[3]) return a[3] === b[3] ? 0 : 255;
+        _labOf(a, _labA); _labOf(b, _labB);
+        var dl = _labA[0] - _labB[0], da = _labA[1] - _labB[1], db = _labA[2] - _labB[2], dA = (a[3] - b[3]) * 100 / 255;
+        return _min(255, _floor(Math.sqrt(dl * dl + da * da + db * db + dA * dA)));
+    }
+
     function _smudgeDab(p, x, y, mask, colorHex, alpha, sc, sz, tex, asp) {
         var ctx = _outCtx();
         if (!ctx) return;
@@ -2944,6 +2987,22 @@
         var W = _docW(), H = _docH();
         var rx = _max(0, _min(ox, sx)), ry = _max(0, _min(oy, sy));
         var rw = _min(W, _max(ox, sx) + mw) - rx, rh = _min(H, _max(oy, sy) + mh) - ry;
+        /* The old engine's dulling averages a patch of the last dab's rect
+         * (KisColorSmudgeStrategyMaskLegacy): blown by half of (radius - 1)
+         * a side, joined to its centre pixel as QRect's | joins, and read
+         * as far as it reaches. */
+        var sR = p.smudgeMode === 1 && !p.smudgeNew && p.smudgeSample > 0 ? _dyn(p, 'smudgeSample', p.smudgeSample, sc, 17) : 0, sq = null;
+        if (sR > 0) {
+            var sL = kx + _round(prev[2] - kx - kW / 2), sT = ky + _round(prev[3] - ky - kH / 2);
+            var bw = Math.trunc(kW * 0.5 * (sR - 1)), bh = Math.trunc(kH * 0.5 * (sR - 1));
+            var ccx = Math.trunc((2 * sL + kW - 1) / 2), ccy = Math.trunc((2 * sT + kH - 1) / 2);
+            var x1 = sL - bw, x2 = sL + kW - 1 + bw, y1 = sT - bh, y2 = sT + kH - 1 + bh;
+            if (x2 === x1 - 1 && y2 === y1 - 1) { x1 = x2 = ccx; y1 = y2 = ccy; }
+            else { x1 = _min(x1, ccx); x2 = _max(x2, ccx); y1 = _min(y1, ccy); y2 = _max(y2, ccy); }
+            sq = [x1, y1, x2 - x1 + 1, y2 - y1 + 1];
+            var nx = _max(0, _min(rx, x1)), ny = _max(0, _min(ry, y1));
+            rw = _min(W, _max(rx + rw, x2 + 1)) - nx; rh = _min(H, _max(ry + rh, y2 + 1)) - ny; rx = nx; ry = ny;
+        }
         if (rw <= 0 || rh <= 0) return;
         var c = _clamp(_dyn(p, 'colorRate', p.colorRate, sc, 9), 0, 100) / 100;
         var s = p.smudgeFull ? 1 : _clamp(_dyn(p, 'smudgeRate', p.smudgeRate == null ? 100 : p.smudgeRate, sc, 15), 0, 100) / 100;
@@ -3004,7 +3063,10 @@
              * Krita's ink. */
             var qx = kx + _round(prev[2] - kx - kW / 2) + ((kW - 1) >> 1) - rx;
             var qy = ky + _round(prev[3] - ky - kH / 2) + ((kH - 1) >> 1) - ry, ar = 0, ag = 0, ab = 0, aa = 0;
-            if (qx >= 0 && qy >= 0 && qx < rw && qy < rh) {
+            if (sq) {
+                _smAvg(g, rx, ry, rw, rh, sq);
+                aa = _smB[3]; ar = _smB[0] * aa / 255; ag = _smB[1] * aa / 255; ab = _smB[2] * aa / 255;
+            } else if (qx >= 0 && qy >= 0 && qx < rw && qy < rh) {
                 t = (qy * rw + qx) * 4;
                 ar = g[t]; ag = g[t + 1]; ab = g[t + 2]; aa = g[t + 3];
             }
@@ -5030,7 +5092,8 @@
         smudgeMode: null,
         smudgeFull: false,
         smudgeMerged: false, // Krita's MergedPaint: picks up from the whole picture
-        smudgeNew: false,    // Krita's new smudge engine (_smudgeDab)
+        smudgeNew: false,
+        smudgeSample: 0,     // Krita's smudge radius, 0..3: how much of the last dab dulling averages    // Krita's new smudge engine (_smudgeDab)
         smudgeSmearAlpha: true,   // Krita's smudge rate switched off: smears at full strength
         hatch: null,         // Krita's hatching brush: see _applyHatch
         pixelSteps: false,   // GIMP's sub-pixel spacing: one dab per pixel; see _stepFor
