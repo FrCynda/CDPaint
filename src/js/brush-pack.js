@@ -1068,6 +1068,8 @@
                 _kritaReach(out, s);
             });
             if (_bool(P.MergedPaint)) out.smudgeMerged = true;
+            if (_bool(P.SmudgeRateUseNewEngine)) out.smudgeNew = true;
+            if (P.SmudgeRateSmearAlpha === 'false') out.smudgeSmearAlpha = false;
         } else if (preset.paintop === 'deformbrush') {
             /* The deform brush moves the pixels that are already there.
              * `deformAction` is which way: Krita numbers them from one, in

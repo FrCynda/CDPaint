@@ -2876,7 +2876,7 @@
      * where Krita, over its white background, lays opaque grey.
      * ponytail: the picture is read whole once a stroke (4 bytes a pixel);
      * read it by the dab's rect if big documents stall. */
-    var _smS = null, _smG = null, _smPic = null;
+    var _smS = null, _smG = null, _smPic = null, _smB = new Float64Array(4);
     function _smRead(d, rx, ry, rw, rh, T, F, pic) {
         var n = rw * rh * 4;
         if (!F || F.length < n) F = new Float32Array(n);
@@ -2957,7 +2957,20 @@
          * (test/krita/probes/smudge7). */
         var op = _adO * (p.opacity == null ? 100 : p.opacity) / 100;
         var k0 = s * _clamp(alpha, 0, 1) * op;
-        if (!(k0 > 0)) return;
+        /* Krita's new smudge engine (SmudgeRateUseNewEngine,
+         * KisColorSmudgeStrategyMask) mixes the dab before laying it: what
+         * is under it takes the pick-up at smudge rate x opacity (dulling
+         * 0.8 of that), copied or laid over as SmearAlpha says; the paint
+         * goes in at colour rate squared x opacity by the preset's own blend;
+         * and that is copied through the tip at full strength. EO Smudge
+         * Color's 0.12 colour rate lays 1.4% a dab, not 12%.
+         * ponytail: dodge and burn blend the paint, any other mode is normal. */
+        var nw = p.smudgeNew, fp = op * _clamp(alpha, 0, 1), sO = 0, cO = 0, cm = 0;
+        if (nw) {
+            sO = (p.smudgeMode === 1 ? 0.8 : 1) * s * fp; cO = c * c * fp;
+            cm = p.blendMode === 'color-dodge' ? 1 : p.blendMode === 'color-burn' ? 2 : 0;
+        } else if (!(k0 > 0)) return;
+        if (!(fp > 0)) return;
         /* The paint's share reads the smudge rate's slider, not its curve,
          * and the opacity curve thins it as well: Basic_mix's own curves at
          * pressure 0.6..1 fit this and not the curved rate (smudge4/5/6,
@@ -3019,16 +3032,31 @@
                 if (px < 0 || py < 0 || px >= rw || py >= rh) continue;
                 t = (py * rw + px) * 4; u = (j * mw + i) * 4;
                 if (stencil && !stencil[t + 3]) continue;
-                var k = k0 * m / 255, ci = 1 - c;
-                if (g !== f) {
-                    g[t] += (src[u] * ci + pr - g[t]) * k; g[t + 1] += (src[u + 1] * ci + pg - g[t + 1]) * k;
-                    g[t + 2] += (src[u + 2] * ci + pb - g[t + 2]) * k; g[t + 3] += (src[u + 3] * ci + pa - g[t + 3]) * k;
+                var k, ci = 1 - c, B = _smB;
+                if (!nw) {          // legacy, premultiplied: lerp(dst, lerp(pickup, paint, c), s * tip)
+                    k = k0 * m / 255;
+                    B[0] = src[u] * ci + pr; B[1] = src[u + 1] * ci + pg; B[2] = src[u + 2] * ci + pb; B[3] = src[u + 3] * ci + pa;
+                } else {
+                    k = m / 255;
+                    var sa = p.smudgeSmearAlpha === false ? src[u + 3] / 255 * sO : 0;
+                    for (n = 0; n < 4; n++) B[n] = sa ? src[u + n] * sO + g[t + n] * (1 - sa) : g[t + n] + (src[u + n] - g[t + n]) * sO;
+                    if (cO > 0 && !cm) { for (n = 0; n < 3; n++) B[n] += (rgb[n] - B[n]) * cO; B[3] += (255 - B[3]) * cO; }
+                    else if (cO > 0) {          // KoCompositeOpGenericSC: colour dodge / burn
+                        var dA = B[3] / 255;
+                        for (n = 0; n < 3; n++) {
+                            var S = rgb[n], D = dA > 0 ? B[n] / dA : 0;
+                            var fz = cm === 1 ? (D <= 0 ? 0 : S >= 255 ? 255 : _min(255, D * 255 / (255 - S)))
+                                : (S <= 0 ? (D >= 255 ? 255 : 0) : 255 - _min(255, (255 - D) * 255 / S));
+                            B[n] = (1 - cO) * dA * D + (1 - dA) * cO * S + cO * dA * fz;
+                        }
+                        B[3] = (cO + dA - cO * dA) * 255;
+                    }
                 }
-                // premultiplied: lerp(dst, lerp(pickup, paint, c), s * tip)
-                var oa = f[t + 3] + ((src[u + 3] * ci + pa) - f[t + 3]) * k;
-                var or = f[t] + ((src[u] * ci + pr) - f[t]) * k;
-                var og = f[t + 1] + ((src[u + 1] * ci + pg) - f[t + 1]) * k;
-                var ob = f[t + 2] + ((src[u + 2] * ci + pb) - f[t + 2]) * k;
+                if (g !== f) for (n = 0; n < 4; n++) g[t + n] += (B[n] - g[t + n]) * k;
+                var oa = f[t + 3] + (B[3] - f[t + 3]) * k;
+                var or = f[t] + (B[0] - f[t]) * k;
+                var og = f[t + 1] + (B[1] - f[t + 1]) * k;
+                var ob = f[t + 2] + (B[2] - f[t + 2]) * k;
                 if (oa <= 0) { if (!locked) { d[t + 3] = 0; f[t] = f[t + 1] = f[t + 2] = f[t + 3] = 0; } continue; }
                 var inv = 255 / oa;
                 d[t] = _clamp(or * inv, 0, 255); d[t + 1] = _clamp(og * inv, 0, 255);
@@ -5005,7 +5033,9 @@
          * smears, 1 dulls. smudgeRate is how strongly a dab lays down. */
         smudgeMode: null,
         smudgeFull: false,
-        smudgeMerged: false, // Krita's MergedPaint: picks up from the whole picture   // Krita's smudge rate switched off: smears at full strength
+        smudgeMerged: false, // Krita's MergedPaint: picks up from the whole picture
+        smudgeNew: false,    // Krita's new smudge engine (_smudgeDab)
+        smudgeSmearAlpha: true,   // Krita's smudge rate switched off: smears at full strength
         hatch: null,         // Krita's hatching brush: see _applyHatch
         pixelSteps: false,   // GIMP's sub-pixel spacing: one dab per pixel; see _stepFor
         grid: null,          // Krita's grid brush: see _gridDab

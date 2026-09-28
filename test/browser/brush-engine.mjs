@@ -678,6 +678,26 @@ await withPage(async (page) => {
         b.forgetSaved('Round'); b.loadPreset('Round');
         return JSON.stringify(out);
     })()`));
+    /* Krita's new smudge engine lays paint at colour rate SQUARED a dab and
+     * copies the mix through the tip whole: at 12% the old engine's rule laid
+     * half as much again, and EO Smudge Color scored 0.21 against Krita. */
+    const nws = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, out = [];
+        for (const smudgeNew of [false, true]) {
+            __B.doc();
+            for (const [k, v] of Object.entries({ smudgeMode: 0, colorRate: 12, smudgeRate: 50, size: 30, hardness: 100,
+                falloff: 'krita', spacing: 3, flowSrc: 'none', sizeSrc: 'none', colorRateSrc: 'none', smudgeRateSrc: 'none',
+                smoothingMode: 'none', smudgeNew })) b.setParam(k, v);
+            b.beginStroke(40, 100, 1, '#000000');
+            for (let i = 41; i <= 160; i++) b.moveStroke(i, 100, 1, '#000000');
+            b.endStroke();
+            out.push(__B.layer().ctx.getImageData(150, 100, 1, 1).data[3]);
+        }
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    check("Krita's new smudge engine lays colour rate squared, not the old engine's share",
+        nws[0] > 180 && nws[1] > 100 && nws[1] < 170, JSON.stringify(nws));
     check('a merged smudge picks the Background up: opaque grey, not see-through black',
         mg[0][3] < 200 && mg[1][3] > 240 && mg[1][0] > 100 && mg[1][0] < 250, JSON.stringify(mg));
     /* Krita's hatching brush (test/krita/probes/hatch): lines fixed to the
