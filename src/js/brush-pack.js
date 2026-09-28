@@ -1067,7 +1067,7 @@
                 if (s.all) { out[e[0] + 'Sensors'] = s.all; out[e[0] + 'Combine'] = s.mode; }
                 _kritaReach(out, s);
             });
-            if (_bool(P.MergedPaint)) warn.push('dropped: picking colour up from every layer rather than this one');
+            if (_bool(P.MergedPaint)) out.smudgeMerged = true;
         } else if (preset.paintop === 'deformbrush') {
             /* The deform brush moves the pixels that are already there.
              * `deformAction` is which way: Krita numbers them from one, in

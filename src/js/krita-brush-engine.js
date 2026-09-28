@@ -2869,24 +2869,34 @@
      * ponytail: float tiles, 64KB each; a stroke over a whole 4k canvas
      * holds ~256MB, go 16-bit if that ever bites. */
     var _smT = null, _smF = null;
-    function _smRead(d, rx, ry, rw, rh) {
+    /* A merged smudge (Krita's MergedPaint, KisColorSmudgeSourceImage)
+     * picks up from the whole picture, not the layer: its own precise copy
+     * of the projection, which each dab paints into as well as the layer.
+     * Picked up off the layer alone, EO Smudge Wet laid see-through black
+     * where Krita, over its white background, lays opaque grey.
+     * ponytail: the picture is read whole once a stroke (4 bytes a pixel);
+     * read it by the dab's rect if big documents stall. */
+    var _smS = null, _smG = null, _smPic = null;
+    function _smRead(d, rx, ry, rw, rh, T, F, pic) {
         var n = rw * rh * 4;
-        if (!_smF || _smF.length < n) _smF = new Float32Array(n);
-        var f = _smF;
+        if (!F || F.length < n) F = new Float32Array(n);
+        var f = F, W = pic ? _docW() : 0;
         for (var j = 0; j < rh; j++) for (var i = 0; i < rw; i++) {
             var gx = rx + i, gy = ry + j, q = (j * rw + i) * 4;
-            var tl = _smT && _smT.get((gy >> 6) * 65536 + (gx >> 6)), o = ((gy & 63) * 64 + (gx & 63)) * 4;
+            var tl = T && T.get((gy >> 6) * 65536 + (gx >> 6)), o = ((gy & 63) * 64 + (gx & 63)) * 4;
             if (tl && tl[o + 3] >= 0) { f[q] = tl[o]; f[q + 1] = tl[o + 1]; f[q + 2] = tl[o + 2]; f[q + 3] = tl[o + 3]; }
-            else { var a = d[q + 3] / 255; f[q] = d[q] * a; f[q + 1] = d[q + 1] * a; f[q + 2] = d[q + 2] * a; f[q + 3] = d[q + 3]; }
+            else {
+                var sd = W ? pic : d, sq = W ? (gy * W + gx) * 4 : q, a = sd[sq + 3] / 255;
+                f[q] = sd[sq] * a; f[q + 1] = sd[sq + 1] * a; f[q + 2] = sd[sq + 2] * a; f[q + 3] = sd[sq + 3];
+            }
         }
         return f;
     }
-    function _smWrite(f, rx, ry, rw, rh) {
-        if (!_smT) _smT = new Map();
+    function _smWrite(f, rx, ry, rw, rh, T) {
         for (var j = 0; j < rh; j++) for (var i = 0; i < rw; i++) {
             var gx = rx + i, gy = ry + j, q = (j * rw + i) * 4, key = (gy >> 6) * 65536 + (gx >> 6);
-            var tl = _smT.get(key);
-            if (!tl) { tl = new Float32Array(16384).fill(-1); _smT.set(key, tl); }
+            var tl = T.get(key);
+            if (!tl) { tl = new Float32Array(16384).fill(-1); T.set(key, tl); }
             var o = ((gy & 63) * 64 + (gx & 63)) * 4;
             tl[o] = f[q]; tl[o + 1] = f[q + 1]; tl[o + 2] = f[q + 2]; tl[o + 3] = f[q + 3];
         }
@@ -2917,7 +2927,13 @@
         var kW = _max(1, _ceil(x - kw / 2 - kx + kw - 1e-6)), kH = _max(1, _ceil(y - kh / 2 - ky + kh - 1e-6));
         var prev = _smPrev;
         _smPrev = [x, y, kx + kW / 2, ky + kH / 2];
-        if (!prev) return;                  // the first dab only loads the brush
+        if (!prev) {                        // the first dab only loads the brush
+            _smPic = null;
+            if (p.smudgeMerged && app.layerMgr && app.layerMgr.getFlattenedCanvas) {
+                try { _smPic = app.layerMgr.getFlattenedCanvas().getContext('2d').getImageData(0, 0, _docW(), _docH()).data; } catch (e0) { _smPic = null; }
+            }
+            return;
+        }
         /* How far the pick-up moves: both ends rounded against the SAME
          * half size, so a 1.64px step alternates 1 and 2 as Krita's does.
          * Rounded against this dab's own phase (round tips are built at it)
@@ -2953,7 +2969,10 @@
         if (app.layerMgr && app.layerMgr.markDirty && ctx === app.ctx) app.layerMgr.markDirty(rx - 1, ry - 1, rw + 2, rh + 2);
         var img;
         try { img = ctx.getImageData(rx, ry, rw, rh); } catch (e) { return; }
-        var d = img.data, f = _smRead(d, rx, ry, rw, rh), src = new Float32Array(mw * mh * 4);
+        var d = img.data, f = _smF = _smRead(d, rx, ry, rw, rh, _smT, _smF), src = new Float32Array(mw * mh * 4);
+        if (!_smT) _smT = new Map();
+        var g = f;                          // where it picks up from: the layer, or the merged picture
+        if (_smPic) { if (!_smS) _smS = new Map(); g = _smG = _smRead(d, rx, ry, rw, rh, _smS, _smG, _smPic); }
         var i, j, t, u, a, n;
         // What the brush picked up, premultiplied; off the canvas is transparent.
         for (j = 0; j < mh; j++) {
@@ -2961,7 +2980,7 @@
                 var gx = sx + i - rx, gy = sy + j - ry;
                 if (gx < 0 || gy < 0 || gx >= rw || gy >= rh) continue;
                 t = (gy * rw + gx) * 4; u = (j * mw + i) * 4;
-                src[u] = f[t]; src[u + 1] = f[t + 1]; src[u + 2] = f[t + 2]; src[u + 3] = f[t + 3];
+                src[u] = g[t]; src[u + 1] = g[t + 1]; src[u + 2] = g[t + 2]; src[u + 3] = g[t + 3];
             }
         }
         if (p.smudgeMode === 1) {
@@ -2974,7 +2993,7 @@
             var qy = ky + _round(prev[3] - ky - kH / 2) + ((kH - 1) >> 1) - ry, ar = 0, ag = 0, ab = 0, aa = 0;
             if (qx >= 0 && qy >= 0 && qx < rw && qy < rh) {
                 t = (qy * rw + qx) * 4;
-                ar = f[t]; ag = f[t + 1]; ab = f[t + 2]; aa = f[t + 3];
+                ar = g[t]; ag = g[t + 1]; ab = g[t + 2]; aa = g[t + 3];
             }
             for (n = 0; n < ma.length; n++) { u = n * 4; src[u] = ar; src[u + 1] = ag; src[u + 2] = ab; src[u + 3] = aa; }
         }
@@ -3001,6 +3020,10 @@
                 t = (py * rw + px) * 4; u = (j * mw + i) * 4;
                 if (stencil && !stencil[t + 3]) continue;
                 var k = k0 * m / 255, ci = 1 - c;
+                if (g !== f) {
+                    g[t] += (src[u] * ci + pr - g[t]) * k; g[t + 1] += (src[u + 1] * ci + pg - g[t + 1]) * k;
+                    g[t + 2] += (src[u + 2] * ci + pb - g[t + 2]) * k; g[t + 3] += (src[u + 3] * ci + pa - g[t + 3]) * k;
+                }
                 // premultiplied: lerp(dst, lerp(pickup, paint, c), s * tip)
                 var oa = f[t + 3] + ((src[u + 3] * ci + pa) - f[t + 3]) * k;
                 var or = f[t] + ((src[u] * ci + pr) - f[t]) * k;
@@ -3014,7 +3037,8 @@
                 else { a = f[t + 3] / 255; f[t] = d[t] * a; f[t + 1] = d[t + 1] * a; f[t + 2] = d[t + 2] * a; }
             }
         }
-        _smWrite(f, rx, ry, rw, rh);
+        _smWrite(f, rx, ry, rw, rh, _smT);
+        if (g !== f) _smWrite(g, rx, ry, rw, rh, _smS);
         ctx.putImageData(img, rx, ry);
     }
 
@@ -4980,7 +5004,8 @@
         /* Krita's colour smudge (_smudgeDab): null is our own smudge; 0
          * smears, 1 dulls. smudgeRate is how strongly a dab lays down. */
         smudgeMode: null,
-        smudgeFull: false,   // Krita's smudge rate switched off: smears at full strength
+        smudgeFull: false,
+        smudgeMerged: false, // Krita's MergedPaint: picks up from the whole picture   // Krita's smudge rate switched off: smears at full strength
         hatch: null,         // Krita's hatching brush: see _applyHatch
         pixelSteps: false,   // GIMP's sub-pixel spacing: one dab per pixel; see _stepFor
         grid: null,          // Krita's grid brush: see _gridDab
@@ -5483,7 +5508,7 @@
             if (_params.hasOwnProperty(_fk)) _strokeParams[_fk] = _isArray(_params[_fk]) ? _cloneCurve(_params[_fk]) : _params[_fk];
         }
         _wet = [];                // the brush is loaded fresh each stroke
-        _smPrev = null; _smT = null;
+        _smPrev = null; _smT = null; _smS = null; _smPic = null;
         _wetPos = [];
         _smoothAngle = NaN;
         _lastDabDist = 0;

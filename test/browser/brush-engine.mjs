@@ -659,6 +659,27 @@ await withPage(async (page) => {
     })()`, { awaitPromise: true }));
     check('a colour smudge dab is grained by its texture too',
         st.plain > 100 && st.grained < st.plain * 0.75, JSON.stringify(st));
+    /* Krita's merged smudge (MergedPaint) picks up from the whole picture
+     * and paints only its layer: over a white Background, black paint on an
+     * empty layer comes out opaque grey. Off the layer alone it came out
+     * see-through black, and EO Smudge Wet scored 0.72 against Krita. */
+    const mg = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, out = [];
+        for (const smudgeMerged of [false, true]) {
+            __B.doc();
+            for (const [k, v] of Object.entries({ smudgeMode: 1, colorRate: 10, smudgeRate: 100, size: 30, hardness: 100,
+                falloff: 'krita', autoSpacing: 0.3, flowSrc: 'none', sizeSrc: 'none', colorRateSrc: 'none', smoothingMode: 'none',
+                smudgeMerged })) b.setParam(k, v);
+            b.beginStroke(60, 100, 1, '#000000');
+            for (let i = 61; i <= 140; i++) b.moveStroke(i, 100, 1, '#000000');
+            b.endStroke();
+            out.push([...__B.layer().ctx.getImageData(120, 100, 1, 1).data]);
+        }
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    check('a merged smudge picks the Background up: opaque grey, not see-through black',
+        mg[0][3] < 200 && mg[1][3] > 240 && mg[1][0] > 100 && mg[1][0] < 250, JSON.stringify(mg));
     /* Krita's hatching brush (test/krita/probes/hatch): lines fixed to the
      * canvas through the origin pixel, thickness/2 wide, drawn afresh in
      * every dab (HatchingBrush::hatch). It used to paint as a

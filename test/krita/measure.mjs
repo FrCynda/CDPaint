@@ -16,6 +16,8 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         app.layerMgr.collapseToBase({ fresh: true });
         app.setSize(W, H); app.config.zoom = 1; app.updateBounds();
         document.getElementById('lsys-add').click();
+        // Krita's createDocument puts an opaque white layer under ours; a merged smudge picks it up
+        { const bg = app.layerMgr.layers[0].ctx; bg.fillStyle = '#fff'; bg.fillRect(0, 0, W, H); }
         app.state.selection = null;
         const L = app.layerMgr.layers[app.layerMgr.activeIdx];
         b.loadPreset(imp.added[0]);
