@@ -1587,6 +1587,17 @@
                 var ac = opts.crop === 'h' ? 'h' : 'w', top = 0;
                 cells.forEach(function (c) { top = Math.max(top, c[ac]); });
                 cells = cells.map(function (c) { return c[ac] === top ? c : _scaleCell(c, top / c[ac]); });
+                /* A second ribbon in normal mode is drawn over the first, not
+                 * through it: Zipper's upper row of teeth is its second
+                 * picture (one row with the second brush off in Clip Studio),
+                 * Braid's second strand too. Same size, so one picture. */
+                if (opts.stack && cells.length === 2) {
+                    var sc2 = document.createElement('canvas');
+                    sc2.width = Math.max(cells[0].w, cells[1].w); sc2.height = Math.max(cells[0].h, cells[1].h);
+                    var sg2 = sc2.getContext('2d');
+                    cells.forEach(function (c) { sg2.drawImage(_canvasFromAlpha(c), 0, 0); });
+                    cells = [_cellOf(sc2, cells[0].opaque)];
+                }
                 /* Laid in a fixed order, each picture takes its own length
                  * (Bead chain's oval is half its big bead's), so the round
                  * is joined into one picture: in turn, or out and back
@@ -3992,7 +4003,7 @@
         ];
         for (var i = 0; i < noted.length; i++) {
             if (noted[i][0] === 'BrushChangeStrokeColor' && out.colorJitterPer === 'stroke') continue;
-            if (noted[i][0] === 'UseDualBrush' && opts.hasTip2) continue;
+            if (noted[i][0] === 'UseDualBrush' && (opts.hasTip2 || opts.dualStacked)) continue;
             if (noted[i][0] === 'BrushRibbon' && opts.hasTip && opts.tipW && opts.tipH) continue;
             if (_sutNum(v[noted[i][0]], 0)) {
                 var msg = 'dropped: ' + noted[i][1];

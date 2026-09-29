@@ -8252,12 +8252,15 @@
                 error: (e && e.message) || 'That file could not be read.' });
         }
 
-        var pr = pack.presets[0];
+        var pr = pack.presets[0], v = pr.variant;
+        // a second ribbon of the same size in normal mode is laid over the first (tipStrip's stack)
+        var stack = !!(pr.tip2 && pr.tips && pr.tips.length === 1 && +v.UseDualBrush && !+v.DualBrushCompositeMode &&
+            +v.BrushRibbon && +v.DualRibbon && Math.abs(v.DualSize - v.BrushSize) < 0.5 && +v.DualRotation === +v.BrushRotation);
         var tipP = (pr.tips && pr.tips.length)
-            ? BrushPack.tipStrip(pr.tips, 'tip.png', { csp: true, crop: pr.variant.BrushRibbon ? (Math.round((pr.variant.BrushRotation || 0) / 90) % 2 ? 'h' : 'w') : false,
-                  join: +pr.variant.BrushPatternOrderType }).catch(function () { return null; })
+            ? BrushPack.tipStrip(stack ? pr.tips.concat([pr.tip2]) : pr.tips, 'tip.png', { csp: true, crop: v.BrushRibbon ? (Math.round((v.BrushRotation || 0) / 90) % 2 ? 'h' : 'w') : false,
+                  join: +v.BrushPatternOrderType, stack: stack }).catch(function () { return null; })
             : Promise.resolve(null);
-        var tip2P = pr.tip2
+        var tip2P = pr.tip2 && !stack
             ? BrushPack.tipStrip(pr.tip2, 'tip2.png').catch(function () { return null; })
             : Promise.resolve(null);
 
@@ -8265,7 +8268,7 @@
             var tip = both[0], tip2 = both[1];
             var want = _packName(pr.name) || 'Clip Studio brush';
             var t = BrushPack.sutToPreset(pr.variant, want,
-                { hasTip: !!tip, hasTexture: !!pr.texture, hasTip2: !!tip2, tipW: tip && tip.w, tipH: tip && tip.h });
+                { hasTip: !!tip, hasTexture: !!pr.texture, hasTip2: !!tip2, dualStacked: stack, tipW: tip && tip.w, tipH: tip && tip.h });
             var ps = t.params;
             var skipped = [], notes = [];
             var warnings = (pack.warnings || []).concat(t.warnings);

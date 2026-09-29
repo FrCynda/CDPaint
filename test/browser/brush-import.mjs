@@ -1524,8 +1524,13 @@ await withPage(async (page) => {
         const g = await BrushPack.tipStrip([pink], 'tip.png', { csp: true });
         const im = new Image(); im.src = g.url; await im.decode();
         const cv = new OffscreenCanvas(im.width, im.height), cx = cv.getContext('2d'); cx.drawImage(im, 0, 0);
+        const halves = await Promise.all([0, 5].map(y => png(10, 10, x => { x.fillStyle = '#000'; x.fillRect(0, y, 10, 5); })));
+        const st = await BrushPack.tipStrip(halves, 'tip.png', { csp: true, crop: 'w', stack: true });
+        const sm = new Image(); sm.src = st.url; await sm.decode();
+        const sv = new OffscreenCanvas(sm.width, sm.height), sx = sv.getContext('2d'); sx.drawImage(sm, 0, 0);
         return JSON.stringify({ cut: [cut.w, cut.h, cut.cells, cut.pick], bounce: [bounce.cells, bounce.w, bounce.h],
-            grey: Array.from(cx.getImageData(1, 1, 1, 1).data.slice(0, 3)) });
+            grey: Array.from(cx.getImageData(1, 1, 1, 1).data.slice(0, 3)),
+            stack: [st.cells, sx.getImageData(5, 2, 1, 1).data[3], sx.getImageData(5, 7, 1, 1).data[3]] });
     })()`, { awaitPromise: true }).then(JSON.parse);
     check('a ribbon picture is cut to its real shape and laid in pieces',
         JSON.stringify(rib.cut) === '[8,12,2,"cycle"]', JSON.stringify(rib.cut));
@@ -1533,6 +1538,10 @@ await withPage(async (page) => {
         JSON.stringify(rib.bounce) === '[4,20,10]', JSON.stringify(rib.bounce));
     check('a coloured picture paints its darkest channel',
         JSON.stringify(rib.grey) === '[128,128,128]', JSON.stringify(rib.grey));
+    /* Zipper's second ribbon is its upper row of teeth: laid over the first,
+     * not cut through it (one row with the second brush off there). */
+    check('a second ribbon in normal mode is laid over the first',
+        JSON.stringify(rib.stack) === '[1,255,255]', JSON.stringify(rib.stack));
 
     /* The pack chooser. It lists what is in a pack before anything is
      * installed, then installs only what was ticked -- so the two halves
