@@ -3071,6 +3071,7 @@ await withPage(async (page) => {
             }
             return n ? { n: n, w: x2 - x1 + 1, h: y2 - y1 + 1, cy: (y1 + y2) >> 1 } : { n: 0 };
         };
+        let lastL = null;
         const line = async (set, vertical) => {
             __B.doc(400, 400);
             ['colorRate', 'texture', 'opacity', 'flow', 'aspectRatio', 'shape',
@@ -3083,7 +3084,7 @@ await withPage(async (page) => {
             b.setParam('spacing', 40); b.setParam('sizeSrc', 'none');
             b._setStrokeSeed(4242);
             set(b);
-            const L = __B.layer();
+            const L = lastL = __B.layer();
             if (vertical) await __B.stroke(200, 40, 200, 360, '#ff0000');
             else await __B.stroke(40, 200, 360, 200, '#ff0000');
             return box(L);
@@ -3105,6 +3106,24 @@ await withPage(async (page) => {
                                         b.setParam('scatterAxis', 'across'); }, true);
         out.alongV = await line(b => { b.setParam('scatter', 150);
                                        b.setParam('scatterAxis', 'along'); }, true);
+        // How far off the line the ink sits on average, and how many separate blobs.
+        const spread = (L) => {
+            const d = L.ctx.getImageData(0, 0, 400, 400).data, col = new Uint8Array(400);
+            let s = 0, n = 0, runs = 0;
+            for (let i = 3; i < d.length; i += 4) if (d[i] > 20) { s += Math.abs(((i / 4 / 400) | 0) - 200); n++; col[((i - 3) / 4) % 400] = 1; }
+            for (let x = 1; x < 400; x++) if (col[x] && !col[x - 1]) runs++;
+            return { off: n ? s / n : 0, runs };
+        };
+        const cloud = async (axis) => { await line(b => { b.setParam('size', 4); b.setParam('spacing', 1000);
+            b.setParam('scatter', 1000); b.setParam('dabCount', 30); b.setParam('scatterAxis', axis); });
+            return spread(lastL); };
+        out.both = await cloud('both');
+        out.disk = await cloud('disk');
+        const stops = async (each) => { await line(b => { b.setParam('spacing', 300);
+            b.setParam('sizeSrc', 'random'); b.setParam('sizeMin', 0); b.setParam('sprayEach', each); });
+            const r = spread(lastL); b.setParam('sprayEach', false); return r.runs; };
+        out.stopsEach = await stops(true);
+        out.stopsShared = await stops(false);
         b._setStrokeSeed(null);
         b.loadPreset('Round');
         return JSON.stringify(out);
@@ -3122,6 +3141,15 @@ await withPage(async (page) => {
     check('...and "along" it leaves the width alone',
         b4.alongV.w <= 22 && b4.alongV.h > b4.acrossV.h,
         `${b4.alongV.w} wide against ${b4.acrossV.w}`);
+    /* Clip Studio sprays evenly over the whole patch (Spray's band is a
+     * semicircle across); a random direction and a random distance pile the
+     * particles up in the middle instead: 4R/3pi off the line against R/pi. */
+    check('a disk spray spreads its particles evenly over the patch',
+        b4.disk.off > b4.both.off * 1.2, `${b4.both.off.toFixed(1)} then ${b4.disk.off.toFixed(1)}`);
+    /* Each particle takes its own random size, and the stops stay a plain
+     * size apart: spaced by the random size, Droplet laid five times the ink. */
+    check('particles sized one by one keep their stops a plain size apart',
+        b4.stopsEach <= 6 && b4.stopsShared > b4.stopsEach, `${b4.stopsEach} stops against ${b4.stopsShared}`);
 
     /* ── how wide a smudge reaches ────────────────────────────────────── */
     console.log('\n== a smudge can reach past the dab it is making ==');

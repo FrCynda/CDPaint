@@ -3678,6 +3678,13 @@
          * one a pixel, where 0.48px would lay 1667. */
         out.minStep = 1;
         var ivt = _sutNum(v.BrushAutoIntervalType, 0);
+        /* ...and a fixed interval is a share of the size whatever the tip's
+         * shape: Droplet's 200x300 picture at size 20 and 300% lays a speck
+         * every 60px (spaced by its 13px width ours laid one every 40), and
+         * Chalk's picture squeezed to half at 40 and 300% one every 120. So
+         * does an auto one on a generated tip; on a picture it follows the
+         * squeezed width (Chalk at thickness 50 lays half again the ink). */
+        out.spacingIsotropic = !(opts.hasTip && ivt >= 1 && ivt <= 3);
         out.spacing = ivt >= 1 && ivt <= 3 ? [12, 8, 4][ivt - 1]
             : Math.max(1, Math.min(400, Math.round(_sutNum(v.BrushInterval, 10))));
         /* ...and those three open up as a round tip softens: 1 + 2 x its
@@ -3738,9 +3745,11 @@
          * is the particle, scattered up to half the patch from the line. */
         var spraying = _sutNum(v.BrushUseSpray, 0) && size > 0 && _sutNum(v.BrushSpraySize, 0) > 0;
         if (spraying) {
-            var spray = _sutNum(v.BrushSpraySize, 0);
+            var spray = _sutNum(v.BrushSpraySize, 0) * ({ 1: 96, 2: 9.6 }[_sutNum(v.BrushSpraySizeUnit, 0)] || 1);
             out.size = Math.max(1, Math.round(spray));
             out.scatter = Math.max(1, Math.round(size / 2 / out.size * 100));
+            out.scatterAxis = 'disk';
+            out.sprayEach = true;
             out.dabCount = Math.max(1, Math.min(16, Math.round(_sutNum(v.BrushSprayDensity, 1))));
         }
 
@@ -3759,6 +3768,7 @@
             var across = side ? opts.tipH : opts.tipW;
             out.size = Math.max(1, Math.min(5000, Math.round(size * Math.max(opts.tipW, opts.tipH) / across)));
             out.spacing = 100;
+            out.spacingIsotropic = false;
             // The first picture starts at the stroke's start, not centred on it (Dashed line's first dash 3.5px in).
             out.offsetAlong = Math.round(50 * (side ? opts.tipW : opts.tipH) / Math.max(opts.tipW, opts.tipH));
             out.angle = ((Math.round(rr) - 90) % 360 + 360) % 360;
@@ -3928,6 +3938,16 @@
             _sutDrive(out, 'flow', v.BrushOpacityEffector, warn, 'its opacity');
         }
         if (spraying) _sutDrive(out, 'size', v.BrushSpraySizeEffector, warn, 'its spray');
+        /* The interval and the spray's density take effectors too: Trees'
+         * random interval (floor 50) laid trees 196-284px apart at 300% of
+         * 100, never further than the interval. */
+        if (!spraying) _sutDrive(out, 'spacing', v.BrushIntervalEffector, warn, 'its spacing');
+        /* A thickness effector only thins (factor floor..1): Droplet's random
+         * one at floor 50 took a quarter off its ink. Ours divides the aspect
+         * by it, which thins too -- but a tip already squeezed side to side
+         * (aspect under 1) would round off instead, so that one is left. */
+        if (spraying && (out.aspectRatio || 1) >= 1) _sutDrive(out, 'aspectRatio', v.BrushThicknessEffector, warn, 'its thickness');
+        if (spraying) _sutDrive(out, 'dabCount', v.BrushSprayDensityEffector, warn, 'its spray density');
 
         /* Colour that wanders. Clip Studio sets a range either side of the
          * colour -- hue in degrees, the other two as percentages -- and

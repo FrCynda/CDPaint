@@ -1373,12 +1373,20 @@ await withPage(async (page) => {
         const flat = P({ BrushSize: 20, BrushThickness: 30 });
         const mm = P({ BrushSize: 5, BrushSizeUnit: 2 });
         const spray = P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 10, BrushSprayDensity: 6 });
+        const rndE = new Uint8Array(rnd.buffer), sp = { BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 10 };
+        const sprayRnd = P(Object.assign({ BrushIntervalEffector: rndE, BrushThicknessEffector: rndE, BrushSprayDensityEffector: rndE }, sp));
+        const plainRnd = P({ BrushIntervalEffector: rndE, BrushThicknessEffector: rndE });
         const rib = { BrushSize: 30, BrushRibbon: 1, BrushRotation: 0 };
         const ribbon = P(rib, { hasTip: true, tipW: 30, tipH: 90 });
         const ribbonNote = W(rib, { hasTip: true, tipW: 30, tipH: 90 });
         return JSON.stringify({ tilt: [tilt.flowSrc, tilt.flowCurve],
             flat: [flat.aspectRatio, flat.angle], mm: mm.size,
             spray: [spray.size, spray.scatter, spray.dabCount],
+            sprayHow: [spray.scatterAxis, spray.sprayEach, P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 2, BrushSpraySizeUnit: 2 }).size],
+            sprayRnd: [sprayRnd.spacingSrc, sprayRnd.aspectRatioSrc, sprayRnd.dabCountSrc].map(s => s || 'none'),
+            plainRnd: [plainRnd.spacingSrc, plainRnd.aspectRatioSrc].map(s => s || 'none'),
+            iso: [P({ BrushAutoIntervalType: 2 }, { hasTip: true }), P({ BrushAutoIntervalType: 0 }, { hasTip: true }),
+                  P({ BrushAutoIntervalType: 2 })].map(p => p.spacingIsotropic),
             ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc, ribbon.offsetAlong], ribbonNote,
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
@@ -1414,6 +1422,21 @@ await withPage(async (page) => {
     /* Spray: the size is the patch, the spray size is each particle. */
     check('a spray paints particles over a patch of its size',
         JSON.stringify(sm.spray) === '[10,500,6]', JSON.stringify(sm.spray));
+    /* Measured with 1px particles there: evenly over the patch, each its own
+     * size, and a spray size in millimetres converted like the brush size. */
+    check('a spray covers its patch evenly, sizes each particle, and reads its unit',
+        JSON.stringify(sm.sprayHow) === '["disk",true,19]', JSON.stringify(sm.sprayHow));
+    /* Trees' random interval varies its gaps; in a spray it did nothing
+     * (60px apart with it on or off). Droplet's random thickness took a
+     * quarter off its ink; Dry Gouache's kept its line (width 74 either way). */
+    check('a spray takes random thickness and density, not a random interval',
+        JSON.stringify(sm.sprayRnd) === '["none","random","random"]', JSON.stringify(sm.sprayRnd));
+    check('a plain brush takes a random interval, not random thickness',
+        JSON.stringify(sm.plainRnd) === '["random","none"]', JSON.stringify(sm.plainRnd));
+    /* A picture tip on automatic spacing follows its squeezed width (Chalk);
+     * a fixed interval and a generated tip go by the size. */
+    check('only a picture tip on automatic spacing spaces by its squeezed width',
+        JSON.stringify(sm.iso) === '[false,true,true]', JSON.stringify(sm.iso));
     /* A ribbon tiles its picture end to end, as wide as the brush, the
      * first starting at the stroke's start (Dashed line's first dash). */
     check('a ribbon lays its picture end to end along the stroke',

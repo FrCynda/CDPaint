@@ -2365,7 +2365,8 @@
             dy += _sin(dir) * oa + _cos(dir) * oc;
         }
         if (scatterAmt > 0) {
-            var scatterDist = (scatterAmt / 100) * sz * (_dabRand(sc.x, sc.y, 2) * 2 - 1);
+            var scatterDist = (scatterAmt / 100) * sz * (p.scatterAxis === 'disk'
+                ? Math.sqrt(_dabRand(sc.x, sc.y, 2)) : _dabRand(sc.x, sc.y, 2) * 2 - 1);
             var ax = p.scatterAxis;
             var scatterAngle = (ax === 'along' || ax === 'across')
                 ? dir + (ax === 'across' ? _PI / 2 : 0)
@@ -3401,6 +3402,8 @@
             if (scatterAmt > 0) {
                 var slot = di * 31;
                 var scatterDist = (scatterAmt / 100) * sz * (_dabRand(x, y, 2 + slot) * 2 - 1);
+                // 'disk': even over the whole patch, as Clip Studio sprays (its Spray's band is a semicircle across)
+                if (p.scatterAxis === 'disk') scatterDist = (scatterAmt / 100) * sz * Math.sqrt(_dabRand(x, y, 2 + slot));
                 /* Krita can scatter along ONE axis, and its axes are the
                  * stroke's own: along the line or across it. Spreading a
                  * one-axis preset in both directions turned a rake's clean
@@ -3424,8 +3427,16 @@
                 var hw = _max(1, sz * _min(1, asp || 1)) / 2, hh = _max(1, sz / _max(1, asp || 1)) / 2;
                 dx = _floor(dx - hw) + hw; dy = _floor(dy - hh) + hh;
             }
+            /* Clip Studio sprays size each particle on its own (Droplet's
+             * random spray size: 14 specks at 18, 12, 9, 6 and 4px), and
+             * space their stops by the plain size (see _stepFor). */
+            var dsz = sz;
+            if (p.sprayEach) {
+                sc.x = dx; sc.y = dy; dsz = _dyn(p, 'size', p.size, sc, 1) * tfSize; sc.x = x; sc.y = y;
+                if (dsz < 0.5) continue;
+            }
             if (p.shape === 'custom') _pickTipCell(p, dx, dy);
-            var mask = _maskFor(p.shape, sz, hard, effAngle, asp, dx, dy);
+            var mask = _maskFor(p.shape, dsz, hard, effAngle, asp, dx, dy);
 
             // Per-dab alpha. Both sensors now read the real pressure; the
             // taper is applied on top of whatever they produce, not smuggled
@@ -3435,7 +3446,7 @@
             flowSc.x = dx; flowSc.y = dy;
             flowSc.pressure = pressure; flowSc.strokeAngle = strokeAngle;
             var alpha = _clamp(_dyn(p, 'flow', p.flow / 100, flowSc, 4), 0, 1);
-            if (tfInk < 1) alpha = _taperAlpha(alpha, tfInk, sz, p);
+            if (tfInk < 1) alpha = _taperAlpha(alpha, tfInk, dsz, p);
 
             if (p.hatch) {
                 var hv = function (o) { return o.src ? _curveAt(o.curve, _sensor(o.src, sc, 16, p), p.curveSmooth) : o.v; };
@@ -3444,7 +3455,7 @@
                 _hatchD = sz; _hatchAsp = asp || 1;
                 _hatchSep = H.separation * Math.pow(2, Math.floor((iv - 1) / 2) - _clamp(Math.ceil(hv(H.sep) * iv) - 1, 0, iv - 1));
             }
-            if (p.smudgeMode != null || p.mixAlpha != null) _smudgeDab(p, dx, dy, mask, finalColor, alpha, sc, sz, tex, asp);
+            if (p.smudgeMode != null || p.mixAlpha != null) _smudgeDab(p, dx, dy, mask, finalColor, alpha, sc, dsz, tex, asp);
             else _paintDab(_flowCtx, dx, dy, mask, finalColor, alpha, tex, p.textureScale, p.textureType, p.wetBlend);
         }
     }
@@ -4419,7 +4430,7 @@
          * spacing ellipse turns with the tip it gives. */
         function _stepFor(pr, px, py, ang, rot) {
             var sc = { x: px, y: py, pressure: pr, strokeAngle: rot != null ? rot : ang };
-            var d = _max(0.5, _dyn(p, 'size', sz, sc, 1));
+            var d = p.sprayEach ? sz : _max(0.5, _dyn(p, 'size', sz, sc, 1));
             var w = d, h = d;
             if (_tipAsp >= 1) h = d / _tipAsp; else w = d * _tipAsp;
             var asp = p.aspectRatio || 1;
@@ -4448,7 +4459,7 @@
             }
             /* spacingStrength: a Krita spacing option's own multiplier, which
              * holds when its curve box is clear and can pass 1. */
-            if (p.spacingStrength != null || (p.spacingSrc && p.spacingSrc !== 'none')) {
+            if (p.spacingStrength != null || p.spacingSensors || (p.spacingSrc && p.spacingSrc !== 'none')) {
                 g *= _dyn(p, 'spacing', 1, sc, 10);
             }
             /* Krita's floor (MIN_DISTANCE_SPACING, kis_distance_information.cpp).
@@ -5247,6 +5258,7 @@
         tipFlip: '',
         scatter: 0,
         scatterAxis: 'both',
+        sprayEach: false,        // Clip Studio sprays: each particle sized on its own, stops spaced by the plain size
         /* Several dabs at every stop, and where each one lands relative to
          * the cursor -- both measured in the stroke's own frame. */
         dabCount: 1,
