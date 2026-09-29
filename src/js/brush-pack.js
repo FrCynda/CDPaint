@@ -3614,6 +3614,11 @@
         var ivt = _sutNum(v.BrushAutoIntervalType, 0);
         out.spacing = ivt >= 1 && ivt <= 3 ? [12, 8, 4][ivt - 1]
             : Math.max(1, Math.min(400, Math.round(_sutNum(v.BrushInterval, 10))));
+        /* "Adjust density by interval": each dab lays flow x spacing / 35.36
+         * (25 root 2), never more than the flow -- round strokes at flow 50
+         * and 10, spacing 5-40, all fit it within a percent of alpha. */
+        if (_sutNum(v.BrushAdjustFlowByInterval, 0))
+            out.flow = Math.max(1, Math.round(out.flow * Math.min(1, out.spacing / 35.36)));
 
         /* Thickness is how wide the tip stays, as a percentage; ours is how
          * many times longer than wide it is. 16% thick is a blade six times

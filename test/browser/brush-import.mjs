@@ -1384,6 +1384,7 @@ await withPage(async (page) => {
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
             gap: [0, 1, 2, 3].map(m => P({ BrushInterval: 1, BrushAutoIntervalType: m }).spacing),
+            adj: [5, 20, 40].map(i => P({ BrushFlow: 50, BrushInterval: i, BrushAdjustFlowByInterval: 1 }).flow),
             paper: [1, 2, 4, 0].map(m => P({ TextureDensity: 50, TextureCompositeMode: m }, { hasTexture: true }).texture || 0),
             aliased: [P({ AntiAlias: 0 }).aliased, P({ AntiAlias: 1 }).aliased,
                       P({ AntiAlias: 0, BrushUseWaterColor: 1, BrushMixColor: 80 }).aliased].map(Boolean),
@@ -1429,6 +1430,11 @@ await withPage(async (page) => {
      * as the interval, Oil paint (1 on narrow) packed four times too many. */
     check('automatic spacing ignores the interval',
         JSON.stringify(sm.gap) === '[1,12,8,4]', JSON.stringify(sm.gap));
+    /* Adjusting density by interval scales each dab's flow with the
+     * spacing: 50 at 5-20% laid 0.07, 0.14 and 0.28 a dab in Clip Studio,
+     * and 40% laid the flow. Soft had twice Clip Studio's ink without it. */
+    check('density adjusted by interval thins each dab with the spacing',
+        JSON.stringify(sm.adj) === '[7,28,50]', JSON.stringify(sm.adj));
     check('the paper shows as strongly as its blend lets it',
         JSON.stringify(sm.paper) === '[50,100,3,0]', JSON.stringify(sm.paper));
     /* Clip Studio's pictures (Book, Building) stamp their own greys and
