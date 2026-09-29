@@ -7,7 +7,7 @@
 // packVar: page expression holding the pack's bytes; packName its filename.
 // importExpr: page expression for any other import ({ ok, added: [name] }).
 // Imported presets are deleted again, so a long run never fills storage.
-export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false }) {
+export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0 }) {
     return JSON.parse(await page.eval(`(async () => {
         const app = PaintApp, b = app.brush, W = ${W}, H = ${H};
         const imp = ${importExpr || `await b.importBrushPack(${packVar}, ${JSON.stringify(packName)},
@@ -32,7 +32,8 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         // tablet reports about one sample a pixel at this speed.
         // Node.paintLine hands Krita no speed at all, so the clock stands
         // still while we draw: every speed sensor reads 0 on both sides.
-        const clock = performance.now; performance.now = () => 0;
+        // msPerPx > 0 runs the clock instead: the pen moves at 1/msPerPx px/ms.
+        const clock = performance.now; let tick = 0; performance.now = () => tick;
         // A sketch or curve brush remembers every point it is handed and joins back to
         // them; Krita's paintLine hands it the two ends and nothing between
         // (test/krita/probes/sketch), so it gets the same here.
@@ -51,6 +52,7 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
             b.beginStroke(x0 + (x1 - x0) * h, y0 + (y1 - y0) * h, p0 + (p1 - p0) * h, '#000000');
             for (let i = 1; i <= n; i++) {
                 const t = i / n;
+                tick += ${msPerPx} * len / n;
                 b.moveStroke(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, p0 + (p1 - p0) * t, '#000000');
             }
             b.endStroke();

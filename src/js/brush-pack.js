@@ -3567,10 +3567,14 @@
                 return { src: s.src, curve: s.curve.map(function (q) { return [q[0], f + (1 - f) * q[1]]; }) };
             });
         }
-        /* ponytail: one linear scale for speed, fitted by eye to three
-         * strokes (0.09, 0.73, 2.6 px/ms read 0.95, 0.83, 0.53 on the curve);
-         * they do not sit on one line, so fast strokes are only roughly right. */
-        if (ins.some(function (s) { return s.src === 'speed'; })) out.speedMax = 4;
+        /* Clip Studio's speed is how far the pen moved since its last report,
+         * over 97.5px -- not over time: a stroke posted in 70 moves reads
+         * 0.117 whether it takes 0.3s or 3s, and 20, 35, 100, 200, 400 and
+         * 800 moves read 40, 22.9, 8, 4, 2 and 1px / 97.5 within 0.002, at
+         * brush sizes 40 and 80 alike. Ours is px/ms.
+         * ponytail: taken at a pen reporting every 7.5ms (133Hz); a faster
+         * one reads slower in Clip Studio than here. */
+        if (ins.some(function (s) { return s.src === 'speed'; })) out.speedMax = 13;
         return true;
     }
 
