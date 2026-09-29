@@ -1421,23 +1421,28 @@
         var out = document.createElement('canvas'); out.width = w; out.height = h;
         var g = out.getContext('2d');
         g.drawImage(_canvasFromAlpha(c), 0, 0, w, h);
-        var d = g.getImageData(0, 0, w, h).data, a = new Uint8ClampedArray(w * h), rgb = new Uint8ClampedArray(w * h * 3);
+        return _cellOf(out, c.opaque);
+    }
+    function _cellOf(cv, opaque) {
+        var w = cv.width, h = cv.height;
+        var d = cv.getContext('2d').getImageData(0, 0, w, h).data, a = new Uint8ClampedArray(w * h), rgb = new Uint8ClampedArray(w * h * 3);
         for (var i = 0; i < w * h; i++) {
             a[i] = d[i * 4 + 3];
             rgb[i * 3] = d[i * 4]; rgb[i * 3 + 1] = d[i * 4 + 1]; rgb[i * 3 + 2] = d[i * 4 + 2];
         }
-        return { w: w, h: h, alpha: a, rgb: rgb, opaque: c.opaque };
+        return { w: w, h: h, alpha: a, rgb: rgb, opaque: opaque };
     }
 
-    /* A cell cut down to where it has any ink: Clip Studio lays a ribbon's
-     * picture end to end by its ink, not by the blank canvas round it. */
-    function _cropCell(c) {
-        var x0 = c.w, y0 = c.h, x1 = -1, y1 = -1, x, y;
-        for (y = 0; y < c.h; y++) for (x = 0; x < c.w; x++) {
-            if (c.alpha[y * c.w + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-        }
-        if (x1 < 0) return c;
-        var w = x1 - x0 + 1, h = y1 - y0 + 1, a = new Uint8ClampedArray(w * h), rgb = new Uint8ClampedArray(w * h * 3);
+    /* A Clip Studio preview cut back to its picture's own shape [w, h],
+     * centred, where the two differ: Rough pen's picture is a 24x2512 strip
+     * and its preview that strip in a 240 square. A ribbon lays the whole
+     * picture end to end, blank margins and all (Dashed line's gaps are its
+     * margins: 27x87, 45 inked, a 16px period at size 5 in Clip Studio). */
+    function _cropCell(c, real) {
+        if (!real || Math.abs(real[0] / real[1] - c.w / c.h) < 0.02 * c.w / c.h) return c;
+        var w = Math.max(1, Math.min(c.w, Math.round(c.h * real[0] / real[1])));
+        var h = Math.max(1, Math.min(c.h, Math.round(c.w * real[1] / real[0])));
+        var x0 = (c.w - w) >> 1, y0 = (c.h - h) >> 1, x, y, a = new Uint8ClampedArray(w * h), rgb = new Uint8ClampedArray(w * h * 3);
         for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
             var i = (y0 + y) * c.w + x0 + x, o = y * w + x;
             a[o] = c.alpha[i];
@@ -1573,19 +1578,60 @@
 
         var many = Array.isArray(bytes) ? bytes : [bytes];
         return Promise.all(many.map(_decode)).then(function (cells) {
+            var pick = 'random';
             if (opts && opts.crop) {
                 /* ...and each picture spans the ribbon whole: Zipper's lone
-                 * tooth is as tall as its pair of halves. */
-                cells = cells.map(_cropCell);
+                 * tooth is as tall as its pair of halves, Bead chain's oval
+                 * as its big bead. */
+                cells = cells.map(function (c, i) { return _cropCell(c, many[i].real); });
                 var ac = opts.crop === 'h' ? 'h' : 'w', top = 0;
                 cells.forEach(function (c) { top = Math.max(top, c[ac]); });
                 cells = cells.map(function (c) { return c[ac] === top ? c : _scaleCell(c, top / c[ac]); });
+                /* Laid in a fixed order, each picture takes its own length
+                 * (Bead chain's oval is half its big bead's), so the round
+                 * is joined into one picture: in turn, or out and back
+                 * (order 1: big, diamond, oval, diamond). */
+                if ((opts.join === 0 || opts.join === 1) && cells.length > 1) {
+                    var seq = cells.slice();
+                    if (opts.join === 1) seq = seq.concat(cells.slice(1, -1).reverse());
+                    var along = ac === 'h' ? 'w' : 'h', len = 0;
+                    seq.forEach(function (c) { len += c[along]; });
+                    var jc = document.createElement('canvas');
+                    jc.width = along === 'w' ? len : top; jc.height = along === 'w' ? top : len;
+                    var jg = jc.getContext('2d'), at = 0;
+                    seq.forEach(function (c) {
+                        jg.drawImage(_canvasFromAlpha(c), along === 'w' ? at : 0, along === 'w' ? 0 : at);
+                        at += c[along];
+                    });
+                    cells = [_cellOf(jc, cells[0].opaque)];
+                }
+                /* A long picture is cut into pieces laid in turn, so the
+                 * stroke stops within a piece of the pen, as Clip Studio's
+                 * does: Rough pen's one picture is 1000px long at size 10,
+                 * and stamped whole it ran 100px past the end of a line. */
+                var ln = ac === 'h' ? 'w' : 'h', one = cells[0], k = Math.round(one[ln] / (2 * one[ac]));
+                if (cells.length === 1 && k > 1) {
+                    var pl = Math.ceil(one[ln] / k), src = _canvasFromAlpha(one);
+                    cells = [];
+                    for (var pi = 0; pi < k; pi++) {
+                        var pc = document.createElement('canvas');
+                        pc.width = ln === 'w' ? pl : one.w; pc.height = ln === 'w' ? one.h : pl;
+                        // stretched a hair to k whole pieces, so the round has no gap
+                        var sx = one[ln] / k, sgx = pc.getContext('2d');
+                        if (ln === 'w') sgx.drawImage(src, pi * sx, 0, sx, one.h, 0, 0, pl, one.h);
+                        else sgx.drawImage(src, 0, pi * sx, one.w, sx, 0, 0, one.w, pl);
+                        cells.push(_cellOf(pc, one.opaque));
+                    }
+                    pick = 'cycle';
+                }
             }
-            var st2 = _strip(cells);
             /* Clip Studio's grey materials (Book, Building, Chain) are
              * pictures: stamped with black they show their own greys and
              * whites. A tip with no solid white is ink, its greys only how
              * dense it is (Crayon's soft grey blob, painted solid black).
+             * A coloured picture paints its darkest channel as grey (Bead
+             * chain's pink beads paint dark grey with black: ink 1.01 of
+             * Clip Studio's, where brightness gave 0.82).
              * ponytail: Clip Studio tints the greys between the main and
              * sub colour; ours stamps them as they are, right for black. */
             var shaded = opts && opts.csp && cells.some(function (c) {
@@ -1597,8 +1643,15 @@
                 }
                 return white > solid * 0.05;
             });
+            if (shaded) cells.forEach(function (c) {
+                for (var q = 0, g; q < c.alpha.length; q++) {
+                    g = Math.min(c.rgb[q * 3], c.rgb[q * 3 + 1], c.rgb[q * 3 + 2]);
+                    c.rgb[q * 3] = c.rgb[q * 3 + 1] = c.rgb[q * 3 + 2] = g;
+                }
+            });
+            var st2 = _strip(cells);
             return { url: st2.url, size: st2.size, w: st2.w, h: st2.h,
-                     cells: cells.length, pick: 'random', params: shaded ? { tipMode: 'color' } : _paper(cells) };
+                     cells: cells.length, pick: pick, params: shaded ? { tipMode: 'color' } : _paper(cells) };
         });
     };
 
@@ -3694,10 +3747,11 @@
         /* A ribbon lays its picture end to end along the stroke, turned so
          * the picture's width runs across it at the brush size (Zipper's
          * teeth stand up off a level stroke; Chain, turned 90, lies along
-         * it), and cut to its ink first: Rough pen's picture is a hairline,
-         * and its ribbon a solid band the brush size high. Ours is the same
-         * stamp, following the stroke and spaced by its own length (100:
-         * the engine spaces a long tip by its extent along the stroke).
+         * it), blank margins and all (tipStrip cuts the preview back to the
+         * real picture's shape). Ours is the same stamp, following the
+         * stroke and spaced by its own length (100: the engine spaces a long
+         * tip by its extent along the stroke), the first one starting at
+         * the stroke's start as Clip Studio's does.
          * ponytail: rigid stamps, so a ribbon round a bend shows seams, and
          * a turn other than 0 or 90 is taken as the nearer of them. */
         if (_sutNum(v.BrushRibbon, 0) && opts.hasTip && opts.tipW && opts.tipH) {
@@ -3705,12 +3759,15 @@
             var across = side ? opts.tipH : opts.tipW;
             out.size = Math.max(1, Math.min(5000, Math.round(size * Math.max(opts.tipW, opts.tipH) / across)));
             out.spacing = 100;
+            // The first picture starts at the stroke's start, not centred on it (Dashed line's first dash 3.5px in).
+            out.offsetAlong = Math.round(50 * (side ? opts.tipW : opts.tipH) / Math.max(opts.tipW, opts.tipH));
             out.angle = ((Math.round(rr) - 90) % 360 + 360) % 360;
             out.angleSrc = 'direction';
             delete out.angleRange;
         }
         /* Several pictures: 0 takes them in turn (Zipper's teeth alternate),
-         * 3 at random (Book). */
+         * 3 at random (Book). A ribbon's fixed order is joined into one
+         * picture instead (tipStrip's join). */
         if (_sutNum(v.BrushPatternOrderType, 3) === 0) out.tipPick = 'cycle';
 
         /* Starting and ending is NOT a taper here. Real Clip Studio 5 draws
@@ -4009,7 +4066,17 @@
         }
 
         var rows = db.MaterialFile || [];
-        var pngs = rows.map(function (m) { return _lastPng(m.FileData); });
+        var pngs = rows.map(function (m) {
+            var png = _lastPng(m.FileData), f = m.FileData;
+            // The first picture is the real one: its pixels are often blank, its size still true.
+            for (var at = 0; png && at + 24 <= f.length; at++) {
+                if (f[at] !== 0x89 || f[at + 1] !== 0x50 || f[at + 2] !== 0x4E || f[at + 3] !== 0x47) continue;
+                var rd = function (o) { return (f[o] << 24 | f[o + 1] << 16 | f[o + 2] << 8 | f[o + 3]) >>> 0; };
+                png.real = [rd(at + 16), rd(at + 20)];
+                break;
+            }
+            return png;
+        });
         var byPath = {}, named = 0, k;
         for (i = 0; i < rows.length; i++) {
             var cat = rows[i].CatalogPath;

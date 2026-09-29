@@ -1379,7 +1379,7 @@ await withPage(async (page) => {
         return JSON.stringify({ tilt: [tilt.flowSrc, tilt.flowCurve],
             flat: [flat.aspectRatio, flat.angle], mm: mm.size,
             spray: [spray.size, spray.scatter, spray.dabCount],
-            ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc], ribbonNote,
+            ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc, ribbon.offsetAlong], ribbonNote,
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
             erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
@@ -1414,9 +1414,10 @@ await withPage(async (page) => {
     /* Spray: the size is the patch, the spray size is each particle. */
     check('a spray paints particles over a patch of its size',
         JSON.stringify(sm.spray) === '[10,500,6]', JSON.stringify(sm.spray));
-    /* A ribbon tiles its picture end to end, as wide as the brush. */
+    /* A ribbon tiles its picture end to end, as wide as the brush, the
+     * first starting at the stroke's start (Dashed line's first dash). */
     check('a ribbon lays its picture end to end along the stroke',
-        JSON.stringify(sm.ribbon) === '[90,100,270,"direction"]', JSON.stringify(sm.ribbon));
+        JSON.stringify(sm.ribbon) === '[90,100,270,"direction",50]', JSON.stringify(sm.ribbon));
     check('...and is no longer reported as dropped', !/ribbon/.test(sm.ribbonNote), sm.ribbonNote);
     check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.random === '',
         JSON.stringify([sm.cycle, sm.random]));
@@ -1481,6 +1482,34 @@ await withPage(async (page) => {
     })()`, { awaitPromise: true }).then(JSON.parse);
     check('a picture tip stamps its own whites, a grey or black one stays ink',
         shade[0] === 'color' && shade[1] === '' && shade[2] === '', JSON.stringify(shade));
+    /* Ribbon pictures. Clip Studio's preview is its picture squeezed into a
+     * square, so it is cut back to the real shape, margins kept (Dashed
+     * line's gaps are its margins); a long one is laid in pieces so a
+     * stroke stops near the pen (Rough pen ran 100px on); order 1 runs out
+     * and back (Bead chain); a coloured one paints its darkest channel. */
+    const rib = await page.eval(`(async () => {
+        const png = async (w, h, draw) => {
+            const c = new OffscreenCanvas(w, h), x = c.getContext('2d'); draw(x);
+            return new Uint8Array(await (await c.convertToBlob()).arrayBuffer());
+        };
+        const bar = await png(24, 24, x => { x.fillStyle = '#000'; x.fillRect(10, 0, 4, 24); });
+        bar.real = [8, 24];
+        const cut = await BrushPack.tipStrip([bar], 'tip.png', { csp: true, crop: 'w' });
+        const pics = await Promise.all([10, 20, 30].map(w => png(w, 10, x => { x.fillStyle = '#000'; x.fillRect(0, 0, w, 10); })));
+        const bounce = await BrushPack.tipStrip(pics, 'tip.png', { csp: true, crop: 'h', join: 1 });
+        const pink = await png(8, 8, x => { x.fillStyle = '#fff'; x.fillRect(4, 0, 2, 8); x.fillStyle = '#ff80c0'; x.fillRect(0, 0, 4, 8); });
+        const g = await BrushPack.tipStrip([pink], 'tip.png', { csp: true });
+        const im = new Image(); im.src = g.url; await im.decode();
+        const cv = new OffscreenCanvas(im.width, im.height), cx = cv.getContext('2d'); cx.drawImage(im, 0, 0);
+        return JSON.stringify({ cut: [cut.w, cut.h, cut.cells, cut.pick], bounce: [bounce.cells, bounce.w, bounce.h],
+            grey: Array.from(cx.getImageData(1, 1, 1, 1).data.slice(0, 3)) });
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('a ribbon picture is cut to its real shape and laid in pieces',
+        JSON.stringify(rib.cut) === '[8,12,2,"cycle"]', JSON.stringify(rib.cut));
+    check('...its pictures joined out and back in order 1',
+        JSON.stringify(rib.bounce) === '[4,20,10]', JSON.stringify(rib.bounce));
+    check('a coloured picture paints its darkest channel',
+        JSON.stringify(rib.grey) === '[128,128,128]', JSON.stringify(rib.grey));
 
     /* The pack chooser. It lists what is in a pack before anything is
      * installed, then installs only what was ticked -- so the two halves

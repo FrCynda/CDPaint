@@ -8242,7 +8242,8 @@
 
         var pr = pack.presets[0];
         var tipP = (pr.tips && pr.tips.length)
-            ? BrushPack.tipStrip(pr.tips, 'tip.png', { csp: true, crop: pr.variant.BrushRibbon ? (Math.round((pr.variant.BrushRotation || 0) / 90) % 2 ? 'h' : 'w') : false }).catch(function () { return null; })
+            ? BrushPack.tipStrip(pr.tips, 'tip.png', { csp: true, crop: pr.variant.BrushRibbon ? (Math.round((pr.variant.BrushRotation || 0) / 90) % 2 ? 'h' : 'w') : false,
+                  join: +pr.variant.BrushPatternOrderType }).catch(function () { return null; })
             : Promise.resolve(null);
         var tip2P = pr.tip2
             ? BrushPack.tipStrip(pr.tip2, 'tip2.png').catch(function () { return null; })
@@ -8263,7 +8264,8 @@
                         _round(tip.url.length / 1024) + 'KB).' };
                 }
                 ps._tipUrl = _tipStash(tip.url);
-                if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = ps.tipPick || tip.pick; }
+                // a long ribbon cut into pieces is laid in turn, whatever its order (tipStrip)
+                if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = tip.pick === 'cycle' ? 'cycle' : ps.tipPick || tip.pick; }
                 if (tip.params && tip.params.tipMode) ps.tipMode = tip.params.tipMode;
             }
             if (tip2 && tip2.url.length <= TIP_CAP) ps._tip2Url = _tipStash(tip2.url);
