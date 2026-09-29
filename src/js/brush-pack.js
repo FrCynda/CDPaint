@@ -3620,6 +3620,10 @@
         /* Spacing mode 0 is Clip Studio's fixed interval; 1-3 (wide, normal,
          * narrow) ignore it. Faint round strokes at sizes 20-200 measured
          * 12, 8 and 4% of the size in those modes, whatever the interval. */
+        /* Never closer than a pixel: 1% of 20 and 4% of 20 paint the same
+         * stroke, and a spray of 6px specks at 8% laid 775 over 800px --
+         * one a pixel, where 0.48px would lay 1667. */
+        out.minStep = 1;
         var ivt = _sutNum(v.BrushAutoIntervalType, 0);
         out.spacing = ivt >= 1 && ivt <= 3 ? [12, 8, 4][ivt - 1]
             : Math.max(1, Math.min(400, Math.round(_sutNum(v.BrushInterval, 10))));
@@ -3633,22 +3637,19 @@
          * many times longer than wide it is. 16% thick is a blade six times
          * longer than it is across. */
         var thick = _sutNum(v.BrushThickness, 100);
-        if (thick > 0 && thick < 99) {
-            if (opts.hasTip) {
-                /* An image tip already IS its shape -- squeezing it by the
-                 * thickness ratio crushes the tower flat (a 90x202 watercolor
-                 * tip at thickness 45 painted 67x76 instead of 67x150).
-                 * Thickness stays a generated-tip setting only. */
-                warn.push('changed: kept the tip\u2019s own shape; thickness not applied');
-            } else {
-                out.aspectRatio = Math.min(10, Math.max(1, Math.round(100 / thick * 100) / 100));
-            }
-        }
+        /* BrushVerticalThicknes 1 squeezes top to bottom, 0 side to side:
+         * Real G-Pen's 107x133 picture (1) at size 200 is one 160x200 dab,
+         * 160x170 at thickness 85 and 160x100 at 50, measured in Clip
+         * Studio. Ours squashes height above 1 and width below it. */
+        var vert = _sutNum(v.BrushVerticalThicknes, 0);
+        if (thick > 0 && thick < 99)
+            out.aspectRatio = vert || !opts.hasTip ? Math.min(10, Math.max(1, Math.round(100 / thick * 100) / 100))
+                : Math.max(0.1, Math.round(thick) / 100);
 
-        /* A thin tip stands upright there at 0 and lies flat here: Flat
-         * marker (thickness 30, turned 90) is 16px across a level stroke in
-         * Clip Studio, and was 50 here until turned the extra quarter. */
-        var rot = _sutNum(v.BrushRotation, 0) + (out.aspectRatio > 1 ? 90 : 0);
+        /* A thin generated tip stands upright there at 0 and lies flat here:
+         * Flat marker (thickness 30, turned 90) is 16px across a level stroke
+         * in Clip Studio, and was 50 here until turned the extra quarter. */
+        var rot = _sutNum(v.BrushRotation, 0) + (out.aspectRatio > 1 && !vert && !opts.hasTip ? 90 : 0);
         if (rot % 360) out.angle = Math.round(rot) % 360;
         /* The rotation dropdown is a mask of what is allowed to turn the
          * tip. Bits 1 and 2 are on in every brush in every file we have, so
@@ -3925,6 +3926,11 @@
          * here; a thumbnail cannot tell its tip from a hatch's. */
         if (_sutNum(v.AntiAlias, 1) === 0 && !out.texture && !out.watercolor &&
             !_sutNum(v.BrushChangePatternColor, 0)) out.aliased = true;
+        /* On, it fades a round dab's rim over AA + 0.5 px at every size (a
+         * 20px G-pen line's edge 163/111/84 at levels 1/2/3): a 5px spray
+         * speck at level 2 carries a third of a hard disc's ink. */
+        var aa = _sutNum(v.AntiAlias, 1);
+        if (aa >= 1 && aa <= 3) out.edgeRamp = aa + 0.5;
 
         return { name: name || 'Clip Studio brush', params: out, warnings: warn };
     };

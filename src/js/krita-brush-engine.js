@@ -133,7 +133,7 @@
         }
 
         function _key(shape, size, hardness, angle, aspect, phase) {
-            return shape + '|' + (/^k(circle|gauss|grect|lrect)/.test(shape) ? size : _round(size)) + '|' + _round(hardness) + '|'
+            return shape + '|' + (/^(k(circle|gauss|grect|lrect)|cspaa)/.test(shape) ? size : _round(size)) + '|' + _round(hardness) + '|'
                 + angle.toFixed(2) + '|' + (aspect || 1).toFixed(2) + (phase ? '|' + phase : '');
         }
 
@@ -194,6 +194,7 @@
                                        shape.charAt(1) === 'l', shape.charAt(6) === 'a', phase);
         }
         if (shape === 'kmarker') return _kritaMarkerMask(size, phase);
+        if (shape.indexOf('cspaa') === 0) return _cspCircleMask(size, +shape.slice(5), phase);
         if (shape.indexOf('rcurve') === 0) return _kritaCurveRectMask(size, aspect, ang, _tcNow, shape.charAt(6) === 'a', phase);
         if (shape.indexOf('ccurve') === 0) return _kritaCurveCircleMask(size, aspect, ang, _tcNow, shape.charAt(6) === 'a', phase);
         if (kc) return _kritaCircleMask(size, aspect, hardness / 100, phase,
@@ -347,6 +348,25 @@
                 }
                 if (sum) { var k = (j * W + i) * 4; d[k] = d[k + 1] = d[k + 2] = 255; d[k + 3] = _round(sum / (ss * ss) * 255); }
             }
+        }
+        ctx.putImageData(img, 0, 0);
+        return canvas;
+    }
+
+    /* Clip Studio's anti-aliased round dab: solid, then falling in a
+     * straight line to nothing at the rim over `w` px (never past the
+     * centre), sampled at pixel centres. Fitted to G-pen lines at every
+     * AA level and sizes 5-40 (w = AA + 0.5), all within a grey level. */
+    function _cspCircleMask(size, w, phase) {
+        var r = size / 2, W = _ceil(size) + 3, canvas = new OffscreenCanvas(W, W), c = W / 2;
+        if (phase) { canvas._cx = _floor(c) + phase[0]; canvas._cy = _floor(c) + phase[1]; }
+        var cx = phase ? canvas._cx : c, cy = phase ? canvas._cy : c, k = 1 / _min(w, r);
+        var ctx = canvas.getContext('2d'), img = ctx.createImageData(W, W), d = img.data;
+        for (var j = 0; j < W; j++) for (var i = 0; i < W; i++) {
+            var a = (r - _hypot(i + 0.5 - cx, j + 0.5 - cy)) * k;
+            if (a <= 0) continue;
+            var o = (j * W + i) * 4;
+            d[o] = d[o + 1] = d[o + 2] = 255; d[o + 3] = _round(_min(1, a) * 255);
         }
         ctx.putImageData(img, 0, 0);
         return canvas;
@@ -3612,18 +3632,19 @@
             // a hard square keeps the plain box: it paints its pixel however small (EO Pixel Perfect)
             if (shape === 'square' && kf && (kf[1] || hardness < 100 || (_params.hardnessY != null && _params.hardnessY < 100)))
                 shape = (kf[1] ? 'kgrect' : 'klrect') + (kf[2] ? 'a' : '') + (_params.hardnessY != null ? ':' + _params.hardnessY : '');
+            if (shape === 'circle' && _params.edgeRamp && hardness >= 100 && (aspect || 1) === 1) shape = 'cspaa' + _params.edgeRamp;
             if (shape === 'circle' && kf) {
                 shape = (kf[1] ? 'kgauss' : 'kcircle') + (kf[2] ? ':aa' : '');
                 sz = sz < 16 ? _max(0.05, sz) : _round(sz);   // its real size, see _kritaCircleMask
             }
             /* A square too, to an eighth up to 32px: rounded to whole pixels,
              * Poska Square's line thickened in steps where Krita's tapers. */
-            if (/^(k(grect|lrect)|[rc]curve)/.test(shape)) sz = sz <= 32 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);
+            if (/^(k(grect|lrect)|[rc]curve|cspaa)/.test(shape)) sz = sz <= 32 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);
             var ph = null;
             // Sharpness snaps dabs to whole pixels in Krita, so it keeps the old path.
             // Krita's own tips only: the built-in brushes keep the look they have.
             if (x != null && sz <= 32 && !(_params.sharpness > 0) &&
-                /^(k(circle|gauss|grect|marker)|[rc]?curve)/.test(shape)) {
+                /^(k(circle|gauss|grect|marker)|[rc]?curve|cspaa)/.test(shape)) {
                 /* ponytail: Krita places its plain square (klrect) at its
                  * phase too, but with it the two Grease Charcoals swap: the
                  * auto-spaced one 0.90 -> 0.98, the 0.05-spaced one 0.98 ->
@@ -4429,7 +4450,7 @@
                 var nx = dm >= 0 ? Math.ceil(m + 0.5 - 1e-6) + 0.5 : _floor(m - 1.5 + 1e-6) + 0.5;
                 g = _abs(nx - m) / _max(1e-6, _abs(dm));
             }
-            return _max(0.5, g);
+            return _max(p.minStep || 0.5, g);
         }
         var pxLine = p.sharpness > 0 && sz <= 1;
         var step = resume ? resume.step
@@ -5172,6 +5193,7 @@
          * every direction, rather than from its width along the stroke. */
         spacingIsotropic: false,
         spacingWhole: false,  // Krita's generated tip: spaced by its whole-pixel size, see _stepFor
+        minStep: 0.5,         // closest two dabs may land, px (Clip Studio: 1)
         hardness: 80,
         hardnessY: null,   // Krita's squares only: the ends' fade when it differs from the sides'
         shape: 'circle',
@@ -5263,6 +5285,7 @@
          * marker. Set by .sut imports alongside wetBlend; default off. */
         watercolor: 0,
         aliased: false,   // Clip Studio's anti-aliasing off; see _applyAliased
+        edgeRamp: 0,      // Clip Studio's anti-aliasing: a round dab's rim fades over this many px
         blendMode: 'normal',
         /* A second tip stamped through the first. `dualTip` below is NOT
          * this -- it is a canvas-anchored surface over the whole stroke --

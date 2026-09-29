@@ -1179,14 +1179,11 @@ await withPage(async (page) => {
      * written into the file first, so reading "the first row" fails here. */
     check('the live settings win over the reset-to defaults',
         sut.angle === 220, JSON.stringify(sut));
-    /* Thickness is a percentage there and a ratio here -- but only for
-     * generated tips. This brush has an image tip (a 192x96 strip of two),
-     * which already IS its shape, so thickness is left off and owned up to
-     * instead of squeezing the tip flat. */
-    check('thickness leaves an image tip alone and says so',
-        sut.aspectRatio === undefined &&
-        (sut.r.lines || []).some(l => /kept the tip.s own shape/.test(l)),
-        JSON.stringify(sut));
+    /* Thickness squeezes an image tip too (measured in Clip Studio on Real
+     * G-Pen's picture); this one's flag says side to side, so 16% thick
+     * is 0.16 of its width. */
+    check('thickness squeezes an image tip side to side',
+        sut.aspectRatio === 0.16, JSON.stringify(sut));
     check('spray is a patch there and a spread of particles here',
         sut.scatter === 286, `${sut.scatter}`);
     /* Clip Studio's starting and ending is not our taper: real Clip Studio
@@ -1387,6 +1384,10 @@ await withPage(async (page) => {
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
             erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
             gap: [0, 1, 2, 3].map(m => P({ BrushInterval: 1, BrushAutoIntervalType: m }).spacing),
+            minStep: P({ BrushInterval: 1 }).minStep,
+            ramp: [0, 1, 2, 3].map(a => P({ AntiAlias: a }).edgeRamp || 0),
+            pic: [P({ BrushThickness: 85, BrushVerticalThicknes: 1 }, { hasTip: true }),
+                  P({ BrushThickness: 50 }, { hasTip: true })].map(p => [p.aspectRatio, p.angle || 0]),
             adj: [5, 20, 40].map(i => P({ BrushFlow: 50, BrushInterval: i, BrushAdjustFlowByInterval: 1 }).flow),
             paper: [1, 2, 4, 0].map(m => P({ TextureDensity: 50, TextureCompositeMode: m }, { hasTexture: true }).texture || 0),
             aliased: [P({ AntiAlias: 0 }).aliased, P({ AntiAlias: 1 }).aliased,
@@ -1430,6 +1431,14 @@ await withPage(async (page) => {
     check('colour mixing brings its density of paint, the watercolour kind its wash',
         JSON.stringify(sm.mix) === '[[50,100,0],[-1,-1,0],[-1,-1,1],[0,0,0]]', JSON.stringify(sm.mix));
     /* Blend mode 27 (Watery brush) thins paint in place and lays none. */
+    /* 1% of 20 and 4% of 20 paint the same stroke there. */
+    check('dabs never land closer than a pixel', sm.minStep === 1, `${sm.minStep}`);
+    /* A round dab's rim fades over AA + 0.5 px, measured at sizes 5-40. */
+    check('anti-aliasing fades a round rim by its level',
+        JSON.stringify(sm.ramp) === '[0,1.5,2.5,3.5]', JSON.stringify(sm.ramp));
+    /* Real G-Pen's picture at thickness 85 was a full-height line here. */
+    check('a picture tip is squeezed by its thickness, the way the file says',
+        JSON.stringify(sm.pic) === '[[1.18,0],[0.5,0]]', JSON.stringify(sm.pic));
     check('blend mode 27 erases', JSON.stringify(sm.erase) === '["erase","normal"]', JSON.stringify(sm.erase));
     check('paper on each dab keeps its blend, its scale and its own strength rule',
         JSON.stringify(sm.plot) === '[80,2,"random",40,1.6]', JSON.stringify(sm.plot));
