@@ -3611,6 +3611,11 @@
         out.shape = opts.hasTip ? 'custom' : 'circle';
         out.opacity = Math.max(1, Math.min(100, Math.round(_sutNum(v.Opacity, 100))));
         out.flow = Math.max(1, Math.min(100, Math.round(_sutNum(v.BrushFlow, 100))));
+        /* Blend mode 27 (Watery brush) lays nothing on an empty layer and
+         * thins a black line it crosses to a third, in place, never dragging
+         * it: an eraser at the brush's opacity.
+         * ponytail: its soft falloff is not ours yet -- ours clears a flat band. */
+        if (_sutNum(v.CompositeMode, 0) === 27) out.blendMode = 'erase';
         out.hardness = Math.max(0, Math.min(100, Math.round(_sutNum(v.BrushHardness, 80))));
         /* Spacing mode 0 is Clip Studio's fixed interval; 1-3 (wide, normal,
          * narrow) ignore it. Faint round strokes at sizes 20-200 measured
@@ -3787,7 +3792,10 @@
         if (_sutNum(v.BrushUseWaterColor, 0) || _sutNum(v.BrushUseWaterColor2, 0) ||
             _sutNum(v.BrushWaterColor, 0)) {
             var mix = Math.max(0, Math.min(100, _sutNum(v.BrushMixColor, 0)));
-            if (mix > 0) {
+            /* No paint of its own but a density under 100 is still mixing:
+             * Gouache blender (0 and 0) lays only what it carries, so nothing
+             * on an empty layer, and lightens a black line it crosses. */
+            if (mix > 0 || (_sutNum(v.BrushUseWaterColor, 0) && _sutNum(v.BrushMixAlpha, 100) < 100)) {
                 /* Measured in Clip Studio (Round mixing brush): a white
                  * stroke across a black one covers it and drags a little grey
                  * on after, so a dab replaces what is under it and picks some

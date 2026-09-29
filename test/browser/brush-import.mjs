@@ -1385,6 +1385,7 @@ await withPage(async (page) => {
             ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc], ribbonNote,
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
+            erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
             gap: [0, 1, 2, 3].map(m => P({ BrushInterval: 1, BrushAutoIntervalType: m }).spacing),
             adj: [5, 20, 40].map(i => P({ BrushFlow: 50, BrushInterval: i, BrushAdjustFlowByInterval: 1 }).flow),
             paper: [1, 2, 4, 0].map(m => P({ TextureDensity: 50, TextureCompositeMode: m }, { hasTexture: true }).texture || 0),
@@ -1392,7 +1393,8 @@ await withPage(async (page) => {
                       P({ AntiAlias: 0, BrushUseWaterColor: 1, BrushMixColor: 80 }).aliased].map(Boolean),
             mix: [P({ BrushUseWaterColor: 1, BrushMixColor: 80, BrushMixAlpha: 50, BrushMixColorExtension: 100 }),
                   P({ BrushUseWaterColor: 1, BrushMixColor: 80, BrushMixAlpha: 100 }),
-                  P({ BrushWaterColor: 2, BrushMixColor: 30, BrushMixAlpha: 50 })]
+                  P({ BrushWaterColor: 2, BrushMixColor: 30, BrushMixAlpha: 50 }),
+                  P({ BrushUseWaterColor: 1, BrushMixColor: 0, BrushMixAlpha: 0 })]
                 .map(p => [p.mixAlpha ?? -1, p.mixStretch ?? -1, p.watercolor || 0]) });
     })()`).then(JSON.parse);
     console.log('  ' + JSON.stringify(sm));
@@ -1423,8 +1425,12 @@ await withPage(async (page) => {
     /* Density of paint and colour stretch, measured in Clip Studio; at
      * full density its line is the plain one. The watercolour kind is
      * unmeasured and keeps the wash. */
+    /* A blender (no paint, density 0: Gouache blender) mixes too -- as a
+     * plain brush it painted a solid line where Clip Studio paints nothing. */
     check('colour mixing brings its density of paint, the watercolour kind its wash',
-        JSON.stringify(sm.mix) === '[[50,100,0],[-1,-1,0],[-1,-1,1]]', JSON.stringify(sm.mix));
+        JSON.stringify(sm.mix) === '[[50,100,0],[-1,-1,0],[-1,-1,1],[0,0,0]]', JSON.stringify(sm.mix));
+    /* Blend mode 27 (Watery brush) thins paint in place and lays none. */
+    check('blend mode 27 erases', JSON.stringify(sm.erase) === '["erase","normal"]', JSON.stringify(sm.erase));
     check('paper on each dab keeps its blend, its scale and its own strength rule',
         JSON.stringify(sm.plot) === '[80,2,"random",40,1.6]', JSON.stringify(sm.plot));
     /* Wide, normal and narrow spacing ignore the interval: faint strokes

@@ -7,7 +7,7 @@
 // packVar: page expression holding the pack's bytes; packName its filename.
 // importExpr: page expression for any other import ({ ok, added: [name] }).
 // Imported presets are deleted again, so a long run never fills storage.
-export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0 }) {
+export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false }) {
     return JSON.parse(await page.eval(`(async () => {
         const app = PaintApp, b = app.brush, W = ${W}, H = ${H};
         const imp = ${importExpr || `await b.importBrushPack(${packVar}, ${JSON.stringify(packName)},
@@ -25,7 +25,7 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         ${Object.entries(c.params || {}).map(([k, v]) => `b.setParam(${JSON.stringify(k)}, ${JSON.stringify(v)});`).join(' ')}   // the same edit xmlSub made in Krita
         // Node.paintLine takes no eraser toggle from the preset (a) Eraser_Textured paints ink
         // there); a true erase blend leaves Krita's canvas blank and is never scored.
-        if (b.getParams().blendMode === 'erase') b.setParam('blendMode', 'normal');
+        if (b.getParams().blendMode === 'erase' && !${keepErase}) b.setParam('blendMode', 'normal');
         await new Promise(res => setTimeout(res, 600));          // let the tip load
         L.ctx.clearRect(0, 0, W, H);
         // Krita's paintLine interpolates pressure along the line; a
