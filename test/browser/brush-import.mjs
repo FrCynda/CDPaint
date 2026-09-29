@@ -1386,6 +1386,10 @@ await withPage(async (page) => {
             gap: [0, 1, 2, 3].map(m => P({ BrushInterval: 1, BrushAutoIntervalType: m }).spacing),
             minStep: P({ BrushInterval: 1 }).minStep,
             ramp: [0, 1, 2, 3].map(a => P({ AntiAlias: a }).edgeRamp || 0),
+            softGap: [P({ BrushAutoIntervalType: 2, BrushHardness: 50 }), P({ BrushAutoIntervalType: 2, BrushHardness: 50 }, { hasTip: true }),
+                      P({ BrushInterval: 20, BrushHardness: 0 })].map(p => p.spacing),
+            softAliased: [P({ AntiAlias: 0, BrushHardness: 50 }).aliased, P({ AntiAlias: 0, BrushHardness: 50 }, { hasTip: true }).aliased].map(Boolean),
+            fracSize: P({ BrushSize: 5.1 }).size,
             pic: [P({ BrushThickness: 85, BrushVerticalThicknes: 1 }, { hasTip: true }),
                   P({ BrushThickness: 50 }, { hasTip: true })].map(p => [p.aspectRatio, p.angle || 0]),
             adj: [5, 20, 40].map(i => P({ BrushFlow: 50, BrushInterval: i, BrushAdjustFlowByInterval: 1 }).flow),
@@ -1435,7 +1439,15 @@ await withPage(async (page) => {
     check('dabs never land closer than a pixel', sm.minStep === 1, `${sm.minStep}`);
     /* A round dab's rim fades over AA + 0.5 px, measured at sizes 5-40. */
     check('anti-aliasing fades a round rim by its level',
-        JSON.stringify(sm.ramp) === '[0,1.5,2.5,3.5]', JSON.stringify(sm.ramp));
+        JSON.stringify(sm.ramp) === '[0.01,1.5,2.5,3.5]', JSON.stringify(sm.ramp));
+    /* Soft lines there sit 1 + 2 x softness further apart (a picture tip
+     * takes no hardness; a fixed interval stays put). */
+    check('auto spacing opens up as a round tip softens',
+        JSON.stringify(sm.softGap) === '[16,8,20]', JSON.stringify(sm.softGap));
+    check('a soft round tip keeps its greys with anti-aliasing off',
+        JSON.stringify(sm.softAliased) === '[false,true]', JSON.stringify(sm.softAliased));
+    /* G-pen is 5.1: six rows there, five when rounded to 5. */
+    check('a fractional size is kept', sm.fracSize === 5.1, `${sm.fracSize}`);
     /* Real G-Pen's picture at thickness 85 was a full-height line here. */
     check('a picture tip is squeezed by its thickness, the way the file says',
         JSON.stringify(sm.pic) === '[[1.18,0],[0.5,0]]', JSON.stringify(sm.pic));

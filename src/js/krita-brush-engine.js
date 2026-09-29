@@ -194,7 +194,7 @@
                                        shape.charAt(1) === 'l', shape.charAt(6) === 'a', phase);
         }
         if (shape === 'kmarker') return _kritaMarkerMask(size, phase);
-        if (shape.indexOf('cspaa') === 0) return _cspCircleMask(size, +shape.slice(5), phase);
+        if (shape.indexOf('cspaa') === 0) return _cspCircleMask(size, +shape.slice(5), phase, aspect, ang, _min(1, hardness / 100));
         if (shape.indexOf('rcurve') === 0) return _kritaCurveRectMask(size, aspect, ang, _tcNow, shape.charAt(6) === 'a', phase);
         if (shape.indexOf('ccurve') === 0) return _kritaCurveCircleMask(size, aspect, ang, _tcNow, shape.charAt(6) === 'a', phase);
         if (kc) return _kritaCircleMask(size, aspect, hardness / 100, phase,
@@ -357,13 +357,27 @@
      * straight line to nothing at the rim over `w` px (never past the
      * centre), sampled at pixel centres. Fitted to G-pen lines at every
      * AA level and sizes 5-40 (w = AA + 0.5), all within a grey level. */
-    function _cspCircleMask(size, w, phase) {
-        var r = size / 2, W = _ceil(size) + 3, canvas = new OffscreenCanvas(W, W), c = W / 2;
+    /* Softer than 100 (hard < 1), a raised cosine runs past the size: out
+     * to 1 + 0.414 x softness of the radius (root 2 at 0), from 1 - 1.245 x
+     * softness of that, and the same ramp still fades its new rim. Single
+     * dabs at hardness 0-80, sizes 6-200: within 3 grey levels and 3% of
+     * ink with anti-aliasing off, 7% with it on (level 2, the smallest). */
+    function _cspCircleMask(size, w, phase, aspect, ang, hard) {
+        // An oval (thickness) keeps the same ramp, measured in px to its rim.
+        var rx = size / 2, ry = size / aspect / 2;
+        if (aspect < 1) { rx = size * aspect / 2; ry = size / 2; }
+        var soft = 1 - hard, ro = 1 + (Math.SQRT2 - 1) * soft, ri = ro * (1 - 1.245 * soft);
+        var W = _ceil(size * ro) + 3, canvas = new OffscreenCanvas(W, W), c = W / 2;
         if (phase) { canvas._cx = _floor(c) + phase[0]; canvas._cy = _floor(c) + phase[1]; }
-        var cx = phase ? canvas._cx : c, cy = phase ? canvas._cy : c, k = 1 / _min(w, r);
+        var cx = phase ? canvas._cx : c, cy = phase ? canvas._cy : c, k = 1 / _min(w, rx * ro, ry * ro);
+        var ca = _cos(ang), sa = -_sin(ang), qx = 1 / (rx * rx), qy = 1 / (ry * ry);
         var ctx = canvas.getContext('2d'), img = ctx.createImageData(W, W), d = img.data;
         for (var j = 0; j < W; j++) for (var i = 0; i < W; i++) {
-            var a = (r - _hypot(i + 0.5 - cx, j + 0.5 - cy)) * k;
+            var x0 = i + 0.5 - cx, y0 = j + 0.5 - cy, x = ca * x0 - sa * y0, y = sa * x0 + ca * y0;
+            var n = Math.sqrt(x * x * qx + y * y * qy);
+            // (ro - n) over n's slope: px to the rim, r - d on a circle
+            var a = n ? _min(1, (ro - n) * n / _hypot(x * qx, y * qy) * k) : 1;
+            if (soft > 0) a *= 0.5 + 0.5 * _cos(_PI * _clamp((n - ri) / (ro - ri), 0, 1));
             if (a <= 0) continue;
             var o = (j * W + i) * 4;
             d[o] = d[o + 1] = d[o + 2] = 255; d[o + 3] = _round(_min(1, a) * 255);
@@ -3632,7 +3646,10 @@
             // a hard square keeps the plain box: it paints its pixel however small (EO Pixel Perfect)
             if (shape === 'square' && kf && (kf[1] || hardness < 100 || (_params.hardnessY != null && _params.hardnessY < 100)))
                 shape = (kf[1] ? 'kgrect' : 'klrect') + (kf[2] ? 'a' : '') + (_params.hardnessY != null ? ':' + _params.hardnessY : '');
-            if (shape === 'circle' && _params.edgeRamp && hardness >= 100 && (aspect || 1) === 1) shape = 'cspaa' + _params.edgeRamp;
+            if (shape === 'circle' && _params.edgeRamp) {
+                shape = 'cspaa' + _params.edgeRamp;
+                if ((aspect || 1) === 1) angleDeg = 0;   // a circle turned is the same circle: one cache entry
+            }
             if (shape === 'circle' && kf) {
                 shape = (kf[1] ? 'kgauss' : 'kcircle') + (kf[2] ? ':aa' : '');
                 sz = sz < 16 ? _max(0.05, sz) : _round(sz);   // its real size, see _kritaCircleMask

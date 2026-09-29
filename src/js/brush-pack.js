@@ -3607,7 +3607,7 @@
          * ponytail: that is the reference canvas's resolution (about 244
          * dpi); ours has none, so every mm brush takes that one. */
         var size = _sutNum(v.BrushSize, 20) * ({ 1: 96, 2: 9.6 }[_sutNum(v.BrushSizeUnit, 0)] || 1);
-        out.size = Math.max(1, Math.min(1000, Math.round(size)));
+        out.size = Math.max(1, Math.min(1000, Math.round(size * 10) / 10));
         out.shape = opts.hasTip ? 'custom' : 'circle';
         out.opacity = Math.max(1, Math.min(100, Math.round(_sutNum(v.Opacity, 100))));
         out.flow = Math.max(1, Math.min(100, Math.round(_sutNum(v.BrushFlow, 100))));
@@ -3627,6 +3627,11 @@
         var ivt = _sutNum(v.BrushAutoIntervalType, 0);
         out.spacing = ivt >= 1 && ivt <= 3 ? [12, 8, 4][ivt - 1]
             : Math.max(1, Math.min(400, Math.round(_sutNum(v.BrushInterval, 10))));
+        /* ...and those three open up as a round tip softens: 1 + 2 x its
+         * softness times as far (soft lines at hardness 0, 50 and 80, sizes
+         * 10-80, fit 3, 2 and 1.4 times). A fixed interval stays put. */
+        if (ivt >= 1 && ivt <= 3 && !opts.hasTip)
+            out.spacing = Math.round(out.spacing * (3 - 2 * Math.min(100, _sutNum(v.BrushHardness, 100)) / 100) * 10) / 10;
         /* "Adjust density by interval": each dab lays flow x spacing / 35.36
          * (25 root 2), never more than the flow -- round strokes at flow 50
          * and 10, spacing 5-40, all fit it within a percent of alpha. */
@@ -3925,12 +3930,14 @@
          * ponytail: Noise, whose soft tip keeps its greys there, is dithered
          * here; a thumbnail cannot tell its tip from a hatch's. */
         if (_sutNum(v.AntiAlias, 1) === 0 && !out.texture && !out.watercolor &&
-            !_sutNum(v.BrushChangePatternColor, 0)) out.aliased = true;
+            !_sutNum(v.BrushChangePatternColor, 0) &&
+            // a soft round tip keeps its greys: hardness 50 with it off or on, the same dab
+            (opts.hasTip || _sutNum(v.BrushHardness, 100) >= 100)) out.aliased = true;
         /* On, it fades a round dab's rim over AA + 0.5 px at every size (a
          * 20px G-pen line's edge 163/111/84 at levels 1/2/3): a 5px spray
          * speck at level 2 carries a third of a hard disc's ink. */
         var aa = _sutNum(v.AntiAlias, 1);
-        if (aa >= 1 && aa <= 3) out.edgeRamp = aa + 0.5;
+        if (aa >= 0 && aa <= 3) out.edgeRamp = aa ? aa + 0.5 : 0.01;
 
         return { name: name || 'Clip Studio brush', params: out, warnings: warn };
     };

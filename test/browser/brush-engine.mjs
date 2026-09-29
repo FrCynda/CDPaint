@@ -406,6 +406,28 @@ await withPage(async (page) => {
     check('...and a faint dab is thinned, not cut away',
         al.faint > 50 && al.faintMid === 0, JSON.stringify(al));
 
+    /* Clip Studio's round dab (edgeRamp): anti-aliasing fades the rim over
+     * that many px; soft, it runs out to root 2 of its size at hardness 0,
+     * 0.9 at its centre. Measured on single dabs in Clip Studio. */
+    const cr = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = __B.layer(), row = (s, h) => {
+            b.setParam('size', s); b.setParam('hardness', h);
+            L.ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+            const d = L.ctx.getImageData(0, 99, 200, 1).data, a = [];
+            for (let i = 3; i < d.length; i += 4) if (d[i]) a.push(d[i]);
+            return a;
+        };
+        b.forgetSaved('Round'); b.loadPreset('Round'); b.setParam('edgeRamp', 2.5);
+        const hard = row(20, 100), soft = row(40, 0);
+        b.setParam('edgeRamp', 0);
+        return JSON.stringify({ hard: [hard.length, hard[0]], soft: [soft.length, Math.max(...soft)] });
+    })()`));
+    check('Clip Studio anti-aliasing fades a round rim over its px',
+        cr.hard[0] === 20 && cr.hard[1] > 40 && cr.hard[1] < 65, JSON.stringify(cr));
+    check('...and a soft one runs past its size, root 2 at hardness 0',
+        cr.soft[0] >= 54 && cr.soft[0] <= 58 && cr.soft[1] > 215 && cr.soft[1] < 240, JSON.stringify(cr));
+
     /* Clip Studio's density of paint: each dab lands at density plus the
      * rest times the alpha under it, replacing what is there -- so on an
      * empty layer the line settles short of solid (Round mixing brush, 236
