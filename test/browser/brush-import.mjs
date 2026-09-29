@@ -1379,7 +1379,11 @@ await withPage(async (page) => {
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             paper: [1, 2, 4, 0].map(m => P({ TextureDensity: 50, TextureCompositeMode: m }, { hasTexture: true }).texture || 0),
             aliased: [P({ AntiAlias: 0 }).aliased, P({ AntiAlias: 1 }).aliased,
-                      P({ AntiAlias: 0, BrushUseWaterColor: 1, BrushMixColor: 80 }).aliased].map(Boolean) });
+                      P({ AntiAlias: 0, BrushUseWaterColor: 1, BrushMixColor: 80 }).aliased].map(Boolean),
+            mix: [P({ BrushUseWaterColor: 1, BrushMixColor: 80, BrushMixAlpha: 50, BrushMixColorExtension: 100 }),
+                  P({ BrushUseWaterColor: 1, BrushMixColor: 80, BrushMixAlpha: 100 }),
+                  P({ BrushWaterColor: 2, BrushMixColor: 30, BrushMixAlpha: 50 })]
+                .map(p => [p.mixAlpha ?? -1, p.mixStretch ?? -1, p.watercolor || 0]) });
     })()`).then(JSON.parse);
     console.log('  ' + JSON.stringify(sm));
     /* Clip Studio's tilt is how upright the pen stands, so a mouse reads 1;
@@ -1406,6 +1410,11 @@ await withPage(async (page) => {
      * (Gouache mixes, and stays grey there with it off). */
     check('a brush with no anti-aliasing paints hard pixels, a mixing one does not',
         JSON.stringify(sm.aliased) === '[true,false,false]', JSON.stringify(sm.aliased));
+    /* Density of paint and colour stretch, measured in Clip Studio; at
+     * full density its line is the plain one. The watercolour kind is
+     * unmeasured and keeps the wash. */
+    check('colour mixing brings its density of paint, the watercolour kind its wash',
+        JSON.stringify(sm.mix) === '[[50,100,0],[-1,-1,0],[-1,-1,1]]', JSON.stringify(sm.mix));
     check('the paper shows as strongly as its blend lets it',
         JSON.stringify(sm.paper) === '[50,100,3,0]', JSON.stringify(sm.paper));
     /* Clip Studio's pictures (Book, Building) stamp their own greys and

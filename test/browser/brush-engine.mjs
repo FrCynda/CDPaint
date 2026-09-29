@@ -406,6 +406,31 @@ await withPage(async (page) => {
     check('...and a faint dab is thinned, not cut away',
         al.faint > 50 && al.faintMid === 0, JSON.stringify(al));
 
+    /* Clip Studio's density of paint: each dab lands at density plus the
+     * rest times the alpha under it, replacing what is there -- so on an
+     * empty layer the line settles short of solid (Round mixing brush, 236
+     * there), and colour stretch makes it fade in. */
+    const mx = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = __B.layer();
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        b.setParam('size', 30); b.setParam('hardness', 100); b.setParam('spacing', 10);
+        const line = (stretch) => {
+            b.setParam('mixAlpha', 50); b.setParam('mixStretch', stretch);
+            L.ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(20, 100, 1, '#000000');
+            for (let i = 1; i <= 160; i++) b.moveStroke(20 + i, 100, 1, '#000000');
+            b.endStroke();
+            b.setParam('mixAlpha', null); b.setParam('mixStretch', 0);
+            const d = L.ctx.getImageData(0, 100, 200, 1).data;
+            return [d[25 * 4 + 3], d[150 * 4 + 3]];
+        };
+        return JSON.stringify({ flat: line(0), fade: line(100) });
+    })()`));
+    check('density of paint settles a line short of solid', mx.flat[1] > 190 && mx.flat[1] < 245,
+        JSON.stringify(mx));
+    check('...and colour stretch fades it in', mx.fade[0] < mx.fade[1] - 30 && mx.flat[0] > mx.fade[0] + 30,
+        JSON.stringify(mx));
+
     console.log('');
     console.log('== editing a brush redraws its own swatch ==');
     const sw2 = await page.eval(`(async () => {

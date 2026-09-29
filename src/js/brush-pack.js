@@ -3761,36 +3761,37 @@
             _sutNum(v.BrushWaterColor, 0)) {
             var mix = Math.max(0, Math.min(100, _sutNum(v.BrushMixColor, 0)));
             if (mix > 0) {
-                /* The mixing itself is NOT mapped onto our smudge, which is
-                 * what it looks like it should be. Measured against real Clip
-                 * Studio, not assumed: painting white over an existing stroke
-                 * there leaves that stroke untouched, so whatever mixing does
-                 * in Clip Studio it does not contaminate the colour a dab puts
-                 * down. Our smudge does exactly that -- it deposits
-                 * colorRate% brush plus the rest canvas -- so this brush's
-                 * mixing of 25 was darkening everything a white stroke crossed
-                 * and, on a fresh document, drinking the white background into
-                 * every dab (a fresh CDPaint document is opaque white PIXELS,
-                 * while in Clip Studio the white is a separate Paper layer the
-                 * mixing cannot read). Stacked strokes of #87CEEB lost about
-                 * a fifth of their coverage to it, and a white stroke over
-                 * them measurably darkened them.
-                 *
-                 * So the mixing is named as dropped rather than mapped to
-                 * something that demonstrably is not it. If it should come
-                 * back it needs its own measurement of what Clip Studio's
-                 * mixing actually does to a deposited colour, not this
-                 * substitution. */
+                /* Measured in Clip Studio (Round mixing brush): a white
+                 * stroke across a black one covers it and drags a little grey
+                 * on after, so a dab replaces what is under it and picks some
+                 * colour up. That pick-up (amount of paint) is not mapped:
+                 * our smudge deposits colorRate% brush plus the canvas, and
+                 * on a fresh CDPaint document -- opaque white PIXELS, where
+                 * Clip Studio's white is a Paper layer mixing cannot read --
+                 * it drank the white into every dab. Named as dropped. */
                 warn.push('dropped: the way it mixes with colour already on the canvas');
-                /* Marked so the engine lays a wash instead of ink: Clip
-                 * Studio watercolour deposits translucent pigment even at
-                 * high flow, and our full-strength dabs come out as marker.
-                 * Silent -- it is a faithful part of the mapping, not a drop.
-                 * Wet blend rides along: one stroke of watercolour must not
-                 * darken itself where it overlaps, so only new coverage lands
-                 * (W1). Silent for the same reason. */
-                out.watercolor = 1;
-                out.wetBlend = 1;
+                /* Density of paint (BrushMixAlpha) is the part that is
+                 * measured (Round mixing brush in Clip Studio, one setting at
+                 * a time): the engine's mixAlpha rule. At 100 Clip Studio's
+                 * line is the same solid line as with mixing off, so that
+                 * paints as a plain brush and keeps its paper grain. Only
+                 * for colour mixing (BrushUseWaterColor): the watercolour
+                 * kind (BrushWaterColor alone) is unmeasured and keeps the
+                 * wash -- given this rule, Rough wash fell near -> off. */
+                var ma = v.BrushMixAlpha == null || !(_sutNum(v.BrushUseWaterColor, 0) || _sutNum(v.BrushUseWaterColor2, 0))
+                    ? null : Math.max(0, Math.min(100, _sutNum(v.BrushMixAlpha, 100)));
+                if (ma != null) {
+                    if (ma < 100) {
+                        out.mixAlpha = ma;
+                        out.mixStretch = Math.max(0, Math.min(100, _sutNum(v.BrushMixColorExtension, 0)));
+                    }
+                } else {
+                    /* Older files carry no density; for those the wash stays:
+                     * translucent pigment even at high flow, and wet blend so
+                     * one stroke cannot darken itself where it overlaps (W1). */
+                    out.watercolor = 1;
+                    out.wetBlend = 1;
+                }
             }
         }
 

@@ -2871,7 +2871,7 @@
      *
      * Straight onto the layer, like the deform brush: each dab has to read
      * what the one before it left. */
-    var _smPrev = null;
+    var _smPrev = null, _smCar = null, _mixTex = null, _mixTexA = null;
     var _smMaskA = new WeakMap();
 
     /* Krita smudges on a precise copy of the layer kept for the whole stroke
@@ -2974,6 +2974,22 @@
         var mw = mask.width, mh = mask.height;
         var cx = mask._cx != null ? mask._cx : mw / 2, cy = mask._cy != null ? mask._cy : mh / 2;
         var ox = _round(x - cx), oy = _round(y - cy);
+        /* Clip Studio's paper grain thins what a mixing dab lays down, as it
+         * does a plain dab (_applyTextureNoise on a copy of the tip); the
+         * pick-up still reads the whole tip. Without it Dry Gouache's dry
+         * brush came out a solid bar, 1.28x Clip Studio's ink. */
+        var mt = null;
+        if (p.mixAlpha != null && tex > 0 && !p.textureMode) {
+            if (!_mixTex || _mixTex.width < mw || _mixTex.height < mh) _mixTex = new OffscreenCanvas(mw, mh);
+            var tc = _mixTex.getContext('2d', { willReadFrequently: true });
+            tc.clearRect(0, 0, mw, mh);
+            tc.drawImage(mask, 0, 0);
+            _applyTextureNoise(tc, mw, mh, tex, p.textureScale, p.textureType, ox, oy);
+            var td = tc.getImageData(0, 0, mw, mh).data;
+            if (!_mixTexA || _mixTexA.length < mw * mh) _mixTexA = new Uint8Array(mw * mh);
+            mt = _mixTexA;
+            for (var q2 = 0; q2 < mw * mh; q2++) mt[q2] = td[q2 * 4 + 3];
+        }
         /* Krita's own rect for this dab (KisDabCacheBase): its corner the
          * whole pixel under the cursor less half the tip, as wide as the tip
          * plus that phase, rounded up. Our tip canvases are padded, so the
@@ -2989,7 +3005,8 @@
             if (p.smudgeMerged && app.layerMgr && app.layerMgr.getFlattenedCanvas) {
                 try { _smPic = app.layerMgr.getFlattenedCanvas().getContext('2d').getImageData(0, 0, _docW(), _docH()).data; } catch (e0) { _smPic = null; }
             }
-            return;
+            if (p.mixAlpha == null) return;
+            prev = _smPrev;                 // Clip Studio's first dab paints
         }
         /* How far the pick-up moves: both ends rounded against the SAME
          * half size, so a 1.64px step alternates 1 and 2 as Krita's does.
@@ -3048,7 +3065,7 @@
          * and the opacity curve thins it as well: Basic_mix's own curves at
          * pressure 0.6..1 fit this and not the curved rate (smudge4/5/6,
          * mean error 6.1 -> 2.6 levels on smudge4). */
-        var sv = (p.smudgeRate == null ? 100 : p.smudgeRate) / 100;
+        var sv = (p.smudgeRate == null ? 100 : p.smudgeRate) / 100, mix = p.mixAlpha != null;
         c *= _max(0.2, 1 - sv) * op;
         var rgb = _hexToRgb(colorHex);
         var pr = rgb[0] * c, pg = rgb[1] * c, pb = rgb[2] * c, pa = 255 * c;
@@ -3060,8 +3077,35 @@
         var g = f;                          // where it picks up from: the layer, or the merged picture
         if (_smPic) { if (!_smS) _smS = new Map(); g = _smG = _smRead(d, rx, ry, rw, rh, _smS, _smG, _smPic); }
         var i, j, t, u, a, n;
+        /* Clip Studio's density of paint (BrushMixAlpha), measured on its own
+         * renders of Round mixing brush, one setting changed at a time: the
+         * paint lands at density + (1 - density) x the alpha the brush
+         * carries, replacing what is under it, and what it carries is the
+         * mean alpha under the dab before it lands. On an empty layer part
+         * of every dab is over nothing, so the line settles short of solid:
+         * density 20/50/80 at 192/236/250 in Clip Studio, and this rule
+         * predicts 193/236/250 from the 50 alone. Colour stretch
+         * (BrushMixColorExtension) is how long the load lasts: its fade-in
+         * halves over about 0.65 x the brush size at 100, linearly less
+         * below (size 50 at 100/80/50, size 20 at 100), none at 0. Amount of
+         * paint (BrushMixColor) did not move the alpha at all.
+         * ponytail: the paint keeps the brush's own colour; Clip Studio's
+         * colour pick-up (amount of paint) is unmeasured. */
+        if (mix) {
+            var ua = 0, uw = 0;
+            for (j = 0; j < mh; j++) for (i = 0; i < mw; i++) {
+                var mm = ma[j * mw + i], qx2 = ox + i - rx, qy2 = oy + j - ry;
+                if (!mm || qx2 < 0 || qy2 < 0 || qx2 >= rw || qy2 >= rh) continue;
+                ua += f[(qy2 * rw + qx2) * 4 + 3] * mm; uw += mm;
+            }
+            var ub = uw ? ua / uw / 255 : 0, hl = 0.65 * (sz || mw) * _clamp(p.mixStretch, 0, 100) / 100;
+            _smCar = _smCar == null || !(hl > 0) ? ub : ub + (_smCar - ub) * _pow(0.5, _hypot(x - prev[0], y - prev[1]) / hl);
+            var A = _clamp(p.mixAlpha, 0, 100) / 100;
+            c = A + (1 - A) * _smCar;    // opacity is in the dab's k0 already
+            pr = rgb[0] * c; pg = rgb[1] * c; pb = rgb[2] * c; pa = 255 * c;
+        }
         // What the brush picked up, premultiplied; off the canvas is transparent.
-        for (j = 0; j < mh; j++) {
+        for (j = 0; !mix && j < mh; j++) {
             for (i = 0; i < mw; i++) {
                 var gx = sx + i - rx, gy = sy + j - ry;
                 if (gx < 0 || gy < 0 || gx >= rw || gy >= rh) continue;
@@ -3112,6 +3156,7 @@
                 if (!nw) {          // legacy, premultiplied: lerp(dst, lerp(pickup, paint, c), s * tip)
                     k = k0 * m / 255;
                     B[0] = src[u] * ci + pr; B[1] = src[u + 1] * ci + pg; B[2] = src[u + 2] * ci + pb; B[3] = src[u + 3] * ci + pa;
+                    if (mt) { var gr = mt[j * mw + i] / m; B[0] *= gr; B[1] *= gr; B[2] *= gr; B[3] *= gr; }
                 } else {
                     k = m / 255;
                     var sa = p.smudgeSmearAlpha === false ? src[u + 3] / 255 * sO : 0;
@@ -3314,7 +3359,7 @@
                 _hatchD = sz; _hatchAsp = asp || 1;
                 _hatchSep = H.separation * Math.pow(2, Math.floor((iv - 1) / 2) - _clamp(Math.ceil(hv(H.sep) * iv) - 1, 0, iv - 1));
             }
-            if (p.smudgeMode != null) _smudgeDab(p, dx, dy, mask, finalColor, alpha, sc, sz, tex, asp);
+            if (p.smudgeMode != null || p.mixAlpha != null) _smudgeDab(p, dx, dy, mask, finalColor, alpha, sc, sz, tex, asp);
             else _paintDab(_flowCtx, dx, dy, mask, finalColor, alpha, tex, p.textureScale, p.textureType, p.wetBlend);
         }
     }
@@ -5127,6 +5172,8 @@
         smudgeNew: false,
         smudgeSample: 0,     // Krita's smudge radius, 0..3: how much of the last dab dulling averages    // Krita's new smudge engine (_smudgeDab)
         smudgeSmearAlpha: true,   // Krita's smudge rate switched off: smears at full strength
+        mixAlpha: null,      // Clip Studio's density of paint, 0..100; see _smudgeDab
+        mixStretch: 0,       // Clip Studio's colour stretch, 0..100
         hatch: null,         // Krita's hatching brush: see _applyHatch
         pixelSteps: false,   // GIMP's sub-pixel spacing: one dab per pixel; see _stepFor
         grid: null,          // Krita's grid brush: see _gridDab
@@ -5630,7 +5677,7 @@
             if (_params.hasOwnProperty(_fk)) _strokeParams[_fk] = _isArray(_params[_fk]) ? _cloneCurve(_params[_fk]) : _params[_fk];
         }
         _wet = [];                // the brush is loaded fresh each stroke
-        _smPrev = null; _smT = null; _smS = null; _smPic = null;
+        _smPrev = null; _smT = null; _smS = null; _smPic = null; _smCar = null;
         _wetPos = [];
         _smoothAngle = NaN;
         _lastDabDist = 0;
