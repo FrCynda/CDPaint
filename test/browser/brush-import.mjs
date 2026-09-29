@@ -1366,6 +1366,11 @@ await withPage(async (page) => {
             return new Uint8Array(b.buffer);
         };
         const tilt = P({ BrushSize: 20, BrushFlowEffector: eff(0x20, [[0, 0], [1, 1]]) });
+        // Chalk's paper: on each dab, subtracted, at a random 40-100% of 80.
+        const rnd = new DataView(new ArrayBuffer(48));
+        [48, 0xf0, 0x80, 0, 0, 0, 40, 0, 0, 0, 0, 0].forEach((x, i) => rnd.setUint32(i * 4, x));
+        const plot = P({ TextureDensity: 80, TextureCompositeMode: 2, TextureForPlot: 1, TextureScale2: 20,
+                         TextureDensityEffector: new Uint8Array(rnd.buffer) }, { hasTexture: true });
         const flat = P({ BrushSize: 20, BrushThickness: 30 });
         const mm = P({ BrushSize: 5, BrushSizeUnit: 2 });
         const spray = P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 10, BrushSprayDensity: 6 });
@@ -1377,6 +1382,7 @@ await withPage(async (page) => {
             spray: [spray.size, spray.scatter, spray.dabCount],
             ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc], ribbonNote,
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
+            plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
             paper: [1, 2, 4, 0].map(m => P({ TextureDensity: 50, TextureCompositeMode: m }, { hasTexture: true }).texture || 0),
             aliased: [P({ AntiAlias: 0 }).aliased, P({ AntiAlias: 1 }).aliased,
                       P({ AntiAlias: 0, BrushUseWaterColor: 1, BrushMixColor: 80 }).aliased].map(Boolean),
@@ -1415,6 +1421,8 @@ await withPage(async (page) => {
      * unmeasured and keeps the wash. */
     check('colour mixing brings its density of paint, the watercolour kind its wash',
         JSON.stringify(sm.mix) === '[[50,100,0],[-1,-1,0],[-1,-1,1]]', JSON.stringify(sm.mix));
+    check('paper on each dab keeps its blend, its scale and its own strength rule',
+        JSON.stringify(sm.plot) === '[80,2,"random",40,1.6]', JSON.stringify(sm.plot));
     check('the paper shows as strongly as its blend lets it',
         JSON.stringify(sm.paper) === '[50,100,3,0]', JSON.stringify(sm.paper));
     /* Clip Studio's pictures (Book, Building) stamp their own greys and

@@ -3700,8 +3700,14 @@
 
         if (opts.hasTexture) {
             var dens = _sutNum(v.TextureDensity, 0);
-            if (dens > 0) {
-                /* How much the paper shows depends on how it is blended,
+            var tm = Math.round(_sutNum(v.TextureCompositeMode, 1)), perDab = _sutNum(v.TextureForPlot, 0) && tm >= 0 && tm <= 7;
+            if (dens > 0 && perDab) {
+                /* Paper on each dab (TextureForPlot): the blend is Clip
+                 * Studio's own, measured dab by dab -- see _cspPaper. */
+                out.texture = Math.min(100, Math.round(dens));
+                out.textureBlend = tm;
+            } else if (dens > 0) {
+                /* Paper on the whole stroke. How much the paper shows depends on how it is blended,
                  * measured in Clip Studio on one plain dab with Pastel's
                  * paper at each mode: subtract (2) at half density matched
                  * multiply (1) pixel for pixel; 3 showed a sixth as much, 4
@@ -3712,6 +3718,13 @@
                 var tk = { 0: 0, 1: 1, 2: 2, 3: 0.17, 4: 0.05, 5: 0.05, 6: 0 }[_sutNum(v.TextureCompositeMode, 1)];
                 out.texture = Math.max(0, Math.min(100, Math.round(dens * (tk === undefined ? 1 : tk))));
                 if (!out.texture) delete out.texture;
+            }
+            if (dens > 0) {
+                /* Its strength has its own rule, dab by dab: Chalk's takes a
+                 * random 40-100% of it, which is why its grain barely shows
+                 * in Clip Studio's stroke (full paper: 225 -> 200 at the
+                 * core, Clip Studio 222). */
+                _sutDrive(out, 'texture', v.TextureDensityEffector, warn, 'its paper texture');
                 /* TextureScale2 is a PERCENTAGE of the paper's natural size,
                  * where 100 means "leave it alone" -- checked against Clip
                  * Studio's own stock tool database rather than guessed: of
@@ -3734,7 +3747,7 @@
                 /* The density, scale and paper picture come over; how Clip
                  * Studio blends and distorts that paper has no equivalent
                  * here, so each active modifier is named. */
-                if (_sutNum(v.TextureCompositeMode, 1) !== 1)
+                if (_sutNum(v.TextureCompositeMode, 1) !== 1 && !perDab)
                     warn.push('changed: how its paper texture blends');
                 if (_sutNum(v.TextureReverseDensity, 0))
                     warn.push('changed: paper texture reverse density');

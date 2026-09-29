@@ -431,6 +431,55 @@ await withPage(async (page) => {
     check('...and colour stretch fades it in', mx.fade[0] < mx.fade[1] - 30 && mx.flat[0] > mx.fade[0] + 30,
         JSON.stringify(mx));
 
+    /* Clip Studio's paper on each dab blends with the dab's alpha, flow
+     * and all: linear light (4) is solid at full flow and the bare paper
+     * at half (single dabs there). With the flow put on after the paper,
+     * half flow came out a flat half. On a mixing brush the paper is how
+     * fast a dab covers, so a line fills in flat (Gouache). */
+    const pp = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, L = __B.layer();
+        const sc = new OffscreenCanvas(64, 64), sx = sc.getContext('2d');
+        for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) {
+            sx.fillStyle = (x + y) & 1 ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.8)'; sx.fillRect(x, y, 1, 1);
+        }
+        const url = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); sc.convertToBlob().then(bl => fr.readAsDataURL(bl)); });
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        const set = () => {
+            b.setParam('size', 40); b.setParam('hardness', 100); b.setParam('spacing', 10);
+            b.setParam('texture', 100); b.setParam('textureScale', 1); b.setParam('textureBlend', 4);
+        };
+        set(); b.setParam('texturePattern', url);
+        await new Promise(r => setTimeout(r, 700));
+        b.loadPreset('Round'); set();
+        await new Promise(r => setTimeout(r, 800));
+        const levels = (y) => {
+            const d = L.ctx.getImageData(90, y - 5, 20, 10).data, v = new Set();
+            for (let i = 3; i < d.length; i += 4) v.add(d[i]);
+            return [...v].sort((p, q) => p - q);
+        };
+        const dab = (flow) => {
+            b.setParam('flow', flow); L.ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+            return levels(100);
+        };
+        const full = dab(100), half = dab(50);
+        b.setParam('flow', 100); b.setParam('textureBlend', 1); b.setParam('mixAlpha', 100);
+        L.ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(20, 100, 1, '#000000');
+        for (let i = 1; i <= 160; i++) b.moveStroke(20 + i, 100, 1, '#000000');
+        b.endStroke();
+        const mixed = levels(100);
+        b.setParam('mixAlpha', null); b.setParam('textureBlend', null); b.setParam('texture', 0);
+        b.setParam('texturePattern', null); b.forgetSaved('Round');
+        return JSON.stringify({ full, half, mixed });
+    })()`, { awaitPromise: true }));
+    check('Clip Studio paper: linear light is solid at full flow', pp.full.length === 1 && pp.full[0] === 255,
+        JSON.stringify(pp));
+    check('...and the bare paper at half flow', pp.half.length >= 2 && pp.half[0] < 100 && pp.half[pp.half.length - 1] > 180,
+        JSON.stringify(pp));
+    check('...and a mixing line fills its paper in flat', pp.mixed[0] > 240 && pp.mixed[pp.mixed.length - 1] - pp.mixed[0] <= 10,
+        JSON.stringify(pp));
+
     console.log('');
     console.log('== editing a brush redraws its own swatch ==');
     const sw2 = await page.eval(`(async () => {

@@ -1565,7 +1565,33 @@
      * one does not: presets are saved to localStorage with the old rounded
      * 2, so those read about 11% finer until re-imported. */
     var _TEX_GRAIN_SCALE = 1.83;
-    function _applyTextureNoise(ctx, w, h, textureLevel, textureScale, textureType, ox, oy) {
+    /* Clip Studio's paper on each dab, measured there one dab at a time
+     * (Dry Gouache's paper, a flat 200px tip, flow 100/75/50/25): with s the
+     * paper's alpha and a the dab's, each blend is a textbook one -- 0 is
+     * a x (s + 0.5), 1 multiply, 2 linear burn, 3 darken, 4 linear light,
+     * 5 hard light, 6 colour dodge, 7 colour burn -- and the density mixes
+     * it with the bare dab (checked at 50 on 1 and 4), except linear burn,
+     * where it scales the paper taken away. Linear light is
+     * why Pastel's soft tip lands as scattered specks and a full-flow dab
+     * shows no grain at all. */
+    function _cspPaper(m, a, s, d) {
+        if (m === 2) return _max(0, a - d * (1 - s));
+        return a + d * (_cspPaperFull(m, a, s) - a);
+    }
+    function _cspPaperFull(m, a, s) {
+        switch (m) {
+            case 0: return _min(1, a * (s + 0.5));
+            case 1: return a * s;
+            case 3: return _min(a, s);
+            case 4: return _clamp(2 * a + s - 1, 0, 1);
+            case 5: return a <= 0.5 ? 2 * a * s : 1 - 2 * (1 - a) * (1 - s);
+            case 6: return s >= 1 ? 1 : _min(1, a / (1 - s));
+            default: return a >= 1 ? 1 : s <= 0 ? 0 : _max(0, 1 - (1 - a) / s);
+        }
+    }
+    var _tileA = new WeakMap();
+
+    function _applyTextureNoise(ctx, w, h, textureLevel, textureScale, textureType, ox, oy, blend, flow) {
         if (textureLevel <= 0) return;
         var tile = _grainTile(textureType);
         /* textureScale is a dial calibrated against the 64px procedural
@@ -1586,6 +1612,28 @@
          * grain sits. Smoothing stays off so specks stay sharp; opaque RGB
          * tiles and generated grain keep the grey-tint path below. */
         var mask = _patIsMask.get(tile) === true;
+        if (blend != null && mask) {
+            var ta = _tileA.get(tile);
+            if (!ta) {
+                var tdat = tile.getContext('2d').getImageData(0, 0, tile.width, tile.height).data;
+                ta = new Uint8Array(tile.width * tile.height);
+                for (var k = 0; k < ta.length; k++) ta[k] = tdat[k * 4 + 3];
+                _tileA.set(tile, ta);
+            }
+            var tw = tile.width, th = tile.height, D = _min(1, textureLevel / 100);
+            var img = ctx.getImageData(0, 0, w, h), dd = img.data;
+            for (var j = 0; j < h; j++) {
+                var ty = ((_floor(((oy || 0) + j) / scale) % th) + th) % th;
+                for (var i = 0; i < w; i++) {
+                    var q = (j * w + i) * 4 + 3, a = dd[q] / 255 * (flow == null ? 1 : flow);
+                    if (!a) continue;
+                    var tx = ((_floor(((ox || 0) + i) / scale) % tw) + tw) % tw;
+                    dd[q] = _round(_clamp(_cspPaper(blend, a, ta[ty * tw + tx] / 255, D), 0, 1) * 255);
+                }
+            }
+            ctx.putImageData(img, 0, 0);
+            return true;    // flow is in the pixels now: draw at 1
+        }
         var alpha = mask ? (textureLevel / 100) : (textureLevel / 100) * 0.25;
         // The phase repeats over the tile's own size; a supplied pattern is
         // rarely the 64px the generated ones happen to be.
@@ -1880,7 +1928,10 @@
         if (_tp.textureMode && _applyKritaTexture(_scratchCtx, mw, mh, ox, oy, texture / 100, _tp)) {
             _tintMask = null;
         } else if (texture > 0 && !_tp.watercolor) {
-            _applyTextureNoise(_scratchCtx, mw, mh, texture, textureScale, textureType, ox, oy);
+            /* Clip Studio's paper modes are not linear in the dab's alpha
+             * (mode 4 at full strength shows no grain), so they see it with
+             * the flow already in. */
+            if (_applyTextureNoise(_scratchCtx, mw, mh, texture, textureScale, textureType, ox, oy, _tp.textureBlend, _clamp(alpha, 0, 1))) alpha = adFlow = 1;
             _tintMask = null;   // the scratch is no longer a plain tint
         }
 
@@ -2978,13 +3029,13 @@
          * does a plain dab (_applyTextureNoise on a copy of the tip); the
          * pick-up still reads the whole tip. Without it Dry Gouache's dry
          * brush came out a solid bar, 1.28x Clip Studio's ink. */
-        var mt = null;
+        var mt = null, mtr = false;
         if (p.mixAlpha != null && tex > 0 && !p.textureMode) {
             if (!_mixTex || _mixTex.width < mw || _mixTex.height < mh) _mixTex = new OffscreenCanvas(mw, mh);
             var tc = _mixTex.getContext('2d', { willReadFrequently: true });
             tc.clearRect(0, 0, mw, mh);
             tc.drawImage(mask, 0, 0);
-            _applyTextureNoise(tc, mw, mh, tex, p.textureScale, p.textureType, ox, oy);
+            var mtr = _applyTextureNoise(tc, mw, mh, tex, p.textureScale, p.textureType, ox, oy, p.textureBlend, _clamp(alpha, 0, 1));
             var td = tc.getImageData(0, 0, mw, mh).data;
             if (!_mixTexA || _mixTexA.length < mw * mh) _mixTexA = new Uint8Array(mw * mh);
             mt = _mixTexA;
@@ -3154,9 +3205,9 @@
                 if (stencil && !stencil[t + 3]) continue;
                 var k, ci = 1 - c, B = _smB;
                 if (!nw) {          // legacy, premultiplied: lerp(dst, lerp(pickup, paint, c), s * tip)
-                    k = k0 * m / 255;
+                    k = mtr ? k0 / _clamp(alpha, 0, 1) * mt[j * mw + i] / 255 : k0 * m / 255;
                     B[0] = src[u] * ci + pr; B[1] = src[u + 1] * ci + pg; B[2] = src[u + 2] * ci + pb; B[3] = src[u + 3] * ci + pa;
-                    if (mt) { var gr = mt[j * mw + i] / m; B[0] *= gr; B[1] *= gr; B[2] *= gr; B[3] *= gr; }
+                    if (mt && !mtr) { var gr = mt[j * mw + i] / m; B[0] *= gr; B[1] *= gr; B[2] *= gr; B[3] *= gr; }
                 } else {
                     k = m / 255;
                     var sa = p.smudgeSmearAlpha === false ? src[u + 3] / 255 * sO : 0;
@@ -5173,6 +5224,7 @@
         smudgeSample: 0,     // Krita's smudge radius, 0..3: how much of the last dab dulling averages    // Krita's new smudge engine (_smudgeDab)
         smudgeSmearAlpha: true,   // Krita's smudge rate switched off: smears at full strength
         mixAlpha: null,      // Clip Studio's density of paint, 0..100; see _smudgeDab
+        textureBlend: null,  // Clip Studio's paper blend on each dab, 0..7; see _cspPaper
         mixStretch: 0,       // Clip Studio's colour stretch, 0..100
         hatch: null,         // Krita's hatching brush: see _applyHatch
         pixelSteps: false,   // GIMP's sub-pixel spacing: one dab per pixel; see _stepFor
