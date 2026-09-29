@@ -3608,7 +3608,12 @@
         out.opacity = Math.max(1, Math.min(100, Math.round(_sutNum(v.Opacity, 100))));
         out.flow = Math.max(1, Math.min(100, Math.round(_sutNum(v.BrushFlow, 100))));
         out.hardness = Math.max(0, Math.min(100, Math.round(_sutNum(v.BrushHardness, 80))));
-        out.spacing = Math.max(1, Math.min(400, Math.round(_sutNum(v.BrushInterval, 10))));
+        /* Spacing mode 0 is Clip Studio's fixed interval; 1-3 (wide, normal,
+         * narrow) ignore it. Faint round strokes at sizes 20-200 measured
+         * 12, 8 and 4% of the size in those modes, whatever the interval. */
+        var ivt = _sutNum(v.BrushAutoIntervalType, 0);
+        out.spacing = ivt >= 1 && ivt <= 3 ? [12, 8, 4][ivt - 1]
+            : Math.max(1, Math.min(400, Math.round(_sutNum(v.BrushInterval, 10))));
 
         /* Thickness is how wide the tip stays, as a percentage; ours is how
          * many times longer than wide it is. 16% thick is a blade six times

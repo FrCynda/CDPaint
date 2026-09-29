@@ -1383,6 +1383,7 @@ await withPage(async (page) => {
             ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc], ribbonNote,
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
+            gap: [0, 1, 2, 3].map(m => P({ BrushInterval: 1, BrushAutoIntervalType: m }).spacing),
             paper: [1, 2, 4, 0].map(m => P({ TextureDensity: 50, TextureCompositeMode: m }, { hasTexture: true }).texture || 0),
             aliased: [P({ AntiAlias: 0 }).aliased, P({ AntiAlias: 1 }).aliased,
                       P({ AntiAlias: 0, BrushUseWaterColor: 1, BrushMixColor: 80 }).aliased].map(Boolean),
@@ -1423,6 +1424,11 @@ await withPage(async (page) => {
         JSON.stringify(sm.mix) === '[[50,100,0],[-1,-1,0],[-1,-1,1]]', JSON.stringify(sm.mix));
     check('paper on each dab keeps its blend, its scale and its own strength rule',
         JSON.stringify(sm.plot) === '[80,2,"random",40,1.6]', JSON.stringify(sm.plot));
+    /* Wide, normal and narrow spacing ignore the interval: faint strokes
+     * at sizes 20-200 in Clip Studio laid dabs 12, 8 and 4% apart; read
+     * as the interval, Oil paint (1 on narrow) packed four times too many. */
+    check('automatic spacing ignores the interval',
+        JSON.stringify(sm.gap) === '[1,12,8,4]', JSON.stringify(sm.gap));
     check('the paper shows as strongly as its blend lets it',
         JSON.stringify(sm.paper) === '[50,100,3,0]', JSON.stringify(sm.paper));
     /* Clip Studio's pictures (Book, Building) stamp their own greys and
