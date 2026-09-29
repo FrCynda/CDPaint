@@ -1149,7 +1149,7 @@ await withPage(async (page) => {
             colorRate: p.colorRate, smudgeLength: p.smudgeLength,
             smudgeRadius: p.smudgeRadius, watercolor: p.watercolor, wetBlend: p.wetBlend,
             flowSrc: p.flowSrc, flowCurve: p.flowCurve, flowMin: p.flowMin,
-            sizeSrc: p.sizeSrc, sizeCurve: p.sizeCurve, sizeMin: p.sizeMin,
+            sizeSrc: p.sizeSrc, sizeCurve: p.sizeCurve, sizeMin: p.sizeMin, sizeSensors: p.sizeSensors, speedMax: p.speedMax, scatterSensors: p.scatterSensors,
             tipCells: p.tipCells || 1, has2: !!p._tip2Url,
             tip2Depth: p.tip2Depth || 0, tip2Size: p.tip2Size || 0,
             tip2Spacing: p.tip2Spacing || 0, tip2Angle: p.tip2Angle || 0,
@@ -1162,9 +1162,10 @@ await withPage(async (page) => {
     check('a .sut installs', sut.r.brushes === 1 && sut.r.failed === 0, JSON.stringify(sut.r));
     check('the sub tool keeps its name', sut.name === 'Rough Scrape', `${sut.name}`);
     /* Clip Studio stores a real diameter, unlike Procreate, so the size is
-     * the brush's own and not the tip image's. */
+     * the brush's own and not the tip image's. This one sprays, so each
+     * dab is a particle of its spray size (14.1) over an 80px patch. */
     check('the size is the brush' + "'" + 's, not the tip image' + "'" + 's',
-        sut.size === 80 && sut.tipH === 96, JSON.stringify(sut));
+        sut.size === 14 && sut.tipH === 96, JSON.stringify(sut));
     /* Which material is which is settled by the catalogue path both the
      * material row and the brush's reference carry -- and the fixture
      * stores them in the wrong order on purpose, paper last, so a reader
@@ -1186,10 +1187,12 @@ await withPage(async (page) => {
         sut.aspectRatio === undefined &&
         (sut.r.lines || []).some(l => /kept the tip.s own shape/.test(l)),
         JSON.stringify(sut));
-    check('spray is pixels there and a share of the brush here',
-        sut.scatter === 18, `${sut.scatter}`);
-    check('a taper that is switched off stays off',
-        sut.taperStart === 30 && sut.taperEnd === 0, JSON.stringify(sut));
+    check('spray is a patch there and a spread of particles here',
+        sut.scatter === 286, `${sut.scatter}`);
+    /* Clip Studio's starting and ending is not our taper: real Clip Studio
+     * draws a mouse stroke of G-pen full width to both ends. */
+    check('its starting and ending never becomes our taper',
+        !sut.taperStart && !sut.taperEnd, JSON.stringify(sut));
     /* Deliberately NOT mapped onto our smudge, which is what it looks like it
      * should be: measured against real Clip Studio, a white stroke laid over
      * an existing one leaves that stroke untouched, so its mixing does not
@@ -1212,22 +1215,23 @@ await withPage(async (page) => {
     check('and the reach it gathered that colour over goes with it',
         sut.smudgeRadius === undefined, String(sut.smudgeRadius));
 
-    /* Clip Studio keeps the way a dial answers the pen in a blob of its own,
-     * and we read none of them until now: every .sut arrived as a flat
-     * stroke. The curve is the file's, points and all, not a straight line
-     * we substituted. */
+    /* Clip Studio keeps the way a dial answers the pen in a blob of its own:
+     * a 48-byte header (which inputs are on, each one's floor, each curve's
+     * length) and the curves. Our first reader took it for 44 bytes and
+     * never read one, so every .sut arrived as a flat stroke. The curve is
+     * the file's, points and all. */
     check('flow follows the pen, along the curve the file drew',
-        sut.flowSrc === 'pressure' && JSON.stringify(sut.flowCurve) ===
+        sut.flowSrc === 'pressure' && sut.flowMin === 0 && JSON.stringify(sut.flowCurve) ===
             JSON.stringify([[0, 0], [0.25, 0.6], [1, 1]]), JSON.stringify(sut.flowCurve));
-    /* Size is driven by two things at once there and one thing here, so the
-     * one we can name wins and the other is owned up to -- with the floor
-     * the file asks for, not zero. */
-    check('a dial driven by two things keeps the one we understand',
-        sut.sizeSrc === 'pressure' && sut.sizeMin === 10 &&
-        JSON.stringify(sut.sizeCurve) === JSON.stringify([[0, 0.2], [1, 1]]),
-        JSON.stringify([sut.sizeSrc, sut.sizeMin, sut.sizeCurve]));
-    check('a curve for an input we cannot name drives nothing',
-        !sut.scatterSrc, String(sut.scatterSrc));
+    /* Two inputs multiply, each curve lifted by its own floor; speed reads
+     * as ours does (0 standing still), so this spray gathers in as it speeds up. */
+    check('a dial driven by two things keeps both, each over its floor',
+        sut.scatterSrc === 'none' && JSON.stringify(sut.scatterSensors) === JSON.stringify([
+            { src: 'pressure', curve: [[0, 0.28], [1, 1]] },
+            { src: 'speed', curve: [[0, 1], [1, 0.5]] }]) && sut.speedMax === 4,
+        JSON.stringify([sut.scatterSrc, sut.scatterSensors, sut.speedMax]));
+    check('an input we cannot name drives nothing',
+        sut.sizeSrc === 'none' && !sut.sizeSensors, String(sut.sizeSrc));
     /* Colour change is a range either side of the colour there, and a
      * negative range is still a range. */
     check('its colour change becomes colour that wanders',
@@ -1238,8 +1242,7 @@ await withPage(async (page) => {
     check('and the per-stroke set it could not also have is named',
         /per-stroke colour shifting/.test(sutNotes), sutNotes);
     check('and the rules we could not place are counted, not swallowed',
-        /a rule that changes its size/.test(sutNotes) &&
-        /a rule that changes its spray/.test(sutNotes), sutNotes);
+        /an unknown rule that changes its spray/.test(sutNotes), sutNotes);
     check('a setting that is switched on is reported', /blur/.test(sutNotes), sutNotes);
     check('...and one that is off is not', !/ribbon/.test(sutNotes), sutNotes);
 
@@ -1288,7 +1291,7 @@ await withPage(async (page) => {
         await new Promise(r => setTimeout(r, 400));
         const one = async (depth) => {
             app.ctx.clearRect(0, 0, 300, 300);
-            br.setParam('tip2Depth', depth); br.setParam('size', 120);
+            br.setParam('tip2Depth', depth); br.setParam('size', 120); br.setParam('scatter', 0);
             // Two tip pictures, picked at random: pin the seed so the two
             // dabs differ only by the second tip.
             br._setStrokeSeed(7);
@@ -1347,6 +1350,73 @@ await withPage(async (page) => {
     check('a tip set to turn at random does turn, by the amount asked',
         sutLib.angleSrc === 'random' && sutLib.angleRange === 45,
         JSON.stringify([sutLib.angleSrc, sutLib.angleRange]));
+
+    /* The mappings measured against Clip Studio's own renders, one variant
+     * row each, straight through the reader. */
+    const sm = await page.eval(`(() => {
+        const P = (v, o) => BrushPack.sutToPreset(v, 'x', o || {}).params;
+        const W = (v, o) => BrushPack.sutToPreset(v, 'x', o || {}).warnings.join(' ');
+        // A 48-byte effector with one curve on the tilt input.
+        const eff = (mask, curve) => {
+            const b = new DataView(new ArrayBuffer(48 + 12 + curve.length * 16));
+            [48, 0xf0, mask, 0, 0, 0, 0, 0, 0, 12 + curve.length * 16, 0, 0]
+                .forEach((x, i) => b.setUint32(i * 4, x));
+            b.setUint32(48, 12); b.setUint32(52, curve.length); b.setUint32(56, 16);
+            curve.forEach((p, i) => { b.setFloat64(60 + i * 16, p[0]); b.setFloat64(68 + i * 16, p[1]); });
+            return new Uint8Array(b.buffer);
+        };
+        const tilt = P({ BrushSize: 20, BrushFlowEffector: eff(0x20, [[0, 0], [1, 1]]) });
+        const flat = P({ BrushSize: 20, BrushThickness: 30 });
+        const mm = P({ BrushSize: 5, BrushSizeUnit: 2 });
+        const spray = P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 10, BrushSprayDensity: 6 });
+        const rib = { BrushSize: 30, BrushRibbon: 1, BrushRotation: 0 };
+        const ribbon = P(rib, { hasTip: true, tipW: 30, tipH: 90 });
+        const ribbonNote = W(rib, { hasTip: true, tipW: 30, tipH: 90 });
+        return JSON.stringify({ tilt: [tilt.flowSrc, tilt.flowCurve],
+            flat: [flat.aspectRatio, flat.angle], mm: mm.size,
+            spray: [spray.size, spray.scatter, spray.dabCount],
+            ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc], ribbonNote,
+            cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
+            paper: [1, 2, 4, 0].map(m => P({ TextureDensity: 50, TextureCompositeMode: m }, { hasTexture: true }).texture || 0) });
+    })()`).then(JSON.parse);
+    console.log('  ' + JSON.stringify(sm));
+    /* Clip Studio's tilt is how upright the pen stands, so a mouse reads 1;
+     * read as our lean, Charcoal and Chalk painted nothing with a mouse. */
+    check('a tilt rule reads how upright the pen stands',
+        sm.tilt[0] === 'elevation', JSON.stringify(sm.tilt));
+    /* Thickness squeezes the width, so an unturned flat tip stands upright. */
+    check('a thin tip stands upright, its thickness kept exactly',
+        sm.flat[0] === 3.33 && sm.flat[1] === 90, JSON.stringify(sm.flat));
+    check('a size given in millimetres is converted to pixels', sm.mm === 48, `${sm.mm}`);
+    /* Spray: the size is the patch, the spray size is each particle. */
+    check('a spray paints particles over a patch of its size',
+        JSON.stringify(sm.spray) === '[10,500,6]', JSON.stringify(sm.spray));
+    /* A ribbon tiles its picture end to end, as wide as the brush. */
+    check('a ribbon lays its picture end to end along the stroke',
+        JSON.stringify(sm.ribbon) === '[90,100,270,"direction"]', JSON.stringify(sm.ribbon));
+    check('...and is no longer reported as dropped', !/ribbon/.test(sm.ribbonNote), sm.ribbonNote);
+    check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.random === '',
+        JSON.stringify([sm.cycle, sm.random]));
+    /* How much paper shows is the blend's doing: subtract at half density
+     * matched multiply at full, 4 barely showed and 0 not at all. Gouache
+     * (4 at 100) came out a speckled grey at full grain. */
+    check('the paper shows as strongly as its blend lets it',
+        JSON.stringify(sm.paper) === '[50,100,3,0]', JSON.stringify(sm.paper));
+    /* Clip Studio's pictures (Book, Building) stamp their own greys and
+     * whites; a tip with no solid white is ink, its greys only density
+     * (Crayon's grey blob paints solid black there). */
+    const shade = await page.eval(`(async () => {
+        const png = async (fill) => {
+            const c = new OffscreenCanvas(24, 16), x = c.getContext('2d'); // 16..24 left clear
+            x.fillStyle = '#000'; x.fillRect(0, 0, 8, 16);
+            x.fillStyle = fill; x.fillRect(8, 0, 8, 16);
+            return new Uint8Array(await (await c.convertToBlob()).arrayBuffer());
+        };
+        const mode = async (fill) => ((await BrushPack.tipStrip([await png(fill)], 'tip.png', { csp: true })).params || {}).tipMode || '';
+        return JSON.stringify([await mode('#fff'), await mode('#888'), await mode('#000')]);
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('a picture tip stamps its own whites, a grey or black one stays ink',
+        shade[0] === 'color' && shade[1] === '' && shade[2] === '', JSON.stringify(shade));
 
     /* The pack chooser. It lists what is in a pack before anything is
      * installed, then installs only what was ticked -- so the two halves

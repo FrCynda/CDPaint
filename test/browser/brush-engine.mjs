@@ -348,6 +348,33 @@ await withPage(async (page) => {
         so.freshNodes && so.samePixels,
         `freshNodes=${so.freshNodes} samePixels=${so.samePixels}`);
 
+    /* A swatch is a whole stroke drawn in one go, its samples a hair apart,
+     * and the pen-rate memory kept those gaps: the next stroke read as a
+     * blur, and a speed-thinned brush (Clip Studio's Milli pen) drew 6px
+     * where 10 were due. A clock that stands still has no speed. */
+    const spd = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = __B.layer(), clock = performance.now;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        b.setParam('size', 20); b.setParam('spacing', 10); b.setParam('smoothingMode', 'none');
+        b.setParam('sizeSrc', 'speed'); b.setParam('sizeMin', 0); b.setParam('sizeCurve', [[0, 1], [1, 0]]);
+        const line = () => {
+            L.ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(20, 100, 1, '#000000');
+            for (let i = 1; i <= 220; i++) b.moveStroke(20 + i * 0.7, 100, 1, '#000000');
+            b.endStroke();
+        };
+        performance.now = () => 0; line();          // the rate memory: all standing still
+        let t = 0; performance.now = () => (t += 0.05);
+        b.generatePreview('Round');                  // a tile drawn in a few ms
+        performance.now = () => 0; line();
+        performance.now = clock;
+        const d = L.ctx.getImageData(100, 0, 1, 200).data;
+        let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 127) n++;
+        return JSON.stringify({ tall: n });
+    })()`));
+    check('a swatch leaves no pen speed behind for the next stroke', spd.tall >= 18,
+        `a stroke with no speed drew ${spd.tall}px of a 20px brush`);
+
     console.log('');
     console.log('== editing a brush redraws its own swatch ==');
     const sw2 = await page.eval(`(async () => {

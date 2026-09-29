@@ -7,7 +7,7 @@
 // packVar: page expression holding the pack's bytes; packName its filename.
 // importExpr: page expression for any other import ({ ok, added: [name] }).
 // Imported presets are deleted again, so a long run never fills storage.
-export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true }) {
+export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false }) {
     return JSON.parse(await page.eval(`(async () => {
         const app = PaintApp, b = app.brush, W = ${W}, H = ${H};
         const imp = ${importExpr || `await b.importBrushPack(${packVar}, ${JSON.stringify(packName)},
@@ -59,6 +59,10 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         await new Promise(res => setTimeout(res, 250));
         b.distanceFrom = 0;
         const ours =L.ctx.getImageData(0, 0, W, H).data;
+        // A reference captured as ink on white (Clip Studio) scores darkness
+        // over white, so a stamp's own white parts are paper there too.
+        if (${onWhite}) for (let i = 0; i < W * H * 4; i += 4)
+            ours[i + 3] = Math.round(ours[i + 3] * (255 - Math.min(ours[i], ours[i + 1], ours[i + 2])) / 255);
         const params = JSON.parse(JSON.stringify(b.getParams(), (k, v) =>
             typeof v === 'string' && v.length > 80 ? v.slice(0, 40) + '...' : v));
         if (!${keep}) for (const n of imp.added) b.deleteUserPreset(n);

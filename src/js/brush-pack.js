@@ -1412,7 +1412,38 @@
             var w = Math.max(1, Math.round(cells[i].w * s)), h = Math.max(1, Math.round(cells[i].h * s));
             g.drawImage(src, i * ow + ((ow - w) >> 1), (oh - h) >> 1, w, h);
         }
-        return { url: out.toDataURL('image/png'), size: Math.max(cw, ch) };
+        return { url: out.toDataURL('image/png'), size: Math.max(cw, ch), w: cw, h: ch };
+    }
+
+    // A cell resized by k, smoothly (the canvas does the filtering).
+    function _scaleCell(c, k) {
+        var w = Math.max(1, Math.round(c.w * k)), h = Math.max(1, Math.round(c.h * k));
+        var out = document.createElement('canvas'); out.width = w; out.height = h;
+        var g = out.getContext('2d');
+        g.drawImage(_canvasFromAlpha(c), 0, 0, w, h);
+        var d = g.getImageData(0, 0, w, h).data, a = new Uint8ClampedArray(w * h), rgb = new Uint8ClampedArray(w * h * 3);
+        for (var i = 0; i < w * h; i++) {
+            a[i] = d[i * 4 + 3];
+            rgb[i * 3] = d[i * 4]; rgb[i * 3 + 1] = d[i * 4 + 1]; rgb[i * 3 + 2] = d[i * 4 + 2];
+        }
+        return { w: w, h: h, alpha: a, rgb: rgb, opaque: c.opaque };
+    }
+
+    /* A cell cut down to where it has any ink: Clip Studio lays a ribbon's
+     * picture end to end by its ink, not by the blank canvas round it. */
+    function _cropCell(c) {
+        var x0 = c.w, y0 = c.h, x1 = -1, y1 = -1, x, y;
+        for (y = 0; y < c.h; y++) for (x = 0; x < c.w; x++) {
+            if (c.alpha[y * c.w + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        }
+        if (x1 < 0) return c;
+        var w = x1 - x0 + 1, h = y1 - y0 + 1, a = new Uint8ClampedArray(w * h), rgb = new Uint8ClampedArray(w * h * 3);
+        for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+            var i = (y0 + y) * c.w + x0 + x, o = y * w + x;
+            a[o] = c.alpha[i];
+            rgb[o * 3] = c.rgb[i * 3]; rgb[o * 3 + 1] = c.rgb[i * 3 + 1]; rgb[o * 3 + 2] = c.rgb[i * 3 + 2];
+        }
+        return { w: w, h: h, alpha: a, rgb: rgb, opaque: c.opaque };
     }
 
     /* Turns whatever a pack calls a tip into one our engine can stamp.
@@ -1542,9 +1573,32 @@
 
         var many = Array.isArray(bytes) ? bytes : [bytes];
         return Promise.all(many.map(_decode)).then(function (cells) {
+            if (opts && opts.crop) {
+                /* ...and each picture spans the ribbon whole: Zipper's lone
+                 * tooth is as tall as its pair of halves. */
+                cells = cells.map(_cropCell);
+                var ac = opts.crop === 'h' ? 'h' : 'w', top = 0;
+                cells.forEach(function (c) { top = Math.max(top, c[ac]); });
+                cells = cells.map(function (c) { return c[ac] === top ? c : _scaleCell(c, top / c[ac]); });
+            }
             var st2 = _strip(cells);
-            return { url: st2.url, size: st2.size,
-                     cells: cells.length, pick: 'random', params: _paper(cells) };
+            /* Clip Studio's grey materials (Book, Building, Chain) are
+             * pictures: stamped with black they show their own greys and
+             * whites. A tip with no solid white is ink, its greys only how
+             * dense it is (Crayon's soft grey blob, painted solid black).
+             * ponytail: Clip Studio tints the greys between the main and
+             * sub colour; ours stamps them as they are, right for black. */
+            var shaded = opts && opts.csp && cells.some(function (c) {
+                var solid = 0, white = 0;
+                for (var q = 0; q < c.alpha.length; q++) {
+                    if (c.alpha[q] <= 127) continue;
+                    solid++;
+                    if (c.rgb[q * 3] + c.rgb[q * 3 + 1] + c.rgb[q * 3 + 2] > 600) white++;
+                }
+                return white > solid * 0.05;
+            });
+            return { url: st2.url, size: st2.size, w: st2.w, h: st2.h,
+                     cells: cells.length, pick: 'random', params: shaded ? { tipMode: 'color' } : _paper(cells) };
         });
     };
 
@@ -3426,75 +3480,98 @@
         return (typeof v === 'number' && isFinite(v)) ? v : dflt;
     }
 
-    /* A curve, as Clip Studio stores one.
+    /* How a dial answers the pen, as Clip Studio stores it ("effector").
      *
-     * The blob is a 44-byte header and then up to two records, whose byte
-     * lengths the header carries -- and that is the check that it parsed at
-     * all, since the header plus those two lengths has to come to the blob
-     * exactly. A record is [12][which input][16] and then its points, as
-     * pairs of big-endian doubles already between 0 and 1, which is the
-     * shape our own curves are in.
+     * Read off the 1,790 effectors in Clip Studio 5's own 106 brushes, every
+     * one of them this shape, and the input bits checked by importing edited
+     * copies into Clip Studio and painting with them:
      *
-     * Which number means which input is only half settled. Id 2 carries the
-     * straight 0,0 - 1,1 line on every dial Clip Studio drives from the pen
-     * by default, so 2 is pen pressure. The rest are named in the warnings
-     * rather than guessed at: a curve hung on the wrong sensor is a brush
-     * that behaves oddly, which is worse than a brush that says what it is
-     * missing. */
-    var SUT_INPUT = { 2: 'pressure' };
+     *   u32 48            header length
+     *   u32 0xf0/0x1f0    which inputs the dial offers
+     *   u32 mask          which are on: 0x10 pressure, 0x20 tilt, 0x40 speed,
+     *                     0x80 random (0x100 is offered, never seen on)
+     *   u32 x5            each input's floor, percent, in bit order
+     *   u32 len 0x10, u32 len 0x20, u32 (a speed setting), u32 len 0x40
+     *   then those curve records back to back: [12][point count][16] and the
+     *   points as big-endian double pairs. Random has no curve.
+     *
+     * An input drives the dial from its floor up: floor + (1 - floor) *
+     * curve(input), and the inputs multiply. Speed runs 0 at rest, as ours
+     * does; Milli pen's curve falls from 1 there to its floor, and
+     * a Milli pen stroke drawn slowly in Clip Studio came out 98% wide, at
+     * 0.73 px/ms 93% and at 2.6 px/ms 81%, against its 60% floor.
+     * Tilt is how upright the pen stands (our elevation), not how far it
+     * leans: Charcoal's flow curve is 0 at 0, and Clip Studio draws it at
+     * full ink with a mouse, which it holds upright. */
+    var SUT_BITS = [[0x10, 'pressure'], [0x20, 'elevation'], [0x40, 'speed'], [0x80, 'random']];
 
     function _sutEffector(blob) {
-        if (!blob || blob.length < 44) return null;
+        if (!blob || blob.length < 48) return null;
         var b = (blob instanceof Uint8Array) ? blob : new Uint8Array(blob);
         var r = _rd(b);
-        if (r.u32() !== 44) return null;
-        r.skip(8);                       // which family of dial, and its flags
-        var floor = r.i32();             // how far down a curve may pull it
-        r.skip(16);
-        var lens = [r.i32(), r.i32()];
-        if (lens[0] < 0 || lens[1] < 0) return null;
-        if (44 + lens[0] + lens[1] !== b.length) return null;
-
-        var out = { min: floor, curves: [] }, at = 44, i, j;
-        for (i = 0; i < 2; i++) {
-            if (lens[i] < 28) { at += lens[i]; continue; }
-            var c = _rd(b);
-            c.p = at;
-            if (c.u32() !== 12) return null;
-            var input = c.u32();
-            if (c.u32() !== 16) return null;
-            var pts = [];
-            for (j = 12; j + 16 <= lens[i]; j += 16) {
-                pts.push([Math.max(0, Math.min(1, c.f64())),
-                          Math.max(0, Math.min(1, c.f64()))]);
+        if (r.u32() !== 48) return null;
+        r.skip(4);
+        var mask = r.u32(), floors = [r.i32(), r.i32(), r.i32(), r.i32(), r.i32()];
+        var lens = [r.i32(), r.i32(), r.i32(), r.i32()];
+        var clen = { 0x10: lens[0], 0x20: lens[1], 0x40: lens[3] };
+        if (48 + lens[0] + lens[1] + lens[3] !== b.length) return null;
+        var at = 48, curves = {}, i, j;
+        for (i = 0; i < 3; i++) {
+            var bit = [0x10, 0x20, 0x40][i], len = clen[bit];
+            if (len >= 12) {
+                var c = _rd(b);
+                c.p = at;
+                if (c.u32() !== 12) return null;
+                var n = c.u32();
+                if (c.u32() !== 16 || 12 + n * 16 !== len) return null;
+                var pts = [];
+                for (j = 0; j < n; j++) {
+                    pts.push([Math.max(0, Math.min(1, c.f64())),
+                              Math.max(0, Math.min(1, c.f64()))]);
+                }
+                curves[bit] = pts;
             }
-            if (pts.length > 1) out.curves.push({ input: input, points: pts });
-            at += lens[i];
+            at += len;
         }
-        return out;
+        var inputs = [];
+        for (i = 0; i < SUT_BITS.length; i++) {
+            var bt = SUT_BITS[i][0];
+            if (!(mask & bt)) continue;
+            var curve = curves[bt] || [[0, 0], [1, 1]];
+            inputs.push({ src: SUT_BITS[i][1], floor: Math.max(0, Math.min(100, floors[i])), curve: curve });
+        }
+        return { inputs: inputs, unknown: !!(mask & ~0xf0) };
     }
 
-    /* One dial and the curves hung off it. Our engine drives a setting from
-     * one thing at a time, so the one we understand wins and the rest are
-     * counted into a warning. */
+    /* One dial. A single input keeps the editable Src/Min/Curve form (our
+     * floor-then-curve is Clip Studio's exactly); several become a list that
+     * multiplies, each curve with its own floor folded in. No input at all
+     * is written down as none, so the pressure default underneath does not
+     * reach a dial Clip Studio holds still. */
     function _sutDrive(out, key, blob, warn, what) {
         var e = _sutEffector(blob);
-        if (!e || !e.curves.length) return false;
-        var known = null, rest = 0, i;
-        for (i = 0; i < e.curves.length; i++) {
-            if (!known && SUT_INPUT[e.curves[i].input]) known = e.curves[i];
-            else rest++;
+        if (!e) return false;
+        if (e.unknown) warn.push('dropped: an unknown rule that changes ' + what + ' as you draw');
+        var ins = e.inputs;
+        if (!ins.length) { out[key + 'Src'] = 'none'; return true; }
+        if (ins.length === 1) {
+            out[key + 'Src'] = ins[0].src;
+            out[key + 'Curve'] = ins[0].curve;
+            out[key + 'Min'] = ins[0].floor;
+        } else {
+            out[key + 'Src'] = 'none';
+            out[key + 'Min'] = 0;
+            out[key + 'Combine'] = 0;
+            out[key + 'Sensors'] = ins.map(function (s) {
+                var f = s.floor / 100;
+                return { src: s.src, curve: s.curve.map(function (q) { return [q[0], f + (1 - f) * q[1]]; }) };
+            });
         }
-        if (known) {
-            out[key + 'Src'] = SUT_INPUT[known.input];
-            out[key + 'Curve'] = known.points;
-            out[key + 'Min'] = Math.max(0, Math.min(100, Math.round(e.min)));
-        }
-        if (rest) {
-            warn.push('dropped: ' + (rest === 1 ? 'a rule that changes ' :
-                                     rest + ' rules that change ') + what + ' as you draw');
-        }
-        return !!known;
+        /* ponytail: one linear scale for speed, fitted by eye to three
+         * strokes (0.09, 0.73, 2.6 px/ms read 0.95, 0.83, 0.53 on the curve);
+         * they do not sit on one line, so fast strokes are only roughly right. */
+        if (ins.some(function (s) { return s.src === 'speed'; })) out.speedMax = 4;
+        return true;
     }
 
     function _sutJitter(out, hue, sat, val) {
@@ -3521,7 +3598,11 @@
         opts = opts || {};
         var out = {}, warn = [];
 
-        var size = _sutNum(v.BrushSize, 20);
+        /* Size may be in centimetres (unit 1) or millimetres (2). Milli pen
+         * set to 1 of each painted 96px and 9.6px wide in Clip Studio.
+         * ponytail: that is the reference canvas's resolution (about 244
+         * dpi); ours has none, so every mm brush takes that one. */
+        var size = _sutNum(v.BrushSize, 20) * ({ 1: 96, 2: 9.6 }[_sutNum(v.BrushSizeUnit, 0)] || 1);
         out.size = Math.max(1, Math.min(1000, Math.round(size)));
         out.shape = opts.hasTip ? 'custom' : 'circle';
         out.opacity = Math.max(1, Math.min(100, Math.round(_sutNum(v.Opacity, 100))));
@@ -3541,12 +3622,15 @@
                  * Thickness stays a generated-tip setting only. */
                 warn.push('changed: kept the tip\u2019s own shape; thickness not applied');
             } else {
-                out.aspectRatio = Math.min(10, Math.max(1, Math.round(100 / thick)));
+                out.aspectRatio = Math.min(10, Math.max(1, Math.round(100 / thick * 100) / 100));
             }
         }
 
-        var rot = _sutNum(v.BrushRotation, 0);
-        if (rot) out.angle = Math.round(rot) % 360;
+        /* A thin tip stands upright there at 0 and lies flat here: Flat
+         * marker (thickness 30, turned 90) is 16px across a level stroke in
+         * Clip Studio, and was 50 here until turned the extra quarter. */
+        var rot = _sutNum(v.BrushRotation, 0) + (out.aspectRatio > 1 ? 90 : 0);
+        if (rot % 360) out.angle = Math.round(rot) % 360;
         /* The rotation dropdown is a mask of what is allowed to turn the
          * tip. Bits 1 and 2 are on in every brush in every file we have, so
          * they are structure rather than a setting. Bit 128 is random: the
@@ -3569,27 +3653,65 @@
             warn.push('dropped: the rule that turns its tip as you draw');
         }
 
-        /* Spray is a radius in pixels; scatter here is a percentage of the
-         * brush, so it only means anything next to the size. */
-        if (_sutNum(v.BrushUseSpray, 0) && size > 0) {
+        /* A spraying brush's size is the patch it sprays over and its spray
+         * size is each particle: Clip Studio's Spray (size 200, particles 5)
+         * is a haze of specks, and Wet blotting ink (size 30, particles 115)
+         * a band 139px tall -- 30 of patch plus a particle either side. Ours
+         * is the particle, scattered up to half the patch from the line. */
+        var spraying = _sutNum(v.BrushUseSpray, 0) && size > 0 && _sutNum(v.BrushSpraySize, 0) > 0;
+        if (spraying) {
             var spray = _sutNum(v.BrushSpraySize, 0);
-            if (spray > 0) {
-                out.scatter = Math.max(1, Math.min(400, Math.round(spray / size * 100)));
-            }
+            out.size = Math.max(1, Math.round(spray));
+            out.scatter = Math.max(1, Math.round(size / 2 / out.size * 100));
+            out.dabCount = Math.max(1, Math.min(16, Math.round(_sutNum(v.BrushSprayDensity, 1))));
         }
 
-        // In and out are a length and a percentage; the percentage is ours.
-        if (_sutNum(v.BrushUseIn, 0)) {
-            out.taperStart = Math.max(1, Math.min(100, Math.round(_sutNum(v.BrushInRatio, 30))));
+        /* A ribbon lays its picture end to end along the stroke, turned so
+         * the picture's width runs across it at the brush size (Zipper's
+         * teeth stand up off a level stroke; Chain, turned 90, lies along
+         * it), and cut to its ink first: Rough pen's picture is a hairline,
+         * and its ribbon a solid band the brush size high. Ours is the same
+         * stamp, following the stroke and spaced by its own length (100:
+         * the engine spaces a long tip by its extent along the stroke).
+         * ponytail: rigid stamps, so a ribbon round a bend shows seams, and
+         * a turn other than 0 or 90 is taken as the nearer of them. */
+        if (_sutNum(v.BrushRibbon, 0) && opts.hasTip && opts.tipW && opts.tipH) {
+            var rr = _sutNum(v.BrushRotation, 0), side = Math.round(rr / 90) % 2 !== 0;
+            var across = side ? opts.tipH : opts.tipW;
+            out.size = Math.max(1, Math.min(5000, Math.round(size * Math.max(opts.tipW, opts.tipH) / across)));
+            out.spacing = 100;
+            out.angle = ((Math.round(rr) - 90) % 360 + 360) % 360;
+            out.angleSrc = 'direction';
+            delete out.angleRange;
         }
-        if (_sutNum(v.BrushUseOut, 0)) {
-            out.taperEnd = Math.max(1, Math.min(100, Math.round(_sutNum(v.BrushOutRatio, 30))));
+        /* Several pictures: 0 takes them in turn (Zipper's teeth alternate),
+         * 3 at random (Book). */
+        if (_sutNum(v.BrushPatternOrderType, 3) === 0) out.tipPick = 'cycle';
+
+        /* Starting and ending is NOT a taper here. Real Clip Studio 5 draws
+         * a mouse stroke of G-pen, Calligraphy or Mapping pen (all UseIn/
+         * UseOut on) at full width to both ends, fast or slow; mapping it to
+         * our taper shrank them to a lens over 30% of the line each side.
+         * ponytail: what it does under a pen cannot be measured here (no pen
+         * input reaches a hidden desktop), so it is named, not guessed. */
+        if (_sutNum(v.BrushUseIn, 0) || _sutNum(v.BrushUseOut, 0)) {
+            warn.push('dropped: its pen taper at the start and end of a stroke');
         }
 
         if (opts.hasTexture) {
             var dens = _sutNum(v.TextureDensity, 0);
             if (dens > 0) {
-                out.texture = Math.max(1, Math.min(100, Math.round(dens)));
+                /* How much the paper shows depends on how it is blended,
+                 * measured in Clip Studio on one plain dab with Pastel's
+                 * paper at each mode: subtract (2) at half density matched
+                 * multiply (1) pixel for pixel; 3 showed a sixth as much, 4
+                 * and 5 a twentieth; 0 and 6 no grain at all (they darken
+                 * flat). ponytail: one strength per mode, measured at 80%
+                 * alpha; the compare-like modes surely read the dab's own
+                 * alpha, so a faint dab would show more grain. */
+                var tk = { 0: 0, 1: 1, 2: 2, 3: 0.17, 4: 0.05, 5: 0.05, 6: 0 }[_sutNum(v.TextureCompositeMode, 1)];
+                out.texture = Math.max(0, Math.min(100, Math.round(dens * (tk === undefined ? 1 : tk))));
+                if (!out.texture) delete out.texture;
                 /* TextureScale2 is a PERCENTAGE of the paper's natural size,
                  * where 100 means "leave it alone" -- checked against Clip
                  * Studio's own stock tool database rather than guessed: of
@@ -3695,13 +3817,18 @@
                 warn.push('changed: watercolour edge softness');
         }
 
-        _sutDrive(out, 'size', v.BrushSizeEffector, warn, 'its size');
-        if (!_sutDrive(out, 'flow', v.BrushFlowEffector, warn, 'its flow')) {
+        /* Nothing drives a dial unless its effector says so; our engine's
+         * own default is pressure. Opacity rides on flow when flow is still. */
+        out.sizeSrc = out.flowSrc = 'none';
+        /* ponytail: sprayed, the patch rides on scatter and the particle on
+         * size, and our scatter is a share of the size, so a pen driving
+         * both counts twice on the patch. */
+        _sutDrive(out, spraying ? 'scatter' : 'size', v.BrushSizeEffector, warn, 'its size');
+        _sutDrive(out, 'flow', v.BrushFlowEffector, warn, 'its flow');
+        if (out.flowSrc === 'none' && !out.flowSensors) {
             _sutDrive(out, 'flow', v.BrushOpacityEffector, warn, 'its opacity');
         }
-        if (out.scatter) {
-            _sutDrive(out, 'scatter', v.BrushSpraySizeEffector, warn, 'its spray');
-        }
+        if (spraying) _sutDrive(out, 'size', v.BrushSpraySizeEffector, warn, 'its spray');
 
         /* Colour that wanders. Clip Studio sets a range either side of the
          * colour -- hue in degrees, the other two as percentages -- and
@@ -3747,6 +3874,7 @@
         for (var i = 0; i < noted.length; i++) {
             if (noted[i][0] === 'BrushChangeStrokeColor' && out.colorJitterPer === 'stroke') continue;
             if (noted[i][0] === 'UseDualBrush' && opts.hasTip2) continue;
+            if (noted[i][0] === 'BrushRibbon' && opts.hasTip && opts.tipW && opts.tipH) continue;
             if (_sutNum(v[noted[i][0]], 0)) {
                 var msg = 'dropped: ' + noted[i][1];
                 if (warn.indexOf(msg) === -1) warn.push(msg);

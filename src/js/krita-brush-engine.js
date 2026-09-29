@@ -6744,6 +6744,11 @@
         // A tip that takes its shapes in turn would otherwise skip ahead by
         // however many dabs the tile drew.
         var savedCycle = _tipCycle;
+        // The pen's rate outlives a stroke; a tile drawn in one go has no
+        // rate, and its gaps of nothing read the next real stroke as a blur
+        // (Clip Studio's Milli pen, speed-thinned, drew 6px instead of 10).
+        var savedSpeed = [_smoothSpeed, _spLast, _spTime, _spDists, _spDts];
+        _spDists = [0]; _spDts = [];
         // _flowUsed says which part of the flow buffer to blank next
         // stroke. A preview drives the same painter over its own tiny
         // buffer, so leaving its bounds behind would blank a swatch-sized
@@ -6857,6 +6862,8 @@
             _mkCanvas = savedMk; _mkCtx = savedMkCtx;
             _flowUsed = savedFlowUsed;
             _tipCycle = savedCycle;
+            _smoothSpeed = savedSpeed[0]; _spLast = savedSpeed[1]; _spTime = savedSpeed[2];
+            _spDists = savedSpeed[3]; _spDts = savedSpeed[4];
             _bgCanvas = savedBg; _bgCtx = savedBgCtx;
         }
 
@@ -8063,7 +8070,7 @@
 
         var pr = pack.presets[0];
         var tipP = (pr.tips && pr.tips.length)
-            ? BrushPack.tipStrip(pr.tips, 'tip.png').catch(function () { return null; })
+            ? BrushPack.tipStrip(pr.tips, 'tip.png', { csp: true, crop: pr.variant.BrushRibbon ? (Math.round((pr.variant.BrushRotation || 0) / 90) % 2 ? 'h' : 'w') : false }).catch(function () { return null; })
             : Promise.resolve(null);
         var tip2P = pr.tip2
             ? BrushPack.tipStrip(pr.tip2, 'tip2.png').catch(function () { return null; })
@@ -8073,7 +8080,7 @@
             var tip = both[0], tip2 = both[1];
             var want = _packName(pr.name) || 'Clip Studio brush';
             var t = BrushPack.sutToPreset(pr.variant, want,
-                { hasTip: !!tip, hasTexture: !!pr.texture, hasTip2: !!tip2 });
+                { hasTip: !!tip, hasTexture: !!pr.texture, hasTip2: !!tip2, tipW: tip && tip.w, tipH: tip && tip.h });
             var ps = t.params;
             var skipped = [], notes = [];
             var warnings = (pack.warnings || []).concat(t.warnings);
@@ -8084,7 +8091,8 @@
                         _round(tip.url.length / 1024) + 'KB).' };
                 }
                 ps._tipUrl = _tipStash(tip.url);
-                if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = tip.pick; }
+                if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = ps.tipPick || tip.pick; }
+                if (tip.params && tip.params.tipMode) ps.tipMode = tip.params.tipMode;
             }
             if (tip2 && tip2.url.length <= TIP_CAP) ps._tip2Url = _tipStash(tip2.url);
             if (ps.texture > 0 && pr.texture) {
