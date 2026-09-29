@@ -11,7 +11,10 @@ A job is JSON:
                    "rects": [ [x, y, w, h, r, g, b, a], ... ],   (optional: blocks over the fill)
                    "xmlSub": [ [regex, replacement], ... ],            (optional)
                    "maxSize": 40,                  (optional: cap the preset's own size)
-                   "dumpXml": true } ],        (optional: <out>/<name>.xml)
+                   "dumpXml": true,             (optional: <out>/<name>.xml)
+                   "keepLayer": true,           (optional: paint on the previous render's layer)
+                   "alphaLock": true,           (optional: lock the layer's alpha first)
+                   "selection": [x, y, w, h, soft] } ],   (optional: soft ramps 0 -> 255 left to right)
   "listFile": "C:/.../presets.json" }          (optional: every loaded preset)
 xmlSub edits the preset's XML before painting (Preset.toXML/fromXML), to
 render a preset with one option switched off. The edit is in memory only:
@@ -23,7 +26,7 @@ p0 to p1 along it, the way a tablet sweep would. Each render goes on a fresh
 transparent layer and is written to <out>/<name>.png as straight RGBA.
 """
 import os, re, json, traceback
-from krita import Krita, Extension, ManagedColor, Preset
+from krita import Krita, Extension, ManagedColor, Preset, Selection
 from PyQt5.QtCore import QPoint, QPointF, QTimer, QByteArray
 from PyQt5.QtGui import QImage, QPainterPath
 
@@ -71,10 +74,23 @@ def _run():
             rgb = r.get("color", [0, 0, 0])
             c.setComponents([rgb[2] / 255, rgb[1] / 255, rgb[0] / 255, 1.0])  # Krita's U8 order is BGRA
             view.setForeGroundColor(c)
-            layer = doc.createNode(r["name"], "paintlayer")
-            root.addChildNode(layer, None)
+            if r.get("keepLayer"):
+                layer.setVisible(True)
+            else:
+                layer = doc.createNode(r["name"], "paintlayer")
+                root.addChildNode(layer, None)
             doc.setActiveNode(layer)
-            if r.get("fill"):   # [r, g, b, a]: the layer starts painted, for brushes that pick colour up
+            layer.setAlphaLocked(bool(r.get("alphaLock")))
+            if r.get("selection"):
+                sx, sy, sw, sh, soft = r["selection"]
+                sel = Selection()
+                if soft:
+                    for i in range(sw): sel.select(sx + i, sy, 1, sh, round(255 * i / (sw - 1)))
+                else:
+                    sel.select(sx, sy, sw, sh, 255)
+                doc.setSelection(sel)
+                doc.waitForDone()
+            if r.get("fill") and not r.get("keepLayer"):   # [r, g, b, a]: the layer starts painted, for brushes that pick colour up
                 f = r["fill"]
                 layer.setPixelData(QByteArray(bytes([f[2], f[1], f[0], f[3]]) * (W * H)), 0, 0, W, H)
             for x, y, w, h, cr, cg, cb, ca in r.get("rects", []):   # then painted blocks on top
@@ -91,6 +107,9 @@ def _run():
             data = bytes(layer.pixelData(0, 0, W, H))
             img = QImage(data, W, H, W * 4, QImage.Format_ARGB32)  # BGRA bytes = ARGB32 little-endian
             img.save(os.path.join(job["out"], r["name"] + ".png"))
+            if r.get("selection"):
+                k.action("deselect").trigger()
+                doc.waitForDone()
             layer.setVisible(False)
             meta[r["name"]] = {"preset": view.currentBrushPreset().name(), "size": view.brushSize(), "file": p.filename(),
                                "krita": k.version()}
