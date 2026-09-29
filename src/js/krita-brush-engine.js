@@ -1810,6 +1810,20 @@
         ctx.putImageData(img, x, y);
     }
 
+    function _applyAliased(ctx, x, y, w, h) {
+        var img;
+        try { img = ctx.getImageData(x, y, w, h); } catch (e) { return; }
+        var d = img.data, i = 3;
+        for (var yy = y; yy < y + h; yy++) {
+            for (var xx = x; xx < x + w; xx++, i += 4) {
+                var t = Math.imul(xx, 374761393) + Math.imul(yy, 668265263) | 0;
+                t = Math.imul(t ^ (t >>> 13), 1274126177);
+                d[i] = d[i] > 127 || d[i] > ((t ^ (t >>> 16)) & 255) ? 255 : 0;
+            }
+        }
+        ctx.putImageData(img, x, y);
+    }
+
     function _paintDab(destCtx, x, y, maskCanvas, colorHex, alpha, texture, textureScale, textureType, wetBlend) {
         var mw = maskCanvas.width;
         var mh = maskCanvas.height;
@@ -4014,6 +4028,24 @@
             _applyWatercolorWash(_washCtx, x, y, w, h, _WATERCOLOR_WASH * (_p.flow / 100));
             src = _washCanvas;
         }
+        /* No anti-aliasing (Clip Studio's off): each pixel is ink or paper.
+         * Over half is ink, which keeps Black soot's edge hard; under it a
+         * pixel inks at a chance of its coverage, so a hatch line or dot
+         * the thumbnail tip blurred to grey does not vanish (Light
+         * crosshatch's haze reads as scattered dots there, as in Clip
+         * Studio). The chance is fixed per canvas pixel, so a live stroke
+         * keeps its dots from one flush to the next.
+         * ponytail: over-inks thin hatching by up to a third; a real tip
+         * at full resolution would need no guessing. */
+        if (_p.aliased && _flowCanvas) {
+            _ensureWashCanvas(_flowCanvas.width, _flowCanvas.height);
+            if (src !== _washCanvas) {
+                _washCtx.clearRect(x, y, w, h);
+                _washCtx.drawImage(src, x, y, w, h, x, y, w, h);
+            }
+            _applyAliased(_washCtx, x, y, w, h);
+            src = _washCanvas;
+        }
 
         var blend = _blendOp(_p.blendMode);
         /* Watercolour restacks by multiplying, not by compositing over: laying
@@ -5131,6 +5163,7 @@
          * watercolour deposits translucent pigment rather than opaque
          * marker. Set by .sut imports alongside wetBlend; default off. */
         watercolor: 0,
+        aliased: false,   // Clip Studio's anti-aliasing off; see _applyAliased
         blendMode: 'normal',
         /* A second tip stamped through the first. `dualTip` below is NOT
          * this -- it is a canvas-anchored surface over the whole stroke --

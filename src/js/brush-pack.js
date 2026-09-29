@@ -3881,6 +3881,15 @@
             }
         }
 
+        /* Anti-aliasing off: every pixel ink or paper (Clip Studio draws the
+         * hatching tones, G-pen and Black soot so). Not where the greys are
+         * colour -- paper grain, mixing or a colour change leave Gouache,
+         * Pastel and the flowers grey there with it off too.
+         * ponytail: Noise, whose soft tip keeps its greys there, is dithered
+         * here; a thumbnail cannot tell its tip from a hatch's. */
+        if (_sutNum(v.AntiAlias, 1) === 0 && !out.texture && !out.watercolor &&
+            !_sutNum(v.BrushChangePatternColor, 0)) out.aliased = true;
+
         return { name: name || 'Clip Studio brush', params: out, warnings: warn };
     };
 

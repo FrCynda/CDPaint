@@ -375,6 +375,37 @@ await withPage(async (page) => {
     check('a swatch leaves no pen speed behind for the next stroke', spd.tall >= 18,
         `a stroke with no speed drew ${spd.tall}px of a 20px brush`);
 
+    /* No anti-aliasing: a soft brush lands as ink or paper only, and a
+     * faint one thins to scattered ink rather than vanishing. */
+    const al = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = __B.layer();
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        b.setParam('size', 30); b.setParam('hardness', 0); b.setParam('aliased', true);
+        L.ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(40, 100, 1, '#000000');
+        for (let i = 1; i <= 24; i++) b.moveStroke(40 + i * 5, 100, 1, '#000000');
+        b.endStroke();
+        b.setParam('aliased', false);
+        const d = L.ctx.getImageData(0, 0, 200, 200).data;
+        let mid = 0, ink = 0;
+        for (let i = 3; i < d.length; i += 4) {
+            if (d[i] > 0 && d[i] < 255) mid++;
+            if (d[i] === 255) ink++;
+        }
+        b.setParam('hardness', 100); b.setParam('flow', 25); b.setParam('aliased', true);
+        L.ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(40, 100, 1, '#000000'); b.endStroke();
+        b.setParam('aliased', false); b.setParam('flow', 100);
+        const f = L.ctx.getImageData(0, 0, 200, 200).data;
+        let faint = 0, faintMid = 0;
+        for (let i = 3; i < f.length; i += 4) { if (f[i] === 255) faint++; else if (f[i]) faintMid++; }
+        return JSON.stringify({ mid, ink, faint, faintMid });
+    })()`));
+    check('a brush with no anti-aliasing leaves no half-inked pixel', al.mid === 0 && al.ink > 500,
+        JSON.stringify(al));
+    check('...and a faint dab is thinned, not cut away',
+        al.faint > 50 && al.faintMid === 0, JSON.stringify(al));
+
     console.log('');
     console.log('== editing a brush redraws its own swatch ==');
     const sw2 = await page.eval(`(async () => {

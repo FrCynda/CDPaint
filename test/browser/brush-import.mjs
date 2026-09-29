@@ -1377,7 +1377,9 @@ await withPage(async (page) => {
             spray: [spray.size, spray.scatter, spray.dabCount],
             ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc], ribbonNote,
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
-            paper: [1, 2, 4, 0].map(m => P({ TextureDensity: 50, TextureCompositeMode: m }, { hasTexture: true }).texture || 0) });
+            paper: [1, 2, 4, 0].map(m => P({ TextureDensity: 50, TextureCompositeMode: m }, { hasTexture: true }).texture || 0),
+            aliased: [P({ AntiAlias: 0 }).aliased, P({ AntiAlias: 1 }).aliased,
+                      P({ AntiAlias: 0, BrushUseWaterColor: 1, BrushMixColor: 80 }).aliased].map(Boolean) });
     })()`).then(JSON.parse);
     console.log('  ' + JSON.stringify(sm));
     /* Clip Studio's tilt is how upright the pen stands, so a mouse reads 1;
@@ -1400,6 +1402,10 @@ await withPage(async (page) => {
     /* How much paper shows is the blend's doing: subtract at half density
      * matched multiply at full, 4 barely showed and 0 not at all. Gouache
      * (4 at 100) came out a speckled grey at full grain. */
+    /* Anti-aliasing off draws ink or paper -- unless the greys are colour
+     * (Gouache mixes, and stays grey there with it off). */
+    check('a brush with no anti-aliasing paints hard pixels, a mixing one does not',
+        JSON.stringify(sm.aliased) === '[true,false,false]', JSON.stringify(sm.aliased));
     check('the paper shows as strongly as its blend lets it',
         JSON.stringify(sm.paper) === '[50,100,3,0]', JSON.stringify(sm.paper));
     /* Clip Studio's pictures (Book, Building) stamp their own greys and
