@@ -3765,8 +3765,16 @@
          * modes do; any other mode is named rather than faked.
          *
          * DualSize is in the same unit as BrushSize, so against the brush
-         * it becomes the percentage our second tip is sized by. */
-        if (opts.hasTip2) {
+         * it becomes the percentage our second tip is sized by.
+         *
+         * Mode 0 lays the second brush over the first instead (Zipper's
+         * second row of teeth, Rose's leaves: Zipper paints 4715 ink with
+         * it off in Clip Studio, 7058 on). Carving with it cut Rose's
+         * flowers down to scraps (ink 0.014 of Clip Studio's; 0.16 left
+         * whole), so it is named, not carved.
+         * ponytail: a second brush of our own would paint the leaves. */
+        var laidOver = v.DualBrushCompositeMode === 0;
+        if (opts.hasTip2 && !laidOver) {
             var dsz = _sutNum(v.DualSize, 0);
             out.tip2Depth = Math.max(1, Math.min(100, Math.round(_sutNum(v.DualFlow, 100))));
             out.tip2Size = (dsz > 0 && size > 0)
@@ -3790,7 +3798,7 @@
         ];
         for (var i = 0; i < noted.length; i++) {
             if (noted[i][0] === 'BrushChangeStrokeColor' && out.colorJitterPer === 'stroke') continue;
-            if (noted[i][0] === 'UseDualBrush' && (opts.hasTip2 || opts.dualStacked)) continue;
+            if (noted[i][0] === 'UseDualBrush' && ((opts.hasTip2 && !laidOver) || opts.dualStacked)) continue;
             if (noted[i][0] === 'BrushRibbon' && opts.hasTip && opts.tipW && opts.tipH) continue;
             if (_sutNum(v[noted[i][0]], 0)) {
                 var msg = 'dropped: ' + noted[i][1];

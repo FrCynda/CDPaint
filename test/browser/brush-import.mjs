@@ -1401,6 +1401,8 @@ await withPage(async (page) => {
                  P(Object.assign({ BrushChangePatternColor: 0 }, cj)).valJitter || 0,
                  P(Object.assign({ BrushChangeColorTarget: 2 }, cj)).valJitter || 0,
                  W(Object.assign({ BrushChangeColorTarget: 2 }, cj))],
+            dual: [0, 2].map(m => [P({ BrushSize: 100, UseDualBrush: 1, DualBrushCompositeMode: m, DualSize: 76 }, { hasTip2: true }).tip2Depth || 0,
+                                   /second brush tip/.test(W({ BrushSize: 100, UseDualBrush: 1, DualBrushCompositeMode: m, DualSize: 76 }, { hasTip2: true }))]),
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
             erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
@@ -1466,6 +1468,10 @@ await withPage(async (page) => {
      * same settings flat; target 2 changes only the sub colour. */
     check('a Clip Studio colour change keeps which way it goes and how far',
         JSON.stringify(sm.cj.slice(0, 2)) === '[[[-1,1],[-1,0],[1,1]],[15,50,100]]', JSON.stringify(sm.cj));
+    /* Mode 0 lays Clip Studio's second brush over the first (Rose's leaves,
+     * Zipper's second row); carving with it cut Rose's flowers to scraps. */
+    check('a second brush laid over the first is named, not carved with',
+        JSON.stringify(sm.dual) === '[[0,true],[100,false]]', JSON.stringify(sm.dual));
     check('...switched off it paints flat, and on the sub colour only it is named',
         sm.cj[2] === 0 && sm.cj[3] === 0 && /sub colour/.test(sm.cj[4]), JSON.stringify(sm.cj));
     check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.random === '',
