@@ -5283,6 +5283,7 @@
         grid: null,          // Krita's grid brush: see _gridDab
         particle: null,      // Krita's particle brush: see _paintParticle
         hairy: null,         // Krita's hairy brush: see _paintHairy
+        mypaint: null,       // a MyPaint brush's own settings: see _paintMyPaint
         smudgeRate: 100,
         smudgeRateSrc: 'none', smudgeRateMin: 0, smudgeRateCurve: 1,
         smudgeRadius: 100,
@@ -5797,7 +5798,8 @@
             _state.paintRaf = null;
         }
         _state.isDrawing = true;
-        _state.strokePoints = [{ x: x, y: y, pressure: pressure || 0.5, color: color, dist: 0 }];
+        _state.strokePoints = [{ x: x, y: y, pressure: pressure || 0.5, color: color, dist: 0, t: performance.now() }];
+        _mpS = null;
         _state.lastColor = color;
         _state.lastProcessedIdx = 0;
         _state.started = false;
@@ -5919,7 +5921,7 @@
         var pts = _state.strokePoints;
         var prevPt = pts.length > 0 ? pts[pts.length - 1] : null;
         var dist = prevPt ? (prevPt.dist || 0) + _hypot(x - prevPt.x, y - prevPt.y) : 0;
-        pts.push({ x: x, y: y, pressure: pressure || 0.5, color: color, dist: dist });
+        pts.push({ x: x, y: y, pressure: pressure || 0.5, color: color, dist: dist, t: performance.now() });
         _state.lastColor = color;
         // Track bounding box incrementally so endStroke doesn't need to
         // scan all points for the background-restore region.
@@ -6600,6 +6602,608 @@
         }
     }
 
+    /* ── MyPaint ─────────────────────────────────────────────────────────
+     * libmypaint 1.6.1 (ISC licence, (C) 2007-2011 Martin Renold and
+     * contributors), the version Krita ships, ported whole: a .myb is not a
+     * tip and a few dials but a small simulation -- forty-odd settings, each
+     * the sum of a base and curves over eighteen inputs, re-evaluated at every
+     * dab -- so the only faithful way to paint one is to run it. This is the
+     * legacy surface path (mypaint_brush_stroke_to), the one Krita drives:
+     * no spectral paint mixing, no posterize. The surface is libmypaint's
+     * too: 64px tiles of 15-bit premultiplied RGBA, loaded from the layer as
+     * a stroke first touches them and written back as they change.
+     *
+     * ponytail: the selection and the layer's alpha lock do not clip it yet
+     * (the brush's own lock_alpha does work). */
+    var MP_SET = 'opaque opaque_multiply opaque_linearize radius_logarithmic hardness anti_aliasing dabs_per_basic_radius dabs_per_actual_radius dabs_per_second radius_by_random speed1_slowness speed2_slowness speed1_gamma speed2_gamma offset_by_random offset_by_speed offset_by_speed_slowness slow_tracking slow_tracking_per_dab tracking_noise color_h color_s color_v restore_color change_color_h change_color_l change_color_hsl_s change_color_v change_color_hsv_s smudge smudge_length smudge_radius_log eraser stroke_threshold stroke_duration_logarithmic stroke_holdtime custom_input custom_input_slowness elliptical_dab_ratio elliptical_dab_angle direction_filter lock_alpha colorize snap_to_pixel pressure_gain_log gridmap_scale gridmap_scale_x gridmap_scale_y smudge_length_log smudge_bucket smudge_transparency offset_y offset_x offset_angle offset_angle_asc offset_angle_view offset_angle_2 offset_angle_2_asc offset_angle_2_view offset_angle_adj offset_multiplier posterize posterize_num paint_mode'.split(' ');
+    var MP_DEF = [1,0,0.9,2,0.8,1,0,2,0,0,0.04,0.8,4,4,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0.5,0,0,0,4,0,0,0,1,90,2,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.05,1];
+    var MP_IN = 'pressure speed1 speed2 random stroke direction tilt_declination tilt_ascension custom direction_angle attack_angle tilt_declinationx tilt_declinationy gridmap_x gridmap_y viewzoom barrel_rotation brush_radius'.split(' ');
+    var MPS = {}, MPI = {};
+    MP_SET.forEach(function (n, i) { MPS[n] = i; });
+    MP_IN.forEach(function (n, i) { MPI[n] = i; });
+    var MP_T = 64, MP_ONE = 32768, MP_RMIN = 0.2, MP_RMAX = 1000, MP_GRID = 256;
+
+    /* Knuth's ran_array at MyPaint's reduced quality (KK 10, LL 7), seeded
+     * as every new brush is (1000): the same seed and the same dabs draw the
+     * same random numbers as libmypaint. */
+    function _mpRng(seed) {
+        var KK = 10, LL = 7, TT = 7, Q = 19, ranU = new Float64Array(KK), buf = new Float64Array(Q), ptr = -1;
+        var ms = function (x, y) { var s = x + y; return s - (s | 0); };
+        function arr(aa, n) {
+            var i, j;
+            for (j = 0; j < KK; j++) aa[j] = ranU[j];
+            for (; j < n; j++) aa[j] = ms(aa[j - KK], aa[j - LL]);
+            for (i = 0; i < LL; i++, j++) ranU[i] = ms(aa[j - KK], aa[j - LL]);
+            for (; i < KK; i++, j++) ranU[i] = ms(aa[j - KK], ranU[i - LL]);
+        }
+        var u = new Float64Array(KK + KK - 1), ulp = Math.pow(2, -52), ss = 2 * ulp * ((seed & 0x3fffffff) + 2), j, t, s;
+        for (j = 0; j < KK; j++) { u[j] = ss; ss += ss; if (ss >= 1) ss -= 1 - 2 * ulp; }
+        u[1] += ulp;
+        for (s = seed & 0x3fffffff, t = TT - 1; t;) {
+            for (j = KK - 1; j > 0; j--) { u[j + j] = u[j]; u[j + j - 1] = 0; }
+            for (j = KK + KK - 2; j >= KK; j--) {
+                u[j - (KK - LL)] = ms(u[j - (KK - LL)], u[j]);
+                u[j - KK] = ms(u[j - KK], u[j]);
+            }
+            if (s & 1) {
+                for (j = KK; j > 0; j--) u[j] = u[j - 1];
+                u[0] = u[KK];
+                u[LL] = ms(u[LL], u[KK]);
+            }
+            if (s) s >>= 1; else t--;
+        }
+        for (j = 0; j < LL; j++) ranU[j + KK - LL] = u[j];
+        for (; j < KK; j++) ranU[j - LL] = u[j];
+        for (j = 0; j < 10; j++) arr(u, KK + KK - 1);
+        return function () {
+            if (ptr >= 0 && buf[ptr] >= 0) return buf[ptr++];
+            arr(buf, Q); buf[KK] = -1; ptr = 1;
+            return buf[0];
+        };
+    }
+    /* libmypaint keeps its state in floats: a position creeping up on 50 from
+     * below lands on it there and stays a hair short here, a row up for a
+     * snapped 1px brush (experimental/1pixel). */
+    var _f32 = Math.fround;
+    function _mpGauss(r) { return _f32((r() + r() + r() + r()) * 1.73205080757 - 3.46410161514); }
+    function _mpMod(a, n) { return a - n * _floor(a / n); }
+    function _mpAngDiff(a, b) {
+        var d = _mpMod(b - a + 180, 360) - 180;
+        return d + (d > 180 ? -360 : d < -180 ? 360 : 0);
+    }
+    function _mpDecay(T, t) { return T <= 0.001 ? 0 : Math.exp(-t / T); }
+    function _mpFmod(a, n) { return a % n; }   // C fmodf: keeps the dividend's sign
+    function _mpRgbHsv(c) {
+        var r = _clamp(c[0], 0, 1), g = _clamp(c[1], 0, 1), b = _clamp(c[2], 0, 1), h = 0, s = 0;
+        var mx = _max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+        if (d > 0.0001) {
+            s = d / mx;
+            if (r === mx) { h = (g - b) / d; if (h < 0) h += 6; }
+            else if (g === mx) h = 2 + (b - r) / d;
+            else h = 4 + (r - g) / d;
+            h /= 6;
+        }
+        c[0] = h; c[1] = s; c[2] = mx;
+    }
+    function _mpHsvRgb(c) {
+        var h = c[0] - _floor(c[0]), s = _clamp(c[1], 0, 1), v = _clamp(c[2], 0, 1);
+        if (s === 0) { c[0] = c[1] = c[2] = v; return; }
+        var hue = h === 1 ? 0 : h * 6, i = hue | 0, f = hue - i,
+            w = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f));
+        var o = [[v, t, w], [q, v, w], [w, v, t], [w, q, v], [t, w, v], [v, w, q]][i] || [0, 0, 0];
+        c[0] = o[0]; c[1] = o[1]; c[2] = o[2];
+    }
+    function _mpRgbHsl(c) {
+        var r = _clamp(c[0], 0, 1), g = _clamp(c[1], 0, 1), b = _clamp(c[2], 0, 1), h = 0, s = 0;
+        var mx = _max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+        if (mx !== mn) {
+            s = l <= 0.5 ? (mx - mn) / (mx + mn) : (mx - mn) / (2 - mx - mn);
+            var d = mx - mn || 1;
+            h = r === mx ? (g - b) / d : g === mx ? 2 + (b - r) / d : 4 + (r - g) / d;
+            h /= 6; if (h < 0) h += 1;
+        }
+        c[0] = h; c[1] = s; c[2] = l;
+    }
+    function _mpHslV(n1, n2, hue) {
+        if (hue > 6) hue -= 6; else if (hue < 0) hue += 6;
+        return hue < 1 ? n1 + (n2 - n1) * hue : hue < 3 ? n2 : hue < 4 ? n1 + (n2 - n1) * (4 - hue) : n1;
+    }
+    function _mpHslRgb(c) {
+        var h = c[0] - _floor(c[0]), s = _clamp(c[1], 0, 1), l = _clamp(c[2], 0, 1);
+        if (s === 0) { c[0] = c[1] = c[2] = l; return; }
+        var m2 = l <= 0.5 ? l * (1 + s) : l + s - l * s, m1 = 2 * l - m2;
+        c[0] = _mpHslV(m1, m2, h * 6 + 2); c[1] = _mpHslV(m1, m2, h * 6); c[2] = _mpHslV(m1, m2, h * 6 - 2);
+    }
+
+    /* A brush from a .myb's settings ({ name: { base, inputs: { input:
+     * [[x, y], ...] } } }), over libmypaint's defaults as Krita loads it
+     * (mypaint_brush_from_defaults, then the file): a setting the file leaves
+     * out keeps its default, and so does an input curve it does not list. */
+    function _mpNewBrush(set) {
+        var n = MP_SET.length, b = {
+            base: new Float32Array(MP_DEF), maps: new Array(n), val: new Float32Array(n),   // floats, as in libmypaint
+            inputs: new Float32Array(MP_IN.length), rng: _mpRng(1000), random: 0, reset: true,
+            skip: 0, skipX: 0, skipY: 0, skipDt: 0, gam: [0, 0], m: [0, 0], q: [0, 0], st: null, bucket: new Float64Array(9)
+        };
+        b.maps[MPS.opaque_multiply] = [{ i: MPI.pressure, xs: [0, 1], ys: [0, 1] }];
+        for (var k in set) {
+            if (!set.hasOwnProperty(k) || MPS[k] == null) continue;
+            var si = MPS[k], rec = set[k] || {};
+            if (isFinite(rec.base)) b.base[si] = +rec.base;
+            var ins = rec.inputs || {};
+            for (var nm in ins) {
+                if (!ins.hasOwnProperty(nm) || MPI[nm] == null) continue;
+                var pts = ins[nm] || [], list = (b.maps[si] || []).filter(function (e) { return e.i !== MPI[nm]; });
+                if (pts.length >= 2) list.push({ i: MPI[nm], xs: Float32Array.from(pts, function (p) { return +p[0]; }), ys: Float32Array.from(pts, function (p) { return +p[1]; }) });
+                list.sort(function (a, c) { return a.i - c.i; });
+                b.maps[si] = list.length ? list : null;
+            }
+        }
+        _mpSpeedMap(b);
+        _mpReset(b);
+        return b;
+    }
+    function _mpSpeedMap(b) {
+        for (var i = 0; i < 2; i++) {
+            var g = Math.exp(b.base[i ? MPS.speed2_gamma : MPS.speed1_gamma]), m = 0.015 * (45 + g);
+            b.gam[i] = g; b.m[i] = m; b.q[i] = 0.5 - m * Math.log(45 + g);
+        }
+    }
+    function _mpReset(b) {
+        b.skip = b.skipX = b.skipY = b.skipDt = 0;
+        b.st = { x: 0, y: 0, pressure: 0, partial: 0, radius: 0, ax: 0, ay: 0, ndx: 0, ndy: 0, sp1: 0, sp2: 0,
+            stroke: 0, started: 0, custom: 0, ratio: 0, angle: 0, ddx: 0, ddy: 0, decl: 0, asc: 0, zoom: 0, rot: 0,
+            adx: 0, ady: 0, flip: -1, gx: 0, gy: 0, declx: 0, decly: 0, dpbr: 0, dpar: 0, dps: 0, barrel: 0 };
+        b.bucket.fill(0);
+    }
+    function _mpConst(b, si) { return !b.maps[si]; }
+
+    function _mpUpdate(b, ddab, dx, dy, dp, ddecl, dasc, dt, zoom, vrot, ddeclx, ddecly, dbarrel) {
+        var st = b.st, V = b.val, B = b.base, I = b.inputs;
+        if (dt <= 0) dt = 0.001;
+        st.x = _f32(st.x + dx); st.y = _f32(st.y + dy); st.pressure += dp;
+        st.dpbr = V[MPS.dabs_per_basic_radius]; st.dpar = V[MPS.dabs_per_actual_radius]; st.dps = V[MPS.dabs_per_second];
+        st.decl += ddecl; st.asc += dasc; st.declx += ddeclx; st.decly += ddecly;
+        st.zoom = zoom;
+        var rot = _mpMod(vrot * 180 / Math.PI + 180, 360) - 180;
+        st.rot = rot;
+        var scale = Math.exp(V[MPS.gridmap_scale]), ssz = scale * MP_GRID;
+        st.gx = _mpMod(Math.abs(st.ax * V[MPS.gridmap_scale_x]), ssz) / ssz * MP_GRID;
+        st.gy = _mpMod(Math.abs(st.ay * V[MPS.gridmap_scale_y]), ssz) / ssz * MP_GRID;
+        if (st.ax < 0) st.gx = MP_GRID - st.gx;
+        if (st.ay < 0) st.gy = MP_GRID - st.gy;
+        var baseR = Math.exp(B[MPS.radius_logarithmic]);
+        st.barrel += dbarrel;
+        if (st.pressure <= 0) st.pressure = 0;
+        var pr = st.pressure, thr = B[MPS.stroke_threshold];
+        if (!st.started && pr > thr + 0.0001) { st.started = 1; st.stroke = 0; }
+        else if (st.started && pr <= thr * 0.9 + 0.0001) st.started = 0;
+        var ndx = dx / dt * st.zoom, ndy = dy / dt * st.zoom, nsp = _hypot(ndx, ndy),
+            ndist = _hypot(dx / dt / baseR, dy / dt / baseR) * dt;
+        I[MPI.pressure] = pr * Math.exp(B[MPS.pressure_gain_log]);
+        I[MPI.speed1] = Math.log(b.gam[0] + st.sp1) * b.m[0] + b.q[0];
+        I[MPI.speed2] = Math.log(b.gam[1] + st.sp2) * b.m[1] + b.q[1];
+        I[MPI.random] = b.random;
+        I[MPI.stroke] = Math.min(st.stroke, 1);
+        var da = Math.atan2(st.ddy, st.ddx) * 180 / Math.PI;
+        I[MPI.direction] = _mpMod(da + rot + 180, 180);
+        var da360 = Math.atan2(st.ady, st.adx) * 180 / Math.PI;
+        I[MPI.direction_angle] = _mpFmod(da360 + rot + 360, 360);
+        I[MPI.tilt_declination] = st.decl;
+        I[MPI.tilt_ascension] = _mpMod(st.asc + rot + 180, 360) - 180;
+        I[MPI.viewzoom] = B[MPS.radius_logarithmic] - Math.log(baseR / st.zoom);
+        I[MPI.attack_angle] = _mpAngDiff(st.asc, _mpMod(da360 + 90, 360));
+        I[MPI.brush_radius] = B[MPS.radius_logarithmic];
+        I[MPI.gridmap_x] = _clamp(st.gx, 0, MP_GRID);
+        I[MPI.gridmap_y] = _clamp(st.gy, 0, MP_GRID);
+        I[MPI.tilt_declinationx] = st.declx;
+        I[MPI.tilt_declinationy] = st.decly;
+        I[MPI.custom] = st.custom;
+        I[MPI.barrel_rotation] = _mpMod(st.barrel, 360);
+        for (var i = 0; i < V.length; i++) {
+            var r = B[i], mp = b.maps[i];
+            if (mp) {
+                for (var e = 0; e < mp.length; e++) {
+                    var xs = mp[e].xs, ys = mp[e].ys, x = I[mp[e].i],
+                        x0 = xs[0], y0 = ys[0], x1 = xs[1], y1 = ys[1];
+                    for (var k = 2; k < xs.length && x > x1; k++) { x0 = x1; y0 = y1; x1 = xs[k]; y1 = ys[k]; }
+                    r += (x0 === x1 || y0 === y1) ? y0 : (y1 * (x - x0) + y0 * (x1 - x)) / (x1 - x0);
+                }
+            }
+            V[i] = r;
+        }
+        var f = 1 - _mpDecay(V[MPS.slow_tracking_per_dab], ddab);
+        st.ax = _f32(st.ax + (st.x - st.ax) * f); st.ay = _f32(st.ay + (st.y - st.ay) * f);
+        f = 1 - _mpDecay(V[MPS.speed1_slowness], dt); st.sp1 += (nsp - st.sp1) * f;
+        f = 1 - _mpDecay(V[MPS.speed2_slowness], dt); st.sp2 += (nsp - st.sp2) * f;
+        var tc = _max(0.002, Math.exp(V[MPS.offset_by_speed_slowness] * 0.01) - 1);
+        f = 1 - _mpDecay(tc, dt); st.ndx += (ndx - st.ndx) * f; st.ndy += (ndy - st.ndy) * f;
+        var ex = dx * st.zoom, ey = dy * st.zoom;
+        f = 1 - _mpDecay(Math.exp(V[MPS.direction_filter] * 0.5) - 1, _hypot(ex, ey));
+        var ox = st.ddx, oy = st.ddy;
+        st.adx += (ex - st.adx) * f; st.ady += (ey - st.ady) * f;
+        if ((ox - ex) * (ox - ex) + (oy - ey) * (oy - ey) > (ox + ex) * (ox + ex) + (oy + ey) * (oy + ey)) { ex = -ex; ey = -ey; }
+        st.ddx += (ex - st.ddx) * f; st.ddy += (ey - st.ddy) * f;
+        f = 1 - _mpDecay(V[MPS.custom_input_slowness], 0.1);
+        st.custom += (V[MPS.custom_input] - st.custom) * f;
+        var fr = Math.exp(-V[MPS.stroke_duration_logarithmic]), sk = _max(0, st.stroke + ndist * fr),
+            wrap = 1 + _max(0, V[MPS.stroke_holdtime]);
+        st.stroke = (sk >= wrap && wrap > 10.9) ? 1 : sk >= wrap ? _mpFmod(sk, wrap) : sk;
+        st.radius = _clamp(Math.exp(V[MPS.radius_logarithmic]), MP_RMIN, MP_RMAX);
+        st.ratio = V[MPS.elliptical_dab_ratio];
+        st.angle = _mpMod(V[MPS.elliptical_dab_angle] - rot + 180, 180) - 180;
+        for (var sk2 in st) st[sk2] = _f32(st[sk2]);
+    }
+
+    function _mpOffsets(b, baseR, flip) {
+        var V = b.val, st = b.st, mult = Math.exp(V[MPS.offset_multiplier]);
+        if (!isFinite(mult)) return [0, 0];
+        var dx = V[MPS.offset_x], dy = V[MPS.offset_y], adj = V[MPS.offset_angle_adj], R = Math.PI / 180,
+            deg = _mpFmod(Math.atan2(st.ady, st.adx) / R - 90, 360), rot = st.rot, a, v;
+        if ((v = V[MPS.offset_angle])) { a = (deg + adj) * R; dx += Math.cos(a) * v; dy += Math.sin(a) * v; }
+        if ((v = V[MPS.offset_angle_asc])) { a = (st.asc - rot + adj) * R; dx += Math.cos(a) * v; dy += Math.sin(a) * v; }
+        if ((v = V[MPS.offset_angle_view])) { a = (rot + adj) * R; dx += Math.cos(-a) * v; dy += Math.sin(-a) * v; }
+        if ((v = _max(0, V[MPS.offset_angle_2]))) { a = (deg + adj * flip) * R; dx += Math.cos(a) * v * flip; dy += Math.sin(a) * v * flip; }
+        if ((v = _max(0, V[MPS.offset_angle_2_asc]))) { a = (st.asc - rot + adj * flip) * R; dx += Math.cos(a) * v * flip; dy += Math.sin(a) * v * flip; }
+        if ((v = _max(0, V[MPS.offset_angle_2_view]))) { a = (rot + adj) * R; dx += Math.cos(-a) * v * flip; dy += Math.sin(-a) * v * flip; }
+        var bm = baseR * mult;
+        return [_clamp(dx * bm, -3240, 3240), _clamp(dy * bm, -3240, 3240)];
+    }
+
+    function _mpDab(b, sf) {
+        var V = b.val, B = b.base, st = b.st;
+        var opaque = _clamp(_max(0, V[MPS.opaque]) * V[MPS.opaque_multiply], 0, 1), lin = B[MPS.opaque_linearize];
+        if (lin) {
+            var dpp = (B[MPS.dabs_per_actual_radius] + B[MPS.dabs_per_basic_radius]) * 2;
+            if (dpp < 1) dpp = 1;
+            dpp = 1 + lin * (dpp - 1);
+            opaque = 1 - Math.pow(1 - opaque, 1 / dpp);
+        }
+        var x = st.ax, y = st.ay, baseR = Math.exp(B[MPS.radius_logarithmic]);
+        var off = _mpOffsets(b, baseR, st.flip);
+        x += off[0]; y += off[1];
+        var obs = V[MPS.offset_by_speed];
+        if (obs) { x += st.ndx * obs * 0.1 / st.zoom; y += st.ndy * obs * 0.1 / st.zoom; }
+        var obr = V[MPS.offset_by_random];
+        if (obr) { var amp = _max(0, obr); x += _mpGauss(b.rng) * amp * baseR; y += _mpGauss(b.rng) * amp * baseR; }
+        var radius = st.radius, rbr = V[MPS.radius_by_random];
+        if (rbr) {
+            radius = _clamp(Math.exp(V[MPS.radius_logarithmic] + _mpGauss(b.rng) * rbr), MP_RMIN, MP_RMAX);
+            var ac = (st.radius / radius) * (st.radius / radius);
+            if (ac <= 1) opaque *= ac;
+        }
+        var c = [B[MPS.color_h], B[MPS.color_s], B[MPS.color_v]];
+        _mpHsvRgb(c);
+        var bk = b.bucket, sl = V[MPS.smudge_length];
+        if (sl < 1 && (V[MPS.smudge] !== 0 || !_mpConst(b, MPS.smudge))) {
+            var uf = _max(0.01, sl), rec = bk[8] * uf, sr, sg, sb, sa;
+            bk[8] = rec;
+            if (rec < Math.min(1, Math.pow(0.5 * uf, V[MPS.smudge_length_log]) + 1e-16)) {
+                if (rec === 0) uf = 0;
+                bk[8] = 1;
+                var got = _mpGetColor(sf, Math.round(x), Math.round(y),
+                    _clamp(radius * Math.exp(V[MPS.smudge_radius_log]), MP_RMIN, MP_RMAX));
+                sr = got[0]; sg = got[1]; sb = got[2]; sa = got[3];
+                var lim = V[MPS.smudge_transparency];
+                if ((lim > 0 && sa < lim) || (lim < 0 && sa > -lim)) return false;
+                bk[4] = sr; bk[5] = sg; bk[6] = sb; bk[7] = sa;
+            } else { sr = bk[4]; sg = bk[5]; sb = bk[6]; sa = bk[7]; }
+            var fo = uf, fn = (1 - uf) * sa;
+            bk[0] = fo * bk[0] + fn * sr; bk[1] = fo * bk[1] + fn * sg; bk[2] = fo * bk[2] + fn * sb;
+            bk[3] = _clamp(fo * bk[3] + fn, 0, 1);
+        }
+        var eta = 1, sm = V[MPS.smudge];
+        if (sm > 0) {
+            var sf2 = Math.min(1, sm);
+            eta = _clamp(1 - sf2 + sf2 * bk[3], 0, 1);
+            if (eta > 0) for (var q = 0; q < 3; q++) c[q] = (sf2 * bk[q] + (1 - sf2) * c[q]) / eta;
+            else { c[0] = 1; c[1] = 0; c[2] = 0; }
+        }
+        if (V[MPS.eraser]) eta *= 1 - V[MPS.eraser];
+        var hsv = V[MPS.change_color_h] || V[MPS.change_color_hsv_s] || V[MPS.change_color_v],
+            hsl = V[MPS.change_color_l] || V[MPS.change_color_hsl_s];
+        if (hsv) {
+            _mpRgbHsv(c);
+            c[0] += V[MPS.change_color_h]; c[1] += c[1] * c[2] * V[MPS.change_color_hsv_s]; c[2] += V[MPS.change_color_v];
+            _mpHsvRgb(c);
+        }
+        if (hsl) {
+            _mpRgbHsl(c);
+            c[2] += V[MPS.change_color_l];
+            c[1] += c[1] * Math.min(Math.abs(1 - c[2]), Math.abs(c[2])) * 2 * V[MPS.change_color_hsl_s];
+            _mpHslRgb(c);
+        }
+        var hard = _clamp(V[MPS.hardness], 0, 1), fade = radius * (1 - hard), minF = V[MPS.anti_aliasing];
+        if (fade < minF) {
+            var optR = radius - (1 - hard) * radius / 2;
+            hard = (optR - minF / 2) / (optR + minF / 2);
+            radius = minF / (1 - hard);
+        }
+        var snap = V[MPS.snap_to_pixel];
+        if (snap > 0) {
+            x += (_floor(x) + 0.5 - x) * snap; y += (_floor(y) + 0.5 - y) * snap;
+            var srad = _max(0.5, Math.round(radius * 2) / 2);
+            if (snap > 0.9999) srad -= 0.0001;
+            radius += (srad - radius) * snap;
+        }
+        return _mpDrawDab(sf, x, y, radius, c[0], c[1], c[2], opaque, hard, eta,
+            st.ratio, st.angle, V[MPS.lock_alpha], V[MPS.colorize]);
+    }
+
+    function _mpDabCount(b, x, y, dt) {
+        var st = b.st, B = b.base, baseR = _clamp(Math.exp(B[MPS.radius_logarithmic]), MP_RMIN, MP_RMAX);
+        if (st.radius === 0) st.radius = baseR;
+        var dx = x - st.x, dy = y - st.y, dist;
+        if (st.ratio > 1) {
+            var a = st.angle * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a),
+                yr = (dy * cs - dx * sn) * st.ratio, xr = dy * sn + dx * cs;
+            dist = Math.sqrt(yr * yr + xr * xr);
+        } else dist = _hypot(dx, dy);
+        dist = _f32(dist);
+        return _f32(dist / st.radius * B[MPS.dabs_per_actual_radius] + dist / baseR * B[MPS.dabs_per_basic_radius] + dt * B[MPS.dabs_per_second]);
+    }
+
+    // One pen event: libmypaint's stroke_to, dtime in seconds.
+    function _mpStrokeTo(b, sf, x, y, pressure, dtime) {
+        var st = b.st, B = b.base;
+        var tAsc = 0, tDecl = 90, tDx = 90, tDy = 90;
+        if (pressure <= 0) pressure = 0;
+        if (dtime <= 0) dtime = 0.0001;
+        if (dtime > 0.1 && pressure && st.pressure === 0) {
+            /* libmypaint passes 90 as xtilt here, clamped to 1: a pen tilted
+             * flat for that one event. Kept, since it is what it paints. */
+            _mpStrokeToTilt(b, sf, x, y, 0, 1, 0, dtime - 0.0001);
+            dtime = 0.0001;
+        }
+        return _mpStrokeToTilt(b, sf, x, y, pressure, 0, 0, dtime, tAsc, tDecl, tDx, tDy);
+    }
+    function _mpStrokeToTilt(b, sf, x, y, pressure, xt, yt, dtime, tAsc, tDecl, tDx, tDy) {
+        var st = b.st, B = b.base;
+        x = _f32(x); y = _f32(y); pressure = _f32(pressure);
+        if (tAsc === undefined) {
+            tAsc = 0; tDecl = 90; tDx = 90; tDy = 90;
+            if (xt || yt) {
+                xt = _clamp(xt, -1, 1); yt = _clamp(yt, -1, 1);
+                tAsc = Math.atan2(-xt, yt) * 180 / Math.PI;
+                tDecl = 90 - _hypot(xt, yt) * 60; tDx = xt * 60; tDy = yt * 60;
+            }
+        }
+        if (b.skip > 0.001) {
+            var d0 = _hypot(b.skipX - x, b.skipY - y);
+            b.skipX = x; b.skipY = y; b.skipDt += dtime; b.skip = _f32(b.skip - _f32(d0)); dtime = b.skipDt;
+            if (b.skip > 0.001 && !(dtime > 5 || b.reset)) return;
+            b.skip = b.skipX = b.skipY = b.skipDt = 0;
+        }
+        if (B[MPS.tracking_noise]) {
+            var noise = Math.exp(B[MPS.radius_logarithmic]) * B[MPS.tracking_noise];
+            if (noise > 0.001) {
+                b.skip = _f32(0.5 * noise); b.skipX = x; b.skipY = y;
+                x = _f32(x + noise * _mpGauss(b.rng)); y = _f32(y + noise * _mpGauss(b.rng));
+            }
+        }
+        var f = 1 - _mpDecay(B[MPS.slow_tracking], 100 * dtime);
+        x = _f32(st.x + (x - st.x) * f); y = _f32(st.y + (y - st.y) * f);
+        if (dtime > 5 || b.reset) {
+            b.reset = false;
+            _mpReset(b); st = b.st;
+            b.random = b.rng();
+            st.x = st.ax = x; st.y = st.ay = y; st.pressure = pressure; st.stroke = 1;
+            return;
+        }
+        var left = dtime, moved = st.partial, todo = _mpDabCount(b, x, y, dtime);
+        while (moved + todo >= 1) {
+            var ddab;
+            if (moved > 0) { ddab = 1 - moved; moved = 0; } else ddab = 1;
+            var fr = _f32(ddab / todo), sdt = _f32(fr * left);   // floats, dtime_left a double: libmypaint's types
+            _mpUpdate(b, ddab, _f32(fr * (x - st.x)), _f32(fr * (y - st.y)), _f32(fr * (pressure - st.pressure)),
+                _f32(fr * (tDecl - st.decl)), _f32(fr * _mpAngDiff(st.asc, tAsc)), sdt, 1, 0,
+                _f32(fr * (tDx - st.declx)), _f32(fr * (tDy - st.decly)), _f32(fr * _mpAngDiff(st.barrel, 0)));
+            st.flip *= -1;
+            _mpDab(b, sf);
+            b.random = b.rng();
+            left -= sdt;
+            todo = _mpDabCount(b, x, y, left);
+        }
+        _mpUpdate(b, todo, x - st.x, y - st.y, pressure - st.pressure, tDecl - st.decl, _mpAngDiff(st.asc, tAsc),
+            left, 1, 0, tDx - st.declx, tDy - st.decly, _mpAngDiff(st.barrel, 0));
+        st.partial = _f32(moved + todo);
+    }
+
+    /* The surface. load(tx, ty, buf) fills a new tile from the layer. */
+    function _mpSurface(load) { return { tiles: new Map(), dirty: new Set(), load: load, mask: new Uint16Array(MP_T * MP_T) }; }
+    function _mpTile(sf, tx, ty) {
+        var k = (ty + 32768) * 65536 + (tx + 32768), t = sf.tiles.get(k);
+        if (!t) { t = new Uint16Array(MP_T * MP_T * 4); sf.load(tx, ty, t); sf.tiles.set(k, t); }
+        return t;
+    }
+    // render_dab_mask for one tile: the 15-bit coverage of each pixel, box returned
+    function _mpMask(m, x, y, radius, hard, ratio, angle) {
+        hard = _clamp(hard, 0, 1); if (ratio < 1) ratio = 1;
+        var o1 = 1, s1 = -(1 / hard - 1), o2 = hard / (1 - hard), s2 = -hard / (1 - hard);
+        var a = angle / 360 * 2 * Math.PI, cs = Math.cos(a), sn = Math.sin(a), rf = radius + 1;
+        var x0 = _max(0, _floor(x - rf)), y0 = _max(0, _floor(y - rf)),
+            x1 = Math.min(MP_T - 1, _floor(x + rf)), y1 = Math.min(MP_T - 1, _floor(y + rf)),
+            inv = 1 / (radius * radius), aa = radius < 3, raa = radius > 1 ? radius - 1 : 0, RA = Math.sqrt(1 / Math.PI);
+        raa *= raa / ratio;
+        for (var yp = y0; yp <= y1; yp++) {
+            for (var xp = x0; xp <= x1; xp++) {
+                var rr;
+                if (!aa) {
+                    var yy = yp + 0.5 - y, xx = xp + 0.5 - x, yr = (yy * cs - xx * sn) * ratio, xr = yy * sn + xx * cs;
+                    rr = (yr * yr + xr * xr) * inv;
+                } else {
+                    // calculate_rr_antialiased
+                    var pr = x - xp, pb = y - yp, pcx = pr - 0.5, pcy = pb - 0.5, pl = pr - 1, pt = pb - 1, nx, ny, rn, rrn;
+                    if (pl < 0 && pr > 0 && pt < 0 && pb > 0) { nx = ny = 0; rrn = 0; }
+                    else {
+                        var tt = (pcx * cs + pcy * sn) / (cs * cs + sn * sn);
+                        nx = _clamp(cs * tt, pl, pr); ny = _clamp(sn * tt, pt, pb);
+                        var a1 = (ny * cs - nx * sn) * ratio, b1 = ny * sn + nx * cs;
+                        rrn = (a1 * a1 + b1 * b1) * inv;
+                    }
+                    if (rrn > 1) rr = rrn;
+                    else {
+                        var sgn = (pcx - cs) * sn - cs * (pcy + sn), fx, fy;
+                        if (sgn < 0) { fx = nx - sn * RA; fy = ny + cs * RA; } else { fx = nx + sn * RA; fy = ny - cs * RA; }
+                        var a2 = (fy * cs - fx * sn) * ratio, b2 = fy * sn + fx * cs, rfar = a2 * a2 + b2 * b2, rrf = rfar * inv;
+                        rr = rfar < raa ? (rrf + rrn) * 0.5 : 1 - (1 - rrn) / (1 + rrf - rrn);
+                    }
+                }
+                var opa = rr > 1 ? 0 : (rr <= hard ? o1 + rr * s1 : o2 + rr * s2);
+                m[yp * MP_T + xp] = opa > 0 ? (opa * MP_ONE) | 0 : 0;
+            }
+        }
+        return [x0, y0, x1, y1];
+    }
+    function _mpDrawDab(sf, x, y, radius, r, g, bl, opaque, hard, ca, ratio, angle, lock, colorize) {
+        opaque = _clamp(opaque, 0, 1); hard = _clamp(hard, 0, 1); lock = _clamp(lock, 0, 1); colorize = _clamp(colorize, 0, 1);
+        if (radius < 0.1 || hard === 0 || opaque === 0) return false;
+        var cr = (_clamp(r, 0, 1) * MP_ONE) | 0, cg = (_clamp(g, 0, 1) * MP_ONE) | 0, cb = (_clamp(bl, 0, 1) * MP_ONE) | 0;
+        ca = _clamp(ca, 0, 1);
+        var normal = (1 - lock) * (1 - colorize), rf = radius + 1;
+        if (ratio < 1) ratio = 1;
+        var tx1 = _floor(_floor(x - rf) / MP_T), tx2 = _floor(_floor(x + rf) / MP_T),
+            ty1 = _floor(_floor(y - rf) / MP_T), ty2 = _floor(_floor(y + rf) / MP_T), m = sf.mask;
+        var opN = (normal * opaque * MP_ONE) | 0, ca16 = (ca * MP_ONE) | 0,
+            opL = (lock * opaque * (1 - colorize) * MP_ONE) | 0, opC = (colorize * opaque * MP_ONE) | 0;
+        for (var ty = ty1; ty <= ty2; ty++) {
+            for (var tx = tx1; tx <= tx2; tx++) {
+                var t = _mpTile(sf, tx, ty), bx = _mpMask(m, x - tx * MP_T, y - ty * MP_T, radius, hard, ratio, angle);
+                sf.dirty.add((ty + 32768) * 65536 + (tx + 32768));
+                for (var yp = bx[1]; yp <= bx[3]; yp++) {
+                    for (var xp = bx[0]; xp <= bx[2]; xp++) {
+                        var mk = m[yp * MP_T + xp];
+                        if (!mk) continue;
+                        var i = (yp * MP_T + xp) * 4, oa, ob;
+                        if (normal) {
+                            oa = (mk * opN) >>> 15; ob = MP_ONE - oa;
+                            if (ca === 1) {
+                                t[i + 3] = oa + ((ob * t[i + 3]) >>> 15);
+                            } else {
+                                oa = (oa * ca16) >>> 15;
+                                t[i + 3] = oa + ((ob * t[i + 3]) >>> 15);
+                            }
+                            t[i] = (oa * cr + ob * t[i]) >>> 15;
+                            t[i + 1] = (oa * cg + ob * t[i + 1]) >>> 15;
+                            t[i + 2] = (oa * cb + ob * t[i + 2]) >>> 15;
+                        }
+                        if (lock && ca !== 0) {
+                            oa = (mk * opL) >>> 15; ob = MP_ONE - oa;
+                            oa = (oa * t[i + 3]) >>> 15;
+                            t[i] = (oa * cr + ob * t[i]) >>> 15;
+                            t[i + 1] = (oa * cg + ob * t[i + 1]) >>> 15;
+                            t[i + 2] = (oa * cb + ob * t[i + 2]) >>> 15;
+                        }
+                        if (colorize) _mpColorize(t, i, cr, cg, cb, (mk * opC) >>> 15);
+                    }
+                }
+            }
+        }
+        return true;
+    }
+    // draw_dab_pixels_BlendMode_Color: the dab's hue and saturation, the layer's luminance
+    function _mpLuma(R, G, B) { return R * 0.2126 * MP_ONE + G * 0.7152 * MP_ONE + B * 0.0722 * MP_ONE; }
+    function _mpColorize(t, i, cr, cg, cb, oa) {
+        var a = t[i + 3], r = 0, g = 0, b = 0;
+        if (a) { r = ((MP_ONE * t[i]) / a) & 0xffff; g = ((MP_ONE * t[i + 1]) / a) & 0xffff; b = ((MP_ONE * t[i + 2]) / a) & 0xffff; }
+        var diff = (((_mpLuma(r, g, b) / MP_ONE) & 0xffff) - ((_mpLuma(cr, cg, cb) / MP_ONE) & 0xffff)) << 16 >> 16;
+        var R = cr + diff, G = cg + diff, B = cb + diff, lum = (_mpLuma(R, G, B) / MP_ONE) | 0,
+            mn = Math.min(R, G, B), mx = _max(R, G, B);
+        if (mn < 0) { R = lum + (((R - lum) * lum) / (lum - mn) | 0); G = lum + (((G - lum) * lum) / (lum - mn) | 0); B = lum + (((B - lum) * lum) / (lum - mn) | 0); }
+        if (mx > MP_ONE) { R = lum + (((R - lum) * (MP_ONE - lum)) / (mx - lum) | 0); G = lum + (((G - lum) * (MP_ONE - lum)) / (mx - lum) | 0); B = lum + (((B - lum) * (MP_ONE - lum)) / (mx - lum) | 0); }
+        R = ((R & 0xffff) * a) >>> 15; G = ((G & 0xffff) * a) >>> 15; B = ((B & 0xffff) * a) >>> 15;
+        var ob = MP_ONE - oa;
+        t[i] = (oa * R + ob * t[i]) >>> 15; t[i + 1] = (oa * G + ob * t[i + 1]) >>> 15; t[i + 2] = (oa * B + ob * t[i + 2]) >>> 15;
+    }
+    // get_color, legacy sampling: the dab-weighted average, straight
+    function _mpGetColor(sf, x, y, radius) {
+        if (radius < 1) radius = 1;
+        var rf = radius + 1, m = sf.mask, W = 0, R = 0, G = 0, B = 0, A = 0;
+        var tx1 = _floor(_floor(x - rf) / MP_T), tx2 = _floor(_floor(x + rf) / MP_T),
+            ty1 = _floor(_floor(y - rf) / MP_T), ty2 = _floor(_floor(y + rf) / MP_T);
+        for (var ty = ty1; ty <= ty2; ty++) {
+            for (var tx = tx1; tx <= tx2; tx++) {
+                var t = _mpTile(sf, tx, ty), bx = _mpMask(m, x - tx * MP_T, y - ty * MP_T, radius, 0.5, 1, 0);
+                var w = 0, r = 0, g = 0, b = 0, a = 0;
+                for (var yp = bx[1]; yp <= bx[3]; yp++) {
+                    for (var xp = bx[0]; xp <= bx[2]; xp++) {
+                        var o = m[yp * MP_T + xp];
+                        if (!o) continue;
+                        var i = (yp * MP_T + xp) * 4;
+                        w += o; r += (o * t[i]) >>> 15; g += (o * t[i + 1]) >>> 15; b += (o * t[i + 2]) >>> 15; a += (o * t[i + 3]) >>> 15;
+                    }
+                }
+                W += w; R += r; G += g; B += b; A += a;
+            }
+        }
+        if (!W) return [0, 1, 0, 0];
+        A /= W; R /= W; G /= W; B /= W;
+        return A > 0 ? [_clamp(R / A, 0, 1), _clamp(G / A, 0, 1), _clamp(B / A, 0, 1), _clamp(A, 0, 1)] : [0, 1, 0, 0];
+    }
+
+    /* The stroke. The brush lives as long as its preset: libmypaint's
+     * random numbers run on from stroke to stroke, a new brush starts them
+     * at the seed again. */
+    var _mpB = null, _mpS = null, MP_EVENT = 0.005;   // seconds between the pen's reports around a press or lift
+    function _paintMyPaint(pts, from, to, final) {
+        var p = getParams();
+        if (!p.mypaint || !pts.length) return;
+        if (!_mpS) {
+            // a preview paints with a brush of its own: it must not use up the canvas brush's random numbers
+            if (!_previewTarget && (!_mpB || _mpB.src !== p.mypaint)) _mpB = { src: p.mypaint, b: _mpNewBrush(p.mypaint.settings || {}) };
+            var b = _previewTarget ? _mpNewBrush(p.mypaint.settings || {}) : _mpB.b, hx = String(_state.lastColor || '#000000'), c = [0, 0, 0];
+            if (/^#[0-9a-f]{6}$/i.test(hx)) c = [parseInt(hx.slice(1, 3), 16) / 255, parseInt(hx.slice(3, 5), 16) / 255, parseInt(hx.slice(5, 7), 16) / 255];
+            _mpRgbHsv(c);
+            b.base[MPS.color_h] = c[0]; b.base[MPS.color_s] = c[1]; b.base[MPS.color_v] = c[2];
+            b.base[MPS.radius_logarithmic] = Math.log(_max(MP_RMIN, p.size / 2));
+            if (p.blendMode === 'erase') b.base[MPS.eraser] = 1;
+            else b.base[MPS.eraser] = (p.mypaint.settings.eraser || {}).base || 0;
+            var W = _docW(), H = _docH(), src = _bgCtx;
+            _mpS = { b: b, t: pts[0].t, sf: _mpSurface(function (tx, ty, buf) {
+                var x0 = tx * MP_T, y0 = ty * MP_T;
+                if (!src || x0 >= W || y0 >= H || x0 + MP_T <= 0 || y0 + MP_T <= 0) return;
+                var cx = _max(0, x0), cy = _max(0, y0), w = Math.min(W, x0 + MP_T) - cx, h = Math.min(H, y0 + MP_T) - cy,
+                    d = src.getImageData(cx, cy, w, h).data;
+                for (var yy = 0; yy < h; yy++) for (var xx = 0; xx < w; xx++) {
+                    var s = (yy * w + xx) * 4, o = ((cy - y0 + yy) * MP_T + (cx - x0 + xx)) * 4, a = Math.round(d[s + 3] * MP_ONE / 255);
+                    buf[o + 3] = a;
+                    for (var k = 0; k < 3; k++) buf[o + k] = Math.round(d[s + k] / 255 * a);
+                }
+            }) };
+            b.reset = true;
+            _mpStrokeTo(b, _mpS.sf, pts[0].x, pts[0].y, 0, 0.5);                  // the pen coming in
+            _mpStrokeTo(b, _mpS.sf, pts[0].x, pts[0].y, pts[0].pressure, MP_EVENT);
+        }
+        var bb = _mpS.b, sf = _mpS.sf;
+        for (var i = from + 1; i <= to; i++) {
+            _mpStrokeTo(bb, sf, pts[i].x, pts[i].y, pts[i].pressure, (pts[i].t - _mpS.t) / 1000);
+            _mpS.t = pts[i].t;
+        }
+        if (final) { var l = pts[pts.length - 1]; _mpStrokeTo(bb, sf, l.x, l.y, 0, MP_EVENT); }
+        _mpFlush(sf);
+        if (final) _mpS = null;
+    }
+    function _mpFlush(sf) {
+        if (!sf.dirty.size) return;
+        var oc = _outCtx(), W = _docW(), H = _docH(), x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+        sf.dirty.forEach(function (k) {
+            var tx = (k % 65536) - 32768, ty = _floor(k / 65536) - 32768, x0 = tx * MP_T, y0 = ty * MP_T,
+                cx = _max(0, x0), cy = _max(0, y0), w = Math.min(W, x0 + MP_T) - cx, h = Math.min(H, y0 + MP_T) - cy;
+            if (w <= 0 || h <= 0) return;
+            var t = sf.tiles.get(k), im = new ImageData(w, h), d = im.data;
+            for (var yy = 0; yy < h; yy++) for (var xx = 0; xx < w; xx++) {
+                var o = ((cy - y0 + yy) * MP_T + (cx - x0 + xx)) * 4, s = (yy * w + xx) * 4, a = t[o + 3];
+                if (!a) continue;
+                d[s + 3] = Math.round(a * 255 / MP_ONE);
+                for (var c = 0; c < 3; c++) d[s + c] = Math.round(t[o + c] * 255 / a);
+            }
+            oc.putImageData(im, cx, cy);
+            if (cx < x1) x1 = cx; if (cy < y1) y1 = cy; if (cx + w > x2) x2 = cx + w; if (cy + h > y2) y2 = cy + h;
+        });
+        sf.dirty.clear();
+        if (x2 > x1 && !_previewTarget && app.layerMgr && app.layerMgr.markDirty) app.layerMgr.markDirty(x1, y1, x2 - x1, y2 - y1);
+    }
+
     function _flushPending(final) {
         if (getParams().engineKind === 'deform') {
             var dpts = _state.strokePoints;
@@ -6611,6 +7215,14 @@
             return;
         }
         var ekf = getParams().engineKind;
+        if (ekf === 'mypaint') {
+            var mpp = _state.strokePoints;
+            if (!mpp.length || !_state.lastColor) return;
+            _paintMyPaint(mpp, _state.started ? _state.lastProcessedIdx : 0, mpp.length - 1, final);
+            _state.lastProcessedIdx = mpp.length - 1;
+            _state.started = true;
+            return;
+        }
         if (ekf === 'sketch' || ekf === 'curve' || ekf === 'particle' || ekf === 'hairy') {
             var kp = _state.strokePoints;
             if (kp.length < 2 || !_state.lastColor) return;
@@ -6708,7 +7320,7 @@
             var pts = _state.strokePoints;
             if (pts.length < 2 || !_state.lastColor) return;
             var ek = getParams().engineKind;
-            if (ek === 'shape' || ek === 'deform' || ek === 'sketch' || ek === 'curve' || ek === 'particle' || ek === 'hairy') { _flushPending(false); return; }
+            if (ek === 'shape' || ek === 'deform' || ek === 'mypaint' || ek === 'sketch' || ek === 'curve' || ek === 'particle' || ek === 'hairy') { _flushPending(false); return; }
             var startIdx = _state.started ? _state.lastProcessedIdx : 0;
             var endIdx = pts.length - 1;
             if (startIdx < endIdx) {
@@ -6954,6 +7566,7 @@
         // A tip that takes its shapes in turn would otherwise skip ahead by
         // however many dabs the tile drew.
         var savedCycle = _tipCycle;
+        var savedMp = _mpS; _mpS = null;   // a MyPaint stroke under way
         // The pen's rate outlives a stroke; a tile drawn in one go has no
         // rate, and its gaps of nothing read the next real stroke as a blur
         // (Clip Studio's Milli pen, speed-thinned, drew 6px instead of 10).
@@ -7072,6 +7685,7 @@
             _mkCanvas = savedMk; _mkCtx = savedMkCtx;
             _flowUsed = savedFlowUsed;
             _tipCycle = savedCycle;
+            _mpS = savedMp;
             _smoothSpeed = savedSpeed[0]; _spLast = savedSpeed[1]; _spTime = savedSpeed[2];
             _spDists = savedSpeed[3]; _spDts = savedSpeed[4];
             _bgCanvas = savedBg; _bgCtx = savedBgCtx;

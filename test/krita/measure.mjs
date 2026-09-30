@@ -7,7 +7,7 @@
 // packVar: page expression holding the pack's bytes; packName its filename.
 // importExpr: page expression for any other import ({ ok, added: [name] }).
 // Imported presets are deleted again, so a long run never fills storage.
-export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false }) {
+export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false }) {
     return JSON.parse(await page.eval(`(async () => {
         const app = PaintApp, b = app.brush, W = ${W}, H = ${H};
         const imp = ${importExpr || `await b.importBrushPack(${packVar}, ${JSON.stringify(packName)},
@@ -28,6 +28,16 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         if (b.getParams().blendMode === 'erase' && !${keepErase}) b.setParam('blendMode', 'normal');
         await new Promise(res => setTimeout(res, 600));          // let the tip load
         L.ctx.clearRect(0, 0, W, H);
+        /* under: stripes to smudge or rub out (mypaint-render.py's), and each
+         * side scored by how far it moved a pixel off them, as black ink. */
+        const STRIPES = [[255, 0, 0], [0, 0, 255], [255, 255, 0]];
+        if (${under}) for (let x = 0; x < W; x += 16) { L.ctx.fillStyle = 'rgb(' + STRIPES[x / 16 % 3] + ')'; L.ctx.fillRect(x, 0, 16, H); }
+        const moved = (d) => { for (let i = 0; i < W * H; i++) {
+            const c = STRIPES[((i % W) >> 4) % 3], a = d[i * 4 + 3];
+            let m = 255 - a;
+            for (let k = 0; k < 3; k++) m = Math.max(m, Math.abs(Math.round(d[i * 4 + k] * a / 255) - c[k]));
+            d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 0; d[i * 4 + 3] = m;
+        } };
         // Krita's paintLine interpolates pressure along the line; a
         // tablet reports about one sample a pixel at this speed.
         // Node.paintLine hands Krita no speed at all, so the clock stands
@@ -61,6 +71,7 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         await new Promise(res => setTimeout(res, 250));
         b.distanceFrom = 0;
         const ours =L.ctx.getImageData(0, 0, W, H).data;
+        if (${under}) moved(ours);
         // A reference captured as ink on white (Clip Studio) scores darkness
         // over white, so a stamp's own white parts are paper there too.
         if (${onWhite}) for (let i = 0; i < W * H * 4; i += 4)
@@ -72,6 +83,7 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         const kc = new OffscreenCanvas(W, H), kx = kc.getContext('2d');
         kx.drawImage(img, 0, 0);
         const theirs = kx.getImageData(0, 0, W, H).data;
+        if (${under}) moved(theirs);
 
         const stat = (d) => {
             let ink = 0, px = 0, part = 0, x0 = W, x1 = -1, y0 = H, y1 = -1, cy = 0;

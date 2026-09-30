@@ -2508,94 +2508,13 @@
     /* ── MyPaint brushes (.myb) ───────────────────────────────────────── */
 
     /* MyPaint paints with no tip image at all: every mark is a soft round
-     * dab and the character comes from forty settings, each of which can be
-     * driven by pressure, speed, direction or randomness. Only some of those
-     * forty have anything to correspond to here, so a .myb arrives as a
-     * likeness rather than a copy -- and says which parts of itself it left
-     * at the door.
+     * dab and the character comes from some sixty settings, each of which can
+     * be driven by pressure, speed, direction or randomness. The engine has a
+     * port of libmypaint (krita-brush-engine.js, _paintMyPaint), so the whole
+     * brush is handed over as it stands and painted as MyPaint and Krita do.
      *
      * Two file shapes: newer ones are JSON, older ones a line per setting
      * reading `name value | input (x,y), (x,y)`. Both say the same things. */
-
-    var MYB_INPUTS = { pressure: 'pressure', speed1: 'speed', speed2: 'speed',
-        random: 'random', direction: 'direction', tilt_declination: 'tilt',
-        tilt_ascension: 'tilt', barrel_rotation: 'twist' };
-
-    /* Settings we read. Everything else in the file is reported by name so
-     * the import says what it could not carry across. */
-    var MYB_KNOWN = {
-        radius_logarithmic: 1, hardness: 1, opaque: 1, opaque_multiply: 1,
-        dabs_per_actual_radius: 1, dabs_per_basic_radius: 1, offset_by_random: 1,
-        elliptical_dab_ratio: 1, elliptical_dab_angle: 1, eraser: 1,
-        smudge: 1, smudge_length: 1, color_h: 1, color_s: 1, color_v: 1,
-        opaque_linearize: 1, slow_tracking: 1, slow_tracking_per_dab: 1,
-        anti_aliasing: 1, restore_color: 1, change_color_h: 1, change_color_l: 1,
-        change_color_hsl_s: 1, change_color_v: 1, change_color_hsv_s: 1,
-        lock_alpha: 1, colorize: 1, snap_to_pixel: 1, pressure_gain_log: 1,
-        dabs_per_second: 1,
-        // named so they are not reported: they describe MyPaint's own
-        // smoothing and speed model, which we do not expose as brush settings
-        speed1_slowness: 1, speed2_slowness: 1, speed1_gamma: 1, speed2_gamma: 1,
-        stroke_duration_logarithmic: 1, stroke_holdtime: 1, stroke_threshold: 1,
-        custom_input: 1, custom_input_slowness: 1, direction_filter: 1,
-        tracking_noise: 1
-    };
-
-    /* The ones whose absence really changes the mark, so they are worth
-     * naming rather than counting. */
-    var MYB_NOTED = {
-        radius_by_random: 'a randomly varying dab size',
-        stroke_holdtime: '',
-        gridmap_scale: 'a texture grid',
-
-        /* MyPaint 2 places the dab away from the cursor through a whole
-         * family of dials. They are one feature to a painter, so they get
-         * one line -- the warnings are de-duplicated below. */
-        offset_by_speed: 'dabs placed away from the cursor',
-        offset_by_speed_slowness: 'dabs placed away from the cursor',
-        /* The rest of the family is a second offset vector with its own
-         * angle, each end of it drivable from its own sensor. Our offset is
-         * one distance along the line and one across it, so these are a
-         * different thing rather than more of the same -- and saying "dabs
-         * placed away from the cursor" about them would be wrong on the
-         * thirteen brushes whose offset we now DO place. */
-        offset_multiplier: 'the finer controls on where a dab lands',
-        offset_x: 'the finer controls on where a dab lands',
-        offset_y: 'the finer controls on where a dab lands',
-        offset_angle: 'the finer controls on where a dab lands',
-        offset_angle_asc: 'the finer controls on where a dab lands',
-        offset_angle_2: 'the finer controls on where a dab lands',
-        offset_angle_2_asc: 'the finer controls on where a dab lands',
-        offset_angle_adj: 'the finer controls on where a dab lands',
-
-        posterize: 'posterising', posterize_num: 'posterising',
-
-        smudge_bucket: 'the finer smudge controls',
-        smudge_radius_log: 'the finer smudge controls',
-        smudge_length_log: 'the finer smudge controls',
-        smudge_transparency: 'the finer smudge controls'
-    };
-
-    /* Most MyPaint dials rest at 0, so "not zero" reads as "switched on".
-     * These rest somewhere else, and reporting them as dropped features
-     * tells the user a brush uses something it does not. */
-    var MYB_NEUTRAL = {
-        offset_by_speed_slowness: 1, gridmap_scale_x: 1, gridmap_scale_y: 1,
-        paint_mode: 1, posterize_num: 0.05
-    };
-
-    /* And these only mean anything while a companion dial is on: a smudge
-     * radius with no smudge changes nothing at all. */
-    var MYB_GATED = {
-        offset_by_speed_slowness: ['offset_by_speed'],
-        offset_multiplier: ['offset_by_random', 'offset_by_speed'],
-        posterize_num: ['posterize'],
-        smudge_radius_log: ['smudge'],
-        smudge_length_log: ['smudge'],
-        smudge_bucket: ['smudge'],
-        smudge_transparency: ['smudge'],
-        gridmap_scale_x: ['gridmap_scale'], gridmap_scale_y: ['gridmap_scale']
-    };
 
     function _mybLines(text) {
         var out = {}, lines = String(text).split(/\r?\n/);
@@ -2633,63 +2552,6 @@
         return out;
     }
 
-    /* MyPaint's input curves run over the input's own range -- pressure is
-     * 0..1, but the y axis is an ADDITION to the setting in its own units,
-     * not a multiplier. Ours is a multiplier over 0..1. So the curve is
-     * rescaled against the largest step it takes, which keeps its shape --
-     * the part that makes a brush feel the way it does -- and lets the
-     * setting's own value carry the magnitude. */
-    function _mybCurve(pts) {
-        if (!pts || pts.length < 2) return null;
-        var lo = Infinity, hi = -Infinity, i;
-        for (i = 0; i < pts.length; i++) { lo = Math.min(lo, pts[i][1]); hi = Math.max(hi, pts[i][1]); }
-        if (!(hi > lo)) return null;
-        var out = [];
-        for (i = 0; i < pts.length; i++) {
-            out.push([Math.max(0, Math.min(1, pts[i][0])),
-                      Math.max(0, Math.min(1, (pts[i][1] - lo) / (hi - lo)))]);
-        }
-        out.sort(function (a, b) { return a[0] - b[0]; });
-        return out;
-    }
-
-    /* How far a setting's input curves reach, in the setting's own units,
-     * keeping the sign of whichever end reaches furthest.
-     *
-     * _mybCurve throws this away on purpose: for size and flow the engine's
-     * own base carries the magnitude and only the SHAPE is wanted. An offset
-     * has no base of its own here -- most real brushes leave it at zero and
-     * put the whole distance in the curve -- so for that one the reach is
-     * the number that matters. */
-    function _mybPeak(set, name) {
-        var rec = set[name], peak = 0;
-        if (!rec || !rec.inputs) return 0;
-        for (var id in rec.inputs) {
-            if (!rec.inputs.hasOwnProperty(id) || !MYB_INPUTS[id]) continue;
-            var pts = rec.inputs[id];
-            for (var i = 0; i < pts.length; i++) {
-                if (Math.abs(pts[i][1]) > Math.abs(peak)) peak = pts[i][1];
-            }
-        }
-        return peak;
-    }
-
-    function _mybDrive(out, key, set, name) {
-        var rec = set[name];
-        if (!rec || !rec.inputs) return;
-        for (var id in rec.inputs) {
-            if (!rec.inputs.hasOwnProperty(id)) continue;
-            var src = MYB_INPUTS[id];
-            if (!src) continue;
-            var curve = _mybCurve(rec.inputs[id]);
-            if (!curve) continue;
-            out[key + 'Src'] = src;
-            out[key + 'Min'] = 0;
-            out[key + 'Curve'] = curve;
-            return;
-        }
-    }
-
     /* One MyPaint brush as our parameters. Same shape as toPreset, so the
      * caller treats both the same way. */
     BrushPack.readMyb = function (text, name) {
@@ -2706,135 +2568,25 @@
             }
         }
         var base = function (k, d) { return set[k] ? _num(set[k].base, d) : d; };
-        var warn = [], out = {};
-
+        /* The engine paints from the settings alone; the rest only gives the
+         * panel and the cursor something true to show. */
+        var out = { engineKind: 'mypaint', mypaint: { settings: set }, shape: 'circle', opacity: 100 };
         // MyPaint stores the log of the dab RADIUS in pixels.
-        out.size = Math.max(1, Math.min(800, Math.round(2 * Math.exp(base('radius_logarithmic', 1.5)))));
-        out.shape = 'circle';
+        out.size = Math.max(1, Math.min(800, Math.round(200 * Math.exp(base('radius_logarithmic', 2))) / 100));
         out.hardness = Math.round(Math.max(0, Math.min(1, base('hardness', 0.8))) * 100);
-        out.opacity = 100;
-        /* `opaque` is per dab, which is our flow; the stroke's own opacity
-         * is a separate idea there and always full.
-         *
-         * `opaque_multiply` scales it, but almost every real brush leaves its
-         * base at 0 and hangs a pressure curve off it -- that is MyPaint's
-         * idiom for "flow follows pressure", not "paint nothing". So it only
-         * multiplies when it is a plain number, and otherwise it is the thing
-         * that drives flow. */
-        var mult = set.opaque_multiply,
-            multDrives = !!(mult && mult.inputs && Object.keys(mult.inputs).length);
-        out.flow = Math.round(Math.max(0, Math.min(1,
-            base('opaque', 1) * (multDrives ? 1 : base('opaque_multiply', 1)))) * 100) || 100;
-
-        /* Dabs per radius, not spacing: MyPaint counts how many land within
-         * one radius, so the gap between them is the other way up. */
-        var per = base('dabs_per_actual_radius', 0) || base('dabs_per_basic_radius', 0);
-        out.spacing = per > 0 ? Math.max(1, Math.min(400, Math.round(50 / per))) : 10;
-
-        /* offset_by_random is a spread in RADIUS units; ours is a fraction
-         * of the dab's width, so it is half the number. */
-        var off = base('offset_by_random', 0);
-        if (off > 0) out.scatter = Math.max(1, Math.min(400, Math.round(off * 50)));
-
-        /* offset_by_speed pushes the dab along the line by how fast the hand
-         * is moving, in radius units, and it can run negative -- the dab
-         * trails instead of leading. Twenty-seven of the 196 real brushes
-         * ask for it, which made it the largest thing we dropped. */
-        var ofsB = base('offset_by_speed', 0), ofsP = _mybPeak(set, 'offset_by_speed');
-        /* MyPaint adds the curve to the base; ours multiplies a distance by
-         * the sensor, so the distance is both of them together and the floor
-         * is the base's share of it. The two pulling opposite ways cannot be
-         * said that way at all, so the bigger one wins and the floor is
-         * nothing. */
-        var ofs = (ofsB * ofsP < 0) ?
-            (Math.abs(ofsB) > Math.abs(ofsP) ? ofsB : ofsP) : ofsB + ofsP;
-        if (Math.abs(ofs) > 0.001) {
-            out.offsetAlong = Math.max(-400, Math.min(400, Math.round(ofs * 50)));
-            out.offsetSrc = 'speed';
-            out.offsetMin = (ofsP && ofsB * ofsP > 0)
-                ? Math.round(Math.abs(ofsB / ofs) * 100) : 0;
-        }
-
         var ratio = base('elliptical_dab_ratio', 1);
         if (ratio > 1) {
             out.aspectRatio = Math.round(Math.min(20, ratio) * 100) / 100;
-            /* The angle exists only to turn a flattened dab. A round one
-             * still carries 90 in the file, where it means nothing. */
-            var ang = base('elliptical_dab_angle', 0);
+            var ang = base('elliptical_dab_angle', 0);   // a round dab still carries 90 in the file
             if (ang) out.angle = Math.round(ang) % 360;
         }
-
         if (base('eraser', 0) > 0.5) out.blendMode = 'erase';
-
-        var smudge = base('smudge', 0);
-        if (smudge > 0.02) {
-            out.colorRate = Math.round((1 - Math.min(1, smudge)) * 100);
-            out.smudgeLength = Math.round(Math.max(0, Math.min(1, base('smudge_length', 0.5))) * 100);
-            /* smudge_radius_log is a doubling: 0 is the dab's own radius, 1
-             * is twice it, -1 half. Across MyPaint's own collection it spans
-             * a quarter to four times, and a wide sampler is the difference
-             * between a blender and a smear. */
-            var sr = base('smudge_radius_log', 0);
-            if (sr) out.smudgeRadius = Math.max(25, Math.min(400,
-                Math.round(Math.pow(2, sr) * 100)));
-        }
-
-        /* Laying dabs down by the clock rather than by distance is what
-         * our airbrush mode does, and the units already agree. */
-        var dps = base('dabs_per_second', 0);
-        if (dps > 0) {
-            out.airbrushMode = true;
-            out.airbrushRate = Math.max(1, Math.min(100, Math.round(dps)));
-        }
-
-        /* A dab whose size wanders. MyPaint's spread is in the same log
-         * units as the radius, so a spread of r means a dab anywhere between
-         * e^-r and e^r of the base -- and since our randomness only takes
-         * size away, the floor is the whole of it. Left as a warning while
-         * something else already drives the size: one driver at a time. */
-        var wob = base('radius_by_random', 0);
-
-        /* Only once an offset really landed. A file that leaves the base at
-         * zero and hangs a curve off it is asking for an offset that is
-         * ENTIRELY sensor-driven, and our offset is a distance the sensor
-         * scales -- so there is nothing for the curve to scale, and the
-         * honest answer is the warning it already had. */
-        if (out.offsetAlong) _mybDrive(out, 'offset', set, 'offset_by_speed');
-        _mybDrive(out, 'size', set, 'radius_logarithmic');
-        _mybDrive(out, 'flow', set, multDrives ? 'opaque_multiply' : 'opaque');
-
-        if (wob > 0 && !out.sizeSrc) {
-            out.sizeSrc = 'random';
-            out.sizeMin = Math.max(1, Math.min(99, Math.round(Math.exp(-wob) * 100)));
-        }
-
-        for (var k in set) {
-            if (!set.hasOwnProperty(k)) continue;
-            if (MYB_KNOWN[k]) continue;
-            if (k === 'radius_by_random' && out.sizeSrc === 'random') continue;
-            if (k === 'offset_by_speed' && out.offsetAlong) continue;
-            if (k === 'smudge_radius_log' && out.smudgeRadius) continue;
-            var rec = set[k];
-            var live = _num(rec.base, 0) !== (MYB_NEUTRAL[k] || 0) ||
-                       (rec.inputs && Object.keys(rec.inputs).length > 0);
-            if (!live) continue;
-            var gate = MYB_GATED[k], on = !gate, g;
-            for (g = 0; gate && g < gate.length; g++) if (base(gate[g], 0)) on = true;
-            if (!on) continue;
-            var label = MYB_NOTED[k];
-            if (label === '') continue;
-            var line = 'dropped: ' + (label || k.replace(/_/g, ' '));
-            if (warn.indexOf(line) < 0) warn.push(line);
-        }
-        if (out.aspectRatio && !out.angle) {
-            warn.push('the flattened dab does not turn with the stroke here');
-        }
 
         /* `comment` is the format's own banner line -- every file carries the
          * same "MyPaint brush file" -- so the brush's name is its description,
          * and failing that the file it came in. */
         var title = (obj && obj.description && String(obj.description).trim()) || name || 'MyPaint brush';
-        return { name: String(title).slice(0, 40), params: out, tipFile: null, warnings: warn };
+        return { name: String(title).slice(0, 40), params: out, tipFile: null, warnings: [] };
     };
 
     /* ── Procreate (.brush / .brushset) ───────────────────────────────── */

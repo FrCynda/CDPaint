@@ -632,10 +632,9 @@ await withPage(async (page) => {
         (await page.run(`return PaintApp.brush.PRESETS[${JSON.stringify(loose.name)}].tipCells;`)) === 4);
 
     console.log('\n== a MyPaint brush ==');
-    /* MyPaint paints with no tip image and forty settings, most of which
-     * have no counterpart here, so this import is openly a likeness. What
-     * is checked is that the numbers that DO cross over land in our units
-     * and that the rest are named rather than dropped in silence. */
+    /* The engine carries a port of libmypaint, so a .myb is handed over whole
+     * and painted as MyPaint paints it (test/krita/mypaint-bank.mjs measures
+     * that against libmypaint itself). What is checked here is the handing over. */
     const myb = await page.eval(`(async () => {
         for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
         const txt = await window.__files['charcoal-soft.myb'].text();
@@ -644,45 +643,70 @@ await withPage(async (page) => {
     })()`, { awaitPromise: true }).then(JSON.parse);
     check('the brush arrives under its own name',
         myb.r.ok && myb.r.added[0] === 'Charcoal Soft', JSON.stringify(myb.r).slice(0, 150));
+    check('and is painted by the MyPaint engine, every setting and curve with it',
+        myb.p && myb.p.engineKind === 'mypaint' && myb.p.mypaint.settings.offset_by_random.base === 0.4 &&
+        myb.p.mypaint.settings.radius_logarithmic.inputs.pressure.length === 3,
+        JSON.stringify(myb.p && myb.p.mypaint).slice(0, 150));
     /* radius_logarithmic 2.3 is a RADIUS of e^2.3, so a 20px brush. */
     check('the logarithmic radius becomes a diameter in pixels',
-        myb.p && myb.p.size === 20, myb.p && String(myb.p.size));
-    /* 5 dabs land inside one radius, so they sit a tenth of a diameter
-     * apart -- reading that as spacing directly would space them 5%. */
-    check('dabs per radius becomes spacing the other way up',
-        myb.p && myb.p.spacing === 10, myb.p && String(myb.p.spacing));
-    check('hardness, flow, squash and turn all cross over',
-        myb.p && myb.p.hardness === 35 && myb.p.flow === 90 &&
-        myb.p.aspectRatio === 2.5 && myb.p.angle === 30,
-        JSON.stringify(myb.p && { h: myb.p.hardness, f: myb.p.flow, a: myb.p.aspectRatio, g: myb.p.angle }));
-    /* offset_by_random 0.4 is 0.4 of a RADIUS; ours is a fraction of the
-     * dab's width, so it is 20, not 40. */
-    check('a random offset becomes scatter', myb.p && myb.p.scatter === 20,
-        myb.p && String(myb.p.scatter));
-    /* MyPaint's curve is an addition in the setting's own units; ours is a
-     * multiplier. The shape has to survive that, and end where it started. */
-    check('the pressure curve keeps its shape',
-        myb.p && myb.p.sizeSrc === 'pressure' && myb.p.sizeCurve.length === 3 &&
-        myb.p.sizeCurve[0][1] === 0 && myb.p.sizeCurve[2][1] === 1 &&
-        myb.p.sizeCurve[1][1] > 0.7,
-        JSON.stringify(myb.p && myb.p.sizeCurve));
-    /* offset_by_speed is 1.5 RADII along the line at full speed, so it is 75
-     * per cent of the dab's width, and the speed sensor scales it. Twenty-
-     * seven of MyPaint's own 196 brushes ask for this, which made it the
-     * largest single thing we dropped. */
-    check('a dab that runs ahead of the pointer does that here too',
-        myb.p && myb.p.offsetAlong === 75 && myb.p.offsetSrc === 'speed',
-        JSON.stringify(myb.p && [myb.p.offsetAlong, myb.p.offsetSrc]));
-    check('and what it could not carry is named, not silently dropped',
-        myb.r.notes.length === 1 &&
-        !myb.r.notes[0].warnings.some(w => /away from the cursor/.test(w)) &&
-        myb.r.notes[0].warnings.some(w => /grid/.test(w)),
-        JSON.stringify(myb.r.notes));
+        myb.p && myb.p.size === 19.95, myb.p && String(myb.p.size));
+    check('the cursor gets its squash and turn',
+        myb.p && myb.p.aspectRatio === 2.5 && myb.p.angle === 30,
+        JSON.stringify(myb.p && { a: myb.p.aspectRatio, g: myb.p.angle }));
+    check('and nothing is reported as left behind', !myb.r.notes.length, JSON.stringify(myb.r.notes));
+
+    /* A brush's random numbers run in order from the same seed MyPaint uses,
+     * so a stroke lands where MyPaint's does. The brush's preview tile used
+     * to paint with the canvas brush and use up its numbers first: Charcoal
+     * matched libmypaint's ink but only half its pixels. */
+    const rnd = await page.eval(`(async () => {
+        const app = PaintApp, b = app.brush, txt = await window.__files['charcoal-soft.myb'].text();
+        const clock = performance.now; let tick = 0; performance.now = () => tick;
+        const paint = (preview) => {
+            for (const n of b.userPresetNames()) b.deleteUserPreset(n);
+            const name = b.importMyb(txt, 'charcoal-soft.myb').added[0];
+            b.loadPreset(name);
+            if (preview) b.generatePreview(name);
+            const ctx = app.layerMgr.layers[app.layerMgr.activeIdx].ctx;
+            ctx.clearRect(0, 0, 200, 100);
+            b.beginStroke(20, 50, 0.8, '#000000');
+            for (let x = 21; x <= 180; x++) { tick += 2; b.moveStroke(x, 50, 0.8, '#000000'); }
+            b.endStroke();
+            return Array.from(ctx.getImageData(0, 0, 200, 100).data.filter((v, i) => i % 4 === 3));
+        };
+        try {
+            const a = paint(false), c = paint(true);
+            return JSON.stringify({ ink: a.reduce((s, v) => s + v, 0), diff: a.filter((v, i) => v !== c[i]).length });
+        } finally { performance.now = clock; }
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('the preview tile does not use up the brush\'s random numbers',
+        rnd.ink > 0 && rnd.diff === 0, JSON.stringify(rnd));
+    /* libmypaint keeps positions in floats. A stroke along y = 50 with slow
+     * tracking creeps up on 50 and lands on it there; kept in doubles it
+     * stayed a hair short and a snapped 1px pen drew the row above
+     * (experimental/1pixel). */
+    const snap = await page.eval(`(() => {
+        const app = PaintApp, b = app.brush, NL = String.fromCharCode(10);
+        const clock = performance.now; let tick = 0; performance.now = () => tick;
+        try {
+            for (const n of b.userPresetNames()) b.deleteUserPreset(n);
+            b.loadPreset(b.importMyb(['version 2', 'radius_logarithmic -0.58', 'hardness 1', 'opaque 1',
+                'dabs_per_actual_radius 0.9', 'slow_tracking 2', 'snap_to_pixel 1'].join(NL), 'px.myb').added[0]);
+            const ctx = app.layerMgr.layers[app.layerMgr.activeIdx].ctx;
+            ctx.clearRect(0, 0, 200, 100);
+            b.beginStroke(20, 50, 1, '#000000');
+            for (let x = 21; x <= 120; x++) { tick += 2; b.moveStroke(x, 50, 1, '#000000'); }
+            b.endStroke();
+            const d = ctx.getImageData(0, 0, 200, 100).data, rows = new Set();
+            for (let i = 3; i < d.length; i += 4) if (d[i]) rows.add((i - 3) / 4 / 200 | 0);
+            return JSON.stringify([...rows]);
+        } finally { performance.now = clock; }
+    })()`).then(JSON.parse);
+    check('a snapped 1px pen draws on the row it was drawn along', snap.length === 1 && snap[0] === 50, JSON.stringify(snap));
 
     console.log('\n== two of David Revoy own MyPaint brushes ==');
-    /* The point of the brush work is that Revoy's brushes look like Revoy's
-     * brushes, so these two are his, straight out of the CC-0 collection --
-     * not something written here from the format description. */
+    /* Revoy's own, straight out of the CC-0 collection -- not something
+     * written here from the format description. */
     const real = await page.eval(`(async () => {
         for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
         const out = {};
@@ -700,69 +724,30 @@ await withPage(async (page) => {
         knife.r.added[0].startsWith('A flat brush'),
         JSON.stringify([air.r.added, knife.r.added]));
     /* radius_logarithmic 4.7 -> a radius of e^4.7, so a 220px brush. */
-    check('his airbrush keeps its size, softness and flow',
-        air.p && air.p.size === 220 && air.p.hardness === 48 && air.p.flow === 52,
-        JSON.stringify(air.p && { s: air.p.size, h: air.p.hardness, f: air.p.flow }));
-    /* opaque_multiply sits at 0 with a pressure curve on it -- that is how
-     * MyPaint says "flow follows pressure", and reading the 0 as a
-     * multiplier would have made every one of his brushes paint nothing. */
-    check('and its flow is driven by pressure, not multiplied away',
-        air.p && air.p.flowSrc === 'pressure' && air.p.flow > 0,
-        JSON.stringify(air.p && { src: air.p.flowSrc, f: air.p.flow }));
+    check('his airbrush keeps its size and softness',
+        air.p && Math.round(air.p.size) === 220 && air.p.hardness === 48,
+        JSON.stringify(air.p && { s: air.p.size, h: air.p.hardness }));
     /* The dab is round here, and MyPaint still stores an angle of 90. */
     check('a round dab brings no angle across',
         air.p && !air.p.aspectRatio && air.p.angle === undefined,
         JSON.stringify(air.p && { a: air.p.aspectRatio, g: air.p.angle }));
     check('his knife is a flattened dab, turned, that smudges',
         knife.p && knife.p.aspectRatio === 3.61 && knife.p.angle === 160 &&
-        knife.p.colorRate === 9 && knife.p.smudgeLength === 50,
-        JSON.stringify(knife.p && { a: knife.p.aspectRatio, g: knife.p.angle,
-                                    c: knife.p.colorRate, l: knife.p.smudgeLength }));
-    check('and neither one invents a feature it does not use',
-        (air.r.notes[0] ? air.r.notes[0].warnings : []).every(w => !/grid|posteris|smudge/.test(w)) &&
-        (knife.r.notes[0] ? knife.r.notes[0].warnings : []).every(w => !/grid|posteris/.test(w)),
-        JSON.stringify([air.r.notes, knife.r.notes]));
+        knife.p.mypaint.settings.smudge.base > 0.9,
+        JSON.stringify(knife.p && { a: knife.p.aspectRatio, g: knife.p.angle }));
 
     const old = await page.eval(`(async () => {
         const txt = await window.__files['hard-eraser.myb'].text();
         const r = PaintApp.brush.importMyb(txt, 'hard-eraser.myb');
         return JSON.stringify({ r, p: r.ok ? PaintApp.brush.PRESETS[r.added[0]] : null });
     })()`, { awaitPromise: true }).then(JSON.parse);
-    check('the older line format reads too', old.r.ok, JSON.stringify(old.r).slice(0, 150));
+    check('the older line format reads too, curves and all',
+        old.r.ok && old.p.engineKind === 'mypaint' &&
+        Object.values(old.p.mypaint.settings).some(s => Object.keys(s.inputs).length),
+        JSON.stringify(old.r).slice(0, 150));
     check('an eraser comes across as an eraser',
         old.p && old.p.blendMode === 'erase' && old.p.hardness === 90,
         JSON.stringify(old.p && { b: old.p.blendMode, h: old.p.hardness }));
-    /* A dab whose size wanders is a quarter of MyPaint's own collection, and
-     * it was being reported as lost. It can only be honoured when nothing
-     * else already drives the size -- here pressure does, so it stays named. */
-    check('a wandering dab size loses to pressure, and says so',
-        old.p && old.p.sizeSrc === 'pressure' &&
-        /randomly varying dab size/.test(JSON.stringify(old.r.notes || [])),
-        JSON.stringify([old.p && old.p.sizeSrc, old.r.notes]));
-    /* MyPaint 2 can aim a second offset vector from its own sensors. Ours is
-     * one distance along the line and one across it, so that family is a
-     * different thing rather than more of the same -- and calling it "dabs
-     * placed away from the cursor" would be wrong on the brushes whose
-     * offset we DO place. */
-    check('the offset controls we cannot aim are named as their own thing',
-        /finer controls on where a dab lands/.test(JSON.stringify(old.r.notes || [])) &&
-        !/away from the cursor/.test(JSON.stringify(old.r.notes || [])),
-        JSON.stringify(old.r.notes));
-
-    /* How wide a patch a smudge picks colour up from. MyPaint spans a
-     * quarter of the dab's radius to four times it across its own
-     * collection, and a wide sampler is what makes a blender blend rather
-     * than smear -- ours had no such dial and sampled the dab's own radius
-     * always. `smudge_radius_log` is a doubling: 1 is twice the radius. */
-    const reach = await page.eval(`(() => {
-        const t = BrushPack.readMyb(['version 2', 'radius_logarithmic 2.0',
-            'smudge 0.8', 'smudge_radius_log 1.0'].join(String.fromCharCode(10)), 'x.myb');
-        return JSON.stringify({ p: t.params, w: t.warnings });
-    })()`).then(JSON.parse);
-    check('a smudge that reaches wider comes across as one',
-        reach.p.smudgeRadius === 200, String(reach.p.smudgeRadius));
-    check('...and is no longer reported as dropped',
-        !/smudge/.test(reach.w.join(' ')), reach.w.join(' | '));
 
     /* Krita drives the fresh-colour half of a smudge from the pen. It is the
      * same dial ours drives -- it just had nowhere to be driven from until
@@ -904,20 +889,6 @@ await withPage(async (page) => {
         appn[3][0] === 'color', appn[3].join(' | '));
     check('the one we cannot do -- reading a gradient -- still says so',
         appn[2][0] === 'alpha' && /gradient/.test(appn[2][1]), appn[2].join(' | '));
-
-    const wob = await page.eval(`(() => {
-        const t = BrushPack.readMyb(['version 2', 'radius_logarithmic 2.0',
-            'radius_by_random 0.7', 'hardness 0.5'].join(String.fromCharCode(10)), 'x.myb');
-        return JSON.stringify({ p: t.params, w: t.warnings });
-    })()`).then(JSON.parse);
-    /* MyPaint's spread is in the same log units as the radius, so 0.7 is a
-     * dab anywhere between half the base and twice it. Ours only takes size
-     * away, so the floor carries the whole spread. */
-    check('and with nothing else driving it, the dab really does wander',
-        wob.p.sizeSrc === 'random' && wob.p.sizeMin === 50,
-        JSON.stringify([wob.p.sizeSrc, wob.p.sizeMin]));
-    check('so it is no longer reported as lost',
-        !/randomly varying/.test(wob.w.join(' ')), wob.w.join(' '));
 
     console.log('\n== dropping a file on the panel ==');
     /* Same importer, reached the way a downloaded pack actually arrives.
