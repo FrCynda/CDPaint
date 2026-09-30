@@ -3480,7 +3480,10 @@
                 sc.x = dx; sc.y = dy; dsz = _dyn(p, 'size', p.size, sc, 1) * tfSize;
                 if (p.angleSrc === 'radial') dang = (p.angle || 0) + _atan2(dy - y, dx - x) * 180 / _PI;
                 else if (p.angleSrc === 'random') dang = _dynAngle(p, p.angle, sc);
-                if (p.subMix) finalColor = _subMixed(p, baseColor, sc);   // each particle its own
+                // each particle its own colour change and mix
+                if (!p.jitterSub && p.colorJitterPer !== 'stroke' && (p.hueJitter || p.satJitter || p.valJitter))
+                    finalColor = baseColor = _jitterColor(p, colorHex, dx, dy);
+                if (p.subMix) finalColor = _subMixed(p, baseColor, sc);
                 sc.x = x; sc.y = y;
                 if (dsz < 0.5) continue;
             }
@@ -3496,6 +3499,7 @@
             flowSc.pressure = pressure; flowSc.strokeAngle = strokeAngle;
             var alpha = _clamp(_dyn(p, 'flow', p.flow / 100, flowSc, 4), 0, 1);
             if (tfInk < 1) alpha = _taperAlpha(alpha, tfInk, dsz, p);
+            if (p.cutByLight) { var lc = _hexToRgb(finalColor); alpha *= _max(lc[0], lc[1], lc[2]) / 255; }
 
             if (p.hatch) {
                 var hv = function (o) { return o.src ? _curveAt(o.curve, _sensor(o.src, sc, 16, p), p.curveSmooth) : o.v; };
@@ -5399,8 +5403,9 @@
         hueJitter: 0,
         satJitter: 0,
         valJitter: 0,
-        jitterSub: false,
-        subMix: 0,          // % each dab goes toward white (Clip Studio's sub colour mix)   // the jitter shades a colour tip's whites (Clip Studio's sub colour), not the ink
+        jitterSub: false,        // the jitter shades a colour tip's whites (Clip Studio's sub colour), not the ink
+        subMix: 0,               // % each dab goes toward white (Clip Studio's sub colour mix)
+        cutByLight: false,       // a cutting second brush takes away as much as its colour is light (Clip Studio mode 2)
         colorJitterPer: 'dab',
         colorJitterRange: null,  // Clip Studio: [lo, hi] per hue, sat, value, in units of the dial
         sprayBias: 0,            // Clip Studio: where in its patch a particle lands (_diskR)
@@ -9093,6 +9098,7 @@
                 var p2 = BrushPack.sutToPreset(sec.variant, want, { hasTip: !!ps._tip2Url, tipW: tip2 && tip2.w, tipH: tip2 && tip2.h }).params;
                 if (tip2 && tip2.cells > 1) { p2.tipCells = tip2.cells; p2.tipPick = tip2.pick === 'cycle' ? 'cycle' : p2.tipPick || tip2.pick; }
                 if (tip2 && tip2.params && tip2.params.tipMode) p2.tipMode = tip2.params.tipMode;
+                if (sec.light) p2.cutByLight = true;
                 ps.second = { op: sec.op, p: p2 };
             }
             if (ps.texture > 0 && pr.texture) {

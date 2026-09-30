@@ -3446,9 +3446,16 @@
      * by sutToPreset like any brush. Measured in Clip Studio on round tips
      * (cdp-csp/dm*): modes 0, 1 and 4 lay it over the first, a 0.3 dab on a
      * 0.3 one making 0.51; mode 12 cuts it out of the first by its alpha,
-     * 0.3 leaving 0.21. Modes 2 (adds its colour), 3 (inverts) and 11
-     * (burns) change the colour only and move no ink; those return null. */
-    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 4: 'destination-over', 12: 'destination-out' };
+     * 0.3 leaving 0.21. Modes 3 (inverts) and 11 (burns) change the colour
+     * only and move no ink; those return null. Mode 2 adds its colour: with
+     * no colour change it adds black and nothing moves, but Glitter's colour
+     * change runs to white and its second spray halves the ink (3427 ->
+     * 1596), lightening part of each particle. On paper adding a colour of
+     * lightness v to black ink is taking v of the ink away, so it cuts by
+     * each dab's lightness (cutByLight).
+     * ponytail: a cut, not an add -- over a darker layer it shows what is
+     * under it rather than a lighter colour. */
+    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'destination-out', 4: 'destination-over', 12: 'destination-out' };
     BrushPack.sutSecond = function (v) {
         var op = _sutNum(v.UseDualBrush, 0) && SUT_SECOND_OP[_sutNum(v.DualBrushCompositeMode, 0)];
         if (!op) return null;
@@ -3461,8 +3468,10 @@
             else if (x in v) v2[x] = v[k];
         }
         // It has no second brush, mixing or colour change of its own.
-        v2.UseDualBrush = 0; v2.BrushUseWaterColor = 0; v2.BrushChangePatternColor = 0;
-        return { op: op, variant: v2 };
+        v2.UseDualBrush = 0; v2.BrushUseWaterColor = 0;
+        var light = _sutNum(v.DualBrushCompositeMode, 0) === 2;
+        if (!light) v2.BrushChangePatternColor = 0;   // mode 2's colour is the point
+        return { op: op, variant: v2, light: light };
     };
 
     /* Clip Studio's settings into ours.

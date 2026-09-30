@@ -3885,6 +3885,16 @@ await withPage(async (page) => {
         out.subMix = __B.px(LM, 100, 50);
         b.setParam('subMix', 0);
 
+        // a dab cutting by lightness (Clip Studio's mode 2 second brush) is as strong as its colour is light
+        out.cutLight = [];
+        for (const col of ['#ffffff', '#000000']) {
+            const LC = __B.doc();
+            b.setParam('dynamicsMode', 'off'); b.setParam('size', 30); b.setParam('hardness', 100); b.setParam('cutByLight', true);
+            await __B.stroke(50, 50, 150, 50, col);
+            out.cutLight.push(+__B.px(LC, 100, 50).split(',')[3]);
+        }
+        b.setParam('cutByLight', false);
+
         out.second = {};
         for (const [op, sz, main] of [['destination-out', 10, 40], ['destination-over', 40, 20]]) {
             __B.doc(400, 200);
@@ -3909,6 +3919,8 @@ await withPage(async (page) => {
         sc.byWidth[0] > sc.byWidth[1] * 1.3, JSON.stringify(sc.byWidth));
     /* Clip Studio's sub colour mix takes each dab that far toward white
      * (Generic Flower's black flowers paint grey). */
+    check('a dab that cuts by its lightness is whole in white and nothing in black',
+        sc.cutLight[0] > 245 && sc.cutLight[1] === 0, JSON.stringify(sc.cutLight));
     check('a sub colour mix of half paints black as mid grey',
         Math.abs(parseInt(sc.subMix) - 128) < 3, sc.subMix);
     check('a Clip Studio spray can point each particle away from its patch centre',

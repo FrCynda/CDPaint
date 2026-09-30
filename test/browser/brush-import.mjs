@@ -1411,7 +1411,8 @@ await withPage(async (page) => {
             dual: [0, 2, 5, 12].map(m => { const d = { BrushSize: 100, BrushFlow: 100, UseDualBrush: 1, DualBrushCompositeMode: m, DualSize: 76, DualFlow: 20 },
                                                sec = BrushPack.sutSecond(d);
                                            return [P(d, { hasTip2: true }).tip2Depth || 0, sec && sec.op, sec && sec.variant.BrushSize, sec && sec.variant.BrushFlow,
-                                                   ['dropped: the colour its second brush blends in', 'dropped: its second brush tip'].find(t => W(d, { hasTip2: true }).includes(t)) || '']; }),
+                                                   ['dropped: the colour its second brush blends in', 'dropped: its second brush tip'].find(t => W(d, { hasTip2: true }).includes(t)) || '',
+                                                   !!(sec && sec.light), sec ? sec.variant.BrushChangePatternColor : null]; }),
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', pingpong: P({ BrushPatternOrderType: 1 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
             erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
@@ -1494,11 +1495,13 @@ await withPage(async (page) => {
         JSON.stringify(sm.cj[5]) === '[0,20]', JSON.stringify(sm.cj[5]));
     /* Clip Studio's second brush is a brush of its own, its Dual columns
      * read as the Brush ones: laid under the first in modes 0/1/4, cut out
-     * of it in 12. Modes 2/3/11 only shift colour, so they are named; none
-     * of them carves, as we used to. */
+     * of it in 12. Mode 2 adds its colour, which on paper takes away as much
+     * ink as the colour is light, so it cuts by lightness and keeps its
+     * colour change (Glitter). Modes 3/11 only shift colour, so they are
+     * named; none of them carves, as we used to. */
     check('a second brush becomes a brush of its own, laid under or cut out, never carved with',
-        JSON.stringify(sm.dual) === JSON.stringify([[0, 'destination-over', 76, 20, ''], [0, null, null, null, 'dropped: the colour its second brush blends in'],
-            [0, null, null, null, 'dropped: its second brush tip'], [0, 'destination-out', 76, 20, '']]), JSON.stringify(sm.dual));
+        JSON.stringify(sm.dual) === JSON.stringify([[0, 'destination-over', 76, 20, '', false, 0], [0, 'destination-out', 76, 20, '', true, undefined],
+            [0, null, null, null, 'dropped: its second brush tip', false, null], [0, 'destination-out', 76, 20, '', false, 0]]), JSON.stringify(sm.dual));
     check('...switched off it paints flat, and on the sub colour it shades the whites alone',
         sm.cj[2] === 0 && JSON.stringify(sm.cj[3]) === '[100,true]' && !/sub colour/.test(sm.cj[4]), JSON.stringify(sm.cj));
     check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.pingpong === 'pingpong' && sm.random === '',
