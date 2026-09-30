@@ -1386,6 +1386,7 @@ await withPage(async (page) => {
             flat: [flat.aspectRatio, flat.angle], mm: mm.size,
             spray: [spray.size, spray.scatter, spray.dabCount],
             sprayHow: [spray.scatterAxis, spray.sprayEach, P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 2, BrushSpraySizeUnit: 2 }).size],
+            bias: [-100, 0, 50].map(b => P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 2, BrushSprayBias: b }).sprayBias || 0),
             sprayRnd: [sprayRnd.spacingSrc, sprayRnd.aspectRatioSrc, sprayRnd.dabCountSrc].map(s => s || 'none'),
             plainRnd: [plainRnd.spacingSrc, plainRnd.aspectRatioSrc].map(s => s || 'none'),
             iso: [P({ BrushAutoIntervalType: 2 }, { hasTip: true }), P({ BrushAutoIntervalType: 0 }, { hasTip: true }),
@@ -1438,6 +1439,8 @@ await withPage(async (page) => {
      * size, and a spray size in millimetres converted like the brush size. */
     check('a spray covers its patch evenly, sizes each particle, and reads its unit',
         JSON.stringify(sm.sprayHow) === '["disk",true,19]', JSON.stringify(sm.sprayHow));
+    check('a spray keeps its bias (where in the patch its particles land)',
+        JSON.stringify(sm.bias) === '[-100,0,50]', JSON.stringify(sm.bias));
     /* Trees' random interval varies its gaps; in a spray it did nothing
      * (60px apart with it on or off). Droplet's random thickness took a
      * quarter off its ink; Dry Gouache's kept its line (width 74 either way). */

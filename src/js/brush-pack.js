@@ -3560,6 +3560,8 @@
             out.scatterAxis = 'disk';
             out.sprayEach = true;
             out.dabCount = Math.max(1, Math.min(16, Math.round(_sutNum(v.BrushSprayDensity, 1))));
+            var bias = Math.max(-100, Math.min(100, Math.round(_sutNum(v.BrushSprayBias, 0))));
+            if (bias) out.sprayBias = bias;
         }
 
         /* A ribbon lays its picture end to end along the stroke, turned so

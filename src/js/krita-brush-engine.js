@@ -2380,7 +2380,7 @@
         }
         if (scatterAmt > 0) {
             var scatterDist = (scatterAmt / 100) * sz * (p.scatterAxis === 'disk'
-                ? Math.sqrt(_dabRand(sc.x, sc.y, 2)) : _dabRand(sc.x, sc.y, 2) * 2 - 1);
+                ? _diskR(p.sprayBias, _dabRand(sc.x, sc.y, 2)) : _dabRand(sc.x, sc.y, 2) * 2 - 1);
             var ax = p.scatterAxis;
             var scatterAngle = (ax === 'along' || ax === 'across')
                 ? dir + (ax === 'across' ? _PI / 2 : 0)
@@ -3417,7 +3417,7 @@
                 var slot = di * 31;
                 var scatterDist = (scatterAmt / 100) * sz * (_dabRand(x, y, 2 + slot) * 2 - 1);
                 // 'disk': even over the whole patch, as Clip Studio sprays (its Spray's band is a semicircle across)
-                if (p.scatterAxis === 'disk') scatterDist = (scatterAmt / 100) * sz * Math.sqrt(_dabRand(x, y, 2 + slot));
+                if (p.scatterAxis === 'disk') scatterDist = (scatterAmt / 100) * sz * _diskR(p.sprayBias, _dabRand(x, y, 2 + slot));
                 /* Krita can scatter along ONE axis, and its axes are the
                  * stroke's own: along the line or across it. Spreading a
                  * one-axis preset in both directions turned a rake's clean
@@ -5360,6 +5360,7 @@
         valJitter: 0,
         colorJitterPer: 'dab',
         colorJitterRange: null,  // Clip Studio: [lo, hi] per hue, sat, value, in units of the dial
+        sprayBias: 0,            // Clip Studio: where in its patch a particle lands (_diskR)
         sizeSrc: 'pressure',     sizeMin: 50,      sizeCurve: 1,
         flowSrc: 'pressure',     flowMin: 0,       flowCurve: 1,
         /* Krita's per-dab opacity: the level a stroke's ink stops building
@@ -6106,6 +6107,32 @@
                 }
             }
         }
+    }
+
+    /* How far out a Clip Studio spray particle lands, as a share of the
+     * patch's radius, from a uniform u. Bias 0 is even over the disk. Fitted
+     * to Clip Studio's own sprays across the stroke (cdp-csp/sb, round
+     * particles, bias -100..100): below 0, even over a ring whose inner
+     * edge is -bias% of the radius; above, the density thins to the rim as
+     * (1 - r)^(bias / 50). Each bias's inverse CDF is tabled once. */
+    var _diskTabs = {};
+    function _diskR(bias, u) {
+        if (!bias) return Math.sqrt(u);
+        var t = _diskTabs[bias], N = 256, i;
+        if (!t) {
+            t = _diskTabs[bias] = new Float32Array(N + 1);
+            var a = bias < 0 ? _min(0.99, -bias / 100) : 0, k = bias > 0 ? bias / 50 : 0, M = 4096,
+                cdf = new Float64Array(M + 1), r;
+            for (i = 1; i <= M; i++) { r = (i - 0.5) / M; cdf[i] = cdf[i - 1] + (r >= a ? r * Math.pow(1 - r, k) : 0); }
+            for (var j = 0, q = 0; j <= N; j++) {
+                var want = j / N * cdf[M];
+                while (q < M && cdf[q + 1] < want) q++;
+                var span = cdf[q + 1] - cdf[q];
+                t[j] = Math.min(1, (q + (span > 0 ? (want - cdf[q]) / span : 0)) / M);
+            }
+        }
+        var f = u * N; i = _min(N - 1, f | 0);
+        return t[i] + (t[i + 1] - t[i]) * (f - i);
     }
 
     function _needsReplay(p, pts) {

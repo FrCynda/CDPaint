@@ -3804,6 +3804,28 @@ await withPage(async (page) => {
          * (cdp-csp/wb): a 40px brush moving on fills back in what a 10px cut
          * took, so only the stroke's end stays cut; laid under, a wider
          * second brush widens the stroke. */
+        /* Clip Studio's spray bias moves its particles to the rim (-100: a
+         * ring) or the middle (+100) of the patch (cdp-csp/sb): the share
+         * of the ink in the middle 60px of a 200px patch's stroke. */
+        out.bias = [];
+        for (const bias of [-100, 0, 100]) {
+            __B.doc(400, 300);
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('size', 4); b.setParam('hardness', 100);
+            b.setParam('scatter', 2500); b.setParam('scatterAxis', 'disk'); b.setParam('dabCount', 16);
+            b.setParam('spacing', 100); b.setParam('sprayBias', bias);
+            b._setStrokeSeed(3);
+            const LB = __B.layer();
+            await __B.stroke(40, 150, 360, 150, '#000000');
+            const d = LB.ctx.getImageData(0, 0, 400, 300).data;
+            let mid = 0, all = 0;
+            for (let y = 0; y < 300; y++) for (let x = 0; x < 400; x++) {
+                const a = d[(y * 400 + x) * 4 + 3]; all += a; if (Math.abs(y - 150) < 30) mid += a;
+            }
+            out.bias.push(+(mid / Math.max(1, all)).toFixed(3));
+        }
+        b.setParam('sprayBias', 0); b._setStrokeSeed(null);
+
         out.second = {};
         for (const [op, sz, main] of [['destination-out', 10, 40], ['destination-over', 40, 20]]) {
             __B.doc(400, 200);
@@ -3822,6 +3844,10 @@ await withPage(async (page) => {
     })()`));
     console.log('  ' + JSON.stringify(sc));
 
+    /* Even over the disk, the middle 60px holds about 38% of the ink; a
+     * ring leaves it about 20%, a centre-heavy spray about 55%. */
+    check('a Clip Studio spray bias moves particles to the rim or the middle',
+        sc.bias[0] < sc.bias[1] * 0.75 && sc.bias[2] > sc.bias[1] * 1.25, JSON.stringify(sc.bias));
     check('a Clip Studio second brush cuts in turn with the first: filled back in mid-stroke, cut at the end',
         sc.second['destination-out'][0] > 200 && sc.second['destination-out'][1] < 64, JSON.stringify(sc.second));
     check('...and one laid under a narrower first brush widens the stroke',
