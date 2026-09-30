@@ -2307,9 +2307,7 @@
         var c = _tipCells();
         var n = c ? c.length : 1;
         if (n < 2) return 0;
-        return (p.tipPick === 'cycle')
-            ? (_tipCycle % n)
-            : _min(n - 1, _floor(_dabRand(x, y, 23) * n));
+        return _tipCellAt(p, _tipCycle, n, x, y);
     }
 
     /* Small LRU, not one slot: a jittering/scattering multi-cell tip can
@@ -4796,9 +4794,14 @@
         var c = _tipCells();
         var n = c ? c.length : 1;
         if (n < 2) { _tipCell = 0; return; }
-        _tipCell = (p.tipPick === 'cycle')
-            ? (_tipCycle++ % n)
-            : _min(n - 1, _floor(_dabRand(x, y, 23) * n));
+        _tipCell = _tipCellAt(p, _tipCycle++, n, x, y);
+    }
+    /* 'cycle' takes the cells in turn, 'pingpong' out and back (0,1,2,1,0,1..:
+     * Clip Studio's order 1, measured on Grass patch), else one at random. */
+    function _tipCellAt(p, t, n, x, y) {
+        if (p.tipPick === 'cycle') return t % n;
+        if (p.tipPick === 'pingpong') { var k = t % (2 * n - 2); return k < n ? k : 2 * n - 2 - k; }
+        return _min(n - 1, _floor(_dabRand(x, y, 23) * n));
     }
     /* Krita's picture tips (KisQImagePyramid). The tip is kept at halving
      * sizes, each averaged down from the original to W/2^k, rounded; a dab

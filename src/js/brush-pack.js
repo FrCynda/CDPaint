@@ -3615,9 +3615,12 @@
             out.ribbonClip = true;
         }
         /* Several pictures: 0 takes them in turn (Zipper's teeth alternate),
-         * 3 at random (Book). A ribbon's fixed order is joined into one
+         * 1 out and back (Grass patch's clumps go 0,1,2,1,0), 3 at random
+         * (Book). A ribbon's fixed order is joined into one
          * picture instead (tipStrip's join). */
-        if (_sutNum(v.BrushPatternOrderType, 3) === 0) out.tipPick = 'cycle';
+        var order = _sutNum(v.BrushPatternOrderType, 3);
+        if (order === 0) out.tipPick = 'cycle';
+        else if (order === 1) out.tipPick = 'pingpong';
 
         /* Starting and ending is NOT a taper here. Real Clip Studio 5 draws
          * a mouse stroke of G-pen, Calligraphy or Mapping pen (all UseIn/

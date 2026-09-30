@@ -1412,7 +1412,7 @@ await withPage(async (page) => {
                                                sec = BrushPack.sutSecond(d);
                                            return [P(d, { hasTip2: true }).tip2Depth || 0, sec && sec.op, sec && sec.variant.BrushSize, sec && sec.variant.BrushFlow,
                                                    ['dropped: the colour its second brush blends in', 'dropped: its second brush tip'].find(t => W(d, { hasTip2: true }).includes(t)) || '']; }),
-            cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
+            cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', pingpong: P({ BrushPatternOrderType: 1 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
             erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
             gap: [0, 1, 2, 3].map(m => P({ BrushInterval: 1, BrushAutoIntervalType: m }).spacing),
@@ -1498,8 +1498,8 @@ await withPage(async (page) => {
             [0, null, null, null, 'dropped: its second brush tip'], [0, 'destination-out', 76, 20, '']]), JSON.stringify(sm.dual));
     check('...switched off it paints flat, and on the sub colour only it is named',
         sm.cj[2] === 0 && sm.cj[3] === 0 && /sub colour/.test(sm.cj[4]), JSON.stringify(sm.cj));
-    check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.random === '',
-        JSON.stringify([sm.cycle, sm.random]));
+    check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.pingpong === 'pingpong' && sm.random === '',
+        JSON.stringify([sm.cycle, sm.pingpong, sm.random]));
     /* How much paper shows is the blend's doing: subtract at half density
      * matched multiply at full, 4 barely showed and 0 not at all. Gouache
      * (4 at 100) came out a speckled grey at full grain. */
