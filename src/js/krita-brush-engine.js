@@ -708,6 +708,13 @@
      * half a level is lost, so the stroke stalls about 16 levels short of
      * its opacity and steps up as the pressure does; the browser's lighten
      * rounds its own way (Basic Paint IoU 0.897 -> 0.952). */
+    /* Clip Studio's second brush in mode 3 is a stroke of its own taken off
+     * the first's, a - d floored at 0, once both are whole (cdp-csp/pr-dt,
+     * pr-dd, Dappled light: on one dab 0.90 / 0.68 / 0.45 of ink under the
+     * same second dab leave 0.25 / 0.02 / 0; along a line the first stroke
+     * less what is left is the second laid on its own, to a level). The
+     * second paints into _subCanvas; the final flush subtracts it. */
+    var _subCanvas = null, _subCtx = null, _subOn = false;
     function _adDab(ox, oy, mw, mh, flow) {
         var x0 = _max(0, ox), y0 = _max(0, oy), x1 = _min(_adCanvas.width, ox + mw), y1 = _min(_adCanvas.height, oy + mh);
         if (x1 <= x0 || y1 <= y0) return;
@@ -4235,6 +4242,18 @@
          * keeps its dots from one flush to the next.
          * ponytail: over-inks thin hatching by up to a third; a real tip
          * at full resolution would need no guessing. */
+        if (_subOn && isFinal && _flowCanvas && _secondOf()) {
+            _ensureWashCanvas(_flowCanvas.width, _flowCanvas.height);
+            if (src !== _washCanvas) {
+                _washCtx.clearRect(x, y, w, h);
+                _washCtx.drawImage(src, x, y, w, h, x, y, w, h);
+            }
+            var wi = _washCtx.getImageData(x, y, w, h), wd = wi.data, sd = _subCtx.getImageData(x, y, w, h).data;
+            for (var si = 3; si < wd.length; si += 4) wd[si] -= sd[si];
+            _washCtx.putImageData(wi, x, y);
+            _subOn = false;
+            src = _washCanvas;
+        }
         if (_p.aliased && _flowCanvas) {
             _ensureWashCanvas(_flowCanvas.width, _flowCanvas.height);
             if (src !== _washCanvas) {
@@ -6145,15 +6164,22 @@
     }
     // Both brushes along pts, a segment of each in turn.
     function _paintBoth(pts, color, sec) {
-        var st = _secondState(sec), n = pts.length;
+        var st = _secondState(sec), n = pts.length, main = _flowCtx;
+        _subOn = sec.op === 'subtract';
+        if (_subOn) {
+            if (!_subCanvas || _subCanvas.width !== _flowCanvas.width || _subCanvas.height !== _flowCanvas.height) {
+                _subCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);
+                _subCtx = _subCanvas.getContext('2d', { willReadFrequently: true });
+            } else _subCtx.clearRect(0, 0, _subCanvas.width, _subCanvas.height);
+        }
         for (var i = 0; i < _max(1, n - 1); i++) {
             for (var w = 0; w < 2; w++) {
-                if (w) { st = _swapState(st); _flowCtx.globalCompositeOperation = sec.op; }
+                if (w) { st = _swapState(st); if (_subOn) _flowCtx = _subCtx; else _flowCtx.globalCompositeOperation = sec.op; }
                 try {
                     if (n === 1) _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, color);
                     else _processSegment(pts, i, i + 1, color, 2);
                 } finally {
-                    if (w) { _flowCtx.globalCompositeOperation = 'source-over'; st = _swapState(st); _second2.cache = st[3]; }
+                    if (w) { _flowCtx = main; _flowCtx.globalCompositeOperation = 'source-over'; st = _swapState(st); _second2.cache = st[3]; }
                 }
             }
         }

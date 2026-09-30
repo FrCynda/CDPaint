@@ -3446,8 +3446,10 @@
      * by sutToPreset like any brush. Measured in Clip Studio on round tips
      * (cdp-csp/dm*): modes 0, 1 and 4 lay it over the first, a 0.3 dab on a
      * 0.3 one making 0.51; mode 12 cuts it out of the first by its alpha,
-     * 0.3 leaving 0.21. Modes 3 (inverts) and 11 (burns) change the colour
-     * only and move no ink; those return null. Mode 2 adds its colour: with
+     * 0.3 leaving 0.21. Mode 3 subtracts it, a - d (Dappled light on one dab,
+     * cdp-csp/pr-dt: 0.90 of ink under its dab leaves 0.25, 0.45 leaves
+     * nothing); laid under solid ink it had seemed to move none. Mode 11
+     * (burns) changes the colour only and moves no ink; it returns null. Mode 2 adds its colour: with
      * no colour change it adds black and nothing moves, but Glitter's colour
      * change runs to white and its second spray halves the ink (3427 ->
      * 1596), lightening part of each particle. On paper adding a colour of
@@ -3455,7 +3457,7 @@
      * each dab's lightness (cutByLight).
      * ponytail: a cut, not an add -- over a darker layer it shows what is
      * under it rather than a lighter colour. */
-    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'destination-out', 4: 'destination-over', 12: 'destination-out' };
+    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'destination-out', 3: 'subtract', 4: 'destination-over', 12: 'destination-out' };
     BrushPack.sutSecond = function (v) {
         var op = _sutNum(v.UseDualBrush, 0) && SUT_SECOND_OP[_sutNum(v.DualBrushCompositeMode, 0)];
         if (!op) return null;
@@ -3529,11 +3531,12 @@
          * 10-80, fit 3, 2 and 1.4 times). A fixed interval stays put. */
         if (ivt >= 1 && ivt <= 3 && !opts.hasTip)
             out.spacing = Math.round(out.spacing * (3 - 2 * Math.min(100, _sutNum(v.BrushHardness, 100)) / 100) * 10) / 10;
-        /* "Adjust density by interval": each dab lays flow x spacing / 35.36
-         * (25 root 2), never more than the flow -- round strokes at flow 50
-         * and 10, spacing 5-40, all fit it within a percent of alpha. */
+        /* "Adjust density by interval": each dab lays flow x spacing / 33.1,
+         * never more than the flow -- one hard dab at 10 and 23.8% takes 0.30
+         * and 0.72 off solid ink in Clip Studio (cdp-csp/pr-dc, zdah*). The
+         * 35.36 fitted to whole strokes before left Soft 7% light. */
         if (_sutNum(v.BrushAdjustFlowByInterval, 0))
-            out.flow = Math.max(1, Math.round(out.flow * Math.min(1, out.spacing / 35.36)));
+            out.flow = Math.max(1, Math.round(out.flow * Math.min(1, out.spacing / 33.1)));
 
         /* Thickness is how wide the tip stays, as a percentage; ours is how
          * many times longer than wide it is. 16% thick is a blade six times

@@ -3896,9 +3896,9 @@ await withPage(async (page) => {
         b.setParam('cutByLight', false);
 
         out.second = {};
-        for (const [op, sz, main] of [['destination-out', 10, 40], ['destination-over', 40, 20]]) {
+        for (const [op, sz, main, flow] of [['destination-out', 10, 40, 100], ['destination-over', 40, 20, 100], ['subtract', 40, 40, 10]]) {
             __B.doc(400, 200);
-            b.PRESETS.Round.second = { op, p: { size: sz, flow: 100, spacing: 10, hardness: 100 } };
+            b.PRESETS.Round.second = { op, p: { size: sz, flow, spacing: 10, hardness: 100 } };
             b.loadPreset('Round');
             b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
             b.setParam('size', main); b.setParam('hardness', 100); b.setParam('spacing', 10);
@@ -3931,6 +3931,11 @@ await withPage(async (page) => {
         sc.second['destination-out'][0] > 200 && sc.second['destination-out'][1] < 64, JSON.stringify(sc.second));
     check('...and one laid under a narrower first brush widens the stroke',
         sc.second['destination-over'][0] === 255 && sc.second['destination-over'][2] === 255, JSON.stringify(sc.second));
+    /* Clip Studio's mode 3 (Dappled light): the second is a whole stroke taken
+     * off the first, not a dab at a time that the first fills back in. Ten
+     * 10% dabs over a point leave about a third of solid ink. */
+    check('...and one that subtracts takes its whole stroke off the finished first',
+        sc.second.subtract[0] > 60 && sc.second.subtract[0] < 120, JSON.stringify(sc.second));
 
     const clear = '0,0,0,0';
     check('the previous stroke does not ghost back into the next',

@@ -1157,7 +1157,7 @@ await withPage(async (page) => {
             tip2Spacing: p.tip2Spacing || 0, tip2Angle: p.tip2Angle || 0,
             scatterSrc: p.scatterSrc, hueJitter: p.hueJitter || 0,
             satJitter: p.satJitter || 0, valJitter: p.valJitter || 0,
-            colorJitterPer: p.colorJitterPer });
+            colorJitterPer: p.colorJitterPer, secondOp: p.second ? p.second.op : null });
     })()`, { awaitPromise: true }).then(JSON.parse);
     console.log('  ' + JSON.stringify(sut));
 
@@ -1253,10 +1253,11 @@ await withPage(async (page) => {
      * share of the brush here: 30 against 80 is 38%. */
     check('the second tip arrives as a picture of its own',
         sut.has2, JSON.stringify(sut));
-    /* Its mode 3 inverts the colour and moves no ink (measured in Clip
-     * Studio), so it is named, and not carved with as it used to be. */
-    check('...and a second brush that only shifts colour is named, not carved with',
-        sut.tip2Depth === 0 && /colour its second brush blends in/.test(sutNotes), sutNotes);
+    /* Its mode 3 takes the second brush's whole stroke off the first's
+     * (Dappled light, measured in Clip Studio), so it is a brush of its own,
+     * not carved with as it used to be. */
+    check('...and a second brush that subtracts is a brush of its own, not carved with',
+        sut.tip2Depth === 0 && sut.secondOp === 'subtract', JSON.stringify(sut.secondOp));
 
     const sutInk = await page.eval(`(async () => {
         const app = PaintApp, br = app.brush;
@@ -1408,7 +1409,7 @@ await withPage(async (page) => {
                  W(Object.assign({ BrushChangeColorTarget: 2 }, cj)),
                  ['[[0,1],[1,0]]', '[[0,0],[1,0.5]]'].map(k => P({ BrushValueChange: 40, BrushChangePatternColor: 1,
                      BrushValueChangeEffector: eff(0x20, JSON.parse(k)) }).valJitter || 0)],
-            dual: [0, 2, 5, 12].map(m => { const d = { BrushSize: 100, BrushFlow: 100, UseDualBrush: 1, DualBrushCompositeMode: m, DualSize: 76, DualFlow: 20 },
+            dual: [0, 2, 3, 5, 12].map(m => { const d = { BrushSize: 100, BrushFlow: 100, UseDualBrush: 1, DualBrushCompositeMode: m, DualSize: 76, DualFlow: 20 },
                                                sec = BrushPack.sutSecond(d);
                                            return [P(d, { hasTip2: true }).tip2Depth || 0, sec && sec.op, sec && sec.variant.BrushSize, sec && sec.variant.BrushFlow,
                                                    ['dropped: the colour its second brush blends in', 'dropped: its second brush tip'].find(t => W(d, { hasTip2: true }).includes(t)) || '',
@@ -1501,7 +1502,7 @@ await withPage(async (page) => {
      * named; none of them carves, as we used to. */
     check('a second brush becomes a brush of its own, laid under or cut out, never carved with',
         JSON.stringify(sm.dual) === JSON.stringify([[0, 'destination-over', 76, 20, '', false, 0], [0, 'destination-out', 76, 20, '', true, undefined],
-            [0, null, null, null, 'dropped: its second brush tip', false, null], [0, 'destination-out', 76, 20, '', false, 0]]), JSON.stringify(sm.dual));
+            [0, 'subtract', 76, 20, '', false, 0], [0, null, null, null, 'dropped: its second brush tip', false, null], [0, 'destination-out', 76, 20, '', false, 0]]), JSON.stringify(sm.dual));
     check('...switched off it paints flat, and on the sub colour it shades the whites alone',
         sm.cj[2] === 0 && JSON.stringify(sm.cj[3]) === '[100,true]' && !/sub colour/.test(sm.cj[4]), JSON.stringify(sm.cj));
     check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.pingpong === 'pingpong' && sm.random === '',
@@ -1546,10 +1547,11 @@ await withPage(async (page) => {
     check('automatic spacing ignores the interval',
         JSON.stringify(sm.gap) === '[1,12,8,4]', JSON.stringify(sm.gap));
     /* Adjusting density by interval scales each dab's flow with the
-     * spacing: 50 at 5-20% laid 0.07, 0.14 and 0.28 a dab in Clip Studio,
-     * and 40% laid the flow. Soft had twice Clip Studio's ink without it. */
+     * spacing, flow x spacing / 33.1: a single hard dab at 10 and 23.8%
+     * takes 0.30 and 0.72 off solid ink in Clip Studio (cdp-csp/pr-dc,
+     * zdah*), and 40% at 50 lays the flow. Soft had twice Clip Studio's ink without it. */
     check('density adjusted by interval thins each dab with the spacing',
-        JSON.stringify(sm.adj) === '[7,28,50]', JSON.stringify(sm.adj));
+        JSON.stringify(sm.adj) === '[8,30,50]', JSON.stringify(sm.adj));
     check('the paper shows as strongly as its blend lets it',
         JSON.stringify(sm.paper) === '[50,100,3,0]', JSON.stringify(sm.paper));
     /* Clip Studio's pictures (Book, Building) stamp their own greys and

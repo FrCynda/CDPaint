@@ -89,6 +89,8 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         if (self) L.ctx.putImageData(shown, 0, 0);
         const params = JSON.parse(JSON.stringify(b.getParams(), (k, v) =>
             typeof v === 'string' && v.length > 80 ? v.slice(0, 40) + '...' : v));
+        const sec = b.PRESETS[b._currentPreset] && b.PRESETS[b._currentPreset].second;   // a Clip Studio second brush lives on the preset
+        if (sec) params.second = { op: sec.op, p: JSON.parse(JSON.stringify(sec.p, (k, v) => typeof v === 'string' && v.length > 80 ? v.slice(0, 40) + '...' : v)) };
         if (!${keep}) for (const n of imp.added) b.deleteUserPreset(n);
         const img = new Image(); img.src = 'data:image/png;base64,${refB64}'; await img.decode();
         const kc = new OffscreenCanvas(W, H), kx = kc.getContext('2d');
