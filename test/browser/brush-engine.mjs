@@ -3540,6 +3540,38 @@ await withPage(async (page) => {
     check('a mirrored tip taken in turn keeps its turn and flips each dab at random',
         dabs.length >= 4 && Math.max(...mgaps) - Math.min(...mgaps) <= 2 && dabs.includes('L') && dabs.includes('R'), dabs + ' ' + mgaps);
 
+    /* A ribbon's pictures meet end to end at fractions of a pixel, and
+     * where two met each half covered the pixel: a light seam every link of
+     * Thin chain. A solid bar laid as a ribbon is solid; one inked on its
+     * left half only (Dashed line's gaps are its blank ends) keeps its gaps. */
+    const rib = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, out = {};
+        for (const half of [false, true]) {
+            const c = document.createElement('canvas'); c.width = 64; c.height = 16;
+            const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, half ? 32 : 64, 16);
+            b.loadCustomTip(c.toDataURL('image/png'), null);
+            await new Promise(r => setTimeout(r, 400));
+            ['texture', 'opacity', 'flow', 'scatter', 'sizeSrc', 'taperStart', 'taperEnd', 'tip2Depth', 'angleSrc', 'tipShrink'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+            b.setParam('dynamicsMode', 'off'); b.setParam('size', 21.3); b.setParam('hardness', 100);
+            b.setParam('spacing', 100); b.setParam('spacingIsotropic', false); b.setParam('autoSpacing', 0);
+            b.setParam('angle', 0); b.setParam('angleSrc', 'direction'); b.setParam('ribbonClip', true);
+            const L = __B.doc(400, 100);
+            await __B.stroke(20.3, 50, 380, 50, '#000000');
+            const row = L.ctx.getImageData(60, 50, 280, 1).data;
+            let min = 255, clear = 0;
+            for (let i = 3; i < row.length; i += 4) { min = Math.min(min, row[i]); if (row[i] < 10) clear++; }
+            const all = []; for (let i = 3; i < row.length; i += 4) all.push(row[i]);
+            out[half ? 'dash' : 'bar'] = [min, clear, all.sort((p, q) => p - q)[all.length >> 1]];
+        }
+        ['spacing', 'spacingIsotropic', 'autoSpacing', 'angle', 'angleSrc', 'ribbonClip'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check('a ribbon of solid pictures has no seams where they meet',
+        rib.bar[1] === 0 && rib.bar[0] >= rib.bar[2] - 5, JSON.stringify(rib));
+    check('...and one whose pictures end blank keeps its gaps',
+        rib.dash[1] > 100, JSON.stringify(rib));
+
     /* At precision 1-3 Krita reuses the last dab while the next is close
      * enough, sub-pixel phase and all, just moved to the new whole pixel. A
      * one-column tip stepped 33.3px spreads the same three alphas on every

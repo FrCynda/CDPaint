@@ -5128,6 +5128,31 @@
             bctx.fillStyle = grad;
             bctx.fillRect(0, 0, w, h);
         }
+        /* A ribbon's pictures meet end to end, each at its own fraction of
+         * a pixel and its length rounded to whole ones, so where two meet
+         * each half covers the pixel and the paper shows through: a light
+         * seam every link of Thin chain. The end the next picture lands on
+         * is carried a pixel on, the pixel inside it repeated (the edge
+         * itself is half clear from the shrink), and the next picture is laid
+         * over it. Only that end: carried back under the last picture too,
+         * Zipper's teeth, lined at both ends, doubled their lines. And only
+         * as far as the other end is inked: Dashed line's gaps are its
+         * pictures' blank ends, and a dash carried on is longer. */
+        var q = ((_round((_params.angle || 0) / 90) % 4) + 4) % 4, vert = q % 2, L = vert ? h : w;
+        if (_params.ribbonClip && L >= 3) {
+            var W2 = w + 2, H2 = h + 2, rid = bctx.getImageData(0, 0, W2, H2), rd = rid.data, n = vert ? w : h;
+            // the end ahead along the stroke: +x at 0, +y turned to +x at 270, the other way at 90 and 180
+            var step = (vert ? W2 * 4 : 4) * (q === 0 || q === 3 ? 1 : -1);
+            for (var k = 1; k <= n; k++) {
+                var s = (vert ? W2 + k : k * W2 + 1) * 4, e = (vert ? L * W2 + k : k * W2 + L) * 4;
+                if (step < 0) { var t0 = s; s = e; e = t0; }
+                if (_min(rd[s + 3], rd[e + 3]) < 64) continue;   // a seam needs ink at both edges
+                var a = _min(rd[s + step + 3], rd[e - step + 3]), p = e - step;   // a pixel in from each end
+                if (a > rd[e + 3]) { rd[e] = rd[p]; rd[e + 1] = rd[p + 1]; rd[e + 2] = rd[p + 2]; rd[e + 3] = a; }   // an edge only ever gains
+                rd[e + step] = rd[p]; rd[e + step + 1] = rd[p + 1]; rd[e + step + 2] = rd[p + 2]; rd[e + step + 3] = a;
+            }
+            bctx.putImageData(rid, 0, 0);
+        }
 
         // Step 2: rotate if needed
         var ang = (angleDeg || 0) * _PI / 180;
