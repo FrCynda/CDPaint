@@ -3519,7 +3519,8 @@
          * it: an eraser at the brush's opacity.
          * ponytail: its soft falloff is not ours yet -- ours clears a flat band. */
         if (_sutNum(v.CompositeMode, 0) === 27) out.blendMode = 'erase';
-        out.hardness = Math.max(0, Math.min(100, Math.round(_sutNum(v.BrushHardness, 80))));
+        // a picture takes no hardness: Pastel's dab at 1 and at 100 is the same picture x flow
+        out.hardness = opts.hasTip ? 100 : Math.max(0, Math.min(100, Math.round(_sutNum(v.BrushHardness, 80))));
         /* Spacing mode 0 is Clip Studio's fixed interval; 1-3 (wide, normal,
          * narrow) ignore it. Faint round strokes at sizes 20-200 measured
          * 12, 8 and 4% of the size in those modes, whatever the interval. */
@@ -3651,6 +3652,13 @@
         var order = _sutNum(v.BrushPatternOrderType, 3);
         if (order === 0) out.tipPick = 'cycle';
         else if (order === 1) out.tipPick = 'pingpong';
+        /* Reverse horizontal/vertical: 1 flips every dab, 2 each one at
+         * random (Pastel, one picture, lays no two dabs alike in Clip
+         * Studio). 3 painted a level stroke unflipped. */
+        var rvx = _sutNum(v.BrushPatternReverseHorizontal, 0), rvy = _sutNum(v.BrushPatternReverseVertical, 0);
+        var both = function (x, y) { return x && y ? 'both' : x ? 'h' : y ? 'v' : ''; };
+        if (both(rvx === 1, rvy === 1)) out.tipFlip = both(rvx === 1, rvy === 1);
+        if (both(rvx === 2, rvy === 2)) out.tipMirror = both(rvx === 2, rvy === 2);
 
         /* Starting and ending is NOT a taper here. Real Clip Studio 5 draws
          * a mouse stroke of G-pen, Calligraphy or Mapping pen (all UseIn/
@@ -3674,6 +3682,11 @@
                  * Studio's own, measured dab by dab -- see _cspPaper. */
                 out.texture = Math.min(100, Math.round(dens));
                 out.textureBlend = tm;
+                /* Contrast spreads the paper about its mid grey: -30 and +30
+                 * took Pastel's paper under a flat dab to 0.70 and 1/0.70 of
+                 * its spread (cdp-csp/pr-dab pfC30, pfCp30). */
+                var tcn = Math.max(-99, Math.min(99, _sutNum(v.TextureContrast, 0)));
+                if (tcn) out.textureContrast = tcn < 0 ? 1 + tcn / 100 : 1 / (1 - tcn / 100);
             } else if (dens > 0) {
                 /* Paper on the whole stroke. How much the paper shows depends on how it is blended,
                  * measured in Clip Studio on one plain dab with Pastel's
@@ -3725,7 +3738,7 @@
                     warn.push('changed: paper texture rotation');
                 if (_sutNum(v.TextureBrightness, 0))
                     warn.push('changed: paper texture brightness');
-                if (_sutNum(v.TextureContrast, 0))
+                if (_sutNum(v.TextureContrast, 0) && !perDab)
                     warn.push('changed: paper texture contrast');
             }
         }
@@ -3806,8 +3819,11 @@
          * there. Its watercolour kind, edge and mixing move no ink on an empty
          * layer in Clip Studio (Soft bleed with each switched off in turn,
          * cdp-csp/pr-sb: 6.49-6.51M of ink every time), so none of our wash,
-         * wet blend or edge comes over with it. */
-        if (_sutNum(v.BrushBlendPatternByDarken, 0)) {
+         * wet blend or edge comes over with it. Colour mixing turns it off:
+         * with it on, Pastel's dabs lay over each other at their density (a
+         * stroke of its one dab at 4px 109 of 255 where Clip Studio has 106,
+         * the strongest of each 42), and at density 100 build to solid. */
+        if (_sutNum(v.BrushBlendPatternByDarken, 0) && !_sutNum(v.BrushUseWaterColor, 0) && !_sutNum(v.BrushUseWaterColor2, 0)) {
             out.dabMax = true;
             delete out.watercolor; delete out.wetBlend; delete out.edgeWidth; delete out.edgeDensity;
         }
@@ -3909,6 +3925,12 @@
             !_sutNum(v.BrushChangePatternColor, 0) &&
             // a soft round tip keeps its greys: hardness 50 with it off or on, the same dab
             (opts.hasTip ? !opts.tipWhole : _sutNum(v.BrushHardness, 100) >= 100)) out.aliased = true;
+        /* ...and a picture it does not ink solid is shrunk without smoothing:
+         * one Pastel dab keeps its ink with it off, in sharper specks (46
+         * pixels over 112 of 128 where anti-aliased it has 4), and its
+         * stroke, the strongest of each pixel's dabs, takes a quarter again
+         * the ink (cdp-csp/pr-dab paR0n). */
+        else if (_sutNum(v.AntiAlias, 1) === 0 && opts.hasTip) out.tipShrink = 'nearest';
         /* On, it fades a round dab's rim over AA + 0.5 px at every size (a
          * 20px G-pen line's edge 163/111/84 at levels 1/2/3): a 5px spray
          * speck at level 2 carries a third of a hard disc's ink. */

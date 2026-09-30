@@ -487,7 +487,11 @@ await withPage(async (page) => {
         const full = dab(100), half = dab(50);
         b.setParam('textureBlend', 0); b.setParam('texture', 50);
         const m0 = dab(50);
-        b.setParam('texture', 100);
+        b.setParam('textureBlend', 4); b.setParam('texture', 60);
+        const m4 = dab(25);
+        b.setParam('texture', 100); b.setParam('textureContrast', 0.7);
+        const ct = dab(50);
+        b.setParam('textureContrast', 1);
         b.setParam('flow', 100); b.setParam('textureBlend', 1); b.setParam('mixAlpha', 100);
         L.ctx.clearRect(0, 0, 200, 200);
         b.beginStroke(20, 100, 1, '#000000');
@@ -496,13 +500,21 @@ await withPage(async (page) => {
         const mixed = levels(100);
         b.setParam('mixAlpha', null); b.setParam('textureBlend', null); b.setParam('texture', 0);
         b.setParam('texturePattern', null); b.forgetSaved('Round');
-        return JSON.stringify({ full, half, mixed, m0 });
+        return JSON.stringify({ full, half, mixed, m0, m4, ct });
     })()`, { awaitPromise: true }));
     /* Blend 0 at half density scales the paper in, a (1.5 - d (1 - s)):
      * 0.3 and 0.8 paper under a 0.5 dab give 0.58 and 0.70 (Soft bleed's
      * paper in Clip Studio); mixed with the bare dab it gave 0.45 and 0.58. */
     check('Clip Studio paper: blend 0 at half density is half again the dab, less the paper',
         pp.m0.length === 2 && Math.abs(pp.m0[0] - 147) <= 3 && Math.abs(pp.m0[1] - 179) <= 3, JSON.stringify(pp.m0));
+    /* Linear light is mixed with the bare dab before it is clipped: a 0.25
+     * dab at density 60 under 0.3 paper is gone (Pastel's paper in Clip
+     * Studio), where clipped first it kept 26. Contrast 0.7 pulls 0.3 and
+     * 0.8 to 0.36 and 0.71. */
+    check('Clip Studio paper: linear light at density 60 takes a faint dab to nothing on light paper',
+        pp.m4.length === 2 && pp.m4[0] === 0 && Math.abs(pp.m4[1] - 71) <= 3, JSON.stringify(pp.m4));
+    check('...and contrast spreads the paper about its mid grey',
+        pp.ct.length === 2 && Math.abs(pp.ct[0] - 92) <= 3 && Math.abs(pp.ct[1] - 181) <= 3, JSON.stringify(pp.ct));
     check('Clip Studio paper: linear light is solid at full flow', pp.full.length === 1 && pp.full[0] === 255,
         JSON.stringify(pp));
     check('...and the bare paper at half flow', pp.half.length >= 2 && pp.half[0] < 100 && pp.half[pp.half.length - 1] > 180,
@@ -3472,6 +3484,55 @@ await withPage(async (page) => {
     })()`, { awaitPromise: true }));
     check("a Krita paper tip's faint ink rounds up as Qt shrinks it (FX_splat_starfield)",
         paper[0] === 0 && paper[1] > 100, JSON.stringify(paper));
+
+    /* Clip Studio's anti-aliasing off shrinks a picture without smoothing:
+     * one dot in every 4x4 at a quarter size is a dot of ink, where smoothed
+     * it is a sixteenth (Pastel's specks). And a mirror flips each dab at
+     * random whatever the order: two pictures taken in turn, the second
+     * blank, ink every other dab, the first landing both ways (Pastel's
+     * reverse 2); cycling the flips as pictures inked two dabs in four. */
+    const crisp = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, out = { max: [], dabs: [] };
+        const c = document.createElement('canvas'); c.width = c.height = 64;
+        const g = c.getContext('2d'); g.fillStyle = '#000';
+        for (let y = 2; y < 64; y += 4) for (let x = 2; x < 64; x += 4) g.fillRect(x, y, 1, 1);
+        b.loadCustomTip(c.toDataURL('image/png'), null);
+        await new Promise(r => setTimeout(r, 400));
+        ['texture', 'opacity', 'flow', 'scatter', 'sizeSrc', 'taperStart', 'taperEnd', 'tip2Depth', 'sharpness', 'angleSrc'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        b.setParam('dynamicsMode', 'off'); b.setParam('size', 16); b.setParam('hardness', 100);
+        for (const mode of ['nearest', '']) {
+            const L = __B.doc(200, 200); b.setParam('tipShrink', mode);
+            b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+            await new Promise(r => setTimeout(r, 200));
+            const d = L.ctx.getImageData(80, 80, 40, 40).data;
+            let m = 0; for (let i = 3; i < d.length; i += 4) m = Math.max(m, d[i]);
+            out.max.push(m);
+        }
+        const s = document.createElement('canvas'); s.width = 128; s.height = 64;
+        const sg = s.getContext('2d'); sg.fillRect(0, 0, 12, 64); sg.fillRect(0, 48, 64, 16);   // an L: its foot finds the dab, its bar the side
+        b.loadCustomTip(s.toDataURL('image/png'), null);
+        b.setParam('tipCells', 2); b.setParam('tipPick', 'cycle'); b.setParam('tipMirror', 'h');
+        await new Promise(r => setTimeout(r, 400));
+        b.setParam('tipShrink', ''); b.setParam('size', 20); b.setParam('spacing', 200); b.setParam('autoSpacing', 0);
+        const L = __B.doc(400, 100);
+        await __B.stroke(20, 50, 380, 50, '#000000');
+        const foot = L.ctx.getImageData(0, 54, 400, 1).data, bar = L.ctx.getImageData(0, 46, 400, 1).data;
+        for (let x = 0; x < 400; x++) {
+            if (!(foot[x * 4 + 3] > 128) || foot[x * 4 - 1] > 128) continue;
+            let e = x; while (e < 399 && foot[(e + 1) * 4 + 3] > 128) e++;
+            const m = (x + e) >> 1; let l = 0, r = 0;
+            for (let i = x; i <= e; i++) (i < m ? (l += bar[i * 4 + 3]) : (r += bar[i * 4 + 3]));
+            out.dabs.push([x, l > r ? 'L' : 'R']); x = e;
+        }
+        ['tipCells', 'tipPick', 'tipMirror', 'spacing', 'autoSpacing'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check("a picture shrunk without smoothing keeps its specks whole (Clip Studio's anti-aliasing off)",
+        crisp.max[0] > 100 && crisp.max[1] < 60, JSON.stringify(crisp.max));
+    const dabs = crisp.dabs.map(d => d[1]).join(''), mgaps = crisp.dabs.slice(1).map((d, i) => d[0] - crisp.dabs[i][0]);
+    check('a mirrored tip taken in turn keeps its turn and flips each dab at random',
+        dabs.length >= 4 && Math.max(...mgaps) - Math.min(...mgaps) <= 2 && dabs.includes('L') && dabs.includes('R'), dabs + ' ' + mgaps);
 
     /* At precision 1-3 Krita reuses the last dab while the next is close
      * enough, sub-pixel phase and all, just moved to the new whole pixel. A

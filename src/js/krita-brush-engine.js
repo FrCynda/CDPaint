@@ -1665,10 +1665,14 @@
      * round at flow 50 under Soft bleed's paper, cdp-csp/pr-sb: 0.75 at 0,
      * 0.55 at 50, the same on each dab or on the stroke). Linear light is
      * why Pastel's soft tip lands as scattered specks and a full-flow dab
-     * shows no grain at all. */
+     * shows no grain at all -- and it is mixed before it is clipped: under
+     * Pastel's paper at 60 a flat flow-25 dab holds 0/15/31/46 at the 5th/
+     * 25th/50th/75th of the paper (cdp-csp/pr-dab pfF25), where clipped
+     * first it never went under 26. */
     function _cspPaper(m, a, s, d) {
         if (m === 2) return _max(0, a - d * (1 - s));
         if (m === 0) return _min(1, a * (1.5 - d * (1 - s)));
+        if (m === 4) return a + d * (a + s - 1);
         return a + d * (_cspPaperFull(m, a, s) - a);
     }
     function _cspPaperFull(m, a, s) {
@@ -1713,7 +1717,7 @@
                 for (var k = 0; k < ta.length; k++) ta[k] = tdat[k * 4 + 3];
                 _tileA.set(tile, ta);
             }
-            var tw = tile.width, th = tile.height, D = _min(1, textureLevel / 100);
+            var tw = tile.width, th = tile.height, D = _min(1, textureLevel / 100), ct = getParams().textureContrast || 1;
             var img = ctx.getImageData(0, 0, w, h), dd = img.data;
             for (var j = 0; j < h; j++) {
                 var ty = ((_floor(((oy || 0) + j) / scale) % th) + th) % th;
@@ -1721,7 +1725,9 @@
                     var q = (j * w + i) * 4 + 3, a = dd[q] / 255 * (flow == null ? 1 : flow);
                     if (!a) continue;
                     var tx = ((_floor(((ox || 0) + i) / scale) % tw) + tw) % tw;
-                    dd[q] = _round(_clamp(_cspPaper(blend, a, ta[ty * tw + tx] / 255, D), 0, 1) * 255);
+                    var s = ta[ty * tw + tx] / 255;
+                    if (ct !== 1) s = _clamp((s - 0.5) * ct + 0.5, 0, 1);
+                    dd[q] = _round(_clamp(_cspPaper(blend, a, s, D), 0, 1) * 255);
                 }
             }
             ctx.putImageData(img, 0, 0);
@@ -4871,10 +4877,16 @@
     }
     /* 'cycle' takes the cells in turn, 'pingpong' out and back (0,1,2,1,0,1..:
      * Clip Studio's order 1, measured on Grass patch), else one at random. */
+    /* A mirror flips each dab at random whatever the order (_sliceCells puts
+     * each picture's m flips after it): Pastel's one picture in Clip Studio
+     * lands flipped at random, where cycling its flips laid them in turn. */
     function _tipCellAt(p, t, n, x, y) {
-        if (p.tipPick === 'cycle') return t % n;
-        if (p.tipPick === 'pingpong') { var k = t % (2 * n - 2); return k < n ? k : 2 * n - 2 - k; }
-        return _min(n - 1, _floor(_dabRand(x, y, 23) * n));
+        var m = p.tipMirror === 'both' ? 4 : p.tipMirror ? 2 : 1;
+        if ((p.tipPick !== 'cycle' && p.tipPick !== 'pingpong') || n % m) return _min(n - 1, _floor(_dabRand(x, y, 23) * n));
+        var f = _min(m - 1, _floor(_dabRand(x, y, 29) * m));
+        n /= m;
+        if (p.tipPick === 'cycle' || n < 2) return (t % n) * m + f;
+        var k = t % (2 * n - 2); return (k < n ? k : 2 * n - 2 - k) * m + f;
     }
     /* Krita's picture tips (KisQImagePyramid). The tip is kept at halving
      * sizes, each averaged down from the original to W/2^k, rounded; a dab
@@ -5087,6 +5099,7 @@
         var base = new OffscreenCanvas(w + 2, h + 2);
         var bctx = base.getContext('2d');
         bctx.imageSmoothingQuality = 'high';
+        if (_params.tipShrink === 'nearest') bctx.imageSmoothingEnabled = false;   // Clip Studio's anti-aliasing off (see brush-pack)
         bctx.translate(1, 1);
         if (mode === 'alpha') {
             // A cut-out: white everywhere the tip covers, and its own

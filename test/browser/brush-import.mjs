@@ -1434,6 +1434,13 @@ await withPage(async (page) => {
                      P({ BrushBlendPatternByDarken: 1, TextureDensity: 50, TextureCompositeMode: 0 }, { hasTexture: true }),
                      P({ BrushBlendPatternByDarken: 1, TextureDensity: 0, TextureCompositeMode: 0, BrushFlow: 50 }, { hasTexture: true })]
                 .map(o => [!!o.dabMax, !!o.watercolor, o.edgeWidth || 0, o.texture || 0, o.textureBlend == null ? null : o.textureBlend, o.flow]),
+            darkMix: !!P({ BrushBlendPatternByDarken: 1, BrushUseWaterColor: 1, BrushUseWaterColor2: 1, BrushMixColor: 70, BrushMixAlpha: 50 }).dabMax,
+            picHard: [P({ BrushHardness: 1 }, { hasTip: true }).hardness, P({ BrushHardness: 1 }).hardness],
+            flips: [[2, 2], [1, 0], [0, 2], [3, 0]].map(([h, v]) => { const o = P({ BrushPatternReverseHorizontal: h, BrushPatternReverseVertical: v }, { hasTip: true });
+                                                           return (o.tipFlip || '-') + '/' + (o.tipMirror || '-'); }).join(' '),
+            crispPic: [P({ AntiAlias: 0, TextureDensity: 60, TextureCompositeMode: 4, TextureForPlot: 1 }, { hasTip: true, hasTexture: true }),
+                       P({ AntiAlias: 1 }, { hasTip: true }), P({ AntiAlias: 0 })].map(o => o.tipShrink || ''),
+            contrast: [-30, 30].map(c => P({ TextureDensity: 60, TextureCompositeMode: 4, TextureForPlot: 1, TextureContrast: c }, { hasTexture: true }).textureContrast),
             aliased: [P({ AntiAlias: 0 }).aliased, P({ AntiAlias: 1 }).aliased,
                       P({ AntiAlias: 0, BrushUseWaterColor: 1, BrushMixColor: 80 }).aliased].map(Boolean),
             mix: [P({ BrushUseWaterColor: 1, BrushMixColor: 80, BrushMixAlpha: 50, BrushMixColorExtension: 100 }),
@@ -1445,6 +1452,20 @@ await withPage(async (page) => {
     console.log('  ' + JSON.stringify(sm));
     /* Clip Studio's tilt is how upright the pen stands, so a mouse reads 1;
      * read as our lean, Charcoal and Chalk painted nothing with a mouse. */
+    /* Pastel, measured in Clip Studio one setting at a time (cdp-csp/pr-dab,
+     * pr-ref pa*): mixing lays its dabs over each other, not by darken; a
+     * picture takes no hardness; reverse 1 flips every dab and 2 each one
+     * at random; anti-aliasing off shrinks the picture unsmoothed; paper
+     * contrast spreads the paper about mid grey. */
+    check('a brush that mixes colour lays its dabs over each other even when set to blend by darken',
+        sm.darkMix === false, JSON.stringify(sm.darkMix));
+    check('a picture tip takes no hardness', JSON.stringify(sm.picHard) === '[100,1]', JSON.stringify(sm.picHard));
+    check('reverse 1 flips every dab, 2 flips each at random',
+        sm.flips === '-/both h/- -/v -/-', sm.flips);
+    check('anti-aliasing off shrinks a picture it does not ink solid without smoothing',
+        JSON.stringify(sm.crispPic) === '["nearest","",""]', JSON.stringify(sm.crispPic));
+    check('paper contrast -30 and +30 spread the paper 0.7 and 1/0.7 times',
+        Math.abs(sm.contrast[0] - 0.7) < 1e-9 && Math.abs(sm.contrast[1] - 1 / 0.7) < 1e-9, JSON.stringify(sm.contrast));
     check('a tilt rule reads how upright the pen stands',
         sm.tilt[0] === 'elevation', JSON.stringify(sm.tilt));
     /* Thickness squeezes the width, so an unturned flat tip stands upright. */
