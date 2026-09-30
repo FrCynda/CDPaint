@@ -3410,11 +3410,23 @@
      * -50 with floor 0 0.13..0.63; hue 15 at floor -100 +-15 degrees. With
      * no random input every dab takes the whole change (+30: 0.93 flat).
      * Ours keeps the dial at |c| and hands [lo, hi] in units of it.
+     * A pressure or tilt input is read where a mouse holds it, at full:
+     * Leaves' value +25 falls to nothing there (its curve ends at 0), and
+     * Clip Studio paints its leaves black.
      * ponytail: a pressure input is taken at full pressure, as measured. */
     function _sutJitter(out, hue, sat, val, effs) {
         var c = [Math.max(-180, Math.min(180, _sutNum(hue, 0))),
                  Math.max(-100, Math.min(100, _sutNum(sat, 0))),
                  Math.max(-100, Math.min(100, _sutNum(val, 0)))];
+        if (effs) c = c.map(function (ch, i) {
+            var e = _sutEffector(effs[i]);
+            (e ? e.inputs : []).forEach(function (q) {
+                if (q.src !== 'pressure' && q.src !== 'elevation') return;
+                var f = q.floor / 100;
+                ch *= f + (1 - f) * q.curve[q.curve.length - 1][1];
+            });
+            return Math.round(ch);
+        });
         if (!c[0] && !c[1] && !c[2]) return false;
         if (c[0]) out.hueJitter = Math.round(Math.abs(c[0]));
         if (c[1]) out.satJitter = Math.round(Math.abs(c[1]));

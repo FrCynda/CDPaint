@@ -1401,7 +1401,9 @@ await withPage(async (page) => {
             cj: [P(cj).colorJitterRange, [P(cj).hueJitter, P(cj).satJitter, P(cj).valJitter],
                  P(Object.assign({ BrushChangePatternColor: 0 }, cj)).valJitter || 0,
                  P(Object.assign({ BrushChangeColorTarget: 2 }, cj)).valJitter || 0,
-                 W(Object.assign({ BrushChangeColorTarget: 2 }, cj))],
+                 W(Object.assign({ BrushChangeColorTarget: 2 }, cj)),
+                 ['[[0,1],[1,0]]', '[[0,0],[1,0.5]]'].map(k => P({ BrushValueChange: 40, BrushChangePatternColor: 1,
+                     BrushValueChangeEffector: eff(0x20, JSON.parse(k)) }).valJitter || 0)],
             dual: [0, 2, 5, 12].map(m => { const d = { BrushSize: 100, BrushFlow: 100, UseDualBrush: 1, DualBrushCompositeMode: m, DualSize: 76, DualFlow: 20 },
                                                sec = BrushPack.sutSecond(d);
                                            return [P(d, { hasTip2: true }).tip2Depth || 0, sec && sec.op, sec && sec.variant.BrushSize, sec && sec.variant.BrushFlow,
@@ -1477,6 +1479,8 @@ await withPage(async (page) => {
      * same settings flat; target 2 changes only the sub colour. */
     check('a Clip Studio colour change keeps which way it goes and how far',
         JSON.stringify(sm.cj.slice(0, 2)) === '[[[-1,1],[-1,0],[1,1]],[15,50,100]]', JSON.stringify(sm.cj));
+    check('a colour change is read at full pressure and tilt, as a mouse paints it (Leaves: +25 falling to 0 there)',
+        JSON.stringify(sm.cj[5]) === '[0,20]', JSON.stringify(sm.cj[5]));
     /* Clip Studio's second brush is a brush of its own, its Dual columns
      * read as the Brush ones: laid under the first in modes 0/1/4, cut out
      * of it in 12. Modes 2/3/11 only shift colour, so they are named; none
