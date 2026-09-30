@@ -1404,7 +1404,7 @@ await withPage(async (page) => {
             ribTilt: [ribTilt.angle, ribTilt.size, ribTilt.ribbonClip],
             cj: [P(cj).colorJitterRange, [P(cj).hueJitter, P(cj).satJitter, P(cj).valJitter],
                  P(Object.assign({ BrushChangePatternColor: 0 }, cj)).valJitter || 0,
-                 P(Object.assign({ BrushChangeColorTarget: 2 }, cj)).valJitter || 0,
+                 [P(Object.assign({ BrushChangeColorTarget: 2 }, cj)).valJitter, P(Object.assign({ BrushChangeColorTarget: 2 }, cj)).jitterSub],
                  W(Object.assign({ BrushChangeColorTarget: 2 }, cj)),
                  ['[[0,1],[1,0]]', '[[0,0],[1,0.5]]'].map(k => P({ BrushValueChange: 40, BrushChangePatternColor: 1,
                      BrushValueChangeEffector: eff(0x20, JSON.parse(k)) }).valJitter || 0)],
@@ -1485,7 +1485,8 @@ await withPage(async (page) => {
      * x + floor * change and x + change, so hue at floor -100 goes both ways,
      * saturation -50 at floor 0 only down, and a value with no random input
      * takes the whole change every dab. BrushChangePatternColor 0 paints the
-     * same settings flat; target 2 changes only the sub colour. */
+     * same settings flat; target 2 changes only the sub colour, a picture's
+     * whites (Building's faces). */
     check('a Clip Studio colour change keeps which way it goes and how far',
         JSON.stringify(sm.cj.slice(0, 2)) === '[[[-1,1],[-1,0],[1,1]],[15,50,100]]', JSON.stringify(sm.cj));
     check('a colour change is read at full pressure and tilt, as a mouse paints it (Leaves: +25 falling to 0 there)',
@@ -1497,8 +1498,8 @@ await withPage(async (page) => {
     check('a second brush becomes a brush of its own, laid under or cut out, never carved with',
         JSON.stringify(sm.dual) === JSON.stringify([[0, 'destination-over', 76, 20, ''], [0, null, null, null, 'dropped: the colour its second brush blends in'],
             [0, null, null, null, 'dropped: its second brush tip'], [0, 'destination-out', 76, 20, '']]), JSON.stringify(sm.dual));
-    check('...switched off it paints flat, and on the sub colour only it is named',
-        sm.cj[2] === 0 && sm.cj[3] === 0 && /sub colour/.test(sm.cj[4]), JSON.stringify(sm.cj));
+    check('...switched off it paints flat, and on the sub colour it shades the whites alone',
+        sm.cj[2] === 0 && JSON.stringify(sm.cj[3]) === '[100,true]' && !/sub colour/.test(sm.cj[4]), JSON.stringify(sm.cj));
     check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.pingpong === 'pingpong' && sm.random === '',
         JSON.stringify([sm.cycle, sm.pingpong, sm.random]));
     /* How much paper shows is the blend's doing: subtract at half density

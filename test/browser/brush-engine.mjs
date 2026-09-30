@@ -3272,15 +3272,17 @@ await withPage(async (page) => {
         cx.fillStyle = '#202020'; cx.fillRect(2, 2, 30, 60);
         cx.fillStyle = '#e0e0e0'; cx.fillRect(32, 2, 30, 60);
         const url = c.toDataURL('image/png');
-        const run = async (mode) => {
+        const run = async (mode, sub) => {
             __B.doc(200, 200);
             b.loadCustomTip(url, null);
             await new Promise(r => setTimeout(r, 400));
             ['texture', 'opacity', 'flow', 'scatter', 'colorRate', 'sizeSrc',
-             'taperStart', 'taperEnd', 'tip2Depth'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+             'taperStart', 'taperEnd', 'tip2Depth', 'valJitter', 'jitterSub', 'colorJitterRange'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
             b.setParam('dynamicsMode', 'off');
             b.setParam('size', 80); b.setParam('hardness', 100);
             b.setParam('tipMode', mode);
+            // the sub colour (white) taken half down, every dab
+            if (sub) { b.setParam('valJitter', 50); b.setParam('colorJitterRange', [[0, 0], [0, 0], [-1, -1]]); b.setParam('jitterSub', true); }
             const L = __B.layer();
             b.beginStroke(100, 100, 1, '#808080');
             b.endStroke();
@@ -3288,7 +3290,7 @@ await withPage(async (page) => {
             return { left: __B.px(L, 80, 100), right: __B.px(L, 120, 100) };
         };
         const out = { alpha: await run('alpha'), light: await run('lightness'),
-                      color: await run('color') };
+                      color: await run('color'), sub: await run('color', true) };
         b.forgetSaved(b._currentPreset || 'Round');
         b.loadPreset('Round');
         return JSON.stringify(out);
@@ -3302,6 +3304,11 @@ await withPage(async (page) => {
         redOf(tm.light.left) < 100 && redOf(tm.light.right) > 160, JSON.stringify(tm.light));
     check('a tip that stamps its own picture ignores the colour entirely',
         redOf(tm.color.left) < 60 && redOf(tm.color.right) > 200, JSON.stringify(tm.color));
+    /* Clip Studio's sub colour is a picture's whites: changed by value it
+     * greys Building's faces and leaves the lines as they were. */
+    check('a change to the sub colour shades the picture and leaves its dark ink dark',
+        Math.abs(redOf(tm.sub.right) - redOf(tm.color.right) / 2) < 4 && redOf(tm.sub.left) <= redOf(tm.color.left),
+        JSON.stringify([tm.color, tm.sub]));
 
     /* Two engines that are not brushes. The experiment brush fills the
      * outline the stroke draws; the deform brush moves pixels that are

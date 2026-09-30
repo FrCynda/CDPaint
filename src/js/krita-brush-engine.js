@@ -1031,6 +1031,14 @@
             /* The tip paints itself: its picture IS the dab, and the chosen
              * colour has no say. Krita calls this an image stamp. */
             _scratchCtx.drawImage(maskCanvas, 0, 0);
+            if (_params.jitterSub) {   // its whites take the sub colour: colorHex, the jittered white
+                _scratchCtx.globalCompositeOperation = 'multiply';
+                _scratchCtx.fillStyle = colorHex;
+                _scratchCtx.fillRect(0, 0, mw, mh);
+                _scratchCtx.globalCompositeOperation = 'destination-in';
+                _scratchCtx.drawImage(maskCanvas, 0, 0);
+                _scratchCtx.globalCompositeOperation = 'source-over';
+            }
             return;
         }
         _scratchCtx.fillStyle = colorHex;
@@ -3351,7 +3359,9 @@
             return;
         }
 
-        var finalColor = _jitterColor(p, colorHex, x, y);
+        // a sub colour's change shades a picture's whites (white is the sub colour), never the ink
+        var finalColor = !p.jitterSub ? _jitterColor(p, colorHex, x, y)
+            : p.tipMode === 'color' ? _jitterColor(p, '#ffffff', x, y) : colorHex;
         if (p.grid) { _gridDab(p, x, y, finalColor); return; }
 
         // Smudge: sample canvas color and mix with brush color
@@ -5370,6 +5380,7 @@
         hueJitter: 0,
         satJitter: 0,
         valJitter: 0,
+        jitterSub: false,   // the jitter shades a colour tip's whites (Clip Studio's sub colour), not the ink
         colorJitterPer: 'dab',
         colorJitterRange: null,  // Clip Studio: [lo, hi] per hue, sat, value, in units of the dial
         sprayBias: 0,            // Clip Studio: where in its patch a particle lands (_diskR)

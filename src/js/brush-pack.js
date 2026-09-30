@@ -3806,16 +3806,13 @@
          * one set with a switch, so per dab wins and the other is named.
          * BrushChangePatternColor switches the per-dab change on (0: the
          * same settings paint flat), and BrushChangeColorTarget says what it
-         * changes: 0 and 1 the main colour, 2 only the sub colour (Rubble's
-         * rock fills), which ours does not paint. */
-        var target = _sutNum(v.BrushChangeColorTarget, 1);
-        var dabJit = _sutNum(v.BrushChangePatternColor, 1) && target !== 2 &&
+         * changes: 0 and 1 the main colour, 2 only the sub colour, which is
+         * a picture's whites (Building's faces land 234-254 of white at
+         * value 12, its lines stay black; Rubble's rock fills). */
+        var dabJit = _sutNum(v.BrushChangePatternColor, 1) &&
             _sutJitter(out, v.BrushHueChange, v.BrushSaturationChange, v.BrushValueChange,
                        [v.BrushHueChangeEffector, v.BrushSaturationChangeEffector, v.BrushValueChangeEffector]);
-        if (_sutNum(v.BrushChangePatternColor, 1) && target === 2 &&
-            (_sutNum(v.BrushHueChange, 0) || _sutNum(v.BrushSaturationChange, 0) || _sutNum(v.BrushValueChange, 0))) {
-            warn.push('dropped: colour changes to its sub colour');
-        }
+        if (dabJit && _sutNum(v.BrushChangeColorTarget, 1) === 2) out.jitterSub = true;
         if (!dabJit && _sutNum(v.BrushChangeStrokeColor, 0) &&
             _sutJitter(out, v.BrushStrokeHueChange, v.BrushStrokeSaturationChange,
                        v.BrushStrokeValueChange)) {
