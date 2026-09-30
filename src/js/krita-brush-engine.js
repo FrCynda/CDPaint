@@ -1055,22 +1055,25 @@
             _scratchCtx.drawImage(maskCanvas, 0, 0);
             /* A sub colour mix greys the ink: Clip Studio paints a picture's
              * darks in the ink and its lights in the sub colour, white,
-             * which is screen -- c(1 - p) + p. */
-            if (_params.subMix) {
-                _scratchCtx.globalCompositeOperation = 'screen';
-                _scratchCtx.fillStyle = colorHex;
-                _scratchCtx.fillRect(0, 0, mw, mh);
-                _scratchCtx.globalCompositeOperation = 'destination-in';
-                _scratchCtx.drawImage(maskCanvas, 0, 0);
-                _scratchCtx.globalCompositeOperation = 'source-over';
-            }
-            if (_params.jitterSub) {   // its whites take the sub colour: colorHex, the jittered white
-                _scratchCtx.globalCompositeOperation = 'multiply';
-                _scratchCtx.fillStyle = colorHex;
-                _scratchCtx.fillRect(0, 0, mw, mh);
-                _scratchCtx.globalCompositeOperation = 'destination-in';
-                _scratchCtx.drawImage(maskCanvas, 0, 0);
-                _scratchCtx.globalCompositeOperation = 'source-over';
+             * which is screen -- c(1 - p) + p. A jitter on the sub colour
+             * shades its whites instead: multiply by the jittered white.
+             * Pixel by pixel, on the colour alone: a canvas blend over the
+             * scratch mixes a half-clear pixel with the fill, and a picture
+             * of thin lines shrunk to a dab is mostly half-clear pixels --
+             * Rubble at size 40 kept 0.64 of Clip Studio's ink. */
+            if (_params.subMix || _params.jitterSub) {
+                var c = _hexToRgb(colorHex), id = _scratchCtx.getImageData(0, 0, mw, mh), d = id.data;
+                var sm = !!_params.subMix, js = !!_params.jitterSub;
+                for (var i = 0; i < d.length; i += 4) {
+                    if (!d[i + 3]) continue;
+                    for (var n = 0; n < 3; n++) {
+                        var v = d[i + n];
+                        if (sm) v = 255 - (255 - c[n]) * (255 - v) / 255;
+                        if (js) v = v * c[n] / 255;
+                        d[i + n] = v;
+                    }
+                }
+                _scratchCtx.putImageData(id, 0, 0);
             }
             return;
         }

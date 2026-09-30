@@ -3291,6 +3291,8 @@ await withPage(async (page) => {
         const cx = c.getContext('2d');
         cx.fillStyle = '#202020'; cx.fillRect(2, 2, 30, 60);
         cx.fillStyle = '#e0e0e0'; cx.fillRect(32, 2, 30, 60);
+        // and its dark half's foot half clear, the way a thin line is once shrunk
+        cx.clearRect(2, 44, 30, 18); cx.fillStyle = 'rgba(32,32,32,0.5)'; cx.fillRect(2, 44, 30, 18);
         const url = c.toDataURL('image/png');
         const run = async (mode, sub) => {
             __B.doc(200, 200);
@@ -3308,7 +3310,7 @@ await withPage(async (page) => {
             b.beginStroke(100, 100, 1, '#808080');
             b.endStroke();
             await new Promise(r => setTimeout(r, 200));
-            return { left: __B.px(L, 80, 100), right: __B.px(L, 120, 100) };
+            return { left: __B.px(L, 80, 100), right: __B.px(L, 120, 100), half: __B.px(L, 80, 128) };
         };
         const out = { alpha: await run('alpha'), light: await run('lightness'),
                       color: await run('color'), sub: await run('color', true), mix: await run('color', 'mix') };
@@ -3331,6 +3333,10 @@ await withPage(async (page) => {
     // its darks in the half-mixed ink (128 -> 192), its lights toward white: 32 -> 200, 224 -> 247
     check('a sub colour mix lightens a picture as Clip Studio tints it, ink to white',
         Math.abs(redOf(tm.mix.left) - 200) < 4 && Math.abs(redOf(tm.mix.right) - 247) < 4, JSON.stringify(tm.mix));
+    // a canvas blend mixed a half-clear pixel with the fill: 32 at half alpha came out 72 (Rubble lost a third of its ink)
+    check('a sub colour shades a half-clear pixel no lighter than it was',
+        redOf(tm.sub.half) <= redOf(tm.color.half) && Math.abs(redOf(tm.mix.half) - 200) < 4 && tm.sub.half.split(',')[3] === tm.color.half.split(',')[3],
+        JSON.stringify([tm.color.half, tm.sub.half, tm.mix.half]));
     check('a change to the sub colour shades the picture and leaves its dark ink dark',
         Math.abs(redOf(tm.sub.right) - redOf(tm.color.right) / 2) < 4 && redOf(tm.sub.left) <= redOf(tm.color.left),
         JSON.stringify([tm.color, tm.sub]));
