@@ -1252,16 +1252,11 @@ await withPage(async (page) => {
      * column family was one line of apology. Size is in pixels there and a
      * share of the brush here: 30 against 80 is 38%. */
     check('the second tip arrives as a picture of its own',
-        sut.has2 && sut.tip2Depth === 60, JSON.stringify(sut));
-    check('...sized, spaced and turned the way the file asks',
-        sut.tip2Size === 38 && sut.tip2Spacing === 120 && sut.tip2Angle === 45,
-        JSON.stringify([sut.tip2Size, sut.tip2Spacing, sut.tip2Angle]));
-    check('...and no longer reported as dropped',
-        !/second brush tip/.test(sutNotes), sutNotes);
-    /* We carve with it, which is what its darkening blend modes do. This
-     * one asks for something else, and that is said rather than faked. */
-    check('a blend for the second tip we cannot do is named',
-        /way its second tip blends/.test(sutNotes), sutNotes);
+        sut.has2, JSON.stringify(sut));
+    /* Its mode 3 inverts the colour and moves no ink (measured in Clip
+     * Studio), so it is named, and not carved with as it used to be. */
+    check('...and a second brush that only shifts colour is named, not carved with',
+        sut.tip2Depth === 0 && /colour its second brush blends in/.test(sutNotes), sutNotes);
 
     const sutInk = await page.eval(`(async () => {
         const app = PaintApp, br = app.brush;
@@ -1401,8 +1396,10 @@ await withPage(async (page) => {
                  P(Object.assign({ BrushChangePatternColor: 0 }, cj)).valJitter || 0,
                  P(Object.assign({ BrushChangeColorTarget: 2 }, cj)).valJitter || 0,
                  W(Object.assign({ BrushChangeColorTarget: 2 }, cj))],
-            dual: [0, 2].map(m => [P({ BrushSize: 100, UseDualBrush: 1, DualBrushCompositeMode: m, DualSize: 76 }, { hasTip2: true }).tip2Depth || 0,
-                                   /second brush tip/.test(W({ BrushSize: 100, UseDualBrush: 1, DualBrushCompositeMode: m, DualSize: 76 }, { hasTip2: true }))]),
+            dual: [0, 2, 5, 12].map(m => { const d = { BrushSize: 100, BrushFlow: 100, UseDualBrush: 1, DualBrushCompositeMode: m, DualSize: 76, DualFlow: 20 },
+                                               sec = BrushPack.sutSecond(d);
+                                           return [P(d, { hasTip2: true }).tip2Depth || 0, sec && sec.op, sec && sec.variant.BrushSize, sec && sec.variant.BrushFlow,
+                                                   ['dropped: the colour its second brush blends in', 'dropped: its second brush tip'].find(t => W(d, { hasTip2: true }).includes(t)) || '']; }),
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
             erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
@@ -1468,10 +1465,13 @@ await withPage(async (page) => {
      * same settings flat; target 2 changes only the sub colour. */
     check('a Clip Studio colour change keeps which way it goes and how far',
         JSON.stringify(sm.cj.slice(0, 2)) === '[[[-1,1],[-1,0],[1,1]],[15,50,100]]', JSON.stringify(sm.cj));
-    /* Mode 0 lays Clip Studio's second brush over the first (Rose's leaves,
-     * Zipper's second row); carving with it cut Rose's flowers to scraps. */
-    check('a second brush laid over the first is named, not carved with',
-        JSON.stringify(sm.dual) === '[[0,true],[100,false]]', JSON.stringify(sm.dual));
+    /* Clip Studio's second brush is a brush of its own, its Dual columns
+     * read as the Brush ones: laid under the first in modes 0/1/4, cut out
+     * of it in 12. Modes 2/3/11 only shift colour, so they are named; none
+     * of them carves, as we used to. */
+    check('a second brush becomes a brush of its own, laid under or cut out, never carved with',
+        JSON.stringify(sm.dual) === JSON.stringify([[0, 'destination-over', 76, 20, ''], [0, null, null, null, 'dropped: the colour its second brush blends in'],
+            [0, null, null, null, 'dropped: its second brush tip'], [0, 'destination-out', 76, 20, '']]), JSON.stringify(sm.dual));
     check('...switched off it paints flat, and on the sub colour only it is named',
         sm.cj[2] === 0 && sm.cj[3] === 0 && /sub colour/.test(sm.cj[4]), JSON.stringify(sm.cj));
     check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.random === '',

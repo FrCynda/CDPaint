@@ -3800,10 +3800,32 @@ await withPage(async (page) => {
         b.setParam('colorJitterRange', null);
         b._setStrokeSeed(null);
 
+        /* Clip Studio's second brush lays its dabs in turn with the first's
+         * (cdp-csp/wb): a 40px brush moving on fills back in what a 10px cut
+         * took, so only the stroke's end stays cut; laid under, a wider
+         * second brush widens the stroke. */
+        out.second = {};
+        for (const [op, sz, main] of [['destination-out', 10, 40], ['destination-over', 40, 20]]) {
+            __B.doc(400, 200);
+            b.PRESETS.Round.second = { op, p: { size: sz, flow: 100, spacing: 10, hardness: 100 } };
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+            b.setParam('size', main); b.setParam('hardness', 100); b.setParam('spacing', 10);
+            const L2 = __B.layer();
+            await __B.stroke(20, 100, 380, 100, '#000000');
+            out.second[op] = [__B.px(L2, 200, 100), __B.px(L2, 380, 100), __B.px(L2, 200, 116)].map(s => +s.split(',')[3]);
+            delete b.PRESETS.Round.second;
+        }
+
         b.loadPreset('Round');
         return JSON.stringify(out);
     })()`));
     console.log('  ' + JSON.stringify(sc));
+
+    check('a Clip Studio second brush cuts in turn with the first: filled back in mid-stroke, cut at the end',
+        sc.second['destination-out'][0] > 200 && sc.second['destination-out'][1] < 64, JSON.stringify(sc.second));
+    check('...and one laid under a narrower first brush widens the stroke',
+        sc.second['destination-over'][0] === 255 && sc.second['destination-over'][2] === 255, JSON.stringify(sc.second));
 
     const clear = '0,0,0,0';
     check('the previous stroke does not ghost back into the next',

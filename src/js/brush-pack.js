@@ -3427,6 +3427,30 @@
         return true;
     }
 
+    /* Clip Studio's second brush is a whole brush of its own: every Dual
+     * column is the same setting as its Brush (or bare) twin, so it is read
+     * by sutToPreset like any brush. Measured in Clip Studio on round tips
+     * (cdp-csp/dm*): modes 0, 1 and 4 lay it over the first, a 0.3 dab on a
+     * 0.3 one making 0.51; mode 12 cuts it out of the first by its alpha,
+     * 0.3 leaving 0.21. Modes 2 (adds its colour), 3 (inverts) and 11
+     * (burns) change the colour only and move no ink; those return null. */
+    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 4: 'destination-over', 12: 'destination-out' };
+    BrushPack.sutSecond = function (v) {
+        var op = _sutNum(v.UseDualBrush, 0) && SUT_SECOND_OP[_sutNum(v.DualBrushCompositeMode, 0)];
+        if (!op) return null;
+        var v2 = {}, k;
+        for (k in v) v2[k] = v[k];
+        for (k in v) {
+            if (k.indexOf('Dual') !== 0) continue;
+            var x = k.slice(4);
+            if (('Brush' + x) in v) v2['Brush' + x] = v[k];
+            else if (x in v) v2[x] = v[k];
+        }
+        // It has no second brush, mixing or colour change of its own.
+        v2.UseDualBrush = 0; v2.BrushUseWaterColor = 0; v2.BrushChangePatternColor = 0;
+        return { op: op, variant: v2 };
+    };
+
     /* Clip Studio's settings into ours.
      *
      * Most of the geometry lines up one to one because both engines stamp a
@@ -3759,34 +3783,12 @@
             out.colorJitterPer = 'stroke';
         }
 
-        /* The second tip. Clip Studio's is a whole brush of its own -- its
-         * own size, spacing, rotation and flow -- stamped into the first
-         * one. Ours carves with it, which is what its two darkening blend
-         * modes do; any other mode is named rather than faked.
-         *
-         * DualSize is in the same unit as BrushSize, so against the brush
-         * it becomes the percentage our second tip is sized by.
-         *
-         * Mode 0 lays the second brush over the first instead (Zipper's
-         * second row of teeth, Rose's leaves: Zipper paints 4715 ink with
-         * it off in Clip Studio, 7058 on). Carving with it cut Rose's
-         * flowers down to scraps (ink 0.014 of Clip Studio's; 0.16 left
-         * whole), so it is named, not carved.
-         * ponytail: a second brush of our own would paint the leaves. */
-        var laidOver = v.DualBrushCompositeMode === 0;
-        if (opts.hasTip2 && !laidOver) {
-            var dsz = _sutNum(v.DualSize, 0);
-            out.tip2Depth = Math.max(1, Math.min(100, Math.round(_sutNum(v.DualFlow, 100))));
-            out.tip2Size = (dsz > 0 && size > 0)
-                ? Math.max(1, Math.min(2000, Math.round(dsz / size * 100))) : 100;
-            out.tip2Spacing = Math.max(10, Math.min(400, Math.round(_sutNum(v.DualInterval, 100))));
-            out.tip2Angle = ((Math.round(_sutNum(v.DualRotation, 0)) % 360) + 360) % 360;
-            if (_sutNum(v.DualBrushCompositeMode, 0) > 1) {
-                warn.push('dropped: the way its second tip blends into the first');
-            }
-            if (_sutNum(v.DualUseSpray, 0)) {
-                warn.push('dropped: scattering on the second tip');
-            }
+        /* The second brush is painted by the engine as a stroke of its own
+         * (sutSecond). One that only shifts colour is named; carving the
+         * first with it, as we used to, is what none of its modes do. */
+        if (_sutNum(v.UseDualBrush, 0) && !BrushPack.sutSecond(v)) {
+            warn.push([2, 3, 11].indexOf(_sutNum(v.DualBrushCompositeMode, 0)) >= 0
+                ? 'dropped: the colour its second brush blends in' : 'dropped: its second brush tip');
         }
 
         var noted = [
@@ -3798,7 +3800,7 @@
         ];
         for (var i = 0; i < noted.length; i++) {
             if (noted[i][0] === 'BrushChangeStrokeColor' && out.colorJitterPer === 'stroke') continue;
-            if (noted[i][0] === 'UseDualBrush' && ((opts.hasTip2 && !laidOver) || opts.dualStacked)) continue;
+            if (noted[i][0] === 'UseDualBrush') continue;
             if (noted[i][0] === 'BrushRibbon' && opts.hasTip && opts.tipW && opts.tipH) continue;
             if (_sutNum(v[noted[i][0]], 0)) {
                 var msg = 'dropped: ' + noted[i][1];
@@ -3942,6 +3944,7 @@
                 tip: tips[0] || null,
                 tips: tips,
                 tip2: tip2 || null,
+                tips2: tip2 ? got.DualPatternImageArray : [],
                 texture: got.TextureImage[0] || null
             }],
             warnings: warnings

@@ -6052,6 +6052,62 @@
         });
     }
 
+    /* Clip Studio's second brush (BrushPack.sutSecond), a brush of its own
+     * whose dabs Clip Studio lays in turn with the first's on one stroke:
+     * under what is there (op 'destination-over': Rose's leaves sit behind
+     * every flower) or cut out of it ('destination-out'). In turn, not
+     * after: a cut takes the first's isolated dabs down to nothing, but a
+     * dense first brush fills its own cut back in as the pen moves on
+     * (cdp-csp/wb, dmL12 and dmM12). The flow buffer holds this stroke
+     * alone, so a cut takes nothing from what was on the layer before.
+     * _secondState swaps the running brush's state for the other's.
+     * ponytail: painted in the pen-up replay only, so it is missing while
+     * the stroke is drawn and from the swatches; and in turn a pen report
+     * at a time, not a dab, so reports further apart than the first
+     * brush's radius leave a cut Clip Studio would fill. */
+    var _second2 = { src: null, key: '', cells: null, cache: {} };
+    function _secondOf() {
+        var pr = engine.PRESETS[engine._currentPreset];
+        return !_previewTarget && pr && pr.second || null;
+    }
+    function _secondState(sec) {
+        var p = {}, k, c = _second2;
+        for (k in engine.DEFAULTS) p[k] = engine.DEFAULTS[k];
+        for (k in sec.p) p[k] = sec.p[k];
+        p.tip2Depth = 0;
+        var key = engine._currentPreset + '|' + (p.tipCells || 1);
+        if (c.src !== _tip2Canvas || c.key !== key) {
+            c.src = _tip2Canvas; c.key = key; c.cache = {};
+            c.cells = _tip2Canvas ? _sliceCells(_tip2Canvas, p.tipCells || 1, p.tipMirror, p.tipFlip) : null;
+        }
+        if (!c.cells && p.shape === 'custom') p.shape = 'round';
+        return [p, p, c.cells, c.cache, 0, null, null, null, 0, [], NaN, 0, 0];
+    }
+    function _swapState(s) {
+        var t = [_params, _strokeParams, _customTipCells, _customTipSizeCache, _dabIndex, _mkLast, _gridSt,
+                 _pxOff, _adAvg, _wet, _smoothAngle, _lastDabDist, _tipCycle];
+        _params = s[0]; _strokeParams = s[1]; _customTipCells = s[2]; _customTipSizeCache = s[3];
+        _dabIndex = s[4]; _mkLast = s[5]; _gridSt = s[6]; _pxOff = s[7]; _adAvg = s[8]; _wet = s[9];
+        _smoothAngle = s[10]; _lastDabDist = s[11]; _tipCycle = s[12];
+        _kReuse = null; _tintMask = null;
+        return t;
+    }
+    // Both brushes along pts, a segment of each in turn.
+    function _paintBoth(pts, color, sec) {
+        var st = _secondState(sec), n = pts.length;
+        for (var i = 0; i < _max(1, n - 1); i++) {
+            for (var w = 0; w < 2; w++) {
+                if (w) { st = _swapState(st); _flowCtx.globalCompositeOperation = sec.op; }
+                try {
+                    if (n === 1) _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, color);
+                    else _processSegment(pts, i, i + 1, color, 2);
+                } finally {
+                    if (w) { _flowCtx.globalCompositeOperation = 'source-over'; st = _swapState(st); _second2.cache = st[3]; }
+                }
+            }
+        }
+    }
+
     function _needsReplay(p, pts) {
         if (!(p.taperStart > 0 || p.taperEnd > 0)) return false;
         if (p.taperEnd > 0) return true;
@@ -7288,8 +7344,8 @@
          * and only four of the presets we ship set one. Fall through to the
          * incremental branch instead, which still picks up the stabilizer
          * catch-up points endStroke appends just before calling us. */
-        var tp = getParams();
-        if (final && !_needsReplay(tp, pts) && !(tp.ribbonClip && pts.length > 1)) final = false;
+        var tp = getParams(), sec = final && _secondOf();
+        if (final && !sec && !_needsReplay(tp, pts) && !(tp.ribbonClip && pts.length > 1)) final = false;
         if (final) {
             _ensureFlowBuffer(
                 (app.config ? app.config.width : 1024),
@@ -7312,7 +7368,10 @@
             // The replay repaints the whole stroke, so the fade sensor has
             // to start counting again with it.
             _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null; _adAvg = 0;
-            if (pts.length === 1) {
+            if (sec) {
+                _paintBoth(pts, _state.lastColor, sec);
+                if (tp.ribbonClip && pts.length > 1) _clipRibbonEnd(pts, tp.size);
+            } else if (pts.length === 1) {
                 _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, _state.lastColor);
             } else {
                 _processSegment(pts, 0, pts.length - 1, _state.lastColor, 2);
@@ -8930,8 +8989,11 @@
             ? BrushPack.tipStrip(stack ? pr.tips.concat([pr.tip2]) : pr.tips, 'tip.png', { csp: true, crop: v.BrushRibbon ? (Math.round((v.BrushRotation || 0) / 90) % 2 ? 'h' : 'w') : false,
                   join: +v.BrushPatternOrderType, stack: stack }).catch(function () { return null; })
             : Promise.resolve(null);
+        // the second brush, painted as a stroke of its own over (or out of) the first
+        var sec = !stack && BrushPack.sutSecond(v);
         var tip2P = pr.tip2 && !stack
-            ? BrushPack.tipStrip(pr.tip2, 'tip2.png').catch(function () { return null; })
+            ? BrushPack.tipStrip(sec ? pr.tips2 : pr.tip2, 'tip2.png', sec ? { csp: true, crop: v.DualRibbon ? (Math.round((v.DualRotation || 0) / 90) % 2 ? 'h' : 'w') : false,
+                  join: +v.DualPatternOrderType } : undefined).catch(function () { return null; })
             : Promise.resolve(null);
 
         return Promise.all([tipP, tip2P]).then(function (both) {
@@ -8954,6 +9016,13 @@
                 if (tip.params && tip.params.tipMode) ps.tipMode = tip.params.tipMode;
             }
             if (tip2 && tip2.url.length <= TIP_CAP) ps._tip2Url = _tipStash(tip2.url);
+            if (sec) {
+                // its picture is _tip2Url, never carved with (tip2Depth 0)
+                var p2 = BrushPack.sutToPreset(sec.variant, want, { hasTip: !!ps._tip2Url, tipW: tip2 && tip2.w, tipH: tip2 && tip2.h }).params;
+                if (tip2 && tip2.cells > 1) { p2.tipCells = tip2.cells; p2.tipPick = tip2.pick === 'cycle' ? 'cycle' : p2.tipPick || tip2.pick; }
+                if (tip2 && tip2.params && tip2.params.tipMode) p2.tipMode = tip2.params.tipMode;
+                ps.second = { op: sec.op, p: p2 };
+            }
             if (ps.texture > 0 && pr.texture) {
                 ps.texturePattern = _bytesToPngUrl(pr.texture);
             }
