@@ -7,7 +7,7 @@
 // packVar: page expression holding the pack's bytes; packName its filename.
 // importExpr: page expression for any other import ({ ok, added: [name] }).
 // Imported presets are deleted again, so a long run never fills storage.
-export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false }) {
+export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false, seed = null, selfSeed = null }) {
     return JSON.parse(await page.eval(`(async () => {
         const app = PaintApp, b = app.brush, W = ${W}, H = ${H};
         const imp = ${importExpr || `await b.importBrushPack(${packVar}, ${JSON.stringify(packName)},
@@ -27,17 +27,20 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         // there); a true erase blend leaves Krita's canvas blank and is never scored.
         if (b.getParams().blendMode === 'erase' && !${keepErase}) b.setParam('blendMode', 'normal');
         await new Promise(res => setTimeout(res, 600));          // let the tip load
-        L.ctx.clearRect(0, 0, W, H);
         /* under: stripes to smudge or rub out (mypaint-render.py's), and each
          * side scored by how far it moved a pixel off them, as black ink. */
         const STRIPES = [[255, 0, 0], [0, 0, 255], [255, 255, 0]];
-        if (${under}) for (let x = 0; x < W; x += 16) { L.ctx.fillStyle = 'rgb(' + STRIPES[x / 16 % 3] + ')'; L.ctx.fillRect(x, 0, 16, H); }
         const moved = (d) => { for (let i = 0; i < W * H; i++) {
             const c = STRIPES[((i % W) >> 4) % 3], a = d[i * 4 + 3];
             let m = 255 - a;
             for (let k = 0; k < 3; k++) m = Math.max(m, Math.abs(Math.round(d[i * 4 + k] * a / 255) - c[k]));
             d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 0; d[i * 4 + 3] = m;
         } };
+        // seed pins the stroke's random numbers (null: a fresh draw, as a user gets)
+        const paint = async (seed) => {
+        if (seed != null) b._setStrokeSeed(seed);
+        L.ctx.clearRect(0, 0, W, H);
+        if (${under}) for (let x = 0; x < W; x += 16) { L.ctx.fillStyle = 'rgb(' + STRIPES[x / 16 % 3] + ')'; L.ctx.fillRect(x, 0, 16, H); }
         // Krita's paintLine interpolates pressure along the line; a
         // tablet reports about one sample a pixel at this speed.
         // Node.paintLine hands Krita no speed at all, so the clock stands
@@ -70,12 +73,20 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         performance.now = clock;
         await new Promise(res => setTimeout(res, 250));
         b.distanceFrom = 0;
-        const ours =L.ctx.getImageData(0, 0, W, H).data;
+        const ours = L.ctx.getImageData(0, 0, W, H).data;
         if (${under}) moved(ours);
         // A reference captured as ink on white (Clip Studio) scores darkness
         // over white, so a stamp's own white parts are paper there too.
         if (${onWhite}) for (let i = 0; i < W * H * 4; i += 4)
             ours[i + 3] = Math.round(ours[i + 3] * (255 - Math.min(ours[i], ours[i + 1], ours[i + 2])) / 255);
+        b._setStrokeSeed(null);
+        return ours;
+        };
+        const ours = await paint(${seed == null ? 'null' : seed}), shown = L.ctx.getImageData(0, 0, W, H);
+        // selfSeed: the same stroke on other random numbers, to say how far a
+        // random brush agrees with itself (second, once a picture tip has loaded)
+        const self = ${selfSeed == null ? 'null' : 'await paint(' + selfSeed + ')'};
+        if (self) L.ctx.putImageData(shown, 0, 0);
         const params = JSON.parse(JSON.stringify(b.getParams(), (k, v) =>
             typeof v === 'string' && v.length > 80 ? v.slice(0, 40) + '...' : v));
         if (!${keep}) for (const n of imp.added) b.deleteUserPreset(n);
@@ -129,12 +140,32 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         const blob = await dc.convertToBlob();
         const u8 = new Uint8Array(await blob.arrayBuffer());
         let s = ''; for (const x of u8) s += String.fromCharCode(x);
+        /* Where the ink lies, not which pixel: both alphas box-blurred twice
+         * over 12px, then sum(min) / sum(max). A scatter brush can match this
+         * without drawing the same random numbers. */
+        const blur = (d) => {
+            let a = new Float32Array(W * H), t = new Float32Array(W * H);
+            for (let i = 0; i < W * H; i++) a[i] = d[i * 4 + 3];
+            const R = 12;
+            for (let pass = 0; pass < 2; pass++) {
+                for (let y = 0; y < H; y++) { let s = 0; for (let x = -R; x < W; x++) {
+                    if (x + R < W) s += a[y * W + x + R]; if (x - R - 1 >= 0) s -= a[y * W + x - R - 1];
+                    if (x >= 0) t[y * W + x] = s / (2 * R + 1); } }
+                for (let x = 0; x < W; x++) { let s = 0; for (let y = -R; y < H; y++) {
+                    if (y + R < H) s += t[(y + R) * W + x]; if (y - R - 1 >= 0) s -= t[(y - R - 1) * W + x];
+                    if (y >= 0) a[y * W + x] = s / (2 * R + 1); } }
+            }
+            return a;
+        };
+        const softIou = (p, q) => { let lo = 0, hi = 0; for (let i = 0; i < W * H; i++) { lo += Math.min(p[i], q[i]); hi += Math.max(p[i], q[i]); } return +(lo / Math.max(1e-9, hi)).toFixed(3); };
+        const bo = blur(ours), bk = blur(theirs);
         const so = stat(ours), sk = stat(theirs);
         return JSON.stringify({ png: btoa(s), ours: so, krita: sk,
             inkRatio: +(so.ink / Math.max(1, sk.ink)).toFixed(3),
             bandInk: so.bands.map((v, i) => +(v / Math.max(1, sk.bands[i])).toFixed(3)),
             meanDiff: +(diff / Math.max(1, n)).toFixed(1), maxDiff: maxd,
-            iou: +(both / Math.max(1, either)).toFixed(3),
+            iou: +(both / Math.max(1, either)).toFixed(3), soft: softIou(bo, bk),
+            self: self ? softIou(bo, blur(self)) : null,
             warnings: imp.notes || [],
             // What the import actually produced, long strings (tip data) cut.
             params });
