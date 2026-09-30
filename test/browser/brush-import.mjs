@@ -1398,6 +1398,8 @@ await withPage(async (page) => {
             plainRnd: [plainRnd.spacingSrc, plainRnd.aspectRatioSrc].map(s => s || 'none'),
             iso: [P({ BrushAutoIntervalType: 2 }, { hasTip: true }), P({ BrushAutoIntervalType: 0 }, { hasTip: true }),
                   P({ BrushAutoIntervalType: 2 })].map(p => p.spacingIsotropic),
+            byWidth: [P({ BrushSize: 100, BrushAutoIntervalType: 1 }, { hasTip: true, tipW: 100, tipH: 100 }).spacingByWidth || false,
+                P({ BrushSize: 100, BrushAutoIntervalType: 1 }).spacingByWidth || false, ribbon.spacingByWidth || false],
             ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc, ribbon.offsetAlong], ribbonNote,
             ribTilt: [ribTilt.angle, ribTilt.size, ribTilt.ribbonClip],
             cj: [P(cj).colorJitterRange, [P(cj).hueJitter, P(cj).satJitter, P(cj).valJitter],
@@ -1452,6 +1454,8 @@ await withPage(async (page) => {
         JSON.stringify(sm.spin) === '[[180,"direction"],[180,null],[180,null]]', JSON.stringify(sm.spin));
     check('Droplet: particles point away from the patch centre (in-spray bit 512) and random thickness thins a picture by width',
         JSON.stringify(sm.drop) === '["radial",true]', JSON.stringify(sm.drop));
+    check('a picture on auto spacing is spaced by its own width however it is turned (Pointillism), a round tip or a ribbon not',
+        JSON.stringify(sm.byWidth) === '[true,false,false]', JSON.stringify(sm.byWidth));
     check('a spray keeps its bias (where in the patch its particles land)',
         JSON.stringify(sm.bias) === '[-100,0,50]', JSON.stringify(sm.bias));
     /* Trees' random interval varies its gaps; in a spray it did nothing

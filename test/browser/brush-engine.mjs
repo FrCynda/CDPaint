@@ -3846,6 +3846,24 @@ await withPage(async (page) => {
         }
         b.setParam('sprayBias', 0); b.setParam('sprayEach', false); b.setParam('aspectRatio', 1); b.setParam('angleSrc', 'none'); b._setStrokeSeed(null);
 
+        /* A thin tip turned to lie along the line, spaced by its own width
+         * (Clip Studio's pictures on auto spacing) lays four times the dabs,
+         * which build up to half as much ink again at this flow. */
+        out.byWidth = [];
+        for (const on of [true, false]) {
+            __B.doc(300, 100);
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0); b.setParam('size', 40); b.setParam('hardness', 100);
+            b.setParam('aspectRatio', 0.25); b.setParam('angle', 90); b.setParam('spacing', 50); b.setParam('flow', 5);
+            b.setParam('spacingIsotropic', false); b.setParam('spacingByWidth', on);
+            const LW = __B.layer();
+            await __B.stroke(50, 50, 250, 50, '#000000');
+            const d = LW.ctx.getImageData(0, 0, 300, 100).data;
+            let s = 0; for (let i = 3; i < d.length; i += 4) s += d[i];
+            out.byWidth.push(s);
+        }
+        b.setParam('spacingByWidth', false); b.setParam('aspectRatio', 1); b.setParam('angle', 0); b.setParam('flow', 100);
+
         out.second = {};
         for (const [op, sz, main] of [['destination-out', 10, 40], ['destination-over', 40, 20]]) {
             __B.doc(400, 200);
@@ -3866,6 +3884,8 @@ await withPage(async (page) => {
 
     /* Even over the disk, the middle 60px holds about 38% of the ink; a
      * ring leaves it about 20%, a centre-heavy spray about 55%. */
+    check('a tip spaced by its own width lays its dabs by that width, not its length along the line',
+        sc.byWidth[0] > sc.byWidth[1] * 1.3, JSON.stringify(sc.byWidth));
     check('a Clip Studio spray can point each particle away from its patch centre',
         sc.radial[0] > sc.radial[1] * 1.15, JSON.stringify(sc.radial));
     check('a Clip Studio spray bias moves particles to the rim or the middle',

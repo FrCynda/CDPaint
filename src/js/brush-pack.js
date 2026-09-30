@@ -3504,8 +3504,13 @@
          * every 60px (spaced by its 13px width ours laid one every 40), and
          * Chalk's picture squeezed to half at 40 and 300% one every 120. So
          * does an auto one on a generated tip; on a picture it follows the
-         * squeezed width (Chalk at thickness 50 lays half again the ink). */
+         * squeezed width (Chalk at thickness 50 lays half again the ink),
+         * however it is turned: Pointillism's 263px particle, squeezed to 79
+         * and turned to lie along the line, stops every 12% of 79 in Clip
+         * Studio (a fixed 12% of it paints the same ink), three times as
+         * often as spacing by its length along the line did. */
         out.spacingIsotropic = !(opts.hasTip && ivt >= 1 && ivt <= 3);
+        if (!out.spacingIsotropic) out.spacingByWidth = true;
         out.spacing = ivt >= 1 && ivt <= 3 ? [12, 8, 4][ivt - 1]
             : Math.max(1, Math.min(400, Math.round(_sutNum(v.BrushInterval, 10))));
         /* ...and those three open up as a round tip softens: 1 + 2 x its
@@ -3600,6 +3605,7 @@
             out.size = Math.max(1, Math.min(5000, Math.round(100 * size * Math.max(opts.tipW, opts.tipH) / across) / 100));
             out.spacing = 100;
             out.spacingIsotropic = false;
+            delete out.spacingByWidth;   // a ribbon is spaced by its length along the line
             // The first picture starts at the stroke's start, not centred on it (Dashed line's first dash 3.5px in).
             out.offsetAlong = Math.round(50 * (side ? opts.tipW : opts.tipH) / Math.max(opts.tipW, opts.tipH));
             // straight along or across: Bumpy's turn of 1 lays level there (near at 270, off at 271)

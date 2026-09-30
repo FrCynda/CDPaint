@@ -4470,12 +4470,13 @@
             }
             var t0 = (p.angle || 0) * _PI / 180, c0 = _abs(_cos(t0)), s0 = _abs(_sin(t0));
             var bw = w * c0 + h * s0, bh = w * s0 + h * c0;
-            w = bw; h = bh;
             var g;
-            if (p.spacingIsotropic || w === h) {   // GIMP spaces a 164x166 tip by its 164
-                g = _gap(_max(w, h));
+            if (p.spacingByWidth) {   // Clip Studio: the tip's own width, however it is turned
+                g = _gap(w);
+            } else if (p.spacingIsotropic || bw === bh) {   // GIMP spaces a 164x166 tip by its 164
+                g = _gap(_max(bw, bh));
             } else {
-                var a = _gap(w), b = _gap(h);
+                var a = _gap(bw), b = _gap(bh);
                 var phi = ((ang || 0) - _dynAngle(p, p.angle, sc) + (p.angle || 0)) * _PI / 180;
                 g = 1 / Math.sqrt(_pow(_cos(phi) / a, 2) + _pow(_sin(phi) / b, 2));
             }
@@ -5370,6 +5371,7 @@
         colorJitterRange: null,  // Clip Studio: [lo, hi] per hue, sat, value, in units of the dial
         sprayBias: 0,            // Clip Studio: where in its patch a particle lands (_diskR)
         aspectThinsWidth: false, // Clip Studio picture tips: the aspect input narrows the width, not the height
+        spacingByWidth: false,   // Clip Studio picture tips on auto spacing: spaced by the tip's unturned width
         sizeSrc: 'pressure',     sizeMin: 50,      sizeCurve: 1,
         flowSrc: 'pressure',     flowMin: 0,       flowCurve: 1,
         /* Krita's per-dab opacity: the level a stroke's ink stops building
