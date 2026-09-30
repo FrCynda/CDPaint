@@ -1391,6 +1391,7 @@ await withPage(async (page) => {
                 BrushRotationInSpray: 90, BrushRotationEffectorInSpray: e, BrushRotationRandomInSpray: 0 });
                 return [o.angle || 0, o.angleSrc || null]; }),
             bias: [-100, 0, 50].map(b => P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 2, BrushSprayBias: b }).sprayBias || 0),
+            sprayPr: P(Object.assign({ BrushIntervalEffector: eff(0x10, [[0, 1], [1, 0]]) }, sp)).spacingSrc || 'none',
             sprayRnd: [sprayRnd.spacingSrc, sprayRnd.aspectRatioSrc, sprayRnd.dabCountSrc].map(s => s || 'none'),
             plainRnd: [plainRnd.spacingSrc, plainRnd.aspectRatioSrc].map(s => s || 'none'),
             iso: [P({ BrushAutoIntervalType: 2 }, { hasTip: true }), P({ BrushAutoIntervalType: 0 }, { hasTip: true }),
@@ -1454,6 +1455,8 @@ await withPage(async (page) => {
         JSON.stringify(sm.sprayRnd) === '["none","random","random"]', JSON.stringify(sm.sprayRnd));
     check('a plain brush takes a random interval, not random thickness',
         JSON.stringify(sm.plainRnd) === '["random","none"]', JSON.stringify(sm.plainRnd));
+    check('...but its pressure does (Leaves closes its gaps to half at full pressure)',
+        sm.sprayPr === 'pressure', sm.sprayPr);
     /* A picture tip on automatic spacing follows its squeezed width (Chalk);
      * a fixed interval and a generated tip go by the size. */
     check('only a picture tip on automatic spacing spaces by its squeezed width',

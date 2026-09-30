@@ -3372,11 +3372,11 @@
      * multiplies, each curve with its own floor folded in. No input at all
      * is written down as none, so the pressure default underneath does not
      * reach a dial Clip Studio holds still. */
-    function _sutDrive(out, key, blob, warn, what) {
+    function _sutDrive(out, key, blob, warn, what, drop) {
         var e = _sutEffector(blob);
         if (!e) return false;
         if (e.unknown) warn.push('dropped: an unknown rule that changes ' + what + ' as you draw');
-        var ins = e.inputs;
+        var ins = e.inputs.filter(function (s) { return s.src !== drop; });
         if (!ins.length) { out[key + 'Src'] = 'none'; return true; }
         if (ins.length === 1) {
             out[key + 'Src'] = ins[0].src;
@@ -3759,8 +3759,11 @@
         if (spraying) _sutDrive(out, 'size', v.BrushSpraySizeEffector, warn, 'its spray');
         /* The interval and the spray's density take effectors too: Trees'
          * random interval (floor 50) laid trees 196-284px apart at 300% of
-         * 100, never further than the interval. */
-        if (!spraying) _sutDrive(out, 'spacing', v.BrushIntervalEffector, warn, 'its spacing');
+         * 100, never further than the interval. A spray's random interval
+         * does nothing, its pressure does: Leaves (pressure falling to 50 at
+         * full pressure, random 50) stops 150px apart at 1000% of 30 with
+         * either or both, 300 with neither -- half its leaves were missing. */
+        _sutDrive(out, 'spacing', v.BrushIntervalEffector, warn, 'its spacing', spraying ? 'random' : null);
         /* A thickness effector only thins (factor floor..1): Droplet's random
          * one at floor 50 took a quarter off its ink. Ours divides the aspect
          * by it, which thins too -- but a tip already squeezed side to side
