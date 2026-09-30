@@ -30,11 +30,16 @@ reader meets in practice:
     python make-sut.py rough-scrape.sut          # the brush above
     python make-sut.py pixel-select.sut tool     # not a brush at all
     python make-sut.py library-tips.sut library  # pictures with no path
+    python make-sut.py library-repeat.sut repeat # library, one picture twice
 
 The "tool" one is a selection tool: same tables, same Node, and a Variant
 with none of the brush columns in it. The "library" one names pictures that
 live inside Clip Studio rather than in the file, so its material rows carry
-no catalogue path and the order is all a reader has.
+no catalogue path and the order is all a reader has. The "repeat" one is
+how the real library brushes are stored (Droplet): still no catalogue path,
+but each material row keeps the path it came from, which the Variant's
+records carry too -- and the brush names its second picture twice, the way
+Droplet lists its smallest droplet five times to have it picked that often.
 """
 import sqlite3, struct, zlib, sys, os
 
@@ -220,6 +225,11 @@ if KIND == 'library':
     LIVE = dict(LIVE, **OVER)
     DEFAULTS = dict(DEFAULTS, **OVER)
 
+if KIND == 'repeat':
+    LIVE = dict(LIVE, BrushPatternImageArray=ref([('scrape a', CAT['scrape a']),
+                                                  ('scrape b', CAT['scrape b']),
+                                                  ('scrape b', CAT['scrape b'])]))
+
 out = sys.argv[1]
 if os.path.exists(out):
     os.remove(out)
@@ -253,10 +263,11 @@ MATERIALS = (
     (('scrape a', TIP), ('scrape b', TIP2),
      ('dual dots', DUAL), ('rough paper', TEXTURE)))
 for name, img in MATERIALS:
-    cat = '' if KIND == 'library' else CAT[name]
+    cat = '' if KIND in ('library', 'repeat') else CAT[name]
+    orig = CAT[name] + ':data:material_0.layer' if KIND == 'repeat' else ''
     con.execute('INSERT INTO MaterialFile(InstallFolder, OriginalPath, '
-                'CatalogPath, FileData) VALUES(0, "", ?, ?)',
-                (cat, material(img)))
+                'CatalogPath, FileData) VALUES(0, ?, ?, ?)',
+                (orig, cat, material(img)))
 
 con.commit()
 con.close()

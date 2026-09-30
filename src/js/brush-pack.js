@@ -3961,22 +3961,23 @@
                           'DualPatternImageArray', 'DualTextureImage'];
 
     function _sutRefs(blob) {
-        if (!blob || blob.length < 16) return { count: 0, paths: [] };
+        if (!blob || blob.length < 16) return { count: 0, paths: [], orig: [] };
         /* Every one of these starts with a word of 8. Some other blob that
          * happens to sit in one of these columns is not a picture list, and
          * reading a count out of it would hand the tip the wrong material. */
-        if (blob[0] || blob[1] || blob[2] || blob[3] !== 8) return { count: 0, paths: [] };
+        if (blob[0] || blob[1] || blob[2] || blob[3] !== 8) return { count: 0, paths: [], orig: [] };
         var count = (blob[4] << 24 | blob[5] << 16 | blob[6] << 8 | blob[7]) >>> 0;
-        if (count > 64) return { count: 0, paths: [] };
+        if (count > 64) return { count: 0, paths: [], orig: [] };
         var s = '', i;
         for (i = 16; i + 1 < blob.length; i += 2) {
             s += String.fromCharCode(blob[i] | (blob[i + 1] << 8));
         }
-        var paths = [], m, re = /\.:[0-9A-Za-z:\-]{10,}/g;
+        var paths = [], orig = [], m, re = /\.:[0-9A-Za-z:\-]{10,}/g;
         while ((m = re.exec(s))) {
-            if (m[0].indexOf(':data:') === -1) paths.push(m[0]);
+            var d = m[0].indexOf(':data:');
+            if (d === -1) paths.push(m[0]); else orig.push(m[0].slice(0, d));
         }
-        return { count: count, paths: paths };
+        return { count: count, paths: paths, orig: orig };
     }
 
     /* A .sut holds one sub tool. Node says which Variant row is the live one
@@ -4018,13 +4019,14 @@
             }
             return png;
         });
-        var byPath = {}, named = 0, k;
+        var byPath = {}, byOrig = {}, named = 0, k;
         for (i = 0; i < rows.length; i++) {
-            var cat = rows[i].CatalogPath;
+            var cat = rows[i].CatalogPath, op = String(rows[i].OriginalPath || '').split(':data:')[0];
             if (cat && pngs[i]) { byPath[cat] = pngs[i]; named++; }
+            if (op && pngs[i]) byOrig[op] = pngs[i];
         }
 
-        var got = {}, warnings = [], at = 0;
+        var got = {}, warnings = [], at = 0, guessed = false;
         for (k = 0; k < SUT_IMAGE_KEYS.length; k++) {
             var key = SUT_IMAGE_KEYS[k];
             var ref = _sutRefs(v[key]);
@@ -4033,14 +4035,22 @@
                 for (i = 0; i < ref.paths.length; i++) {
                     if (byPath[ref.paths[i]]) list.push(byPath[ref.paths[i]]);
                 }
+            } else if (ref.orig.length === ref.count && ref.orig.every(function (o) { return byOrig[o]; })) {
+                /* A library brush names its pictures by where they came
+                 * from, once per entry: Droplet lists 15 -- its biggest
+                 * picture once, its smallest five times -- and Clip Studio
+                 * picks among all 15 (914 droplets: 0.08 / 0.14 / 0.22 /
+                 * 0.26 / 0.30, big to small). */
+                for (i = 0; i < ref.count; i++) list.push(byOrig[ref.orig[i]]);
+                at += ref.orig.filter(function (o, j) { return ref.orig.indexOf(o) === j; }).length;
             } else {
                 for (i = 0; i < ref.count && at < pngs.length; i++, at++) {
-                    if (pngs[at]) list.push(pngs[at]);
+                    if (pngs[at]) { list.push(pngs[at]); guessed = true; }
                 }
             }
             got[key] = list;
         }
-        if (!named && pngs.length) {
+        if (guessed) {
             warnings.push('Its pictures come from the Clip Studio library, so ' +
                 'which is the tip and which is the paper is taken from their order.');
         }

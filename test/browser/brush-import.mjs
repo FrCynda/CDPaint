@@ -41,6 +41,7 @@ const FILES = {
     'rough-scrape.sut': b64('rough-scrape.sut'),
     'pixel-select.sut': b64('pixel-select.sut'),
     'library-tips.sut': b64('library-tips.sut'),
+    'library-repeat.sut': b64('library-repeat.sut'),
     'masked-generated.kpp': b64('masked-generated.kpp'),
     'masked-file.kpp': b64('masked-file.kpp'),
     'itxt-binary-md5.kpp': b64('itxt-binary-md5.kpp'),
@@ -1336,6 +1337,20 @@ await withPage(async (page) => {
     check('...and the brush owns up to having guessed',
         /taken from their order/.test((sutLib.r.lines || []).join(' ')),
         (sutLib.r.lines || []).join(' '));
+    /* A real library brush keeps where each picture came from, and lists a
+     * picture as often as it wants it picked: Droplet names its smallest
+     * droplet five times in fifteen, and Clip Studio lays it 0.30 of the
+     * time. Read in stored order, the paper here would be a tip. */
+    const sutRep = await page.eval(`(async () => {
+        for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
+        const r = await PaintApp.brush.importFiles([window.__files['library-repeat.sut']]);
+        const n = PaintApp.brush.userPresetNames()[0];
+        const p = n ? PaintApp.brush.PRESETS[n] : {};
+        return JSON.stringify({ r, cells: p.tipCells || 1, tex: !!p.texturePattern });
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('a library brush takes each picture as often as it is listed, by where it came from',
+        sutRep.cells === 3 && sutRep.tex && !/taken from their order/.test((sutRep.r.lines || []).join(' ')),
+        JSON.stringify(sutRep));
     /* Clip Studio has three switches for mixing and they usually agree, but
      * the markers and the flat watercolour brushes leave the two obvious
      * ones off and set the third. Reading only the obvious ones imported
