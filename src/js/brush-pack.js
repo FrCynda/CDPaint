@@ -3813,6 +3813,15 @@
             _sutJitter(out, v.BrushHueChange, v.BrushSaturationChange, v.BrushValueChange,
                        [v.BrushHueChangeEffector, v.BrushSaturationChangeEffector, v.BrushValueChangeEffector]);
         if (dabJit && _sutNum(v.BrushChangeColorTarget, 1) === 2) out.jitterSub = true;
+        /* Sub colour mix: each dab goes that far toward the sub colour
+         * (white), its random input scaling it -- Generic Flower's 38% at
+         * floor 21 lays flowers from grey 41 to 112, 101-115 without the
+         * random, and at 100% nothing shows. */
+        var subMix = _sutNum(v.BrushChangePatternColor, 1) ? _sutNum(v.BrushSubColor, 0) : 0;
+        if (subMix > 0) {
+            out.subMix = Math.min(100, subMix);
+            _sutDrive(out, 'subMix', v.BrushSubColorEffector, warn, 'its sub colour mix');
+        }
         if (!dabJit && _sutNum(v.BrushChangeStrokeColor, 0) &&
             _sutJitter(out, v.BrushStrokeHueChange, v.BrushStrokeSaturationChange,
                        v.BrushStrokeValueChange)) {

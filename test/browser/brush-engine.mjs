@@ -3277,12 +3277,13 @@ await withPage(async (page) => {
             b.loadCustomTip(url, null);
             await new Promise(r => setTimeout(r, 400));
             ['texture', 'opacity', 'flow', 'scatter', 'colorRate', 'sizeSrc',
-             'taperStart', 'taperEnd', 'tip2Depth', 'valJitter', 'jitterSub', 'colorJitterRange'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+             'taperStart', 'taperEnd', 'tip2Depth', 'valJitter', 'jitterSub', 'colorJitterRange', 'subMix'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
             b.setParam('dynamicsMode', 'off');
             b.setParam('size', 80); b.setParam('hardness', 100);
             b.setParam('tipMode', mode);
             // the sub colour (white) taken half down, every dab
-            if (sub) { b.setParam('valJitter', 50); b.setParam('colorJitterRange', [[0, 0], [0, 0], [-1, -1]]); b.setParam('jitterSub', true); }
+            if (sub === 'mix') b.setParam('subMix', 50);
+            else if (sub) { b.setParam('valJitter', 50); b.setParam('colorJitterRange', [[0, 0], [0, 0], [-1, -1]]); b.setParam('jitterSub', true); }
             const L = __B.layer();
             b.beginStroke(100, 100, 1, '#808080');
             b.endStroke();
@@ -3290,7 +3291,8 @@ await withPage(async (page) => {
             return { left: __B.px(L, 80, 100), right: __B.px(L, 120, 100) };
         };
         const out = { alpha: await run('alpha'), light: await run('lightness'),
-                      color: await run('color'), sub: await run('color', true) };
+                      color: await run('color'), sub: await run('color', true), mix: await run('color', 'mix') };
+        b.setParam('subMix', 0);
         b.forgetSaved(b._currentPreset || 'Round');
         b.loadPreset('Round');
         return JSON.stringify(out);
@@ -3306,6 +3308,9 @@ await withPage(async (page) => {
         redOf(tm.color.left) < 60 && redOf(tm.color.right) > 200, JSON.stringify(tm.color));
     /* Clip Studio's sub colour is a picture's whites: changed by value it
      * greys Building's faces and leaves the lines as they were. */
+    // its darks in the half-mixed ink (128 -> 192), its lights toward white: 32 -> 200, 224 -> 247
+    check('a sub colour mix lightens a picture as Clip Studio tints it, ink to white',
+        Math.abs(redOf(tm.mix.left) - 200) < 4 && Math.abs(redOf(tm.mix.right) - 247) < 4, JSON.stringify(tm.mix));
     check('a change to the sub colour shades the picture and leaves its dark ink dark',
         Math.abs(redOf(tm.sub.right) - redOf(tm.color.right) / 2) < 4 && redOf(tm.sub.left) <= redOf(tm.color.left),
         JSON.stringify([tm.color, tm.sub]));
@@ -3871,6 +3876,15 @@ await withPage(async (page) => {
         }
         b.setParam('spacingByWidth', false); b.setParam('aspectRatio', 1); b.setParam('angle', 0); b.setParam('flow', 100);
 
+        __B.doc(200, 100);
+        b.loadPreset('Round');
+        b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0); b.setParam('size', 30); b.setParam('hardness', 100); b.setParam('subMix', 50);
+        ['hueJitter', 'satJitter', 'valJitter', 'dabCount', 'scatterAxis'].forEach(k => b.setParam(k, b.DEFAULTS[k]));   // left by the tests above
+        const LM = __B.layer();
+        await __B.stroke(50, 50, 150, 50, '#000000');
+        out.subMix = __B.px(LM, 100, 50);
+        b.setParam('subMix', 0);
+
         out.second = {};
         for (const [op, sz, main] of [['destination-out', 10, 40], ['destination-over', 40, 20]]) {
             __B.doc(400, 200);
@@ -3893,6 +3907,10 @@ await withPage(async (page) => {
      * ring leaves it about 20%, a centre-heavy spray about 55%. */
     check('a tip spaced by its own width lays its dabs by that width, not its length along the line',
         sc.byWidth[0] > sc.byWidth[1] * 1.3, JSON.stringify(sc.byWidth));
+    /* Clip Studio's sub colour mix takes each dab that far toward white
+     * (Generic Flower's black flowers paint grey). */
+    check('a sub colour mix of half paints black as mid grey',
+        Math.abs(parseInt(sc.subMix) - 128) < 3, sc.subMix);
     check('a Clip Studio spray can point each particle away from its patch centre',
         sc.radial[0] > sc.radial[1] * 1.15, JSON.stringify(sc.radial));
     check('a Clip Studio spray bias moves particles to the rim or the middle',

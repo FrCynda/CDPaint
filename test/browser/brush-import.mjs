@@ -1420,6 +1420,7 @@ await withPage(async (page) => {
             ramp: [0, 1, 2, 3].map(a => P({ AntiAlias: a }).edgeRamp || 0),
             softGap: [P({ BrushAutoIntervalType: 2, BrushHardness: 50 }), P({ BrushAutoIntervalType: 2, BrushHardness: 50 }, { hasTip: true }),
                       P({ BrushInterval: 20, BrushHardness: 0 })].map(p => p.spacing),
+            subMix: [P({ BrushSubColor: 38 }).subMix, P({ BrushSubColor: 38, BrushChangePatternColor: 0 }).subMix || 0],
             wholeAliased: [P({ AntiAlias: 0 }, { hasTip: true }).aliased, P({ AntiAlias: 0 }, { hasTip: true, tipWhole: true }).aliased].map(Boolean),
             softAliased: [P({ AntiAlias: 0, BrushHardness: 50 }).aliased, P({ AntiAlias: 0, BrushHardness: 50 }, { hasTip: true }).aliased].map(Boolean),
             fracSize: P({ BrushSize: 5.1 }).size,
@@ -1571,6 +1572,8 @@ await withPage(async (page) => {
      * its greys in Clip Studio with it off or on). */
     check('only a preview shrunk from its picture is known to be crisper than it looks',
         JSON.stringify(shade[3]) === '[true,false,false]', JSON.stringify(shade[3]));
+    check('a sub colour mix is read, and only with colour change on',
+        JSON.stringify(sm.subMix) === '[38,0]', JSON.stringify(sm.subMix));
     check('a picture shown whole keeps its greys with anti-aliasing off',
         JSON.stringify(sm.wholeAliased) === '[true,false]', JSON.stringify(sm.wholeAliased));
     /* Ribbon pictures. Clip Studio's preview is its picture squeezed into a

@@ -1031,6 +1031,17 @@
             /* The tip paints itself: its picture IS the dab, and the chosen
              * colour has no say. Krita calls this an image stamp. */
             _scratchCtx.drawImage(maskCanvas, 0, 0);
+            /* A sub colour mix greys the ink: Clip Studio paints a picture's
+             * darks in the ink and its lights in the sub colour, white,
+             * which is screen -- c(1 - p) + p. */
+            if (_params.subMix) {
+                _scratchCtx.globalCompositeOperation = 'screen';
+                _scratchCtx.fillStyle = colorHex;
+                _scratchCtx.fillRect(0, 0, mw, mh);
+                _scratchCtx.globalCompositeOperation = 'destination-in';
+                _scratchCtx.drawImage(maskCanvas, 0, 0);
+                _scratchCtx.globalCompositeOperation = 'source-over';
+            }
             if (_params.jitterSub) {   // its whites take the sub colour: colorHex, the jittered white
                 _scratchCtx.globalCompositeOperation = 'multiply';
                 _scratchCtx.fillStyle = colorHex;
@@ -3315,6 +3326,11 @@
     var _scDab  = { x: 0, y: 0, pressure: 0, strokeAngle: 0 };
     var _scFlow = { x: 0, y: 0, pressure: 0, strokeAngle: 0 };
 
+    // that far toward the sub colour, white (Clip Studio's sub colour mix)
+    function _subMixed(p, hex, sc) {
+        var m = _dyn(p, 'subMix', p.subMix, sc, 20) / 100, c = _hexToRgb(hex);
+        return _rgbToHex(c[0] + (255 - c[0]) * m, c[1] + (255 - c[1]) * m, c[2] + (255 - c[2]) * m);
+    }
     function _renderDab(x, y, pressure, colorHex, strokeAngle, rawPressure, taper) {
         var p = getParams();
         _dabIndex++;
@@ -3362,6 +3378,8 @@
         // a sub colour's change shades a picture's whites (white is the sub colour), never the ink
         var finalColor = !p.jitterSub ? _jitterColor(p, colorHex, x, y)
             : p.tipMode === 'color' ? _jitterColor(p, '#ffffff', x, y) : colorHex;
+        var baseColor = finalColor;
+        if (p.subMix) finalColor = _subMixed(p, baseColor, sc);
         if (p.grid) { _gridDab(p, x, y, finalColor); return; }
 
         // Smudge: sample canvas color and mix with brush color
@@ -3462,6 +3480,7 @@
                 sc.x = dx; sc.y = dy; dsz = _dyn(p, 'size', p.size, sc, 1) * tfSize;
                 if (p.angleSrc === 'radial') dang = (p.angle || 0) + _atan2(dy - y, dx - x) * 180 / _PI;
                 else if (p.angleSrc === 'random') dang = _dynAngle(p, p.angle, sc);
+                if (p.subMix) finalColor = _subMixed(p, baseColor, sc);   // each particle its own
                 sc.x = x; sc.y = y;
                 if (dsz < 0.5) continue;
             }
@@ -5380,7 +5399,8 @@
         hueJitter: 0,
         satJitter: 0,
         valJitter: 0,
-        jitterSub: false,   // the jitter shades a colour tip's whites (Clip Studio's sub colour), not the ink
+        jitterSub: false,
+        subMix: 0,          // % each dab goes toward white (Clip Studio's sub colour mix)   // the jitter shades a colour tip's whites (Clip Studio's sub colour), not the ink
         colorJitterPer: 'dab',
         colorJitterRange: null,  // Clip Studio: [lo, hi] per hue, sat, value, in units of the dial
         sprayBias: 0,            // Clip Studio: where in its patch a particle lands (_diskR)
