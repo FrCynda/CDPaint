@@ -1669,7 +1669,10 @@
              * chain's pink beads paint dark grey with black: ink 1.01 of
              * Clip Studio's, where brightness gave 0.82).
              * ponytail: Clip Studio tints the greys between the main and
-             * sub colour; ours stamps them as they are, right for black. */
+             * sub colour; ours stamps them as they are, right for black.
+             * That is its 'change brush tip colour'. Off, a picture paints
+             * in its own colours whatever the ink: Bead chain's beads come
+             * out red and pink with black. */
             var shaded = opts && opts.csp && cells.some(function (c) {
                 var solid = 0, white = 0;
                 for (var q = 0; q < c.alpha.length; q++) {
@@ -1679,7 +1682,14 @@
                 }
                 return white > solid * 0.05;
             });
-            if (shaded) cells.forEach(function (c) {
+            var own = opts && opts.keepColor && cells.some(function (c) {
+                for (var q = 0; q < c.alpha.length; q++) {
+                    var r = c.rgb[q * 3], g = c.rgb[q * 3 + 1], b = c.rgb[q * 3 + 2];
+                    if (c.alpha[q] > 127 && Math.max(r, g, b) - Math.min(r, g, b) > 30) return true;
+                }
+                return false;
+            });
+            if (shaded && !own) cells.forEach(function (c) {
                 for (var q = 0, g; q < c.alpha.length; q++) {
                     g = Math.min(c.rgb[q * 3], c.rgb[q * 3 + 1], c.rgb[q * 3 + 2]);
                     c.rgb[q * 3] = c.rgb[q * 3 + 1] = c.rgb[q * 3 + 2] = g;
@@ -1688,7 +1698,7 @@
             var st2 = _strip(cells);
             if (exact) { st2.w = exact[0]; st2.h = exact[1]; }
             return { url: st2.url, size: st2.size, w: st2.w, h: st2.h, whole: whole,
-                     cells: cells.length, pick: pick, params: shaded ? { tipMode: 'color' } : _paper(cells) };
+                     cells: cells.length, pick: pick, params: shaded || own ? { tipMode: 'color' } : _paper(cells) };
         });
     };
 
