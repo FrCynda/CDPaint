@@ -1579,6 +1579,8 @@
         var many = Array.isArray(bytes) ? bytes : [bytes];
         return Promise.all(many.map(_decode)).then(function (cells) {
             var pick = 'random';
+            // every preview at its picture's own size: its greys are the picture's, not a shrink's
+            var whole = many.every(function (b, i) { return b.real && b.real[0] <= cells[i].w; });
             if (opts && opts.crop) {
                 /* ...and each picture spans the ribbon whole: Zipper's lone
                  * tooth is as tall as its pair of halves, Bead chain's oval
@@ -1669,7 +1671,7 @@
             });
             var st2 = _strip(cells);
             if (exact) { st2.w = exact[0]; st2.h = exact[1]; }
-            return { url: st2.url, size: st2.size, w: st2.w, h: st2.h,
+            return { url: st2.url, size: st2.size, w: st2.w, h: st2.h, whole: whole,
                      cells: cells.length, pick: pick, params: shaded ? { tipMode: 'color' } : _paper(cells) };
         });
     };
@@ -3849,12 +3851,16 @@
          * hatching tones, G-pen and Black soot so). Not where the greys are
          * colour -- paper grain, mixing or a colour change leave Gouache,
          * Pastel and the flowers grey there with it off too.
-         * ponytail: Noise, whose soft tip keeps its greys there, is dithered
-         * here; a thumbnail cannot tell its tip from a hatch's. */
+         * It is the picture that is crisp, not the setting: Noise's soft tip
+         * paints the same greys with it on or off. Its preview is the whole
+         * 210x204 picture, as the cross-hatches' are, where Black soot's and
+         * Light crosshatch's 300px previews are shrunk from 1000 and 657px of
+         * solid ink, so only a shrunk preview is sharpened (Cross-hatching x4
+         * ink 1.30 -> 0.99 of Clip Studio's, Noise 1.27 -> 0.94). */
         if (_sutNum(v.AntiAlias, 1) === 0 && !out.texture && !out.watercolor &&
             !_sutNum(v.BrushChangePatternColor, 0) &&
             // a soft round tip keeps its greys: hardness 50 with it off or on, the same dab
-            (opts.hasTip || _sutNum(v.BrushHardness, 100) >= 100)) out.aliased = true;
+            (opts.hasTip ? !opts.tipWhole : _sutNum(v.BrushHardness, 100) >= 100)) out.aliased = true;
         /* On, it fades a round dab's rim over AA + 0.5 px at every size (a
          * 20px G-pen line's edge 163/111/84 at levels 1/2/3): a 5px spray
          * speck at level 2 carries a third of a hard disc's ink. */

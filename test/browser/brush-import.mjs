@@ -1420,6 +1420,7 @@ await withPage(async (page) => {
             ramp: [0, 1, 2, 3].map(a => P({ AntiAlias: a }).edgeRamp || 0),
             softGap: [P({ BrushAutoIntervalType: 2, BrushHardness: 50 }), P({ BrushAutoIntervalType: 2, BrushHardness: 50 }, { hasTip: true }),
                       P({ BrushInterval: 20, BrushHardness: 0 })].map(p => p.spacing),
+            wholeAliased: [P({ AntiAlias: 0 }, { hasTip: true }).aliased, P({ AntiAlias: 0 }, { hasTip: true, tipWhole: true }).aliased].map(Boolean),
             softAliased: [P({ AntiAlias: 0, BrushHardness: 50 }).aliased, P({ AntiAlias: 0, BrushHardness: 50 }, { hasTip: true }).aliased].map(Boolean),
             fracSize: P({ BrushSize: 5.1 }).size,
             pic: [P({ BrushThickness: 85, BrushVerticalThicknes: 1 }, { hasTip: true }),
@@ -1557,10 +1558,20 @@ await withPage(async (page) => {
             return new Uint8Array(await (await c.convertToBlob()).arrayBuffer());
         };
         const mode = async (fill) => ((await BrushPack.tipStrip([await png(fill)], 'tip.png', { csp: true })).params || {}).tipMode || '';
-        return JSON.stringify([await mode('#fff'), await mode('#888'), await mode('#000')]);
+        const whole = async (real) => { const b = await png('#888'); if (real) b.real = real;
+                                        return !!(await BrushPack.tipStrip([b], 'tip.png', { csp: true })).whole; };
+        return JSON.stringify([await mode('#fff'), await mode('#888'), await mode('#000'),
+                               [await whole([24, 16]), await whole([96, 64]), await whole(null)]]);
     })()`, { awaitPromise: true }).then(JSON.parse);
     check('a picture tip stamps its own whites, a grey or black one stays ink',
         shade[0] === 'color' && shade[1] === '' && shade[2] === '', JSON.stringify(shade));
+    /* Anti-aliasing off sharpens a preview shrunk from a bigger picture (Black
+     * soot's), not one that is the picture (Noise's soft 210x204 tip keeps
+     * its greys in Clip Studio with it off or on). */
+    check('only a preview shrunk from its picture is known to be crisper than it looks',
+        JSON.stringify(shade[3]) === '[true,false,false]', JSON.stringify(shade[3]));
+    check('a picture shown whole keeps its greys with anti-aliasing off',
+        JSON.stringify(sm.wholeAliased) === '[true,false]', JSON.stringify(sm.wholeAliased));
     /* Ribbon pictures. Clip Studio's preview is its picture squeezed into a
      * square, so it is cut back to the real shape, margins kept (Dashed
      * line's gaps are its margins); a long one is laid in pieces so a
