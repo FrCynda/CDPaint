@@ -3523,7 +3523,13 @@
         /* A thin generated tip stands upright there at 0 and lies flat here:
          * Flat marker (thickness 30, turned 90) is 16px across a level stroke
          * in Clip Studio, and was 50 here until turned the extra quarter. */
-        var rot = _sutNum(v.BrushRotation, 0) + (out.aspectRatio > 1 && !vert && !opts.hasTip ? 90 : 0);
+        /* A spray's particles turn by their own columns: Pointillism
+         * (rotation 45 at random, in spray 90 following the line) lays every
+         * particle along a 23-degree stroke in Clip Studio, and the same with
+         * rotation 0; without the in-spray bit 64 they lie level. */
+        var spraying = _sutNum(v.BrushUseSpray, 0) && size > 0 && _sutNum(v.BrushSpraySize, 0) > 0;
+        var rk = spraying && 'BrushRotationInSpray' in v ? 'InSpray' : '';   // older files have none
+        var rot = _sutNum(v['BrushRotation' + rk], 0) + (out.aspectRatio > 1 && !vert && !opts.hasTip ? 90 : 0);
         if (rot % 360) out.angle = Math.round(rot) % 360;
         /* The rotation dropdown is a mask of what is allowed to turn the
          * tip. Bits 1 and 2 are on in every brush in every file we have, so
@@ -3535,15 +3541,15 @@
          * depending on drag direction, which reads as a wrong aspect ratio,
          * a blotchy/uneven edge, and inconsistent dab overlap. Bit 16 is
          * still unnamed and stays a warning. */
-        var reff = _sutNum(v.BrushRotationEffector, 0);
-        if (reff & 128) {
+        var reff = _sutNum(v['BrushRotationEffector' + rk], 0), rdir = rk ? 64 : 32;
+        var rrand = Math.min(180, Math.round(_sutNum(v[rk ? 'BrushRotationRandomInSpray' : 'BrushRotationRandomScale'], 100) * 1.8));
+        if (reff & 128 && rrand > 0) {
             out.angleSrc = 'random';
-            out.angleRange = Math.max(1, Math.min(180, Math.round(
-                _sutNum(v.BrushRotationRandomScale, 100) * 1.8)));
-        } else if (reff & 32) {
+            out.angleRange = rrand;
+        } else if (reff & rdir) {
             out.angleSrc = 'direction';
         }
-        if (reff & ~163) {
+        if (reff & ~(131 | rdir)) {
             warn.push('dropped: the rule that turns its tip as you draw');
         }
 
@@ -3552,7 +3558,6 @@
          * is a haze of specks, and Wet blotting ink (size 30, particles 115)
          * a band 139px tall -- 30 of patch plus a particle either side. Ours
          * is the particle, scattered up to half the patch from the line. */
-        var spraying = _sutNum(v.BrushUseSpray, 0) && size > 0 && _sutNum(v.BrushSpraySize, 0) > 0;
         if (spraying) {
             var spray = _sutNum(v.BrushSpraySize, 0) * ({ 1: 96, 2: 9.6 }[_sutNum(v.BrushSpraySizeUnit, 0)] || 1);
             out.size = Math.max(1, Math.round(spray));

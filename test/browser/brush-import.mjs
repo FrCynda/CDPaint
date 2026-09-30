@@ -1386,6 +1386,10 @@ await withPage(async (page) => {
             flat: [flat.aspectRatio, flat.angle], mm: mm.size,
             spray: [spray.size, spray.scatter, spray.dabCount],
             sprayHow: [spray.scatterAxis, spray.sprayEach, P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 2, BrushSpraySizeUnit: 2 }).size],
+            spin: [65, 1, 129].map(e => { const o = P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 20, BrushThickness: 30,
+                BrushRotation: 45, BrushRotationEffector: 131, BrushRotationRandomScale: 25,
+                BrushRotationInSpray: 90, BrushRotationEffectorInSpray: e, BrushRotationRandomInSpray: 0 });
+                return [o.angle || 0, o.angleSrc || null]; }),
             bias: [-100, 0, 50].map(b => P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 2, BrushSprayBias: b }).sprayBias || 0),
             sprayRnd: [sprayRnd.spacingSrc, sprayRnd.aspectRatioSrc, sprayRnd.dabCountSrc].map(s => s || 'none'),
             plainRnd: [plainRnd.spacingSrc, plainRnd.aspectRatioSrc].map(s => s || 'none'),
@@ -1439,6 +1443,8 @@ await withPage(async (page) => {
      * size, and a spray size in millimetres converted like the brush size. */
     check('a spray covers its patch evenly, sizes each particle, and reads its unit',
         JSON.stringify(sm.sprayHow) === '["disk",true,19]', JSON.stringify(sm.sprayHow));
+    check('a spray turns its particles by the in-spray rotation (bit 64 follows the line), not the brush rotation',
+        JSON.stringify(sm.spin) === '[[180,"direction"],[180,null],[180,null]]', JSON.stringify(sm.spin));
     check('a spray keeps its bias (where in the patch its particles land)',
         JSON.stringify(sm.bias) === '[-100,0,50]', JSON.stringify(sm.bias));
     /* Trees' random interval varies its gaps; in a spray it did nothing
