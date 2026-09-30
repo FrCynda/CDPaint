@@ -703,6 +703,37 @@ await withPage(async (page) => {
         } finally { performance.now = clock; }
     })()`).then(JSON.parse);
     check('a snapped 1px pen draws on the row it was drawn along', snap.length === 1 && snap[0] === 50, JSON.stringify(snap));
+    /* The selection and the layer's alpha lock are the app's, not MyPaint's,
+     * and a MyPaint stroke used to ignore both. */
+    const clip = await page.eval(`(() => {
+        const app = PaintApp, b = app.brush, NL = String.fromCharCode(10);
+        const clock = performance.now; let tick = 0; performance.now = () => tick;
+        const L = app.layerMgr.layers[app.layerMgr.activeIdx], ctx = L.ctx;
+        const px = (x, y) => Array.from(ctx.getImageData(x, y, 1, 1).data).join(',');
+        const line = (y) => { b.beginStroke(10, y, 1, '#000000');
+            for (let x = 11; x <= 190; x++) { tick += 2; b.moveStroke(x, y, 1, '#000000'); } b.endStroke(); };
+        try {
+            for (const n of b.userPresetNames()) b.deleteUserPreset(n);
+            b.loadPreset(b.importMyb(['version 2', 'radius_logarithmic 2.0', 'hardness 1', 'opaque 1',
+                'dabs_per_actual_radius 2'].join(NL), 'solid.myb').added[0]);
+            ctx.clearRect(0, 0, 200, 100);
+            app.state.selection = { x: 20, y: 20, w: 60, h: 60, rotation: 0, canvas: null, originalX: 20, originalY: 20 };
+            app.state.selectionOriginalPos = { x: 20, y: 20, w: 60, h: 60, rotation: 0 };
+            line(50);
+            app.state.selection = null; app.state.selectionOriginalPos = null;
+            const sel = [px(50, 50), px(150, 50)];
+            ctx.clearRect(0, 0, 200, 100);
+            ctx.fillStyle = '#00ff00'; ctx.fillRect(20, 20, 40, 40);
+            L.alphaLock = true;
+            line(40);
+            L.alphaLock = false;
+            return JSON.stringify({ sel, lock: [px(40, 40), px(150, 40)] });
+        } finally { performance.now = clock; L.alphaLock = false; app.state.selection = null; }
+    })()`).then(JSON.parse);
+    check('a MyPaint stroke paints inside the selection and not outside it',
+        clip.sel[0] === '0,0,0,255' && clip.sel[1] === '0,0,0,0', JSON.stringify(clip.sel));
+    check('and under alpha lock it recolours the paint that is there and nothing else',
+        clip.lock[0] === '0,0,0,255' && clip.lock[1] === '0,0,0,0', JSON.stringify(clip.lock));
 
     console.log('\n== two of David Revoy own MyPaint brushes ==');
     /* Revoy's own, straight out of the CC-0 collection -- not something

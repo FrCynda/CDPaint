@@ -6611,10 +6611,9 @@
      * legacy surface path (mypaint_brush_stroke_to), the one Krita drives:
      * no spectral paint mixing, no posterize. The surface is libmypaint's
      * too: 64px tiles of 15-bit premultiplied RGBA, loaded from the layer as
-     * a stroke first touches them and written back as they change.
-     *
-     * ponytail: the selection and the layer's alpha lock do not clip it yet
-     * (the brush's own lock_alpha does work). */
+     * a stroke first touches them and written back as they change. The
+     * selection and the layer's alpha lock are the app's, not MyPaint's:
+     * they are put back into the tiles as each is written out (_mpClip). */
     var MP_SET = 'opaque opaque_multiply opaque_linearize radius_logarithmic hardness anti_aliasing dabs_per_basic_radius dabs_per_actual_radius dabs_per_second radius_by_random speed1_slowness speed2_slowness speed1_gamma speed2_gamma offset_by_random offset_by_speed offset_by_speed_slowness slow_tracking slow_tracking_per_dab tracking_noise color_h color_s color_v restore_color change_color_h change_color_l change_color_hsl_s change_color_v change_color_hsv_s smudge smudge_length smudge_radius_log eraser stroke_threshold stroke_duration_logarithmic stroke_holdtime custom_input custom_input_slowness elliptical_dab_ratio elliptical_dab_angle direction_filter lock_alpha colorize snap_to_pixel pressure_gain_log gridmap_scale gridmap_scale_x gridmap_scale_y smudge_length_log smudge_bucket smudge_transparency offset_y offset_x offset_angle offset_angle_asc offset_angle_view offset_angle_2 offset_angle_2_asc offset_angle_2_view offset_angle_adj offset_multiplier posterize posterize_num paint_mode'.split(' ');
     var MP_DEF = [1,0,0.9,2,0.8,1,0,2,0,0,0.04,0.8,4,4,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0.5,0,0,0,4,0,0,0,1,90,2,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.05,1];
     var MP_IN = 'pressure speed1 speed2 random stroke direction tilt_declination tilt_ascension custom direction_angle attack_angle tilt_declinationx tilt_declinationy gridmap_x gridmap_y viewzoom barrel_rotation brush_radius'.split(' ');
@@ -7013,7 +7012,7 @@
     function _mpSurface(load) { return { tiles: new Map(), dirty: new Set(), load: load, mask: new Uint16Array(MP_T * MP_T) }; }
     function _mpTile(sf, tx, ty) {
         var k = (ty + 32768) * 65536 + (tx + 32768), t = sf.tiles.get(k);
-        if (!t) { t = new Uint16Array(MP_T * MP_T * 4); sf.load(tx, ty, t); sf.tiles.set(k, t); }
+        if (!t) { t = new Uint16Array(MP_T * MP_T * 4); sf.load(tx, ty, t); sf.tiles.set(k, t); if (sf.orig) sf.orig.set(k, t.slice()); }
         return t;
     }
     // render_dab_mask for one tile: the 15-bit coverage of each pixel, box returned
@@ -7170,6 +7169,8 @@
                     for (var k = 0; k < 3; k++) buf[o + k] = Math.round(d[s + k] / 255 * a);
                 }
             }) };
+            // what the tiles held before the stroke, for the selection and alpha lock to put back
+            if (!_previewTarget && (_selStencil || _alphaLocked())) _mpS.sf.orig = new Map();
             b.reset = true;
             _mpStrokeTo(b, _mpS.sf, pts[0].x, pts[0].y, 0, 0.5);                  // the pen coming in
             _mpStrokeTo(b, _mpS.sf, pts[0].x, pts[0].y, pts[0].pressure, MP_EVENT);
@@ -7191,6 +7192,7 @@
                 cx = _max(0, x0), cy = _max(0, y0), w = Math.min(W, x0 + MP_T) - cx, h = Math.min(H, y0 + MP_T) - cy;
             if (w <= 0 || h <= 0) return;
             var t = sf.tiles.get(k), im = new ImageData(w, h), d = im.data;
+            if (sf.orig) _mpClip(t, sf.orig.get(k), cx, cy, cx - x0, cy - y0, w, h);
             for (var yy = 0; yy < h; yy++) for (var xx = 0; xx < w; xx++) {
                 var o = ((cy - y0 + yy) * MP_T + (cx - x0 + xx)) * 4, s = (yy * w + xx) * 4, a = t[o + 3];
                 if (!a) continue;
@@ -7202,6 +7204,19 @@
         });
         sf.dirty.clear();
         if (x2 > x1 && !_previewTarget && app.layerMgr && app.layerMgr.markDirty) app.layerMgr.markDirty(x1, y1, x2 - x1, y2 - y1);
+    }
+
+    /* Outside the selection a pixel keeps what it had; under the layer's
+     * alpha lock it keeps its alpha and takes the new colour. Written into
+     * the tile itself, so a smudge picks up the clipped picture. */
+    function _mpClip(t, o, cx, cy, ox, oy, w, h) {
+        var st = null, locked = _alphaLocked();
+        if (_selStencil) { try { st = _selStencil.getContext('2d').getImageData(cx, cy, w, h).data; } catch (e) { st = null; } }
+        for (var yy = 0; yy < h; yy++) for (var xx = 0; xx < w; xx++) {
+            var i = ((oy + yy) * MP_T + ox + xx) * 4, a = t[i + 3], oa = o[i + 3];
+            if ((st && !st[(yy * w + xx) * 4 + 3]) || (locked && !a)) { t[i] = o[i]; t[i + 1] = o[i + 1]; t[i + 2] = o[i + 2]; t[i + 3] = oa; }
+            else if (locked && a !== oa) { for (var c = 0; c < 3; c++) t[i + c] = Math.round(t[i + c] * oa / a); t[i + 3] = oa; }
+        }
     }
 
     function _flushPending(final) {
