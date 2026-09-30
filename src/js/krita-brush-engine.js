@@ -2362,7 +2362,8 @@
         var hard = _clamp(_dyn(p, 'hardness', p.hardness, sc, 6), 0, 100);
         var asp = p.aspectRatio;
         if (p.aspectRatioSrc && p.aspectRatioSrc !== 'none') {
-            asp = _clamp(asp / _max(0.01, _dyn(p, 'aspectRatio', 1, sc, 7)), 0.1, 20);
+            var af = _max(0.01, _dyn(p, 'aspectRatio', 1, sc, 7));
+            asp = _clamp(p.aspectThinsWidth ? asp * af : asp / af, 0.1, 20);
         }
         var scatterAmt = _dyn(p, 'scatter', p.scatter, sc, 5);
         // Offset/scatter-axis math wants SOME direction even with none yet,
@@ -3381,7 +3382,8 @@
              * flatter the other way round is a tip they can build -- clamping
              * here at 1 was the only thing making a sub-1 aspect snap back to
              * round the moment a sensor drove it. */
-            asp = _clamp(asp / _max(0.01, _dyn(p, 'aspectRatio', 1, sc, 7)), 0.1, 20);
+            var af = _max(0.01, _dyn(p, 'aspectRatio', 1, sc, 7));
+            asp = _clamp(p.aspectThinsWidth ? asp * af : asp / af, 0.1, 20);
         }
         var tex = _clamp(_dyn(p, 'texture', p.texture, sc, 8), 0, 100);
         var scatterAmt = _dyn(p, 'scatter', p.scatter, sc, 5);
@@ -3444,13 +3446,19 @@
             /* Clip Studio sprays size each particle on its own (Droplet's
              * random spray size: 14 specks at 18, 12, 9, 6 and 4px), and
              * space their stops by the plain size (see _stepFor). */
-            var dsz = sz;
+            /* ...and turn each on its own: at random, or pointing away from
+             * the patch's centre (Droplet's in-spray bit 512: drops on the
+             * line lie along it, those above and below stand up). */
+            var dsz = sz, dang = effAngle;
             if (p.sprayEach) {
-                sc.x = dx; sc.y = dy; dsz = _dyn(p, 'size', p.size, sc, 1) * tfSize; sc.x = x; sc.y = y;
+                sc.x = dx; sc.y = dy; dsz = _dyn(p, 'size', p.size, sc, 1) * tfSize;
+                if (p.angleSrc === 'radial') dang = (p.angle || 0) + _atan2(dy - y, dx - x) * 180 / _PI;
+                else if (p.angleSrc === 'random') dang = _dynAngle(p, p.angle, sc);
+                sc.x = x; sc.y = y;
                 if (dsz < 0.5) continue;
             }
             if (p.shape === 'custom') _pickTipCell(p, dx, dy);
-            var mask = _maskFor(p.shape, dsz, hard, effAngle, asp, dx, dy);
+            var mask = _maskFor(p.shape, dsz, hard, dang, asp, dx, dy);
 
             // Per-dab alpha. Both sensors now read the real pressure; the
             // taper is applied on top of whatever they produce, not smuggled
@@ -5361,6 +5369,7 @@
         colorJitterPer: 'dab',
         colorJitterRange: null,  // Clip Studio: [lo, hi] per hue, sat, value, in units of the dial
         sprayBias: 0,            // Clip Studio: where in its patch a particle lands (_diskR)
+        aspectThinsWidth: false, // Clip Studio picture tips: the aspect input narrows the width, not the height
         sizeSrc: 'pressure',     sizeMin: 50,      sizeCurve: 1,
         flowSrc: 'pressure',     flowMin: 0,       flowCurve: 1,
         /* Krita's per-dab opacity: the level a stroke's ink stops building

@@ -3560,8 +3560,10 @@
             out.angleRange = rrand;
         } else if (reff & rdir) {
             out.angleSrc = 'direction';
+        } else if (rk && reff & 512) {
+            out.angleSrc = 'radial';   // each particle points away from the patch's centre (Droplet)
         }
-        if (reff & ~(131 | rdir)) {
+        if (reff & ~(131 | rdir | (rk ? 512 : 0))) {
             warn.push('dropped: the rule that turns its tip as you draw');
         }
 
@@ -3779,8 +3781,12 @@
         /* A thickness effector only thins (factor floor..1): Droplet's random
          * one at floor 50 took a quarter off its ink. Ours divides the aspect
          * by it, which thins too -- but a tip already squeezed side to side
-         * (aspect under 1) would round off instead, so that one is left. */
-        if (spraying && (out.aspectRatio || 1) >= 1) _sutDrive(out, 'aspectRatio', v.BrushThicknessEffector, warn, 'its thickness');
+         * (aspect under 1) would round off instead, so that one is left.
+         * A picture squeezed by width (vertical flag 0) thins by width:
+         * Droplet's round blobs land as thin lenses in Clip Studio. */
+        var thinW = spraying && opts.hasTip && !vert;
+        if (spraying && (thinW || (out.aspectRatio || 1) >= 1) &&
+            _sutDrive(out, 'aspectRatio', v.BrushThicknessEffector, warn, 'its thickness') && thinW) out.aspectThinsWidth = true;
         if (spraying) _sutDrive(out, 'dabCount', v.BrushSprayDensityEffector, warn, 'its spray density');
 
         /* Colour that wanders. Clip Studio sets a range either side of the

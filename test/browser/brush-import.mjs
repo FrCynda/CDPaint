@@ -1390,6 +1390,8 @@ await withPage(async (page) => {
                 BrushRotation: 45, BrushRotationEffector: 131, BrushRotationRandomScale: 25,
                 BrushRotationInSpray: 90, BrushRotationEffectorInSpray: e, BrushRotationRandomInSpray: 0 });
                 return [o.angle || 0, o.angleSrc || null]; }),
+            drop: (o => [o.angleSrc, !!o.aspectThinsWidth])(P({ BrushSize: 250, BrushUseSpray: 1, BrushSpraySize: 20,
+                BrushRotationInSpray: 90, BrushRotationEffectorInSpray: 513, BrushThicknessEffector: rndE }, { hasTip: true, tipW: 200, tipH: 300 })),
             bias: [-100, 0, 50].map(b => P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 2, BrushSprayBias: b }).sprayBias || 0),
             sprayPr: P(Object.assign({ BrushIntervalEffector: eff(0x10, [[0, 1], [1, 0]]) }, sp)).spacingSrc || 'none',
             sprayRnd: [sprayRnd.spacingSrc, sprayRnd.aspectRatioSrc, sprayRnd.dabCountSrc].map(s => s || 'none'),
@@ -1448,6 +1450,8 @@ await withPage(async (page) => {
         JSON.stringify(sm.sprayHow) === '["disk",true,19]', JSON.stringify(sm.sprayHow));
     check('a spray turns its particles by the in-spray rotation (bit 64 follows the line), not the brush rotation',
         JSON.stringify(sm.spin) === '[[180,"direction"],[180,null],[180,null]]', JSON.stringify(sm.spin));
+    check('Droplet: particles point away from the patch centre (in-spray bit 512) and random thickness thins a picture by width',
+        JSON.stringify(sm.drop) === '["radial",true]', JSON.stringify(sm.drop));
     check('a spray keeps its bias (where in the patch its particles land)',
         JSON.stringify(sm.bias) === '[-100,0,50]', JSON.stringify(sm.bias));
     /* Trees' random interval varies its gaps; in a spray it did nothing

@@ -3824,7 +3824,27 @@ await withPage(async (page) => {
             }
             out.bias.push(+(mid / Math.max(1, all)).toFixed(3));
         }
-        b.setParam('sprayBias', 0); b._setStrokeSeed(null);
+        /* Thin particles on a ring round one stop: pointing away from the
+         * centre, their ink spreads along the radius; lying level, only the
+         * ones at the sides do. */
+        out.radial = [];
+        for (const src of ['radial', 'none']) {
+            __B.doc(400, 300);
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('size', 40); b.setParam('hardness', 100);
+            b.setParam('aspectRatio', 8); b.setParam('angle', 0); b.setParam('angleSrc', src); b.setParam('sprayEach', true);
+            b.setParam('scatter', 200); b.setParam('scatterAxis', 'disk'); b.setParam('dabCount', 16); b.setParam('sprayBias', -100);
+            b._setStrokeSeed(3);
+            const LR = __B.layer();
+            await __B.stroke(200, 150, 201, 150, '#000000');
+            const d = LR.ctx.getImageData(0, 0, 400, 300).data;
+            let s = 0, s1 = 0, s2 = 0;
+            for (let y = 0; y < 300; y++) for (let x = 0; x < 400; x++) {
+                const a = d[(y * 400 + x) * 4 + 3], r = Math.hypot(x - 200, y - 150); s += a; s1 += a * r; s2 += a * r * r;
+            }
+            out.radial.push(+Math.sqrt(s2 / s - (s1 / s) ** 2).toFixed(1));
+        }
+        b.setParam('sprayBias', 0); b.setParam('sprayEach', false); b.setParam('aspectRatio', 1); b.setParam('angleSrc', 'none'); b._setStrokeSeed(null);
 
         out.second = {};
         for (const [op, sz, main] of [['destination-out', 10, 40], ['destination-over', 40, 20]]) {
@@ -3846,6 +3866,8 @@ await withPage(async (page) => {
 
     /* Even over the disk, the middle 60px holds about 38% of the ink; a
      * ring leaves it about 20%, a centre-heavy spray about 55%. */
+    check('a Clip Studio spray can point each particle away from its patch centre',
+        sc.radial[0] > sc.radial[1] * 1.15, JSON.stringify(sc.radial));
     check('a Clip Studio spray bias moves particles to the rim or the middle',
         sc.bias[0] < sc.bias[1] * 0.75 && sc.bias[2] > sc.bias[1] * 1.25, JSON.stringify(sc.bias));
     check('a Clip Studio second brush cuts in turn with the first: filled back in mid-stroke, cut at the end',
