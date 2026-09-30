@@ -1430,6 +1430,10 @@ await withPage(async (page) => {
                   P({ BrushThickness: 50 }, { hasTip: true })].map(p => [p.aspectRatio, p.angle || 0]),
             adj: [5, 20, 40].map(i => P({ BrushFlow: 50, BrushInterval: i, BrushAdjustFlowByInterval: 1 }).flow),
             paper: [1, 2, 4, 0].map(m => P({ TextureDensity: 50, TextureCompositeMode: m }, { hasTexture: true }).texture || 0),
+            darken: [P({ BrushBlendPatternByDarken: 1, BrushWaterColor: 2, BrushUseWaterEdge: 1, BrushWaterEdgeRadius: 2, BrushWaterEdgeAlphaPower: 25 }),
+                     P({ BrushBlendPatternByDarken: 1, TextureDensity: 50, TextureCompositeMode: 0 }, { hasTexture: true }),
+                     P({ BrushBlendPatternByDarken: 1, TextureDensity: 0, TextureCompositeMode: 0, BrushFlow: 50 }, { hasTexture: true })]
+                .map(o => [!!o.dabMax, !!o.watercolor, o.edgeWidth || 0, o.texture || 0, o.textureBlend == null ? null : o.textureBlend, o.flow]),
             aliased: [P({ AntiAlias: 0 }).aliased, P({ AntiAlias: 1 }).aliased,
                       P({ AntiAlias: 0, BrushUseWaterColor: 1, BrushMixColor: 80 }).aliased].map(Boolean),
             mix: [P({ BrushUseWaterColor: 1, BrushMixColor: 80, BrushMixAlpha: 50, BrushMixColorExtension: 100 }),
@@ -1552,6 +1556,12 @@ await withPage(async (page) => {
      * zdah*), and 40% at 50 lays the flow. Soft had twice Clip Studio's ink without it. */
     check('density adjusted by interval thins each dab with the spacing',
         JSON.stringify(sm.adj) === '[8,30,50]', JSON.stringify(sm.adj));
+    /* Blend by darken (Soft bleed, measured in Clip Studio): dabs never pile
+     * up, its watercolour and edge move no ink on an empty layer, and its
+     * paper blends on each dab as it would on the stroke -- blend 0 half
+     * again the flow even at density 0. */
+    check('a brush laid by darken keeps its strongest dab and drops the wash, its paper on each dab',
+        JSON.stringify(sm.darken) === '[[true,false,0,0,null,100],[true,false,0,50,0,100],[true,false,0,0,null,75]]', JSON.stringify(sm.darken));
     check('the paper shows as strongly as its blend lets it',
         JSON.stringify(sm.paper) === '[50,100,3,0]', JSON.stringify(sm.paper));
     /* Clip Studio's pictures (Book, Building) stamp their own greys and
@@ -1567,8 +1577,15 @@ await withPage(async (page) => {
         const mode = async (fill) => ((await BrushPack.tipStrip([await png(fill)], 'tip.png', { csp: true })).params || {}).tipMode || '';
         const whole = async (real) => { const b = await png('#888'); if (real) b.real = real;
                                         return !!(await BrushPack.tipStrip([b], 'tip.png', { csp: true })).whole; };
+        const blob = async () => {   // a soft cloud, as Soft bleed's is, shown shrunk
+            const c = new OffscreenCanvas(96, 96), x = c.getContext('2d'), g = x.createRadialGradient(48, 48, 0, 48, 48, 48);
+            g.addColorStop(0, 'rgba(0,0,0,0.8)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+            x.fillStyle = g; x.fillRect(0, 0, 96, 96);
+            const b = new Uint8Array(await (await c.convertToBlob()).arrayBuffer()); b.real = [300, 300];
+            return !!(await BrushPack.tipStrip([b], 'tip.png', { csp: true })).whole;
+        };
         return JSON.stringify([await mode('#fff'), await mode('#888'), await mode('#000'),
-                               [await whole([24, 16]), await whole([96, 64]), await whole(null)]]);
+                               [await whole([24, 16]), await whole([96, 64]), await whole(null), await blob()]]);
     })()`, { awaitPromise: true }).then(JSON.parse);
     check('a picture tip stamps its own whites, a grey or black one stays ink',
         shade[0] === 'color' && shade[1] === '' && shade[2] === '', JSON.stringify(shade));
@@ -1576,7 +1593,10 @@ await withPage(async (page) => {
      * soot's), not one that is the picture (Noise's soft 210x204 tip keeps
      * its greys in Clip Studio with it off or on). */
     check('only a preview shrunk from its picture is known to be crisper than it looks',
-        JSON.stringify(shade[3]) === '[true,false,false]', JSON.stringify(shade[3]));
+        JSON.stringify(shade[3].slice(0, 3)) === '[true,false,false]', JSON.stringify(shade[3]));
+    /* ...unless it is a soft cloud: Soft bleed's, shrunk from 491px, paints
+     * its greys in Clip Studio with anti-aliasing off. */
+    check('...and a shrunk soft cloud keeps its greys', shade[3][3] === true, JSON.stringify(shade[3]));
     check('a sub colour mix is read, and only with colour change on',
         JSON.stringify(sm.subMix) === '[38,0]', JSON.stringify(sm.subMix));
     check('a picture shown whole keeps its greys with anti-aliasing off',

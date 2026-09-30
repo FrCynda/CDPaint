@@ -1579,8 +1579,24 @@
         var many = Array.isArray(bytes) ? bytes : [bytes];
         return Promise.all(many.map(_decode)).then(function (cells) {
             var pick = 'random';
-            // every preview at its picture's own size: its greys are the picture's, not a shrink's
-            var whole = many.every(function (b, i) { return b.real && b.real[0] <= cells[i].w; });
+            /* Every preview's greys are the picture's, not a shrink's: it is at
+             * its picture's own size, or it is a soft blob, nearly all grey and
+             * changing slowly -- Soft bleed's 491px cloud shrunk to 300 paints
+             * its greys in Clip Studio with anti-aliasing off (pr-sb), where
+             * Black soot's specks (half solid) and Light crosshatch's lines
+             * (grey, but 0.7 of their alpha from one pixel to the next,
+             * against the cloud's 0.03) come out crisp. */
+            var soft = function (c) {
+                var A = c.alpha, W = c.w, n = 0, s = 0, g = 0, grey = 0;
+                for (var y = 0; y < c.h - 1; y++) for (var x = 0, i = y * W; x < W - 1; x++, i++) {
+                    var v = A[i];
+                    if (v <= 30) continue;
+                    n++; s += v; g += Math.abs(A[i + 1] - v) + Math.abs(A[i + W] - v);
+                    if (v < 225) grey++;
+                }
+                return n > 0 && grey > 0.9 * n && g < 0.2 * s;
+            };
+            var whole = many.every(function (b, i) { return b.real && b.real[0] <= cells[i].w || soft(cells[i]); });
             if (opts && opts.crop) {
                 /* ...and each picture spans the ribbon whole: Zipper's lone
                  * tooth is as tall as its pair of halves, Bead chain's oval
@@ -3648,7 +3664,11 @@
 
         if (opts.hasTexture) {
             var dens = _sutNum(v.TextureDensity, 0);
-            var tm = Math.round(_sutNum(v.TextureCompositeMode, 1)), perDab = _sutNum(v.TextureForPlot, 0) && tm >= 0 && tm <= 7;
+            // laid by darken, the paper on each dab is the paper on the stroke (Soft bleed, pr-sb: 0.55 both ways at 50)
+            var tm = Math.round(_sutNum(v.TextureCompositeMode, 1)),
+                perDab = (_sutNum(v.TextureForPlot, 0) || _sutNum(v.BrushBlendPatternByDarken, 0)) && tm >= 0 && tm <= 7;
+            // blend 0 at density 0 is still half again each dab (see _cspPaper)
+            if (!dens && perDab && tm === 0) out.flow = Math.min(100, Math.round(out.flow * 1.5));
             if (dens > 0 && perDab) {
                 /* Paper on each dab (TextureForPlot): the blend is Clip
                  * Studio's own, measured dab by dab -- see _cspPaper. */
@@ -3780,6 +3800,16 @@
                 warn.push('changed: watercolour edge timing');
             if (_sutNum(v.BrushWaterEdgeBlur, 0) || _sutNum(v.BrushWaterEdgeBlurUnit, 0))
                 warn.push('changed: watercolour edge softness');
+        }
+
+        /* Blend by darken: each dab keeps the stronger of it and what is
+         * there. Its watercolour kind, edge and mixing move no ink on an empty
+         * layer in Clip Studio (Soft bleed with each switched off in turn,
+         * cdp-csp/pr-sb: 6.49-6.51M of ink every time), so none of our wash,
+         * wet blend or edge comes over with it. */
+        if (_sutNum(v.BrushBlendPatternByDarken, 0)) {
+            out.dabMax = true;
+            delete out.watercolor; delete out.wetBlend; delete out.edgeWidth; delete out.edgeDensity;
         }
 
         /* Nothing drives a dial unless its effector says so; our engine's

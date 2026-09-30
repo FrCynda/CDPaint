@@ -485,6 +485,9 @@ await withPage(async (page) => {
             return levels(100);
         };
         const full = dab(100), half = dab(50);
+        b.setParam('textureBlend', 0); b.setParam('texture', 50);
+        const m0 = dab(50);
+        b.setParam('texture', 100);
         b.setParam('flow', 100); b.setParam('textureBlend', 1); b.setParam('mixAlpha', 100);
         L.ctx.clearRect(0, 0, 200, 200);
         b.beginStroke(20, 100, 1, '#000000');
@@ -493,8 +496,13 @@ await withPage(async (page) => {
         const mixed = levels(100);
         b.setParam('mixAlpha', null); b.setParam('textureBlend', null); b.setParam('texture', 0);
         b.setParam('texturePattern', null); b.forgetSaved('Round');
-        return JSON.stringify({ full, half, mixed });
+        return JSON.stringify({ full, half, mixed, m0 });
     })()`, { awaitPromise: true }));
+    /* Blend 0 at half density scales the paper in, a (1.5 - d (1 - s)):
+     * 0.3 and 0.8 paper under a 0.5 dab give 0.58 and 0.70 (Soft bleed's
+     * paper in Clip Studio); mixed with the bare dab it gave 0.45 and 0.58. */
+    check('Clip Studio paper: blend 0 at half density is half again the dab, less the paper',
+        pp.m0.length === 2 && Math.abs(pp.m0[0] - 147) <= 3 && Math.abs(pp.m0[1] - 179) <= 3, JSON.stringify(pp.m0));
     check('Clip Studio paper: linear light is solid at full flow', pp.full.length === 1 && pp.full[0] === 255,
         JSON.stringify(pp));
     check('...and the bare paper at half flow', pp.half.length >= 2 && pp.half[0] < 100 && pp.half[pp.half.length - 1] > 180,
@@ -3895,6 +3903,17 @@ await withPage(async (page) => {
         }
         b.setParam('cutByLight', false);
 
+        // dabs laid by darken (Clip Studio's Soft bleed) hold their flow, anti-aliased or not
+        out.dabMax = [];
+        for (const [max, aliased] of [[false, false], [true, false], [true, true]]) {
+            const LD = __B.doc();
+            b.setParam('dynamicsMode', 'off'); b.setParam('size', 30); b.setParam('hardness', 100); b.setParam('flow', 50); b.setParam('flowSrc', 'none');
+            b.setParam('dabMax', max); b.setParam('aliased', aliased);
+            await __B.stroke(50, 50, 150, 50, '#000000');
+            out.dabMax.push(+__B.px(LD, 100, 50).split(',')[3]);
+        }
+        b.setParam('dabMax', false); b.setParam('aliased', false); b.setParam('flow', 100); b.setParam('flowSrc', b.DEFAULTS.flowSrc);
+
         out.second = {};
         for (const [op, sz, main, flow] of [['destination-out', 10, 40, 100], ['destination-over', 40, 20, 100], ['subtract', 40, 40, 10]]) {
             __B.doc(400, 200);
@@ -3934,6 +3953,8 @@ await withPage(async (page) => {
     /* Clip Studio's mode 3 (Dappled light): the second is a whole stroke taken
      * off the first, not a dab at a time that the first fills back in. Ten
      * 10% dabs over a point leave about a third of solid ink. */
+    check('dabs laid by darken hold the flow instead of piling up, and anti-aliasing off keeps it',
+        sc.dabMax[0] > 160 && Math.abs(sc.dabMax[1] - 128) <= 2 && Math.abs(sc.dabMax[2] - 128) <= 2, JSON.stringify(sc.dabMax));
     check('...and one that subtracts takes its whole stroke off the finished first',
         sc.second.subtract[0] > 60 && sc.second.subtract[0] < 120, JSON.stringify(sc.second));
 

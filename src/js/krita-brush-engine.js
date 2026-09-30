@@ -715,6 +715,21 @@
      * less what is left is the second laid on its own, to a level). The
      * second paints into _subCanvas; the final flush subtracts it. */
     var _subCanvas = null, _subCtx = null, _subOn = false;
+    /* Clip Studio's "blend by darken" lays each dab by the darker of it and
+     * what is there: on one colour the stronger alpha wins and dabs never
+     * pile up (cdp-csp/pr-sb, Soft bleed: a hard round at flow 25/50 holds
+     * 0.37/0.75 the whole stroke, a soft one its own dab's profile). */
+    function _maxDab(ctx, ox, oy, mw, mh, f) {
+        var x0 = _max(0, ox), y0 = _max(0, oy), x1 = _min(ctx.canvas.width, ox + mw), y1 = _min(ctx.canvas.height, oy + mh);
+        if (x1 <= x0 || y1 <= y0) return;
+        var w = x1 - x0, h = y1 - y0, m = _scratchCtx.getImageData(x0 - ox, y0 - oy, w, h).data;
+        var img = ctx.getImageData(x0, y0, w, h), d = img.data;
+        for (var i = 0; i < d.length; i += 4) {
+            var a = m[i + 3] * f;
+            if (a > d[i + 3]) { d[i] = m[i]; d[i + 1] = m[i + 1]; d[i + 2] = m[i + 2]; d[i + 3] = a; }
+        }
+        ctx.putImageData(img, x0, y0);
+    }
     function _adDab(ox, oy, mw, mh, flow) {
         var x0 = _max(0, ox), y0 = _max(0, oy), x1 = _min(_adCanvas.width, ox + mw), y1 = _min(_adCanvas.height, oy + mh);
         if (x1 <= x0 || y1 <= y0) return;
@@ -1645,11 +1660,15 @@
      * a x (s + 0.5), 1 multiply, 2 linear burn, 3 darken, 4 linear light,
      * 5 hard light, 6 colour dodge, 7 colour burn -- and the density mixes
      * it with the bare dab (checked at 50 on 1 and 4), except linear burn,
-     * where it scales the paper taken away. Linear light is
+     * where it scales the paper taken away, and 0, where it scales the paper
+     * in: a (1.5 - d (1 - s)), half again the dab at density 0 (a hard
+     * round at flow 50 under Soft bleed's paper, cdp-csp/pr-sb: 0.75 at 0,
+     * 0.55 at 50, the same on each dab or on the stroke). Linear light is
      * why Pastel's soft tip lands as scattered specks and a full-flow dab
      * shows no grain at all. */
     function _cspPaper(m, a, s, d) {
         if (m === 2) return _max(0, a - d * (1 - s));
+        if (m === 0) return _min(1, a * (1.5 - d * (1 - s)));
         return a + d * (_cspPaperFull(m, a, s) - a);
     }
     function _cspPaperFull(m, a, s) {
@@ -1932,7 +1951,8 @@
         ctx.putImageData(img, x, y);
     }
 
-    function _applyAliased(ctx, x, y, w, h) {
+    // cap: the most a pixel holds -- dabs laid by darken stop at their flow (Soft bleed: flat 0.5 at flow 50, anti-aliasing off)
+    function _applyAliased(ctx, x, y, w, h, cap) {
         var img;
         try { img = ctx.getImageData(x, y, w, h); } catch (e) { return; }
         var d = img.data, i = 3;
@@ -1940,7 +1960,7 @@
             for (var xx = x; xx < x + w; xx++, i += 4) {
                 var t = Math.imul(xx, 374761393) + Math.imul(yy, 668265263) | 0;
                 t = Math.imul(t ^ (t >>> 13), 1274126177);
-                d[i] = d[i] > 127 || d[i] > ((t ^ (t >>> 16)) & 255) ? 255 : 0;
+                d[i] = d[i] * 2 > cap || d[i] * 255 > ((t ^ (t >>> 16)) & 255) * cap ? cap : 0;
             }
         }
         ctx.putImageData(img, x, y);
@@ -2061,6 +2081,7 @@
          * buys nothing visible and cost a fifth of the stroke. */
         var dc = ad ? _adCtx : destCtx;
         if (ad && ox === _floor(ox) && oy === _floor(oy)) _adDab(ox, oy, mw, mh, adFlow);
+        else if (_tp.dabMax && !ad) _maxDab(dc, _round(ox), _round(oy), mw, mh, _clamp(alpha, 0, 1));
         else {
         if (ad) dc.globalCompositeOperation = 'lighten';
         dc.globalAlpha = _clamp(alpha, 0, 1);
@@ -4260,7 +4281,7 @@
                 _washCtx.clearRect(x, y, w, h);
                 _washCtx.drawImage(src, x, y, w, h, x, y, w, h);
             }
-            _applyAliased(_washCtx, x, y, w, h);
+            _applyAliased(_washCtx, x, y, w, h, _p.dabMax ? _round(255 * _min(1, _p.flow / 100)) : 255);
             src = _washCanvas;
         }
 
@@ -5425,6 +5446,7 @@
         jitterSub: false,        // the jitter shades a colour tip's whites (Clip Studio's sub colour), not the ink
         subMix: 0,               // % each dab goes toward white (Clip Studio's sub colour mix)
         cutByLight: false,       // a cutting second brush takes away as much as its colour is light (Clip Studio mode 2)
+        dabMax: false,           // each dab keeps the stronger of it and what is there (Clip Studio's blend by darken)
         colorJitterPer: 'dab',
         colorJitterRange: null,  // Clip Studio: [lo, hi] per hue, sat, value, in units of the dial
         sprayBias: 0,            // Clip Studio: where in its patch a particle lands (_diskR)
