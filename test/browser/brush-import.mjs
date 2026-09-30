@@ -1382,6 +1382,11 @@ await withPage(async (page) => {
         const ribbon = P(rib, { hasTip: true, tipW: 30, tipH: 90 });
         const ribbonNote = W(rib, { hasTip: true, tipW: 30, tipH: 90 });
         const ribTilt = P(Object.assign({}, rib, { BrushRotation: 1, BrushSize: 10 }), { hasTip: true, tipW: 117, tipH: 300 });
+        // A colour-change effector: random from floor f, or no input at all.
+        const cjE = (mask, f) => { const d = new DataView(new ArrayBuffer(48));
+            [48, 0xf0, mask, 0, 0, 0, f, 0, 0, 0, 0, 0].forEach((x, i) => d.setUint32(i * 4, x)); return new Uint8Array(d.buffer); };
+        const cj = { BrushHueChange: 15, BrushSaturationChange: -50, BrushValueChange: 100,
+            BrushHueChangeEffector: cjE(0x80, -100), BrushSaturationChangeEffector: cjE(0x80, 0), BrushValueChangeEffector: cjE(0, 0) };
         return JSON.stringify({ tilt: [tilt.flowSrc, tilt.flowCurve],
             flat: [flat.aspectRatio, flat.angle], mm: mm.size,
             spray: [spray.size, spray.scatter, spray.dabCount],
@@ -1392,6 +1397,10 @@ await withPage(async (page) => {
                   P({ BrushAutoIntervalType: 2 })].map(p => p.spacingIsotropic),
             ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc, ribbon.offsetAlong], ribbonNote,
             ribTilt: [ribTilt.angle, ribTilt.size, ribTilt.ribbonClip],
+            cj: [P(cj).colorJitterRange, [P(cj).hueJitter, P(cj).satJitter, P(cj).valJitter],
+                 P(Object.assign({ BrushChangePatternColor: 0 }, cj)).valJitter || 0,
+                 P(Object.assign({ BrushChangeColorTarget: 2 }, cj)).valJitter || 0,
+                 W(Object.assign({ BrushChangeColorTarget: 2 }, cj))],
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
             erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
@@ -1450,6 +1459,15 @@ await withPage(async (page) => {
      * and rounded to 26 it drifted a whole wave over a line; it stops at the pen. */
     check('a ribbon lies straight, keeps its length to a hundredth and stops at the pen',
         JSON.stringify(sm.ribTilt) === '[270,25.64,true]', JSON.stringify(sm.ribTilt));
+    /* Colour change, measured in Clip Studio: a dab lands evenly between
+     * x + floor * change and x + change, so hue at floor -100 goes both ways,
+     * saturation -50 at floor 0 only down, and a value with no random input
+     * takes the whole change every dab. BrushChangePatternColor 0 paints the
+     * same settings flat; target 2 changes only the sub colour. */
+    check('a Clip Studio colour change keeps which way it goes and how far',
+        JSON.stringify(sm.cj.slice(0, 2)) === '[[[-1,1],[-1,0],[1,1]],[15,50,100]]', JSON.stringify(sm.cj));
+    check('...switched off it paints flat, and on the sub colour only it is named',
+        sm.cj[2] === 0 && sm.cj[3] === 0 && /sub colour/.test(sm.cj[4]), JSON.stringify(sm.cj));
     check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.random === '',
         JSON.stringify([sm.cycle, sm.random]));
     /* How much paper shows is the blend's doing: subtract at half density

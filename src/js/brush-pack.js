@@ -3362,7 +3362,7 @@
             var bt = SUT_BITS[i][0];
             if (!(mask & bt)) continue;
             var curve = curves[bt] || [[0, 0], [1, 1]];
-            inputs.push({ src: SUT_BITS[i][1], floor: Math.max(0, Math.min(100, floors[i])), curve: curve });
+            inputs.push({ src: SUT_BITS[i][1], floor: Math.max(0, Math.min(100, floors[i])), raw: floors[i], curve: curve });
         }
         return { inputs: inputs, unknown: !!(mask & ~0xf0) };
     }
@@ -3402,14 +3402,28 @@
         return true;
     }
 
-    function _sutJitter(out, hue, sat, val) {
-        var h = Math.min(180, Math.abs(_sutNum(hue, 0)));
-        var sa = Math.min(100, Math.abs(_sutNum(sat, 0)));
-        var vv = Math.min(100, Math.abs(_sutNum(val, 0)));
-        if (!h && !sa && !vv) return false;
-        if (h) out.hueJitter = Math.round(h);
-        if (sa) out.satJitter = Math.round(sa);
-        if (vv) out.valJitter = Math.round(vv);
+    /* Clip Studio's colour change per dab, measured on a round tip painted
+     * with green (v 0.63, s 0.78): each dab lands evenly between x + f*c and
+     * x + c, both ends cut at 0 and 1, where c is the signed change and f
+     * the random input's floor. Value +20 with floor -100 ran 0.43..0.83,
+     * floor 0 0.63..0.83, floor -10 at +100 0.53..1 (no pile-up at 1),
+     * -50 with floor 0 0.13..0.63; hue 15 at floor -100 +-15 degrees. With
+     * no random input every dab takes the whole change (+30: 0.93 flat).
+     * Ours keeps the dial at |c| and hands [lo, hi] in units of it.
+     * ponytail: a pressure input is taken at full pressure, as measured. */
+    function _sutJitter(out, hue, sat, val, effs) {
+        var c = [Math.max(-180, Math.min(180, _sutNum(hue, 0))),
+                 Math.max(-100, Math.min(100, _sutNum(sat, 0))),
+                 Math.max(-100, Math.min(100, _sutNum(val, 0)))];
+        if (!c[0] && !c[1] && !c[2]) return false;
+        if (c[0]) out.hueJitter = Math.round(Math.abs(c[0]));
+        if (c[1]) out.satJitter = Math.round(Math.abs(c[1]));
+        if (c[2]) out.valJitter = Math.round(Math.abs(c[2]));
+        if (effs) out.colorJitterRange = c.map(function (ch, i) {
+            var e = _sutEffector(effs[i]), rnd = e && e.inputs.filter(function (q) { return q.src === 'random'; })[0];
+            var f = !e ? -1 : rnd ? rnd.raw / 100 : 1;   // none at all: Clip Studio's stock random, floor -100
+            return ch < 0 ? [-1, -f] : [f, 1];
+        });
         return true;
     }
 
@@ -3726,9 +3740,19 @@
         /* Colour that wanders. Clip Studio sets a range either side of the
          * colour -- hue in degrees, the other two as percentages -- and
          * offers the same three again for a whole stroke at a time. Ours is
-         * one set with a switch, so per dab wins and the other is named. */
-        var dabJit = _sutJitter(out, v.BrushHueChange, v.BrushSaturationChange,
-                                v.BrushValueChange);
+         * one set with a switch, so per dab wins and the other is named.
+         * BrushChangePatternColor switches the per-dab change on (0: the
+         * same settings paint flat), and BrushChangeColorTarget says what it
+         * changes: 0 and 1 the main colour, 2 only the sub colour (Rubble's
+         * rock fills), which ours does not paint. */
+        var target = _sutNum(v.BrushChangeColorTarget, 1);
+        var dabJit = _sutNum(v.BrushChangePatternColor, 1) && target !== 2 &&
+            _sutJitter(out, v.BrushHueChange, v.BrushSaturationChange, v.BrushValueChange,
+                       [v.BrushHueChangeEffector, v.BrushSaturationChangeEffector, v.BrushValueChangeEffector]);
+        if (_sutNum(v.BrushChangePatternColor, 1) && target === 2 &&
+            (_sutNum(v.BrushHueChange, 0) || _sutNum(v.BrushSaturationChange, 0) || _sutNum(v.BrushValueChange, 0))) {
+            warn.push('dropped: colour changes to its sub colour');
+        }
         if (!dabJit && _sutNum(v.BrushChangeStrokeColor, 0) &&
             _sutJitter(out, v.BrushStrokeHueChange, v.BrushStrokeSaturationChange,
                        v.BrushStrokeValueChange)) {

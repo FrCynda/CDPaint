@@ -3785,6 +3785,19 @@ await withPage(async (page) => {
         b.setParam('hueJitter', 0);
         await __B.stroke(20, 100, 380, 100, '#808000');
         out.plainPix = [__B.px(LJ3, 60, 100), __B.px(LJ3, 200, 100), __B.px(LJ3, 340, 100)];
+
+        /* Clip Studio's colour change: each dab lands evenly between two
+         * ends cut at black and white. Glitter (value 100 from floor -10,
+         * saturation 50) on black paints greys from black to white in Clip
+         * Studio; clamped the other way, half its dabs stayed black and the
+         * saturation tinted the rest. */
+        const LC = jitterStrip();
+        b.setParam('hueJitter', 15); b.setParam('satJitter', 50); b.setParam('valJitter', 100);
+        b.setParam('colorJitterRange', [[-1, 1], [-1, 1], [-0.1, 1]]);
+        await __B.stroke(20, 100, 380, 100, '#000000');
+        out.cspDabs = [];
+        for (let x = 30; x < 370; x += 3) out.cspDabs.push(__B.px(LC, x, 100));
+        b.setParam('colorJitterRange', null);
         b._setStrokeSeed(null);
 
         b.loadPreset('Round');
@@ -3817,6 +3830,14 @@ await withPage(async (page) => {
             Math.abs(v - sc.plainPix[0].split(',')[i]) <= 1)), sc.plainPix.join(' | '));
     check('...and the same stroke on the same seed comes out the same',
         sc.jitterA === sc.jitterB, `${sc.jitterA} vs ${sc.jitterB}`);
+    {
+        const g = sc.cspDabs.map(s => s.split(',').map(Number));
+        const black = g.filter(p => p[0] + p[1] + p[2] < 8).length / g.length;
+        check('a Clip Studio colour change spreads black into greys, not half of them black',
+            black < 0.15 && g.some(p => p[0] > 200), `${Math.round(black * 100)}% black`);
+        check('...and a grey takes no tint from its saturation change',
+            g.every(p => Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]) <= 2), sc.cspDabs.slice(0, 8).join(' | '));
+    }
 
     /* Spacing, as Krita's effectiveSpacing does it. Each case is a hard
      * stroke that Krita paints unbroken; count bare pixels down its middle. */

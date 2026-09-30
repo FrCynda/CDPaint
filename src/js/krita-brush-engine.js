@@ -980,9 +980,23 @@
             else h = (r - g) / d + 4;
             h *= 60;
         }
-        h = (h + (_dabRand(jx, jy, 31) * 2 - 1) * hj + 360) % 360;
-        sat = _clamp(sat + (_dabRand(jx, jy, 32) * 2 - 1) * (sj / 100), 0, 1);
-        val = _clamp(val + (_dabRand(jx, jy, 33) * 2 - 1) * (vj / 100), 0, 1);
+        var rg = p.colorJitterRange;
+        if (rg) {
+            /* Clip Studio: evenly between x + lo*dial and x + hi*dial, each
+             * end cut at 0 and 1 first (see _sutJitter in brush-pack.js).
+             * A grey stays grey: Glitter's saturation 50 on black painted
+             * greys from black to white with no tint at all. */
+            var ds = d ? sj / 100 : 0;
+            var sa = _clamp(sat + rg[1][0] * ds, 0, 1), sb = _clamp(sat + rg[1][1] * ds, 0, 1);
+            var va = _clamp(val + rg[2][0] * vj / 100, 0, 1), vb = _clamp(val + rg[2][1] * vj / 100, 0, 1);
+            h = ((h + (rg[0][0] + _dabRand(jx, jy, 31) * (rg[0][1] - rg[0][0])) * hj) % 360 + 360) % 360;
+            sat = sa + _dabRand(jx, jy, 32) * (sb - sa);
+            val = va + _dabRand(jx, jy, 33) * (vb - va);
+        } else {
+            h = (h + (_dabRand(jx, jy, 31) * 2 - 1) * hj + 360) % 360;
+            sat = _clamp(sat + (_dabRand(jx, jy, 32) * 2 - 1) * (sj / 100), 0, 1);
+            val = _clamp(val + (_dabRand(jx, jy, 33) * 2 - 1) * (vj / 100), 0, 1);
+        }
 
         var c = val * sat, hh = h / 60, xx = c * (1 - _abs(hh % 2 - 1)), m = val - c;
         var t = hh < 1 ? [c, xx, 0] : hh < 2 ? [xx, c, 0] : hh < 3 ? [0, c, xx]
@@ -5345,6 +5359,7 @@
         satJitter: 0,
         valJitter: 0,
         colorJitterPer: 'dab',
+        colorJitterRange: null,  // Clip Studio: [lo, hi] per hue, sat, value, in units of the dial
         sizeSrc: 'pressure',     sizeMin: 50,      sizeCurve: 1,
         flowSrc: 'pressure',     flowMin: 0,       flowCurve: 1,
         /* Krita's per-dab opacity: the level a stroke's ink stops building
