@@ -1379,6 +1379,7 @@ await withPage(async (page) => {
         const rib = { BrushSize: 30, BrushRibbon: 1, BrushRotation: 0 };
         const ribbon = P(rib, { hasTip: true, tipW: 30, tipH: 90 });
         const ribbonNote = W(rib, { hasTip: true, tipW: 30, tipH: 90 });
+        const ribTilt = P(Object.assign({}, rib, { BrushRotation: 1, BrushSize: 10 }), { hasTip: true, tipW: 117, tipH: 300 });
         return JSON.stringify({ tilt: [tilt.flowSrc, tilt.flowCurve],
             flat: [flat.aspectRatio, flat.angle], mm: mm.size,
             spray: [spray.size, spray.scatter, spray.dabCount],
@@ -1388,6 +1389,7 @@ await withPage(async (page) => {
             iso: [P({ BrushAutoIntervalType: 2 }, { hasTip: true }), P({ BrushAutoIntervalType: 0 }, { hasTip: true }),
                   P({ BrushAutoIntervalType: 2 })].map(p => p.spacingIsotropic),
             ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc, ribbon.offsetAlong], ribbonNote,
+            ribTilt: [ribTilt.angle, ribTilt.size, ribTilt.ribbonClip],
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
             erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
@@ -1442,6 +1444,10 @@ await withPage(async (page) => {
     check('a ribbon lays its picture end to end along the stroke',
         JSON.stringify(sm.ribbon) === '[90,100,270,"direction",50]', JSON.stringify(sm.ribbon));
     check('...and is no longer reported as dropped', !/ribbon/.test(sm.ribbonNote), sm.ribbonNote);
+    /* Bumpy's turn of 1 lays level there; Waved line's 10 x 300/117 is 25.64,
+     * and rounded to 26 it drifted a whole wave over a line; it stops at the pen. */
+    check('a ribbon lies straight, keeps its length to a hundredth and stops at the pen',
+        JSON.stringify(sm.ribTilt) === '[270,25.64,true]', JSON.stringify(sm.ribTilt));
     check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.random === '',
         JSON.stringify([sm.cycle, sm.random]));
     /* How much paper shows is the blend's doing: subtract at half density
@@ -1518,6 +1524,9 @@ await withPage(async (page) => {
         const bar = await png(24, 24, x => { x.fillStyle = '#000'; x.fillRect(10, 0, 4, 24); });
         bar.real = [8, 24];
         const cut = await BrushPack.tipStrip([bar], 'tip.png', { csp: true, crop: 'w' });
+        const odd = await png(24, 24, x => { x.fillStyle = '#000'; x.fillRect(8, 0, 9, 24); });
+        odd.real = [5, 13];
+        const cut2 = await BrushPack.tipStrip([odd], 'tip.png', { csp: true, crop: 'w' });
         const pics = await Promise.all([10, 20, 30].map(w => png(w, 10, x => { x.fillStyle = '#000'; x.fillRect(0, 0, w, 10); })));
         const bounce = await BrushPack.tipStrip(pics, 'tip.png', { csp: true, crop: 'h', join: 1 });
         const pink = await png(8, 8, x => { x.fillStyle = '#fff'; x.fillRect(4, 0, 2, 8); x.fillStyle = '#ff80c0'; x.fillRect(0, 0, 4, 8); });
@@ -1530,10 +1539,15 @@ await withPage(async (page) => {
         const sv = new OffscreenCanvas(sm.width, sm.height), sx = sv.getContext('2d'); sx.drawImage(sm, 0, 0);
         return JSON.stringify({ cut: [cut.w, cut.h, cut.cells, cut.pick], bounce: [bounce.cells, bounce.w, bounce.h],
             grey: Array.from(cx.getImageData(1, 1, 1, 1).data.slice(0, 3)),
+            exact: [cut2.w, +cut2.h.toFixed(2)],
             stack: [st.cells, sx.getImageData(5, 2, 1, 1).data[3], sx.getImageData(5, 7, 1, 1).data[3]] });
     })()`, { awaitPromise: true }).then(JSON.parse);
     check('a ribbon picture is cut to its real shape and laid in pieces',
         JSON.stringify(rib.cut) === '[8,12,2,"cycle"]', JSON.stringify(rib.cut));
+    /* Cut back from the preview it comes out 9x24; the picture is 5x13, so
+     * 9 across is 23.4 along (Chain's links came 1.8% short off its preview). */
+    check("a ribbon picture keeps its own proportions, not its preview's",
+        JSON.stringify(rib.exact) === '[9,23.4]', JSON.stringify(rib.exact));
     check('...its pictures joined out and back in order 1',
         JSON.stringify(rib.bounce) === '[4,20,10]', JSON.stringify(rib.bounce));
     check('a coloured picture paints its darkest channel',

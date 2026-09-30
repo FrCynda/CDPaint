@@ -3077,7 +3077,7 @@ await withPage(async (page) => {
             ['colorRate', 'texture', 'opacity', 'flow', 'aspectRatio', 'shape',
              'tipCells', 'bristleCount', 'sizeSrc', 'sizeMin', 'scatter',
              'scatterAxis', 'dabCount', 'offsetAlong', 'offsetAcross', 'offsetSrc',
-             'smoothingMode', 'taperStart', 'taperEnd', 'flowSrc', 'angleSrc']
+             'smoothingMode', 'taperStart', 'taperEnd', 'flowSrc', 'angleSrc', 'ribbonClip']
                 .forEach(k => b.setParam(k, b.DEFAULTS[k]));
             b.setParam('dynamicsMode', 'off');
             b.setParam('size', 20); b.setParam('hardness', 100);
@@ -3122,6 +3122,11 @@ await withPage(async (page) => {
         const stops = async (each) => { await line(b => { b.setParam('spacing', 300);
             b.setParam('sizeSrc', 'random'); b.setParam('sizeMin', 0); b.setParam('sprayEach', each); });
             const r = spread(lastL); b.setParam('sprayEach', false); return r.runs; };
+        // dabs laid a whole tip ahead of the pen, cut off where it stopped or not
+        out.ahead = await line(b => { b.setParam('size', 40); b.setParam('spacing', 100); b.setParam('offsetAlong', 100); });
+        out.cut = await line(b => { b.setParam('size', 40); b.setParam('spacing', 100); b.setParam('offsetAlong', 100);
+                                    b.setParam('ribbonClip', true); });
+        b.setParam('ribbonClip', false);
         out.stopsEach = await stops(true);
         out.stopsShared = await stops(false);
         b._setStrokeSeed(null);
@@ -3141,6 +3146,10 @@ await withPage(async (page) => {
     check('...and "along" it leaves the width alone',
         b4.alongV.w <= 22 && b4.alongV.h > b4.acrossV.h,
         `${b4.alongV.w} wide against ${b4.acrossV.w}`);
+    /* A Clip Studio ribbon stops where the pen stops, its last picture cut
+     * straight across (Chain ran 90px past the end of a line here). */
+    check('a ribbon is cut off where the pen stopped',
+        b4.ahead.w >= 335 && b4.cut.w <= 301, `${b4.ahead.w} wide, then ${b4.cut.w}`);
     /* Clip Studio sprays evenly over the whole patch (Spray's band is a
      * semicircle across); a random direction and a random distance pile the
      * particles up in the middle instead: 4R/3pi off the line against R/pi. */

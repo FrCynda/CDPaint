@@ -1621,6 +1621,13 @@
                  * does: Rough pen's one picture is 1000px long at size 10,
                  * and stamped whole it ran 100px past the end of a line. */
                 var ln = ac === 'h' ? 'w' : 'h', one = cells[0], k = Math.round(one[ln] / (2 * one[ac]));
+                /* The picture's own proportions, not the preview's: Chain's
+                 * 4016x355 previews as 300x27, and its links came 1.8% short. */
+                var rl = many.length === 1 && many[0].real, exact = null;
+                if (rl && cells.length === 1) {
+                    var ra = rl[ac === 'w' ? 0 : 1], rn = rl[ac === 'w' ? 1 : 0], ex = one[ac] * rn / ra / Math.max(1, k);
+                    exact = ln === 'w' ? [ex, one.h] : [one.w, ex];
+                }
                 if (cells.length === 1 && k > 1) {
                     var pl = Math.ceil(one[ln] / k), src = _canvasFromAlpha(one);
                     cells = [];
@@ -1661,6 +1668,7 @@
                 }
             });
             var st2 = _strip(cells);
+            if (exact) { st2.w = exact[0]; st2.h = exact[1]; }
             return { url: st2.url, size: st2.size, w: st2.w, h: st2.h,
                      cells: cells.length, pick: pick, params: shaded ? { tipMode: 'color' } : _paper(cells) };
         });
@@ -3773,18 +3781,21 @@
          * tip by its extent along the stroke), the first one starting at
          * the stroke's start as Clip Studio's does.
          * ponytail: rigid stamps, so a ribbon round a bend shows seams, and
-         * a turn other than 0 or 90 is taken as the nearer of them. */
+         * a turn other than 0 or 90 is taken as the nearer of them (unmeasured past 1). */
         if (_sutNum(v.BrushRibbon, 0) && opts.hasTip && opts.tipW && opts.tipH) {
             var rr = _sutNum(v.BrushRotation, 0), side = Math.round(rr / 90) % 2 !== 0;
             var across = side ? opts.tipH : opts.tipW;
-            out.size = Math.max(1, Math.min(5000, Math.round(size * Math.max(opts.tipW, opts.tipH) / across)));
+            // to a hundredth: Waved line's 10 x 300/117 is 25.64, and 26 drifted a wave in 20
+            out.size = Math.max(1, Math.min(5000, Math.round(100 * size * Math.max(opts.tipW, opts.tipH) / across) / 100));
             out.spacing = 100;
             out.spacingIsotropic = false;
             // The first picture starts at the stroke's start, not centred on it (Dashed line's first dash 3.5px in).
             out.offsetAlong = Math.round(50 * (side ? opts.tipW : opts.tipH) / Math.max(opts.tipW, opts.tipH));
-            out.angle = ((Math.round(rr) - 90) % 360 + 360) % 360;
+            // straight along or across: Bumpy's turn of 1 lays level there (near at 270, off at 271)
+            out.angle = ((Math.round(rr / 90) * 90 - 90) % 360 + 360) % 360;
             out.angleSrc = 'direction';
             delete out.angleRange;
+            out.ribbonClip = true;
         }
         /* Several pictures: 0 takes them in turn (Zipper's teeth alternate),
          * 3 at random (Book). A ribbon's fixed order is joined into one

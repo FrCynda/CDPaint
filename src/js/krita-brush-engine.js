@@ -5259,6 +5259,7 @@
         scatter: 0,
         scatterAxis: 'both',
         sprayEach: false,        // Clip Studio sprays: each particle sized on its own, stops spaced by the plain size
+        ribbonClip: false,       // Clip Studio ribbons: the last picture is cut off where the pen stops
         /* Several dabs at every stop, and where each one lands relative to
          * the cursor -- both measured in the stroke's own frame. */
         dabCount: 1,
@@ -6010,6 +6011,30 @@
      * the dab PHASE at the restart index -- spacing is cumulative, so picking
      * up mid-stroke lands dabs off the live pass's grid and seams. Record
      * `_lastDabDist` per point if this ever needs fixing properly. */
+    /* A Clip Studio ribbon is laid as far as the pen went and no further: its
+     * last picture is cut straight across there (Chain stopped at 895 where
+     * ours laid its last link whole, to 987). Ours stamps whole pictures, so
+     * the part past the pen is wiped from the stroke before it is flushed.
+     * ponytail: only within a picture's length of the end, so a stroke that
+     * doubles back over its own end would lose ink there too. */
+    function _clipRibbonEnd(pts, len) {
+        var e = pts[pts.length - 1], i = pts.length - 2;
+        while (i > 0 && _hypot(e.x - pts[i].x, e.y - pts[i].y) < 2) i--;
+        var dx = e.x - pts[i].x, dy = e.y - pts[i].y, d = _hypot(dx, dy);
+        if (d < 0.001) return;
+        dx /= d; dy /= d;
+        [_flowCtx, _adCtx].forEach(function (c) {
+            if (!c) return;
+            c.save();
+            c.beginPath();
+            c.arc(e.x, e.y, len * 1.5, _atan2(dy, dx) - _PI / 2, _atan2(dy, dx) + _PI / 2);
+            c.closePath();
+            c.clip();
+            c.clearRect(e.x - len * 2, e.y - len * 2, len * 4, len * 4);
+            c.restore();
+        });
+    }
+
     function _needsReplay(p, pts) {
         if (!(p.taperStart > 0 || p.taperEnd > 0)) return false;
         if (p.taperEnd > 0) return true;
@@ -6622,7 +6647,7 @@
          * incremental branch instead, which still picks up the stabilizer
          * catch-up points endStroke appends just before calling us. */
         var tp = getParams();
-        if (final && !_needsReplay(tp, pts)) final = false;
+        if (final && !_needsReplay(tp, pts) && !(tp.ribbonClip && pts.length > 1)) final = false;
         if (final) {
             _ensureFlowBuffer(
                 (app.config ? app.config.width : 1024),
@@ -6649,6 +6674,7 @@
                 _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, _state.lastColor);
             } else {
                 _processSegment(pts, 0, pts.length - 1, _state.lastColor, 2);
+                if (tp.ribbonClip) _clipRibbonEnd(pts, tp.size);
             }
         } else {
             // The endStroke drain: no budget, runs whole — but it picks up a
