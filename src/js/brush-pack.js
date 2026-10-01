@@ -3487,6 +3487,12 @@
     BrushPack.sutSecond = function (v) {
         var op = _sutNum(v.UseDualBrush, 0) && SUT_SECOND_OP[_sutNum(v.DualBrushCompositeMode, 0)];
         if (!op) return null;
+        /* Mode 4 lays the second brush over the first only while it changes
+         * the colour (ChangeRGBByDual, on in every probe above); off, it is
+         * a mask -- the lesser of the two strokes. Watercolor splash with
+         * both brushes held still: 198k of ink alone or in mode 0, 18k in
+         * mode 4, 198k again with the change switched on (cdp-csp/pr-du). */
+        if (_sutNum(v.DualBrushCompositeMode, 0) === 4 && !_sutNum(v.ChangeRGBByDual, 1)) op = 'min';
         var v2 = {}, k;
         for (k in v) v2[k] = v[k];
         for (k in v) {

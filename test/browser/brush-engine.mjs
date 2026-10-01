@@ -4061,7 +4061,7 @@ await withPage(async (page) => {
         b.setParam('dabMax', false); b.setParam('aliased', false); b.setParam('flow', 100); b.setParam('flowSrc', b.DEFAULTS.flowSrc);
 
         out.second = {};
-        for (const [op, sz, main, flow] of [['destination-out', 10, 40, 100], ['destination-over', 40, 20, 100], ['subtract', 40, 40, 10]]) {
+        for (const [op, sz, main, flow] of [['destination-out', 10, 40, 100], ['destination-over', 40, 20, 100], ['subtract', 40, 40, 10], ['min', 10, 40, 100]]) {
             __B.doc(400, 200);
             b.PRESETS.Round.second = { op, p: { size: sz, flow, spacing: 10, hardness: 100 } };
             b.loadPreset('Round');
@@ -4103,6 +4103,11 @@ await withPage(async (page) => {
         sc.dabMax[0] > 160 && Math.abs(sc.dabMax[1] - 128) <= 2 && Math.abs(sc.dabMax[2] - 128) <= 2, JSON.stringify(sc.dabMax));
     check('...and one that subtracts takes its whole stroke off the finished first',
         sc.second.subtract[0] > 60 && sc.second.subtract[0] < 120, JSON.stringify(sc.second));
+
+    /* Mode 4 with the colour change off (Watercolor splash): a mask, ink
+     * only where both strokes are. */
+    check('...and one that masks keeps the first only where the second lies too',
+        sc.second.min[0] === 255 && sc.second.min[2] === 0, JSON.stringify(sc.second));
 
     const clear = '0,0,0,0';
     check('the previous stroke does not ghost back into the next',

@@ -712,9 +712,13 @@
      * the first's, a - d floored at 0, once both are whole (cdp-csp/pr-dt,
      * pr-dd, Dappled light: on one dab 0.90 / 0.68 / 0.45 of ink under the
      * same second dab leave 0.25 / 0.02 / 0; along a line the first stroke
-     * less what is left is the second laid on its own, to a level). The
-     * second paints into _subCanvas; the final flush subtracts it. */
-    var _subCanvas = null, _subCtx = null, _subOn = false;
+     * less what is left is the second laid on its own, to a level). Mode 4
+     * with the second brush's colour change off ('min') keeps the lesser of
+     * the two strokes: Watercolor splash's dense first stroke is left only
+     * where its second dabs lie, and to their own levels (cdp-csp/pr-du,
+     * against min 0.005 off a pixel, against a x d 0.137). The second
+     * paints into _subCanvas; the final flush takes it off, or under. */
+    var _subCanvas = null, _subCtx = null, _subOn = false;   // false, 'subtract' or 'min'
     /* Clip Studio's "blend by darken" lays each dab by the darker of it and
      * what is there: on one colour the stronger alpha wins and dabs never
      * pile up (cdp-csp/pr-sb, Soft bleed: a hard round at flow 25/50 holds
@@ -4279,7 +4283,7 @@
                 _washCtx.drawImage(src, x, y, w, h, x, y, w, h);
             }
             var wi = _washCtx.getImageData(x, y, w, h), wd = wi.data, sd = _subCtx.getImageData(x, y, w, h).data;
-            for (var si = 3; si < wd.length; si += 4) wd[si] -= sd[si];
+            for (var si = 3; si < wd.length; si += 4) wd[si] = _subOn === 'min' ? _min(wd[si], sd[si]) : wd[si] - sd[si];
             _washCtx.putImageData(wi, x, y);
             _subOn = false;
             src = _washCanvas;
@@ -6237,7 +6241,7 @@
     // Both brushes along pts, a segment of each in turn.
     function _paintBoth(pts, color, sec) {
         var st = _secondState(sec), n = pts.length, main = _flowCtx;
-        _subOn = sec.op === 'subtract';
+        _subOn = sec.op === 'subtract' || sec.op === 'min' ? sec.op : false;
         if (_subOn) {
             if (!_subCanvas || _subCanvas.width !== _flowCanvas.width || _subCanvas.height !== _flowCanvas.height) {
                 _subCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);

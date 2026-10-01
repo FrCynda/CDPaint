@@ -1429,6 +1429,7 @@ await withPage(async (page) => {
                                            return [P(d, { hasTip2: true }).tip2Depth || 0, sec && sec.op, sec && sec.variant.BrushSize, sec && sec.variant.BrushFlow,
                                                    ['dropped: the colour its second brush blends in', 'dropped: its second brush tip'].find(t => W(d, { hasTip2: true }).includes(t)) || '',
                                                    !!(sec && sec.light), sec ? sec.variant.BrushChangePatternColor : null]; }),
+            mask4: [1, 0].map(c => (BrushPack.sutSecond({ UseDualBrush: 1, DualBrushCompositeMode: 4, ChangeRGBByDual: c }) || {}).op),
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', pingpong: P({ BrushPatternOrderType: 1 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
             erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
@@ -1545,6 +1546,8 @@ await withPage(async (page) => {
     check('a second brush becomes a brush of its own, laid under or cut out, never carved with',
         JSON.stringify(sm.dual) === JSON.stringify([[0, 'destination-over', 76, 20, '', false, 0], [0, 'destination-out', 76, 20, '', true, undefined],
             [0, 'subtract', 76, 20, '', false, 0], [0, null, null, null, 'dropped: its second brush tip', false, null], [0, 'destination-out', 76, 20, '', false, 0]]), JSON.stringify(sm.dual));
+    check('...mode 4 lays it under while it changes the colour, and with the change off keeps the lesser of the two strokes',
+        JSON.stringify(sm.mask4) === '["destination-over","min"]', JSON.stringify(sm.mask4));
     check('...switched off it paints flat, and on the sub colour it shades the whites alone',
         sm.cj[2] === 0 && JSON.stringify(sm.cj[3]) === '[100,true]' && !/sub colour/.test(sm.cj[4]), JSON.stringify(sm.cj));
     check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.pingpong === 'pingpong' && sm.random === '',
