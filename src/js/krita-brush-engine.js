@@ -5157,6 +5157,13 @@
         // Step 2: rotate if needed
         var ang = (angleDeg || 0) * _PI / 180;
         var needRot = _abs(ang) > 0.001;
+        if (needRot && _abs(ang / (_PI / 2) - _round(ang / (_PI / 2))) < 1e-6) {
+            var dst = new OffscreenCanvas(vert ? base.height : base.width, vert ? base.width : base.height), ctx = dst.getContext('2d');
+            ctx.translate(dst.width / 2, dst.height / 2);
+            ctx.rotate(q * _PI / 2);
+            ctx.drawImage(base, -base.width / 2, -base.height / 2);
+            return _tipCacheKeep(key, dst);
+        }
         if (needRot) {
             var diag = _ceil(_hypot(w, h)) + 2;
             var dst = new OffscreenCanvas(diag, diag);

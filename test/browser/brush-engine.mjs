@@ -3572,6 +3572,31 @@ await withPage(async (page) => {
     check('...and one whose pictures end blank keeps its gaps',
         rib.dash[1] > 100, JSON.stringify(rib));
 
+    /* A picture turned a quarter turn keeps its pixels: turned about the
+     * middle of a square as wide as its diagonal, an odd-by-even picture
+     * landed half a pixel off the grid and every line went two pixels grey
+     * (Braid, turned 270 in Clip Studio, came out soft). A one-pixel line
+     * across a 63x16 picture, turned 90, in one dab. */
+    const quarter = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, L = __B.doc(200, 200);
+        const c = document.createElement('canvas'); c.width = 63; c.height = 16;
+        const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 8, 63, 1);
+        b.loadCustomTip(c.toDataURL('image/png'), null);
+        await new Promise(r => setTimeout(r, 400));
+        ['texture', 'opacity', 'flow', 'scatter', 'sizeSrc', 'taperStart', 'taperEnd', 'tip2Depth', 'angleSrc', 'tipShrink', 'ribbonClip'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        b.setParam('dynamicsMode', 'off'); b.setParam('size', 63); b.setParam('hardness', 100);
+        b.setParam('angle', 90); b.setParam('sizeSrc', 'none');
+        b.beginStroke(100, 100, 1, '#000000'); b.endStroke();   // one dab
+        await new Promise(r => setTimeout(r, 180));
+        const row = L.ctx.getImageData(80, 100, 40, 1).data, a = [];
+        for (let i = 3; i < row.length; i += 4) if (row[i] > 10) a.push(row[i]);
+        b.setParam('angle', b.DEFAULTS.angle);
+        b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
+        return JSON.stringify(a);
+    })()`, { awaitPromise: true }));
+    check('a picture turned a quarter turn keeps a one-pixel line one pixel wide',
+        quarter.length === 1, JSON.stringify(quarter));
+
     /* At precision 1-3 Krita reuses the last dab while the next is close
      * enough, sub-pixel phase and all, just moved to the new whole pixel. A
      * one-column tip stepped 33.3px spreads the same three alphas on every
