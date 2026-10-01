@@ -994,6 +994,16 @@ await withPage(async (page) => {
     })()`, { awaitPromise: true }).then(JSON.parse);
     check("a tip named from Krita's own default bundle comes from the copy we ship",
         dflt.r.brushes === 1 && !!dflt.tip, JSON.stringify(dflt));
+    const svgTip = await page.eval(`(async () => {
+        const s = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="10" height="10"/></svg>';
+        const t = await BrushPack.tipStrip(new TextEncoder().encode(s), 'half.svg', { krita: true });
+        const c = document.createElement('canvas'), im = await createImageBitmap(await (await fetch(t.url)).blob());
+        c.width = im.width; c.height = im.height; c.getContext('2d').drawImage(im, 0, 0);
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        return JSON.stringify({ w: im.width, h: im.height, left: d[5 * c.width * 4 + 5 * 4 + 3], right: d[5 * c.width * 4 + 15 * 4 + 3] });
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('an SVG tip is drawn at its own size, ink where it is filled',
+        svgTip.w === 20 && svgTip.h === 10 && svgTip.left > 200 && svgTip.right < 20, JSON.stringify(svgTip));
 
     /* Procreate. Two formats stacked: a ZIP holding a binary property list
      * written by NSKeyedArchiver. The fixture's plist half comes out of

@@ -9104,7 +9104,7 @@
     var _kritaDefaults = {};
     function _kritaDefault(file) {
         var f = String(file || '');
-        if (!/^[\w .()-]+\.(png|gbr|gih)$/i.test(f)) return Promise.resolve(null);
+        if (!/^[\w .()-]+\.(png|gbr|gih|svg)$/i.test(f)) return Promise.resolve(null);
         return _kritaDefaults[f] || (_kritaDefaults[f] = fetch('brushes/krita/' + encodeURIComponent(f))
             .then(function (r) { return r.ok ? r.arrayBuffer() : null; })
             .then(function (b) { return b && new Uint8Array(b); }, function () { return null; }));

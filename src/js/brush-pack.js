@@ -1502,8 +1502,15 @@
          * A list of them becomes one strip, the way a brush pipe does --
          * Clip Studio brushes hand us several tip pictures at once. */
         function _decode(one) {
-        var blob = new Blob([one]);
-        return createImageBitmap(blob).then(function (bmp) {
+        var svg = /\.svg$/i.test(name), blob = new Blob([one], svg ? { type: 'image/svg+xml' } : {});
+        /* createImageBitmap refuses an SVG blob; an <img> draws it at the
+         * size the file declares (Krita's triangle.svg, a masking tip). */
+        return (svg ? new Promise(function (ok, no) {
+            var im = new Image(), u = URL.createObjectURL(blob);
+            im.onload = function () { URL.revokeObjectURL(u); ok(im); };
+            im.onerror = function () { URL.revokeObjectURL(u); no(new Error('unreadable SVG tip')); };
+            im.src = u;
+        }) : createImageBitmap(blob)).then(function (bmp) {
             var c = document.createElement('canvas');
             c.width = bmp.width; c.height = bmp.height;
             var g = c.getContext('2d');
