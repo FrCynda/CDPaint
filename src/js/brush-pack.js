@@ -3713,17 +3713,29 @@
                 var tcn = Math.max(-99, Math.min(99, _sutNum(v.TextureContrast, 0)));
                 if (tcn) out.textureContrast = tcn < 0 ? 1 + tcn / 100 : 1 / (1 - tcn / 100);
             } else if (dens > 0) {
-                /* Paper on the whole stroke. How much the paper shows depends on how it is blended,
-                 * measured in Clip Studio on one plain dab with Pastel's
-                 * paper at each mode: subtract (2) at half density matched
-                 * multiply (1) pixel for pixel; 3 showed a sixth as much, 4
-                 * and 5 a twentieth; 0 and 6 no grain at all (they darken
-                 * flat). ponytail: one strength per mode, measured at 80%
-                 * alpha; the compare-like modes surely read the dab's own
-                 * alpha, so a faint dab would show more grain. */
-                var tk = { 0: 0, 1: 1, 2: 2, 3: 0.17, 4: 0.05, 5: 0.05, 6: 0 }[_sutNum(v.TextureCompositeMode, 1)];
-                out.texture = Math.max(0, Math.min(100, Math.round(dens * (tk === undefined ? 1 : tk))));
-                if (!out.texture) delete out.texture;
+                /* Paper on the whole stroke, blended as on a dab (_cspPaper)
+                 * but once, over the finished stroke: laid on each of a
+                 * dense stroke's dabs, the next one fills the grain back in.
+                 * Round watercolor brush's paper at 70 (multiply) takes its
+                 * stroke from 0.97 to 0.45 in Clip Studio, the stroke times
+                 * 1 - 0.7 (1 - s) with s the paper's own alpha (0.22 mean
+                 * there, 0.21 in the file; cdp-csp/pr-dua zrwA against
+                 * zrwE). Only multiply and subtract on a paper left as it
+                 * is: mode 0's blend adds half again on a dab, which a whole
+                 * stroke does not (Soft 0.97 -> 1.14 of the ink), and a
+                 * reversed or brightened paper is unmeasured (Wet blotting
+                 * ink 1.01 -> 0.83). Those keep the grain measured on one
+                 * plain dab with Pastel's paper, a strength per mode:
+                 * subtract at half density matched multiply, 3 showed a
+                 * sixth as much, 4 and 5 a twentieth, 0 and 6 no grain. */
+                if ((tm === 1 || tm === 2) && !_sutNum(v.TextureReverseDensity, 0) && !_sutNum(v.TextureBrightness, 0) && !_sutNum(v.TextureContrast, 0)) {
+                    out.texture = Math.max(0, Math.min(100, Math.round(dens)));
+                    out.textureStroke = tm;
+                } else {
+                    var tk = { 0: 0, 1: 1, 2: 2, 3: 0.17, 4: 0.05, 5: 0.05, 6: 0 }[tm];
+                    out.texture = Math.max(0, Math.min(100, Math.round(dens * (tk === undefined ? 1 : tk))));
+                    if (!out.texture) delete out.texture;
+                }
             }
             if (dens > 0) {
                 /* Its strength has its own rule, dab by dab: Chalk's takes a
@@ -3807,8 +3819,12 @@
                         out.mixAlpha = ma;
                         out.mixStretch = Math.max(0, Math.min(100, _sutNum(v.BrushMixColorExtension, 0)));
                     }
-                } else {
-                    /* Older files carry no density; for those the wash stays:
+                } else if (v.BrushMixAlpha == null) {
+                    /* The watercolour kind alone (BrushWaterColor, no colour
+                     * mixing) moves no ink: Round watercolor brush paints
+                     * the same pixels with it at 2 or 0 (cdp-csp/pr-dua zrwA,
+                     * zrwC), and Watery ink is solid where the wash held it
+                     * at 0.76. Older files carry no density; for those the wash stays:
                      * translucent pigment even at high flow, and wet blend so
                      * one stroke cannot darken itself where it overlaps (W1). */
                     out.watercolor = 1;

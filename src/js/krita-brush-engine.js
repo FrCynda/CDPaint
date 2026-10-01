@@ -1695,7 +1695,8 @@
     }
     var _tileA = new WeakMap();
 
-    function _applyTextureNoise(ctx, w, h, textureLevel, textureScale, textureType, ox, oy, blend, flow) {
+    // `at`: work on ctx's own pixels at (ox, oy), a whole stroke rather than a dab-local scratch
+    function _applyTextureNoise(ctx, w, h, textureLevel, textureScale, textureType, ox, oy, blend, flow, at) {
         if (textureLevel <= 0) return;
         var tile = _grainTile(textureType);
         /* textureScale is a dial calibrated against the 64px procedural
@@ -1725,7 +1726,7 @@
                 _tileA.set(tile, ta);
             }
             var tw = tile.width, th = tile.height, D = _min(1, textureLevel / 100), ct = getParams().textureContrast || 1;
-            var img = ctx.getImageData(0, 0, w, h), dd = img.data;
+            var img = ctx.getImageData(at ? ox : 0, at ? oy : 0, w, h), dd = img.data;
             for (var j = 0; j < h; j++) {
                 var ty = ((_floor(((oy || 0) + j) / scale) % th) + th) % th;
                 for (var i = 0; i < w; i++) {
@@ -1737,9 +1738,10 @@
                     dd[q] = _round(_clamp(_cspPaper(blend, a, s, D), 0, 1) * 255);
                 }
             }
-            ctx.putImageData(img, 0, 0);
+            ctx.putImageData(img, at ? ox : 0, at ? oy : 0);
             return true;    // flow is in the pixels now: draw at 1
         }
+        if (at) return false;
         var alpha = mask ? (textureLevel / 100) : (textureLevel / 100) * 0.25;
         // The phase repeats over the tile's own size; a supplied pattern is
         // rarely the 64px the generated ones happen to be.
@@ -2034,7 +2036,7 @@
         }
         if (_tp.textureMode && _applyKritaTexture(_scratchCtx, mw, mh, ox, oy, texture / 100, _tp)) {
             _tintMask = null;
-        } else if (texture > 0 && !_tp.watercolor) {
+        } else if (texture > 0 && !_tp.watercolor && _tp.textureStroke == null) {
             /* Clip Studio's paper modes are not linear in the dab's alpha
              * (mode 4 at full strength shows no grain), so they see it with
              * the flow already in. */
@@ -4374,7 +4376,7 @@
          * without requiring a dual tip. Stamped last, after the edge ring,
          * so grain still visibly textures the rim instead of only the
          * interior. */
-        if (_p.watercolor && (_p.texture || 0) > 0 && _flowCanvas) {
+        if ((_p.watercolor || _p.textureStroke != null) && (_p.texture || 0) > 0 && _flowCanvas) {
             if (src === _flowCanvas || src === _grainCanvas) {
                 _ensureWashCanvas(_flowCanvas.width, _flowCanvas.height);
                 _washCtx.clearRect(x, y, w, h);
@@ -4382,18 +4384,23 @@
                 src = _washCanvas;
             }
             var _gtx = src === _edgeCanvas ? _edgeCtx : _washCtx;
-            /* _applyTextureNoise paints at its ctx's own origin (it's
-             * normally handed a dab-local scratch canvas) -- translate the
-             * full-document buffer to the dirty rect's corner first, and
-             * clip to it, so the grain lands where the ink actually is
-             * instead of the canvas's top-left corner. */
-            _gtx.save();
-            _gtx.beginPath();
-            _gtx.rect(x, y, w, h);
-            _gtx.clip();
-            _gtx.translate(x, y);
-            _applyTextureNoise(_gtx, w, h, _p.texture, _p.textureScale, _p.textureType, x, y);
-            _gtx.restore();
+            /* Clip Studio's paper on the stroke is its own blend, the one
+             * measured on each dab (_cspPaper), read straight off the
+             * paper's alpha -- not the contrast-curved grain below. */
+            if (_p.textureStroke == null || !_applyTextureNoise(_gtx, w, h, _p.texture, _p.textureScale, _p.textureType, x, y, _p.textureStroke, null, true)) {
+                /* _applyTextureNoise paints at its ctx's own origin (it's
+                 * normally handed a dab-local scratch canvas) -- translate the
+                 * full-document buffer to the dirty rect's corner first, and
+                 * clip to it, so the grain lands where the ink actually is
+                 * instead of the canvas's top-left corner. */
+                _gtx.save();
+                _gtx.beginPath();
+                _gtx.rect(x, y, w, h);
+                _gtx.clip();
+                _gtx.translate(x, y);
+                _applyTextureNoise(_gtx, w, h, _p.texture, _p.textureScale, _p.textureType, x, y);
+                _gtx.restore();
+            }
         }
         mainCtx.save();
         mainCtx.globalAlpha = opacity;
@@ -5428,6 +5435,7 @@
         smudgeSample: 0,     // Krita's smudge radius, 0..3: how much of the last dab dulling averages    // Krita's new smudge engine (_smudgeDab)
         smudgeSmearAlpha: true,   // Krita's smudge rate switched off: smears at full strength
         mixAlpha: null,      // Clip Studio's density of paint, 0..100; see _smudgeDab
+        textureStroke: null,   // Clip Studio's paper blend (0..7) on the finished stroke, not on each dab
         textureBlend: null,  // Clip Studio's paper blend on each dab, 0..7; see _cspPaper
         mixStretch: 0,       // Clip Studio's colour stretch, 0..100
         hatch: null,         // Krita's hatching brush: see _applyHatch

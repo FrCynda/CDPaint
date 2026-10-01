@@ -1450,7 +1450,8 @@ await withPage(async (page) => {
             stretch: [P({ BrushThickness: 150 }, { hasTip: true }), P({ BrushThickness: 150, BrushVerticalThicknes: 1 }, { hasTip: true }),
                       P({ BrushThickness: 150, BrushRibbon: 1 }, { hasTip: true, tipW: 10, tipH: 40 }), P({ BrushThickness: 150 })].map(o => o.tipStretch || null),
             adj: [5, 20, 40].map(i => P({ BrushFlow: 50, BrushInterval: i, BrushAdjustFlowByInterval: 1 }).flow),
-            paper: [1, 2, 4, 0].map(m => P({ TextureDensity: 50, TextureCompositeMode: m }, { hasTexture: true }).texture || 0),
+            paper: [[1], [2], [4], [0], [1, 1]].map(([m, r]) => P({ TextureDensity: 50, TextureCompositeMode: m, TextureReverseDensity: r || 0 }, { hasTexture: true }))
+                .map(o => [o.texture || 0, o.textureStroke ?? null]),
             darken: [P({ BrushBlendPatternByDarken: 1, BrushWaterColor: 2, BrushUseWaterEdge: 1, BrushWaterEdgeRadius: 2, BrushWaterEdgeAlphaPower: 25 }),
                      P({ BrushBlendPatternByDarken: 1, TextureDensity: 50, TextureCompositeMode: 0 }, { hasTexture: true }),
                      P({ BrushBlendPatternByDarken: 1, TextureDensity: 0, TextureCompositeMode: 0, BrushFlow: 50 }, { hasTexture: true })]
@@ -1568,12 +1569,12 @@ await withPage(async (page) => {
     check('a brush with no anti-aliasing paints hard pixels, a mixing one does not',
         JSON.stringify(sm.aliased) === '[true,false,false]', JSON.stringify(sm.aliased));
     /* Density of paint and colour stretch, measured in Clip Studio; at
-     * full density its line is the plain one. The watercolour kind is
-     * unmeasured and keeps the wash. */
+     * full density its line is the plain one. The watercolour kind alone
+     * moves no ink (Round watercolor brush the same pixels at 2 and 0). */
     /* A blender (no paint, density 0: Gouache blender) mixes too -- as a
      * plain brush it painted a solid line where Clip Studio paints nothing. */
-    check('colour mixing brings its density of paint, the watercolour kind its wash',
-        JSON.stringify(sm.mix) === '[[50,100,0],[-1,-1,0],[-1,-1,1],[0,0,0]]', JSON.stringify(sm.mix));
+    check('colour mixing brings its density of paint, the watercolour kind alone no wash',
+        JSON.stringify(sm.mix) === '[[50,100,0],[-1,-1,0],[-1,-1,0],[0,0,0]]', JSON.stringify(sm.mix));
     /* Blend mode 27 (Watery brush) thins paint in place and lays none. */
     /* 1% of 20 and 4% of 20 paint the same stroke there. */
     check('dabs never land closer than a pixel', sm.minStep === 1, `${sm.minStep}`);
@@ -1613,8 +1614,10 @@ await withPage(async (page) => {
      * again the flow even at density 0. */
     check('a brush laid by darken keeps its strongest dab and drops the wash, its paper on each dab',
         JSON.stringify(sm.darken) === '[[true,false,0,0,null,100],[true,false,0,50,0,100],[true,false,0,0,null,75]]', JSON.stringify(sm.darken));
-    check('the paper shows as strongly as its blend lets it',
-        JSON.stringify(sm.paper) === '[50,100,3,0]', JSON.stringify(sm.paper));
+    /* Multiply and subtract on a plain paper blend once over the whole
+     * stroke (Round watercolor brush); the rest keep a strength per mode. */
+    check('the paper shows as strongly as its blend lets it, multiply and subtract on the whole stroke',
+        JSON.stringify(sm.paper) === '[[50,1],[50,2],[3,null],[0,null],[50,null]]', JSON.stringify(sm.paper));
     /* Clip Studio's pictures (Book, Building) stamp their own greys and
      * whites; a tip with no solid white is ink, its greys only density
      * (Crayon's grey blob paints solid black there). */

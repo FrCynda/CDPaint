@@ -502,6 +502,40 @@ await withPage(async (page) => {
         b.setParam('texturePattern', null); b.forgetSaved('Round');
         return JSON.stringify({ full, half, mixed, m0, m4, ct });
     })()`, { awaitPromise: true }));
+    /* Clip Studio's paper on the whole stroke: a dense line takes the
+     * paper's own levels once (multiply at full: a x s, 0.3 and 0.8 of
+     * ink), where on each dab the next one fills it back in. */
+    const ps = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, L = __B.layer();
+        const sc = new OffscreenCanvas(64, 64), sx = sc.getContext('2d');
+        for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) {
+            sx.fillStyle = (x + y) & 1 ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.8)'; sx.fillRect(x, y, 1, 1);
+        }
+        const url = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); sc.convertToBlob().then(bl => fr.readAsDataURL(bl)); });
+        const out = [];
+        b.forgetSaved('Round'); b.loadPreset('Round'); b.setParam('texture', 100); b.setParam('texturePattern', url);
+        await new Promise(r => setTimeout(r, 700));
+        for (const st of [1, null]) {
+            b.loadPreset('Round');
+            for (const [k, v] of Object.entries({ size: 40, hardness: 100, spacing: 5, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
+                    texture: 100, textureScale: 1, textureStroke: st })) b.setParam(k, v);
+            await new Promise(r => setTimeout(r, 800));
+            L.ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(40, 100, 1, '#000000');
+            for (let i = 1; i <= 120; i++) b.moveStroke(40 + i, 100, 1, '#000000');
+            b.endStroke();
+            const d = L.ctx.getImageData(90, 95, 20, 10).data, v = [];
+            for (let i = 3; i < d.length; i += 4) v.push(d[i]);
+            v.sort((p, q) => p - q);
+            out.push([v[0], v[v.length >> 1], v[v.length - 1]]);
+        }
+        b.setParam('texture', 0); b.setParam('textureStroke', null); b.setParam('texturePattern', null); b.forgetSaved('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(ps));
+    check("Clip Studio's paper on the whole stroke lays its own levels once, not filled back in by the next dab",
+        Math.abs(ps[0][0] - 77) <= 4 && Math.abs(ps[0][2] - 204) <= 4 && ps[1][1] > 230, JSON.stringify(ps));
+
     /* Blend 0 at half density scales the paper in, a (1.5 - d (1 - s)):
      * 0.3 and 0.8 paper under a 0.5 dab give 0.58 and 0.70 (Soft bleed's
      * paper in Clip Studio); mixed with the bare dab it gave 0.45 and 0.58. */
