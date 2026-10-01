@@ -1443,6 +1443,8 @@ await withPage(async (page) => {
             fracSize: P({ BrushSize: 5.1 }).size,
             pic: [P({ BrushThickness: 85, BrushVerticalThicknes: 1 }, { hasTip: true }),
                   P({ BrushThickness: 50 }, { hasTip: true })].map(p => [p.aspectRatio, p.angle || 0]),
+            stretch: [P({ BrushThickness: 150 }, { hasTip: true }), P({ BrushThickness: 150, BrushVerticalThicknes: 1 }, { hasTip: true }),
+                      P({ BrushThickness: 150, BrushRibbon: 1 }, { hasTip: true, tipW: 10, tipH: 40 }), P({ BrushThickness: 150 })].map(o => o.tipStretch || null),
             adj: [5, 20, 40].map(i => P({ BrushFlow: 50, BrushInterval: i, BrushAdjustFlowByInterval: 1 }).flow),
             paper: [1, 2, 4, 0].map(m => P({ TextureDensity: 50, TextureCompositeMode: m }, { hasTexture: true }).texture || 0),
             darken: [P({ BrushBlendPatternByDarken: 1, BrushWaterColor: 2, BrushUseWaterEdge: 1, BrushWaterEdgeRadius: 2, BrushWaterEdgeAlphaPower: 25 }),
@@ -1578,6 +1580,8 @@ await withPage(async (page) => {
     /* Real G-Pen's picture at thickness 85 was a full-height line here. */
     check('a picture tip is squeezed by its thickness, the way the file says',
         JSON.stringify(sm.pic) === '[[1.18,0],[0.5,0]]', JSON.stringify(sm.pic));
+    check("...and past 100 stretches it: Feather's 150 lays each picture half again as wide, or tall with the vertical flag (not a ribbon's, nor a generated tip)",
+        JSON.stringify(sm.stretch) === '[[1.5,1],[1,1.5],null,null]', JSON.stringify(sm.stretch));
     check('blend mode 27 erases', JSON.stringify(sm.erase) === '["erase","normal"]', JSON.stringify(sm.erase));
     check('paper on each dab keeps its blend, its scale and its own strength rule',
         JSON.stringify(sm.plot) === '[80,2,"random",40,1.6]', JSON.stringify(sm.plot));

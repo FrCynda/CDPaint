@@ -3597,6 +3597,28 @@ await withPage(async (page) => {
     check('a picture turned a quarter turn keeps a one-pixel line one pixel wide',
         quarter.length === 1, JSON.stringify(quarter));
 
+    /* Clip Studio's thickness past 100 stretches a picture (Feather's 150):
+     * a solid 20x40 picture at size 40 lays 30 wide, as tall as it was. */
+    const stretch = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, L = __B.doc(200, 200);
+        const c = document.createElement('canvas'); c.width = 20; c.height = 40;
+        const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, 20, 40);
+        b.loadCustomTip(c.toDataURL('image/png'), null);
+        await new Promise(r => setTimeout(r, 400));
+        ['texture', 'opacity', 'flow', 'scatter', 'taperStart', 'taperEnd', 'tip2Depth', 'angleSrc', 'tipShrink', 'ribbonClip', 'angle'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        b.setParam('dynamicsMode', 'off'); b.setParam('size', 40); b.setParam('hardness', 100); b.setParam('sizeSrc', 'none');
+        b.setParam('tipStretch', [1.5, 1]);
+        b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+        await new Promise(r => setTimeout(r, 180));
+        const d = L.ctx.getImageData(0, 0, 200, 200).data; let w = 0, h = 0;
+        for (let i = 0; i < 200; i++) { if (d[(100 * 200 + i) * 4 + 3] > 128) w++; if (d[(i * 200 + 100) * 4 + 3] > 128) h++; }
+        b.setParam('tipStretch', null);
+        b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
+        return JSON.stringify([w, h]);
+    })()`, { awaitPromise: true }));
+    check("a picture tip's stretch widens it and leaves its height (Clip Studio's thickness past 100)",
+        stretch[0] === 30 && stretch[1] === 40, JSON.stringify(stretch));
+
     /* At precision 1-3 Krita reuses the last dab while the next is close
      * enough, sub-pixel phase and all, just moved to the new whole pixel. A
      * one-column tip stepped 33.3px spreads the same three alphas on every

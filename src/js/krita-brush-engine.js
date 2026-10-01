@@ -5077,8 +5077,8 @@
         if (_params.tipShrink === 'area' && (hardness == null || hardness >= 99))
             return _kritaTipMask(_tipCanvas(), sz, (angleDeg || 0) * _PI / 180, asp, sz <= 64 ? x : null, y);
         var hard = (hardness != null ? hardness : 100) / 100;
-        var mode = _params.tipMode || 'alpha';
-        var key = _tipKey() + '|' + _round(sz) + '|' + _round(angleDeg || 0) + '|' + asp.toFixed(2) + '|' + _round(hardness || 100) + '|' + mode + '|' + (_params.tipShrink || '');
+        var mode = _params.tipMode || 'alpha', st = _params.tipStretch;
+        var key = _tipKey() + '|' + _round(sz) + '|' + _round(angleDeg || 0) + '|' + asp.toFixed(2) + '|' + _round(hardness || 100) + '|' + mode + '|' + (_params.tipShrink || '') + (st ? '|' + st : '');
         if (_customTipSizeCache[key]) return _customTipSizeCache[key];
         var src = _tipCanvas();
         var s = _max(1, _round(sz));
@@ -5092,6 +5092,7 @@
         } else {
             w = _max(1, _round(w * asp));
         }
+        if (st) { w = _max(1, _round(w * st[0])); h = _max(1, _round(h * st[1])); kx *= st[0]; ky *= st[1]; }
 
         /* Step 1: create base (unrotated) mask with tip image clipped.
          * A clear pixel all round: the browser filters a half-pixel
@@ -5499,6 +5500,7 @@
         colorJitterRange: null,  // Clip Studio: [lo, hi] per hue, sat, value, in units of the dial
         sprayBias: 0,            // Clip Studio: where in its patch a particle lands (_diskR)
         aspectThinsWidth: false, // Clip Studio picture tips: the aspect input narrows the width, not the height
+        tipStretch: null,        // [x, y]: Clip Studio's thickness past 100 stretches a picture tip
         spacingByWidth: false,   // Clip Studio picture tips on auto spacing: spaced by the tip's unturned width
         sizeSrc: 'pressure',     sizeMin: 50,      sizeCurve: 1,
         flowSrc: 'pressure',     flowMin: 0,       flowCurve: 1,
