@@ -1430,6 +1430,9 @@ await withPage(async (page) => {
                                                    ['dropped: the colour its second brush blends in', 'dropped: its second brush tip'].find(t => W(d, { hasTip2: true }).includes(t)) || '',
                                                    !!(sec && sec.light), sec ? sec.variant.BrushChangePatternColor : null]; }),
             mask4: [1, 0].map(c => (BrushPack.sutSecond({ UseDualBrush: 1, DualBrushCompositeMode: 4, ChangeRGBByDual: c }) || {}).op),
+            opac: [{}, { BrushBlendPatternByDarken: 1 }, { UseDualBrush: 1, DualBrushCompositeMode: 12 }, { UseDualBrush: 1, DualBrushCompositeMode: 4, ChangeRGBByDual: 0 }]
+                .map(x => P(Object.assign({ BrushOpacityEffector: rndE }, x))).map(q => [q.dabOpacitySrc || 'none', q.dabOpacityAvg === false, q.flowSrc]),
+            opac2: 'BrushOpacityEffector' in BrushPack.sutSecond({ UseDualBrush: 1, DualBrushCompositeMode: 4, BrushOpacityEffector: rndE }).variant,
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', pingpong: P({ BrushPatternOrderType: 1 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
             erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
@@ -1548,6 +1551,11 @@ await withPage(async (page) => {
             [0, 'subtract', 76, 20, '', false, 0], [0, null, null, null, 'dropped: its second brush tip', false, null], [0, 'destination-out', 76, 20, '', false, 0]]), JSON.stringify(sm.dual));
     check('...mode 4 lays it under while it changes the colour, and with the change off keeps the lesser of the two strokes',
         JSON.stringify(sm.mask4) === '["destination-over","min"]', JSON.stringify(sm.mask4));
+    /* Opacity caps each dab at its own level (cdp-csp/pr-dua zwiG); laid
+     * by darken, or under a second brush cut in turn, it stays on flow. */
+    check("a Clip Studio brush's opacity is a per-dab cap; laid by darken or under a cutting second brush it stays on flow",
+        JSON.stringify(sm.opac) === JSON.stringify([['random', true, 'none'], ['none', false, 'random'], ['none', false, 'random'], ['random', true, 'none']]) && !sm.opac2,
+        JSON.stringify([sm.opac, sm.opac2]));
     check('...switched off it paints flat, and on the sub colour it shades the whites alone',
         sm.cj[2] === 0 && JSON.stringify(sm.cj[3]) === '[100,true]' && !/sub colour/.test(sm.cj[4]), JSON.stringify(sm.cj));
     check('pictures set to take turns take turns', sm.cycle === 'cycle' && sm.pingpong === 'pingpong' && sm.random === '',

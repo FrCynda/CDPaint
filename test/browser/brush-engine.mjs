@@ -684,6 +684,26 @@ await withPage(async (page) => {
     check("Krita's elevation is full upright and nothing at 60 degrees", d.elevationIsKritasWayUp);
     check("Krita's dab opacity is a ceiling the stroke builds to, not past",
         Math.abs(d.dabOpacityCapsAt - 128) <= 8, 'max alpha ' + d.dabOpacityCapsAt);
+
+    /* Clip Studio caps each dab at its own opacity, where Krita's running
+     * average keeps a falling one high: a 0.6 dab over 0.5 of ink takes
+     * half of the step to 0.6, not toward Krita's 0.96 average. */
+    const avg = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = __B.layer(), out = [];
+        for (const a of [true, false]) {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            for (const [k, v] of Object.entries({ size: 40, spacing: 25, hardness: 100, flow: 50, flowSrc: 'none', sizeSrc: 'none',
+                    smoothingMode: 'none', dabOpacitySrc: 'pressure', dabOpacityMin: 0, dabOpacityCurve: 1, dabOpacityAvg: a })) b.setParam(k, v);
+            L.ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(100, 100, 1, '#000000'); b.moveStroke(110, 100, 0.6, '#000000'); b.endStroke();
+            out.push(L.ctx.getImageData(105, 100, 1, 1).data[3]);
+        }
+        b.setParam('dabOpacityAvg', true); b.setParam('dabOpacitySrc', 'none');
+        return JSON.stringify(out);
+    })()`));
+    console.log('  ' + JSON.stringify(avg));
+    check('a Clip Studio dab caps the stroke at its own opacity, not at a running average',
+        avg[1] < avg[0] - 10 && Math.abs(avg[1] - 140) <= 8, JSON.stringify(avg));
     /* Krita's texture removes ink (subtract: a - (m + 1 - s)); our grey-tint
      * grain on an opaque pattern removed none, so Chalk Soft came out 1.6x
      * too dark against real Krita. A flat mid-grey pattern at strength 1

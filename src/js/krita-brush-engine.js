@@ -699,7 +699,7 @@
      * the same lighten at grey avg, the dab thinned by o/avg. */
     var _adCanvas = null, _adCtx = null, _adO = 1, _adAvg = 0, _adColor = '#000000';
     function _alphaDarken(p) {
-        return !!((p.dabOpacitySrc && p.dabOpacitySrc !== 'none') || p.maskOp || p.hatch)
+        return !!((p.dabOpacitySrc && p.dabOpacitySrc !== 'none') || p.dabOpacitySensors || p.maskOp || p.hatch)
             && p.engineKind !== 'shape' && p.engineKind !== 'deform';
     }
     /* A dab on whole pixels takes Krita's alpha darken as its 8-bit RGBA
@@ -3406,7 +3406,7 @@
         // draws as a clean 1px line.
         if (sz < (/^krita/.test(p.falloff) ? 0.01 : 0.5)) return;
         _adO = _dyn(p, 'dabOpacity', 1, sc, 14);
-        _adAvg = _adAvg < _adO ? _adO : 0.1 * _adO + 0.9 * _adAvg;
+        _adAvg = _adAvg < _adO || !p.dabOpacityAvg ? _adO : 0.1 * _adO + 0.9 * _adAvg;
         if (p.maskOp && _flowCanvas) _maskStrokeDab(p, x, y, sc);
 
         // Bristle mode: render multiple fiber dabs
@@ -5511,6 +5511,7 @@
         /* Krita's per-dab opacity: the level a stroke's ink stops building
          * at, not how much each dab adds. See _alphaDarken. */
         dabOpacitySrc: 'none',   dabOpacityMin: 0, dabOpacityCurve: 1,
+        dabOpacityAvg: true,     // Krita's running average caps a falling dab; Clip Studio caps each at its own
         // Krita's several inputs on one option (_kritaInputs); null = just <key>Src.
         angleSensors: null, angleCombine: 0, angleReach: null, sizeSensors: null, sizeCombine: 0, colorRateSensors: null, colorRateCombine: 0, spacingSensors: null, spacingCombine: 0, aspectRatioSensors: null, aspectRatioCombine: 0, textureSensors: null, textureCombine: 0, scatterSensors: null, scatterCombine: 0, smudgeRateSensors: null, smudgeRateCombine: 0, flowSensors: null, flowCombine: 0, dabOpacitySensors: null, dabOpacityCombine: 0,
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own

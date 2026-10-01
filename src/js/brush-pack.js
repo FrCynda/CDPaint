@@ -3501,8 +3501,8 @@
             if (('Brush' + x) in v) v2['Brush' + x] = v[k];
             else if (x in v) v2[x] = v[k];
         }
-        // It has no second brush, mixing or colour change of its own.
-        v2.UseDualBrush = 0; v2.BrushUseWaterColor = 0;
+        // It has no second brush, mixing, opacity or colour change of its own.
+        v2.UseDualBrush = 0; v2.BrushUseWaterColor = 0; delete v2.BrushOpacityEffector;
         var light = _sutNum(v.DualBrushCompositeMode, 0) === 2;
         if (!light) v2.BrushChangePatternColor = 0;   // mode 2's colour is the point
         return { op: op, variant: v2, light: light };
@@ -3854,16 +3854,28 @@
         }
 
         /* Nothing drives a dial unless its effector says so; our engine's
-         * own default is pressure. Opacity rides on flow when flow is still. */
+         * own default is pressure. */
         out.sizeSrc = out.flowSrc = 'none';
         /* ponytail: sprayed, the patch rides on scatter and the particle on
          * size, and our scatter is a share of the size, so a pen driving
          * both counts twice on the patch. */
         _sutDrive(out, spraying ? 'scatter' : 'size', v.BrushSizeEffector, warn, 'its size');
         _sutDrive(out, 'flow', v.BrushFlowEffector, warn, 'its flow');
-        if (out.flowSrc === 'none' && !out.flowSensors) {
-            _sutDrive(out, 'flow', v.BrushOpacityEffector, warn, 'its opacity');
-        }
+        /* Opacity is the level the stroke builds to, as Krita's per-dab
+         * opacity, but each dab capped at its own: two picture dabs half
+         * overlapping, each at a random opacity, leave dst + (o - dst) * p
+         * where the second lands (cdp-csp/pr-dua zwiG/zwiH, Watery ink:
+         * 0.003 off a pixel, against 0.007 stacked as flow and 0.005 with
+         * Krita's running average). Dense, the stroke rises to about the
+         * largest of the opacities under it, not to solid. Laid by darken
+         * a dab already keeps the stronger level, and a mixing brush builds
+         * no stroke, so for those it still rides on still flow; so too
+         * under a second brush cut or laid in turn, which the capped stroke
+         * would paint back over (Wet blotting ink 1.01 -> 1.16 of the ink). */
+        var sec2 = BrushPack.sutSecond(v);
+        if (_sutNum(v.BrushBlendPatternByDarken, 0) || _sutNum(v.BrushUseWaterColor, 0) || (sec2 && sec2.op !== 'subtract' && sec2.op !== 'min')) {
+            if (out.flowSrc === 'none' && !out.flowSensors) _sutDrive(out, 'flow', v.BrushOpacityEffector, warn, 'its opacity');
+        } else if (_sutDrive(out, 'dabOpacity', v.BrushOpacityEffector, warn, 'its opacity')) out.dabOpacityAvg = false;
         if (spraying) _sutDrive(out, 'size', v.BrushSpraySizeEffector, warn, 'its spray');
         /* The interval and the spray's density take effectors too: Trees'
          * random interval (floor 50) laid trees 196-284px apart at 300% of
