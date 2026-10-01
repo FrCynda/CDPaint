@@ -48,3 +48,16 @@ Two are still out, and are meant to stay out:
 One shipped brush is a knowing near miss: **Oval Basic** turns its tip with
 Krita's `tangentialpressure`, a barrel-wheel reading no browser reports, so
 its tip does not turn.
+
+## krita/
+
+Tips and papers from Krita's own default bundles
+(`Krita_3_Default_Resources.bundle` and `Krita_4_Default_Resources.bundle`,
+both CC-0), byte for byte as Krita ships them. Packs made for Krita name these
+without carrying them, because every Krita has them: Deevad 2021's rakes,
+eleven of the Muses brushes, GDQuest's and others'. The importer fetches one
+by name only when a pack asks for it and does not carry it.
+
+Only the files real packs were found to ask for are here, not the whole
+bundles (about 43MB). A pack that names another default tip still imports
+with a note saying which file it missed.

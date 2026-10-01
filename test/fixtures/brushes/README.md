@@ -39,6 +39,12 @@ does: it is built on top of Krita's own default resources, so it names a tip
 and a canvas pattern that are not inside the pack. That used to cost a brush
 on import.
 
+default-tip.kpp is thin-brush-pointy.kpp with its one tip name swapped for
+bristles_chisel_dense.png and its embedded copy removed: a tip from Krita's own
+default bundle that we ship in src/brushes/krita/ (make-default-tip-kpp.py).
+Packs built on Krita's defaults name such tips without carrying them; this
+checks they still get one.
+
 The three two-tips-*.abr files are not from anywhere: they are written by hand
 from the Photoshop brush format's description (scripts are in the session
 scratchpad, not the repo) to cover version 2, version 6 subversion 1, and

@@ -9094,6 +9094,22 @@
         });
     }
 
+    /* ...and failing that, Krita's own copy. A pack leans on Krita's default
+     * bundles (both CC-0) for tips and papers it names but does not carry:
+     * Deevad 2021's rakes on bristles_chisel_dense.png, the Muses pack on
+     * eleven Krita 3 tips. Krita paints them because every Krita has them;
+     * src/brushes/krita holds, as Krita ships them, the ones real packs ask
+     * for. Fetched by name when asked, so the folder is the list; anything
+     * but a plain file name resolves null. */
+    var _kritaDefaults = {};
+    function _kritaDefault(file) {
+        var f = String(file || '');
+        if (!/^[\w .()-]+\.(png|gbr|gih)$/i.test(f)) return Promise.resolve(null);
+        return _kritaDefaults[f] || (_kritaDefaults[f] = fetch('brushes/krita/' + encodeURIComponent(f))
+            .then(function (r) { return r.ok ? r.arrayBuffer() : null; })
+            .then(function (b) { return b && new Uint8Array(b); }, function () { return null; }));
+    }
+
     /* A Procreate brush or brush set.
      *
      * Its shape and its grain are real images, which is most of what makes
@@ -9334,7 +9350,14 @@
                            preset.resources[file].bytes) || pack.tips[file];
                 var p = src
                     ? BrushPack.tipStrip(src, file, { krita: true }).catch(function () { return null; })
-                    : _abrTip(file) || _shippedTip(file);
+                    : _abrTip(file) || _shippedTip(file).then(function (t) {
+                        return t || _kritaDefault(file).then(function (b) {
+                            return b && BrushPack.tipStrip(b, file, { krita: true }).then(function (k) {
+                                k.shipped = true;
+                                return k;
+                            }, function () { return null; });
+                        });
+                    });
                 tipCache[file] = p;
                 return p;
             }
@@ -9370,9 +9393,11 @@
                         /* A masking brush can name its tip the same way the
                          * brush names its own, so it is resolved the same
                          * way -- against the pack, while the pack is here. */
-                        var m2f = ps._tip2File;
+                        var m2f = ps._tip2File, pf0 = ps.texturePatternFile;
                         delete ps._tip2File;
-                        return (m2f ? tipFor(pr, m2f) : Promise.resolve(null)).then(function (m2) {
+                        return Promise.all([m2f ? tipFor(pr, m2f) : null,
+                            pf0 && !ps.texturePatternData && !pack.tips[pf0] ? _kritaDefault(pf0) : null]).then(function (got) {
+                        var m2 = got[0], kpat = got[1];
                         if (m2f) {
                             if (m2 && m2.url) ps._tip2Url = m2.url;
                             else t.warnings.push('its masking tip "' + m2f +
@@ -9386,7 +9411,9 @@
                             var pf = ps.texturePatternFile, pe = ps.texturePatternData;
                             delete ps.texturePatternFile;
                             delete ps.texturePatternData;
-                            var pb = pack.tips[pf];
+                            var pb = pack.tips[pf] || kpat;
+                            if (kpat) t.warnings.push('its canvas texture "' + pf + '" is not in this pack; ' +
+                                'Krita\'s own, which we ship, was used');
                             if (pe) {
                                 ps.texturePattern = pe;   // the preset's own copy, see toPreset
                             } else if (pb) {

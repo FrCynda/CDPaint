@@ -46,7 +46,8 @@ const FILES = {
     'masked-file.kpp': b64('masked-file.kpp'),
     'itxt-binary-md5.kpp': b64('itxt-binary-md5.kpp'),
     'shapes-alchemy.kpp': b64('shapes-alchemy.kpp'),
-    'distort-move.kpp': b64('distort-move.kpp')
+    'distort-move.kpp': b64('distort-move.kpp'),
+    'default-tip.kpp': b64('default-tip.kpp')
 };
 
 await withPage(async (page) => {
@@ -985,6 +986,14 @@ await withPage(async (page) => {
     check('a texture we cannot find leaves the brush grainy, not smooth',
         borrowed.notes.some(n => n.texture > 0),
         JSON.stringify(borrowed.notes.map(n => n.texture)));
+    const dflt = await page.eval(`(async () => {
+        for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
+        const r = await PaintApp.brush.importFiles([window.__files['default-tip.kpp']]);
+        const n = PaintApp.brush.userPresetNames()[0];
+        return JSON.stringify({ r, tip: n ? PaintApp.brush.PRESETS[n]._tipUrl || null : null });
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check("a tip named from Krita's own default bundle comes from the copy we ship",
+        dflt.r.brushes === 1 && !!dflt.tip, JSON.stringify(dflt));
 
     /* Procreate. Two formats stacked: a ZIP holding a binary property list
      * written by NSKeyedArchiver. The fixture's plist half comes out of
