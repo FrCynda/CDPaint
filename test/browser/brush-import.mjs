@@ -1463,6 +1463,7 @@ await withPage(async (page) => {
             crispPic: [P({ AntiAlias: 0, TextureDensity: 60, TextureCompositeMode: 4, TextureForPlot: 1 }, { hasTip: true, hasTexture: true }),
                        P({ AntiAlias: 1 }, { hasTip: true }), P({ AntiAlias: 0 })].map(o => o.tipShrink || ''),
             contrast: [-30, 30].map(c => P({ TextureDensity: 60, TextureCompositeMode: 4, TextureForPlot: 1, TextureContrast: c }, { hasTexture: true }).textureContrast),
+            reverse: [0, 1].map(r => !!P({ TextureDensity: 50, TextureCompositeMode: 4, TextureForPlot: 1, TextureReverseDensity: r }, { hasTexture: true }).textureInvert),
             aliased: [P({ AntiAlias: 0 }).aliased, P({ AntiAlias: 1 }).aliased,
                       P({ AntiAlias: 0, BrushUseWaterColor: 1, BrushMixColor: 80 }).aliased].map(Boolean),
             mix: [P({ BrushUseWaterColor: 1, BrushMixColor: 80, BrushMixAlpha: 50, BrushMixColorExtension: 100 }),
@@ -1488,6 +1489,10 @@ await withPage(async (page) => {
         JSON.stringify(sm.crispPic) === '["nearest","",""]', JSON.stringify(sm.crispPic));
     check('paper contrast -30 and +30 spread the paper 0.7 and 1/0.7 times',
         Math.abs(sm.contrast[0] - 0.7) < 1e-9 && Math.abs(sm.contrast[1] - 1 / 0.7) < 1e-9, JSON.stringify(sm.contrast));
+    /* Dry ink with reverse on lays 24.7k of ink in Clip Studio, 29.6k off
+     * (cdp-csp/pr-dua zdiE, zdiF): the paper's light is read as its dark. */
+    check('paper reverse density on each dab reads the paper inverted',
+        JSON.stringify(sm.reverse) === '[false,true]', JSON.stringify(sm.reverse));
     check('a tilt rule reads how upright the pen stands',
         sm.tilt[0] === 'elevation', JSON.stringify(sm.tilt));
     /* Thickness squeezes the width, so an unturned flat tip stands upright. */

@@ -515,10 +515,10 @@ await withPage(async (page) => {
         const out = [];
         b.forgetSaved('Round'); b.loadPreset('Round'); b.setParam('texture', 100); b.setParam('texturePattern', url);
         await new Promise(r => setTimeout(r, 700));
-        for (const st of [1, null]) {
+        for (const [st, inv] of [[1, false], [null, false], [1, true]]) {
             b.loadPreset('Round');
             for (const [k, v] of Object.entries({ size: 40, hardness: 100, spacing: 5, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
-                    texture: 100, textureScale: 1, textureStroke: st })) b.setParam(k, v);
+                    texture: 100, textureScale: 1, textureStroke: st, textureInvert: inv })) b.setParam(k, v);
             await new Promise(r => setTimeout(r, 800));
             L.ctx.clearRect(0, 0, 200, 200);
             b.beginStroke(40, 100, 1, '#000000');
@@ -529,12 +529,15 @@ await withPage(async (page) => {
             v.sort((p, q) => p - q);
             out.push([v[0], v[v.length >> 1], v[v.length - 1]]);
         }
-        b.setParam('texture', 0); b.setParam('textureStroke', null); b.setParam('texturePattern', null); b.forgetSaved('Round');
+        b.setParam('texture', 0); b.setParam('textureStroke', null); b.setParam('textureInvert', false); b.setParam('texturePattern', null); b.forgetSaved('Round');
         return JSON.stringify(out);
     })()`, { awaitPromise: true }));
     console.log('  ' + JSON.stringify(ps));
     check("Clip Studio's paper on the whole stroke lays its own levels once, not filled back in by the next dab",
         Math.abs(ps[0][0] - 77) <= 4 && Math.abs(ps[0][2] - 204) <= 4 && ps[1][1] > 230, JSON.stringify(ps));
+    /* Reverse density reads 0.3 and 0.8 paper as 0.7 and 0.2. */
+    check("Clip Studio's reversed paper lays the paper's levels inverted",
+        Math.abs(ps[2][0] - 51) <= 4 && Math.abs(ps[2][2] - 179) <= 4, JSON.stringify(ps));
 
     /* Blend 0 at half density scales the paper in, a (1.5 - d (1 - s)):
      * 0.3 and 0.8 paper under a 0.5 dab give 0.58 and 0.70 (Soft bleed's

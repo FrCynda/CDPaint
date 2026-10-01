@@ -3712,6 +3712,11 @@
                  * its spread (cdp-csp/pr-dab pfC30, pfCp30). */
                 var tcn = Math.max(-99, Math.min(99, _sutNum(v.TextureContrast, 0)));
                 if (tcn) out.textureContrast = tcn < 0 ? 1 + tcn / 100 : 1 / (1 - tcn / 100);
+                /* Reverse density reads the paper's light as its dark: Dry
+                 * ink's paper (subtract, 50) with it on eats the stroke's
+                 * edges, 29.6k of ink to 24.7k in Clip Studio, where off it
+                 * matched ours to 0.998 (cdp-csp/pr-dua zdiE, zdiF). */
+                if (_sutNum(v.TextureReverseDensity, 0)) out.textureInvert = true;
             } else if (dens > 0) {
                 /* Paper on the whole stroke, blended as on a dab (_cspPaper)
                  * but once, over the finished stroke: laid on each of a
@@ -3767,7 +3772,7 @@
                  * here, so each active modifier is named. */
                 if (_sutNum(v.TextureCompositeMode, 1) !== 1 && !perDab)
                     warn.push('changed: how its paper texture blends');
-                if (_sutNum(v.TextureReverseDensity, 0))
+                if (_sutNum(v.TextureReverseDensity, 0) && !perDab)
                     warn.push('changed: paper texture reverse density');
                 if (_sutNum(v.TextureStressDensity, 0))
                     warn.push('changed: paper texture stress density');

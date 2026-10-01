@@ -1725,7 +1725,7 @@
                 for (var k = 0; k < ta.length; k++) ta[k] = tdat[k * 4 + 3];
                 _tileA.set(tile, ta);
             }
-            var tw = tile.width, th = tile.height, D = _min(1, textureLevel / 100), ct = getParams().textureContrast || 1;
+            var tw = tile.width, th = tile.height, D = _min(1, textureLevel / 100), ct = getParams().textureContrast || 1, inv = getParams().textureInvert;
             var img = ctx.getImageData(at ? ox : 0, at ? oy : 0, w, h), dd = img.data;
             for (var j = 0; j < h; j++) {
                 var ty = ((_floor(((oy || 0) + j) / scale) % th) + th) % th;
@@ -1734,6 +1734,7 @@
                     if (!a) continue;
                     var tx = ((_floor(((ox || 0) + i) / scale) % tw) + tw) % tw;
                     var s = ta[ty * tw + tx] / 255;
+                    if (inv) s = 1 - s;
                     if (ct !== 1) s = _clamp((s - 0.5) * ct + 0.5, 0, 1);
                     dd[q] = _round(_clamp(_cspPaper(blend, a, s, D), 0, 1) * 255);
                 }
