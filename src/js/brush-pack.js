@@ -570,7 +570,7 @@
         /* These engines draw without a tip; a brush definition they still
          * carry is left over from the preset they were made from, and
          * pablocazorla's Shapes brushes name a tip no Krita ships. */
-        var noTip = /^(experimentbrush|deformbrush|curvebrush|particlebrush)$/.test(preset.paintop);
+        var noTip = /^(experimentbrush|deformbrush|curvebrush|particlebrush|gridbrush)$/.test(preset.paintop);
         if (mask) {
             // A generated tip: numbers all the way down, which is our own case.
             // Anything Krita does not read as "circle" is its rectangle (KisMaskGenerator::fromXML): EO Pixel Taper says "rct".
@@ -1185,6 +1185,8 @@
                 div: Math.max(1, Math.round(_num(P['Grid/divisionLevel'], 2))),
                 shape: Math.round(_num(P['GridShape/shape'], 0))
             };
+            // a preset saved before Krita had a diameter covers one cell's width (KisGridOpOptionData)
+            out.size = Math.max(1, _num(P['Grid/diameter'], 0) || out.grid.w);
             if (out.grid.shape > 1) warn.push('dropped: its grid shape ' + out.grid.shape + ', painted as circles');
             if (_bool(P['Grid/pressureDivision']) || _bool(P['Grid/randomBorder']) ||
                 _num(P['Grid/horizontalBorder'], 0) || _num(P['Grid/verticalBorder'], 0)) {

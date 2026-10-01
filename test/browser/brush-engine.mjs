@@ -969,7 +969,7 @@ await withPage(async (page) => {
     const gr = JSON.parse(await page.eval(`(() => {
         const b = PaintApp.brush;
         b.forgetSaved('Round'); b.loadPreset('Round');
-        for (const [k, v] of Object.entries({ size: 30, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
+        for (const [k, v] of Object.entries({ size: 25, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
             grid: { w: 25, h: 25, scale: 1, div: 2, shape: 0 } })) b.setParam(k, v);
         __B.layer().ctx.clearRect(0, 0, 200, 200);
         b.beginStroke(40, 50, 1, '#000000');
@@ -981,6 +981,24 @@ await withPage(async (page) => {
     })()`));
     check('a grid brush fills the canvas cells it passes, not the cell it ends in',
         gr.first > 250 && gr.last > 250 && gr.end === 0 && gr.gap < 128, JSON.stringify(gr));
+    /* kis_grid_paintop.cpp: a dab covers the diameter (size) in tiles of
+     * cell/divisionLevel, a rectangle filled at its truncated corner and size.
+     * A 3x2 cell in halves, size 3, fills "##." on three rows -- as Krita
+     * paints HatiGamedev's pixel vertical-rect (IoU 0.25 -> 0.997). */
+    const gtile = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 3, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
+            grid: { w: 3, h: 2, scale: 1, div: 2, shape: 1 } })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(10, 50.5, 1, '#000000');
+        for (let i = 11; i <= 40; i++) b.moveStroke(i, 50.5, 1, '#000000');
+        b.endStroke();
+        const a = (x, y) => __B.layer().ctx.getImageData(x, y, 1, 1).data[3];
+        return JSON.stringify([49, 50, 51, 52, 53].map(y => [30, 31, 32].map(x => a(x, y) > 128 ? '#' : '.').join('')));
+    })()`));
+    check("a grid's half-pixel tiles fill whole pixels from their truncated corners, over the brush's size",
+        gtile.join('|') === '...|##.|##.|##.|...', JSON.stringify(gtile));
     /* Dabs fainter than a few 8-bit levels still add up in Krita
      * (test/krita/probes/addop: X1BB at pressure 0.5, dabs 2.8 levels deep,
      * stacked to 17 in Krita and 9 here). The stroke buffer rounded every

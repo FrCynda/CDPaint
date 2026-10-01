@@ -1433,8 +1433,7 @@
     /* Krita's grid brush, from the bank's own render (Grid_square_25): the
      * canvas is cut into gridWidth x gridHeight cells, and every
      * gridWidth px along the stroke -- from its first point, never at its
-     * last -- the cell under the pen is filled with divisionLevel^2 shapes
-     * inscribed in its sub-cells. A cell is filled once per stroke.
+     * last -- a dab is laid (_gridCell).
      * ponytail: ellipse and rectangle only; no borders, colour options or
      * pressure division (the importer warns). */
     var _gridSt = null, _gridMask = null;
@@ -1456,26 +1455,34 @@
         }
         st.acc += d; st.x = x; st.y = y;
     }
+    /* kis_grid_paintop.cpp: a dab covers the brush's diameter (our size),
+     * its corner snapped to the cell grid (fmod, so toward zero), cut into
+     * cell/divisionLevel tiles. A rectangle tile is filled at whole pixels
+     * truncated from its corner and size -- a 3px cell in halves fills
+     * "##." (HatiGamedev's pixel vertical-rect). Each tile once a stroke. */
     function _gridCell(p, x, y, color) {
-        var G = p.grid, gw = G.w * G.scale, gh = G.h * G.scale;
-        var cx = Math.floor(x / gw), cy = Math.floor(y / gh), key = cx + ',' + cy;
-        if (_gridSt.seen[key]) return;
-        _gridSt.seen[key] = 1;
-        var mk = gw + ',' + gh + ',' + G.div + ',' + G.shape;
-        if (!_gridMask || _gridMask._key !== mk) {
-            var c = new OffscreenCanvas(_max(1, _ceil(gw)), _max(1, _ceil(gh))), g = c.getContext('2d');
-            var n = _max(1, G.div), sw = gw / n, sh = gh / n;
-            g.fillStyle = '#fff';
-            for (var j = 0; j < n; j++) for (var i = 0; i < n; i++) {
-                if (G.shape === 1) { g.fillRect(i * sw, j * sh, sw, sh); continue; }
-                g.beginPath();
-                g.ellipse(i * sw + sw / 2, j * sh + sh / 2, sw / 2, sh / 2, 0, 0, 2 * _PI);
-                g.fill();
+        var G = p.grid, cw = G.w * G.scale, ch = G.h * G.scale, D = _max(1, p.size) * G.scale;
+        var px = x - D / 2 + cw / 2, py = y - D / 2 + ch / 2;
+        px -= px % cw; py -= py % ch;
+        var n = _max(1, _round(G.scale * G.div)), xs = cw / n, ys = ch / n, rect = G.shape === 1;
+        var mw = rect ? _max(1, ~~xs) : _max(1, _ceil(xs) + 1), mh = rect ? _max(1, ~~ys) : _max(1, _ceil(ys) + 1);
+        for (var j = 0; j < D / ys; j++) for (var i = 0; i < D / xs; i++) {
+            var tx = px + i * xs, ty = py + j * ys, ix = rect ? ~~tx : _floor(tx), iy = rect ? ~~ty : _floor(ty);
+            var key = ix + ',' + iy;
+            if (_gridSt.seen[key]) continue;
+            _gridSt.seen[key] = 1;
+            var fx = rect ? 0 : tx - ix, fy = rect ? 0 : ty - iy;
+            var mk = mw + ',' + mh + ',' + xs + ',' + ys + ',' + fx + ',' + fy + ',' + rect;
+            if (!_gridMask || _gridMask._key !== mk) {
+                var c = new OffscreenCanvas(mw, mh), g = c.getContext('2d');
+                g.fillStyle = '#fff';
+                if (rect) g.fillRect(0, 0, mw, mh);
+                else { g.beginPath(); g.ellipse(fx + xs / 2, fy + ys / 2, xs / 2, ys / 2, 0, 0, 2 * _PI); g.fill(); }
+                c._cx = 0; c._cy = 0; c._key = mk;
+                _gridMask = c;
             }
-            c._cx = 0; c._cy = 0; c._key = mk;
-            _gridMask = c;
+            _paintDab(_flowCtx, ix, iy, _gridMask, color, _clamp(p.flow / 100, 0, 1), 0);
         }
-        _paintDab(_flowCtx, _round(cx * gw), _round(cy * gh), _gridMask, color, _clamp(p.flow / 100, 0, 1), 0);
     }
     function _applyKritaTexture(ctx, w, h, ox, oy, s, p) {
         var t = _kritaTexMask(p);
