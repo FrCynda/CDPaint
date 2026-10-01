@@ -47,7 +47,8 @@ const FILES = {
     'itxt-binary-md5.kpp': b64('itxt-binary-md5.kpp'),
     'shapes-alchemy.kpp': b64('shapes-alchemy.kpp'),
     'distort-move.kpp': b64('distort-move.kpp'),
-    'default-tip.kpp': b64('default-tip.kpp')
+    'default-tip.kpp': b64('default-tip.kpp'),
+    'shapes-leftover-tip.kpp': b64('shapes-leftover-tip.kpp')
 };
 
 await withPage(async (page) => {
@@ -994,6 +995,14 @@ await withPage(async (page) => {
     })()`, { awaitPromise: true }).then(JSON.parse);
     check("a tip named from Krita's own default bundle comes from the copy we ship",
         dflt.r.brushes === 1 && !!dflt.tip, JSON.stringify(dflt));
+    const leftover = await page.eval(`(async () => {
+        for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
+        const r = await PaintApp.brush.importFiles([window.__files['shapes-leftover-tip.kpp']]);
+        const n = PaintApp.brush.userPresetNames()[0];
+        return JSON.stringify({ r, kind: n ? PaintApp.brush.PRESETS[n].engineKind : null });
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('a Shapes brush naming a tip it never uses still arrives, as a Shapes brush',
+        leftover.r.brushes === 1 && leftover.kind === 'shape', JSON.stringify(leftover));
     const svgTip = await page.eval(`(async () => {
         const s = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="10" height="10"/></svg>';
         const t = await BrushPack.tipStrip(new TextEncoder().encode(s), 'half.svg', { krita: true });

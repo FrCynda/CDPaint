@@ -567,6 +567,10 @@
         if (_bool(P['Spacing/Isotropic'])) out.spacingIsotropic = true;
 
         var mask = bd.mask;
+        /* These engines draw without a tip; a brush definition they still
+         * carry is left over from the preset they were made from, and
+         * pablocazorla's Shapes brushes name a tip no Krita ships. */
+        var noTip = /^(experimentbrush|deformbrush|curvebrush|particlebrush)$/.test(preset.paintop);
         if (mask) {
             // A generated tip: numbers all the way down, which is our own case.
             // Anything Krita does not read as "circle" is its rectangle (KisMaskGenerator::fromXML): EO Pixel Taper says "rct".
@@ -608,7 +612,7 @@
             if (sc0) { out.tipCurve = sc0; out.hardness = 0; out.falloff = 'krita-soft' + aa; }
             else if (gen === 'soft') out.hardness = Math.round(out.hardness * 0.3);
             if (_num(mask.spikes, 2) > 2) warn.push('a star-shaped tip became a plain one');
-        } else if (bd.filename) {
+        } else if (bd.filename && !noTip) {
             out.shape = 'custom';
             out.hardness = 100;      // the image is the shape; do not fade it
             out.tipShrink = 'area';  // Krita keeps a shrunk tip's ink; see the engine's _shrinkTip
@@ -619,8 +623,7 @@
             out.shape = 'circle';   // see the engine's _kritaMarkerMask
             out.falloff = 'marker';
             out.size = _num(P.diameter, 30);
-        } else if (preset.paintop !== 'experimentbrush' &&
-                   preset.paintop !== 'deformbrush' && preset.paintop !== 'curvebrush' && preset.paintop !== 'particlebrush') {
+        } else if (!noTip) {
             warn.push('no tip definition; falling back to a round brush');
             out.shape = 'circle';
             out.size = 20;
