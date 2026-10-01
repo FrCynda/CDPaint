@@ -4,6 +4,7 @@
 //   node test/krita/bank.mjs --render        render the missing packs in Krita first
 //   node test/krita/bank.mjs --packs deevad23,eo-v3
 //   node test/krita/bank.mjs --holdout [--render]
+//   node test/krita/bank.mjs --random [--render]   the presets that ask for chance, by statistics
 //
 // The fixed corpus (compare.mjs) tests seventeen brushes by hand; this runs
 // the whole of Krita's own bundles plus the packs downloaded into
@@ -36,6 +37,12 @@ const LINES = [[40, 50, 0.1, 440, 50, 1.0], [60, 185, 0.8, 200, 115, 0.8], [300,
 const BANDS = [[0, 100], [100, 200], [200, 300]];
 
 const argv = process.argv.slice(2);
+/* --random scores the presets left out for chance: Krita renders each twice,
+ * ours paints once, and the grade is the ink and where it lies (12px blur)
+ * against how far Krita's two renders agree with each other. */
+const RANDOM = argv.includes('--random');
+// --only <regex>: just the presets it names, printed and not saved
+const only = argv.includes('--only') ? new RegExp(argv[argv.indexOf('--only') + 1], 'i') : null;
 const onlyPacks = argv.includes('--packs') ? argv[argv.indexOf('--packs') + 1].split(',') : null;
 
 // A pack is a .bundle, or a folder of paintoppresets/brushes/patterns (nested
@@ -70,6 +77,35 @@ function flatten(src, dst) {   // folder pack -> dst/{paintoppresets,brushes,pat
     }
 }
 
+async function scoreRandom(page, p, e, row, refDir, meta) {
+    if (!meta) { row.status = 'not rendered'; return; }
+    if (!meta[e.key + 'a'] || !meta[e.key + 'b']) { row.status = 'Krita could not load it'; return; }
+    const A = fs.readFileSync(path.join(refDir, e.key + 'a.png')).toString('base64');
+    const B = fs.readFileSync(path.join(refDir, e.key + 'b.png')).toString('base64');
+    row.size = meta[e.key + 'a'].size;
+    let r;
+    try {
+        r = await measureCase(page, { preset: e.name, size: row.size, lines: LINES, bands: BANDS },
+            { packVar: 'window.__pk', packName: path.basename(p.zip), refB64: A, refB: B, W, H, seed: 1 });
+    } catch (err) { row.status = 'harness error'; row.why = [err.message]; return; }
+    if (r.error) { row.status = 'CDPaint could not import it'; row.why = [r.error, ...(r.skipped || []).map(s => s.why)]; return; }
+    const km = (r.krita.ink + r.kk.ink) / 2;
+    if (!km) { row.status = 'Krita painted nothing'; row.ourInk = r.ours.ink; return; }
+    fs.writeFileSync(path.join(p.dir, e.key + '.png'), Buffer.from(r.png, 'base64'));
+    Object.assign(row, { status: 'scored', key: e.key, inkRatio: +(r.ours.ink / km).toFixed(3),
+        kSpread: +(Math.abs(r.krita.ink - r.kk.ink) / km).toFixed(3), soft: r.soft, kSoft: r.kk.soft,
+        iou: r.iou, why: e.random, warnings: (r.warnings[0] || {}).warnings || [] });
+    console.log(`  ${e.name.padEnd(46).slice(0, 46)} ink ${String(row.inkRatio).padEnd(6)} soft ${r.soft} (Krita ${r.kk.soft})`);
+}
+/* A random brush is close when its ink is within 10% (or twice Krita's own
+ * spread) and its blurred overlap with Krita comes within 0.05 of Krita's
+ * with itself; near within 25% and three quarters of that overlap. */
+const gradeRandom = r => {
+    const d = Math.abs(r.inkRatio - 1);
+    return d <= Math.max(0.1, 2 * r.kSpread) && r.soft >= r.kSoft - 0.05 ? 'close'
+        : d <= Math.max(0.25, 3 * r.kSpread) && r.soft >= 0.75 * r.kSoft ? 'near' : 'off';
+};
+
 fs.mkdirSync(RUN, { recursive: true });
 for (const p of packs) {
     p.dir = path.join(RUN, p.id);
@@ -97,9 +133,9 @@ await withPage(async (page) => {
         try { await scorePack(page, p); }
         catch (e) { console.log('  harness error: ' + e.message); results.push({ pack: p.id, status: 'harness error', why: [e.message] }); }
         // Packs not run this time keep their last results.
-        const file = path.join(RUN, 'results.json'), ids = new Set([p.id, ...results.map(r => r.pack)]);
+        const file = path.join(RUN, RANDOM ? 'results-random.json' : 'results.json'), ids = new Set([p.id, ...results.map(r => r.pack)]);
         const old = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).filter(r => !ids.has(r.pack)) : [];
-        fs.writeFileSync(file, JSON.stringify([...old, ...results], null, 1));
+        if (!only) fs.writeFileSync(file, JSON.stringify([...old, ...results], null, 1));
     }
 });
 
@@ -136,9 +172,9 @@ async function scorePack(page, p) {
                 return { name: pr.name, file: pr.file.split('/').pop(), engine: pr.paintop, random: why };
             }));
         })()`, { awaitPromise: true }));
-        const todo = list.filter(e => !e.random.length);
-        todo.forEach((e, i) => { e.key = 'p' + i; });
-        const refDir = path.join(p.dir, 'ref');
+        const todo = list.filter(e => RANDOM ? e.random.length : !e.random.length);
+        todo.forEach((e, i) => { e.key = (RANDOM ? 'r' : 'p') + i; });
+        const refDir = path.join(p.dir, RANDOM ? 'rref' : 'ref');
 
         if (argv.includes('--render') && !fs.existsSync(path.join(refDir, 'meta.json'))) {
             const res = path.join(p.dir, 'kres');
@@ -160,9 +196,11 @@ async function scorePack(page, p) {
         }
         const meta = fs.existsSync(path.join(refDir, 'meta.json')) ? JSON.parse(fs.readFileSync(path.join(refDir, 'meta.json'), 'utf8')) : null;
 
-        for (const e of list) {
+        for (const e of RANDOM ? todo : list) {
+            if (only && !only.test(e.name)) continue;
             const row = { pack: p.id, name: e.name, engine: e.engine };
             results.push(row);
+            if (RANDOM) { await scoreRandom(page, p, e, row, refDir, meta); continue; }
             if (e.random.length) { row.status = 'random'; row.why = e.random; continue; }
             if (!meta) { row.status = 'not rendered'; continue; }
             if (!meta[e.key + 'a']) { row.status = 'Krita could not load it'; continue; }
@@ -197,7 +235,7 @@ async function scorePack(page, p) {
 }
 
 const scored = results.filter(r => r.status === 'scored');
-const grade = r => r.iou >= 0.9 && r.inkRatio >= 0.9 && r.inkRatio <= 1.1 ? 'close'
+const grade = RANDOM ? gradeRandom : r => r.iou >= 0.9 && r.inkRatio >= 0.9 && r.inkRatio <= 1.1 ? 'close'
     : r.iou >= 0.75 && r.inkRatio >= 0.8 && r.inkRatio <= 1.25 ? 'near' : 'off';
 const tally = {};
 for (const r of results) {
@@ -206,5 +244,6 @@ for (const r of results) {
 }
 console.log('\n', tally);
 console.log('\nworst:');
-for (const r of scored.sort((a, b) => a.iou - b.iou).slice(0, 40))
-    console.log(`  ${r.pack.padEnd(18)} ${r.name.padEnd(46).slice(0, 46)} ${r.engine.padEnd(14)} ink ${String(r.inkRatio).padEnd(6)} IoU ${r.iou}  bands ${r.bandInk.join('/')}`);
+for (const r of scored.sort((a, b) => RANDOM ? a.soft / a.kSoft - b.soft / b.kSoft : a.iou - b.iou).slice(0, 40))
+    console.log(RANDOM ? `  ${r.pack.padEnd(18)} ${r.name.padEnd(46).slice(0, 46)} ${r.engine.padEnd(14)} ink ${String(r.inkRatio).padEnd(6)} (Krita +-${r.kSpread}) soft ${r.soft} / ${r.kSoft}  ${grade(r)}`
+        : `  ${r.pack.padEnd(18)} ${r.name.padEnd(46).slice(0, 46)} ${r.engine.padEnd(14)} ink ${String(r.inkRatio).padEnd(6)} IoU ${r.iou}  bands ${r.bandInk.join('/')}`);

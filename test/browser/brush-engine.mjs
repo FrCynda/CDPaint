@@ -999,6 +999,47 @@ await withPage(async (page) => {
     })()`));
     check("a grid's half-pixel tiles fill whole pixels from their truncated corners, over the brush's size",
         gtile.join('|') === '...|##.|##.|##.|...', JSON.stringify(gtile));
+    /* Krita's spray (spray_brush.cpp): dabs of particles thrown over a disc
+     * of the diameter, not a round dab. Starfield, Hearts and the rest used
+     * to paint as an ordinary brush (Starfield 98x Krita's ink). */
+    const spr = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 60, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
+            kspray: { tip: 0, aspect: 1, rot: 0, scale: 1, spacing: 0.5, jitter: 0, density: 0, count: 20, radial: 1, sd: 0.5,
+                shape: 0, w: 3, h: 3, prop: false, randomSize: false, fixedRot: 0, randomRot: 0, followCursor: 0, followDrawing: 0,
+                randomOpacity: false, perParticle: false } })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(40, 100, 1, '#000000');
+        for (let i = 41; i <= 140; i++) b.moveStroke(i, 100, 1, '#000000');
+        b.endStroke();
+        const d = __B.layer().ctx.getImageData(0, 0, 200, 200).data;
+        let band = 0, far = 0, out = 0;
+        for (let y = 0; y < 200; y++) for (let x = 0; x < 200; x++) {
+            if (d[(y * 200 + x) * 4 + 3] < 128) continue;
+            if (Math.hypot(Math.max(0, Math.max(40 - x, x - 140)), y - 100) > 32) out++;
+            else if (Math.abs(y - 100) > 15) far++; else band++;
+        }
+        return JSON.stringify({ band, far, out });
+    })()`));
+    check('a Krita spray throws specks over its diameter instead of laying a round line',
+        spr.band > 50 && spr.far > 50 && spr.band < 1500 && spr.out === 0, JSON.stringify(spr));
+    /* A Krita generated tip's density keeps each pixel by chance, fresh
+     * every dab (kis_brush_mask_scalar_applicator.h). Ignored, Chalk, Pencil
+     * 4B and Dry Marker (density 0.5) laid twice Krita's ink. */
+    const dens = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 30, hardness: 100, opacity: 100, flow: 100, spacing: 1000,
+            flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none', tipDensity: 0.5 })) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(100, 100, 1, '#000000');
+        b.endStroke();
+        const d = __B.layer().ctx.getImageData(90, 90, 20, 20).data;
+        let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 128) n++;
+        return n;
+    })()`));
+    check("a Krita tip's density keeps about that share of its pixels", dens > 120 && dens < 280, dens + ' of 400');
     /* Dabs fainter than a few 8-bit levels still add up in Krita
      * (test/krita/probes/addop: X1BB at pressure 0.5, dabs 2.8 levels deep,
      * stacked to 17 in Krita and 9 here). The stroke buffer rounded every

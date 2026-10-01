@@ -570,7 +570,8 @@
         /* These engines draw without a tip; a brush definition they still
          * carry is left over from the preset they were made from, and
          * pablocazorla's Shapes brushes name a tip no Krita ships. */
-        var noTip = /^(experimentbrush|deformbrush|curvebrush|particlebrush|gridbrush)$/.test(preset.paintop);
+        var noTip = /^(experimentbrush|deformbrush|curvebrush|particlebrush|gridbrush)$/.test(preset.paintop) ||
+            preset.paintop === 'spraybrush' && P['SprayShape/enabled'] !== 'false';
         if (mask) {
             // A generated tip: numbers all the way down, which is our own case.
             // Anything Krita does not read as "circle" is its rectangle (KisMaskGenerator::fromXML): EO Pixel Taper says "rct".
@@ -611,6 +612,9 @@
                 BrushPack.parseCurve('<curve>' + (mask.softness_curve || '') + '</curve>');
             if (sc0) { out.tipCurve = sc0; out.hardness = 0; out.falloff = 'krita-soft' + aa; }
             else if (gen === 'soft') out.hardness = Math.round(out.hardness * 0.3);
+            // see the engine's _noisyMask
+            if (_num(bd.density, 1) < 1) out.tipDensity = Math.max(0, _num(bd.density, 1));
+            if (_num(bd.randomness, 0) > 0) out.tipRandomness = Math.min(1, _num(bd.randomness, 0));
             if (_num(mask.spikes, 2) > 2) warn.push('a star-shaped tip became a plain one');
         } else if (bd.filename && !noTip) {
             out.shape = 'custom';
@@ -1260,6 +1264,40 @@
             // its own spacing, not a tip's (KisRoundMarkerOpOptionData)
             out.spacing = Math.max(1, Math.round(_num(P.spacing, 0.02) * 100));
             if (_bool(P.useAutoSpacing)) out.autoSpacing = _num(P.autoSpacingCoeff, 1);
+        } else if (preset.paintop === 'spraybrush') {
+            /* See _ksprayDab in the engine (kis_spray_paintop.cpp, spray_brush.cpp).
+             * Particles are shapes when SprayShape is on, the brush tip at its
+             * own size when it is off; our size is the spray's diameter, as
+             * Krita's is (KisSprayPaintOpSettings::setPaintOpSize). */
+            var sd = P['ShapeDynamics/enabled'] != null ? 'ShapeDynamics/' : 'SprayShape/',
+                sdOn = sd === 'SprayShape/' || _bool(P['ShapeDynamics/enabled']),
+                shapeOn = P['SprayShape/enabled'] !== 'false', D = Math.max(1, Math.round(_num(P['Spray/diameter'], 100))),
+                rt = P['Spray/radialDistributionType'] || (_bool(P['Spray/gaussianDistribution']) ? 'gaussian' : 'uniform');
+            out.kspray = {
+                tip: shapeOn ? 0 : out.size, aspect: _num(P['Spray/aspect'], 1), rot: _num(P['Spray/rotation'], 0) * Math.PI / 180, scale: _num(P['Spray/scale'], 1),
+                spacing: _num(P['Spray/spacing'], 0.5),
+                jitter: _bool(P['Spray/jitterMovement']) ? _num(P['Spray/jitterMoveAmount'], 1) : 0,
+                density: _bool(P['Spray/useDensity']) ? _num(P['Spray/coverage'], 0.1) / 100 : 0,
+                count: Math.max(0, _num(P['Spray/particleCount'], 12)),
+                // 0 uniform, 1 uniform over the area, 2 half-normal, 3 its polar spread
+                radial: (rt === 'gaussian' ? 2 : 0) + (P['Spray/radialDistributionCenterBiased'] === 'false' ? 1 : 0),
+                sd: Math.max(1e-3, _num(P['Spray/radialDistributionStdDeviation'], 0.5)),
+                shape: shapeOn ? Math.round(_num(P['SprayShape/shape'], 0)) : -1,
+                w: Math.round(_num(P['SprayShape/width'], 6)), h: Math.round(_num(P['SprayShape/height'], 6)),
+                prop: _bool(P['SprayShape/proportional']),
+                randomSize: sdOn && _bool(P[sd + 'randomSize']),
+                fixedRot: sdOn && _bool(P[sd + 'fixedRotation']) ? Math.round(_num(P[sd + 'fixedAngle'], 0)) * Math.PI / 180 : 0,
+                randomRot: sdOn && _bool(P[sd + 'randomRotation']) ? _num(P[sd + 'randomRotationWeight'], 0.5) : 0,
+                followCursor: sdOn && _bool(P[sd + 'followCursor']) ? _num(P[sd + 'followCursorWeigth'], 1) : 0,
+                followDrawing: sdOn && _bool(P[sd + 'followDrawingAngle']) ? _num(P[sd + 'followDrawingAngleWeigth'], 1) : 0,
+                randomOpacity: _bool(P['ColorOption/useRandomOpacity']), perParticle: _bool(P['ColorOption/colorPerParticle'])
+            };
+            out.size = D;
+            if (rt !== 'gaussian' && rt !== 'uniform') warn.push('dropped: its ' + rt + ' spray distribution, painted uniform');
+            if (P['Spray/angularDistributionType'] === 'curveBased') warn.push('dropped: its curved spray angles, painted uniform');
+            if (out.kspray.shape > 1) warn.push('dropped: its spray particle shape ' + out.kspray.shape + (out.kspray.shape === 4 ? ', which paints nothing' : ', painted as pixels'));
+            if (['fillBackground', 'mixBgColor', 'sampleInputColor', 'useRandomHSV'].some(function (k) { return _bool(P['ColorOption/' + k]); }))
+                warn.push('dropped: its spray colour options');
         } else if (preset.paintop && preset.paintop !== 'paintbrush') {
             warn.push('this is a ' + preset.paintop + ', which we paint as an ordinary brush');
         }

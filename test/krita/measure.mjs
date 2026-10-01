@@ -7,7 +7,7 @@
 // packVar: page expression holding the pack's bytes; packName its filename.
 // importExpr: page expression for any other import ({ ok, added: [name] }).
 // Imported presets are deleted again, so a long run never fills storage.
-export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false, seed = null, selfSeed = null }) {
+export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false, seed = null, selfSeed = null, refB = null }) {
     return JSON.parse(await page.eval(`(async () => {
         const app = PaintApp, b = app.brush, W = ${W}, H = ${H};
         const imp = ${importExpr || `await b.importBrushPack(${packVar}, ${JSON.stringify(packName)},
@@ -161,13 +161,22 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         };
         const softIou = (p, q) => { let lo = 0, hi = 0; for (let i = 0; i < W * H; i++) { lo += Math.min(p[i], q[i]); hi += Math.max(p[i], q[i]); } return +(lo / Math.max(1e-9, hi)).toFixed(3); };
         const bo = blur(ours), bk = blur(theirs);
+        /* refB: Krita's second render of a random brush -- how far Krita agrees
+         * with itself is the most we can ask of ours. */
+        let kk = null;
+        if (${refB != null}) {
+            const ib = new Image(); ib.src = 'data:image/png;base64,${refB || ''}'; await ib.decode();
+            const bc = new OffscreenCanvas(W, H), bx = bc.getContext('2d'); bx.drawImage(ib, 0, 0);
+            const tb = bx.getImageData(0, 0, W, H).data;
+            kk = { soft: softIou(bk, blur(tb)), ink: stat(tb).ink };
+        }
         const so = stat(ours), sk = stat(theirs);
         return JSON.stringify({ png: btoa(s), ours: so, krita: sk,
             inkRatio: +(so.ink / Math.max(1, sk.ink)).toFixed(3),
             bandInk: so.bands.map((v, i) => +(v / Math.max(1, sk.bands[i])).toFixed(3)),
             meanDiff: +(diff / Math.max(1, n)).toFixed(1), maxDiff: maxd,
             iou: +(both / Math.max(1, either)).toFixed(3), soft: softIou(bo, bk),
-            self: self ? softIou(bo, blur(self)) : null,
+            self: self ? softIou(bo, blur(self)) : null, kk,
             warnings: imp.notes || [],
             // What the import actually produced, long strings (tip data) cut.
             params });

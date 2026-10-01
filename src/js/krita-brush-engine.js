@@ -1484,6 +1484,100 @@
             _paintDab(_flowCtx, ix, iy, _gridMask, color, _clamp(p.flow / 100, 0, 1), 0);
         }
     }
+    /* Krita's spray (kis_spray_paintop.cpp, spray_brush.cpp). Every
+     * diameter/2 * spacing px of the stroke -- the size sensor plays no part
+     * in it -- a dab of particles thrown over a disc of the diameter times
+     * the size sensor, stretched by Spray/scale and squashed by its aspect.
+     * Each is a shape (SprayShape on) or the brush tip at its own size,
+     * either times a random scale; all of a dab's particles pile up over
+     * each other and the pile is laid down as one dab. A random opacity is
+     * the particle's colour AND its painter's, so it lands squared. Shares
+     * the grid's stepping state: no brush is both.
+     * ponytail: positions come from our position hash, not Krita's random
+     * source -- same spread, other specks. No colour options, curve or
+     * cluster distributions, wu-particles (painted as pixels) or images. */
+    var _ksBuf = new Float32Array(6 * 256), _ksCanvas = null, _ksCtx = null;
+    function _ksprayDab(p, x, y, color, sc, hard, asp, strokeAngle) {
+        var K = p.kspray, D = _max(1, p.size), st = _gridSt;
+        var step = D / 2 > 1 ? _max(0.5, D / 2 * K.spacing) : 1;
+        if (!st) { _gridSt = { x: x, y: y, acc: 0, next: step }; _ksprayAt(p, x, y, color, sc, hard, asp, strokeAngle, D); return; }
+        var d = Math.hypot(x - st.x, y - st.y);
+        while (d > 0 && st.acc + d > st.next + 1e-6) {
+            var t = (st.next - st.acc) / d;
+            _ksprayAt(p, st.x + (x - st.x) * t, st.y + (y - st.y) * t, color, sc, hard, asp, strokeAngle, D);
+            st.next += step;
+        }
+        st.acc += d; st.x = x; st.y = y;
+    }
+    function _ksprayAt(p, x, y, color, sc, hard, asp, strokeAngle, D) {
+        var K = p.kspray, k = 101, R = D / 2 * _dyn(p, 'size', 1, sc, 1);
+        if (K.jitter) {
+            x += (2 * R * _dabRand(x, y, 99) - R) * K.jitter;
+            y += (2 * R * _dabRand(x, y, 100) - R) * K.jitter;
+        }
+        var n = _min(20000, ~~(K.density ? K.density * _PI * R * R : K.count));
+        if (!n) return;
+        if (_ksBuf.length < n * 6) _ksBuf = new Float32Array(n * 6);
+        var B = _ksBuf, ra = K.rot - (_dynAngle(p, p.angle || 0, sc) - (p.angle || 0)) * _PI / 180,
+            mc = _cos(ra) * K.scale, ms = _sin(ra) * K.scale, da = (strokeAngle || 0) * _PI / 180,
+            ew = K.prop ? _round(K.w * D * K.scale / 100) : K.w, eh = K.prop ? _round(K.h * D * K.scale / 100) : K.h,
+            x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, al = 1;
+        for (var i = 0; i < n; i++) {
+            var ang = _dabRand(x, y, k++) * 2 * _PI, u = _dabRand(x, y, k++), len;
+            if (K.radial === 0) len = u;
+            else if (K.radial === 1) len = Math.sqrt(u);
+            else {
+                // a half-normal (Box-Muller) and its polar form, a Rayleigh, both cut at 5 sd
+                len = K.radial === 2 ? Math.abs(K.sd * Math.sqrt(-2 * Math.log(1 - u)) * _cos(2 * _PI * _dabRand(x, y, k++)))
+                    : K.sd * Math.sqrt(-2 * Math.log(1 - u));
+                len = _min(len, 5 * K.sd);
+            }
+            var rz = K.fixedRot, ps = 1;
+            if (K.randomRot) rz += (2 * _PI * _dabRand(x, y, k++) - rz) * K.randomRot;
+            if (K.followCursor) rz += (ang - rz) * K.followCursor;
+            if (K.followDrawing) rz += (da - rz) * K.followDrawing;
+            if (K.randomSize) ps = _dabRand(x, y, k++);
+            if (K.randomOpacity && (K.perParticle || !i)) { al = _dabRand(x, y, k++); al *= al; }
+            var nx = R * _cos(ang) * len, ny = R * _sin(ang) * len * K.aspect,
+                px = x + nx * mc - ny * ms, py = y + nx * ms + ny * mc;
+            var a = K.shape < 0 ? K.tip * ps : _max(1, ew * ps), b = K.shape < 0 ? a : _max(1, eh * ps),
+                m = (K.shape < 0 ? 0.75 * a : 0.71 * _max(a, b)) + 2;
+            B[i * 6] = px; B[i * 6 + 1] = py; B[i * 6 + 2] = a; B[i * 6 + 3] = b; B[i * 6 + 4] = rz; B[i * 6 + 5] = al;
+            if (px - m < x0) x0 = px - m; if (px + m > x1) x1 = px + m;
+            if (py - m < y0) y0 = py - m; if (py + m > y1) y1 = py + m;
+        }
+        x0 = _floor(x0); y0 = _floor(y0);
+        var w = _ceil(x1 - x0), h = _ceil(y1 - y0);
+        if (!_ksCanvas) { _ksCanvas = new OffscreenCanvas(w, h); _ksCtx = _ksCanvas.getContext('2d'); }
+        if (_ksCanvas.width !== w || _ksCanvas.height !== h) { _ksCanvas.width = w; _ksCanvas.height = h; }
+        else _ksCtx.clearRect(0, 0, w, h);
+        var g = _ksCtx;
+        g.fillStyle = '#fff';
+        for (i = 0; i < n; i++) {
+            px = B[i * 6] - x0; py = B[i * 6 + 1] - y0; a = B[i * 6 + 2]; b = B[i * 6 + 3]; rz = B[i * 6 + 4];
+            g.globalAlpha = B[i * 6 + 5];
+            if (K.shape < 0) {
+                if (a < 0.05) continue;
+                if (p.shape === 'custom') _pickTipCell(p, B[i * 6], B[i * 6 + 1]);
+                var mk = _maskFor(p.shape, a, hard, (p.angle || 0) - rz * 180 / _PI, asp, B[i * 6], B[i * 6 + 1]);
+                if (mk && (p.tipDensity < 1 || p.tipRandomness)) mk = _noisyMask(mk, B[i * 6], B[i * 6 + 1], p);
+                if (mk) g.drawImage(mk, px - (mk._cx != null ? mk._cx : mk.width / 2), py - (mk._cy != null ? mk._cy : mk.height / 2));
+            } else if (K.shape === 0) {
+                g.beginPath();
+                // equal sizes are Krita's circle, which ignores the particle's turn
+                g.ellipse(px, py, a / 2, (ew === eh ? a : b) / 2, ew === eh ? 0 : rz, 0, 2 * _PI);
+                g.fill();
+            } else if (K.shape === 1) {
+                g.setTransform(_cos(rz), _sin(rz), -_sin(rz), _cos(rz), px, py);
+                g.fillRect(-_round(a) / 2, -_round(b) / 2, _round(a), _round(b));
+                g.setTransform(1, 0, 0, 1, 0, 0);
+            } else if (K.shape < 4) g.fillRect(_round(px), _round(py), 1, 1);
+        }
+        g.globalAlpha = 1;
+        _ksCanvas._cx = x - x0; _ksCanvas._cy = y - y0;
+        _tintMask = null;   // the same canvas, redrawn
+        _paintDab(_flowCtx, x, y, _ksCanvas, color, _clamp(_dyn(p, 'flow', p.flow / 100, sc, 4), 0, 1), 0);
+    }
     function _applyKritaTexture(ctx, w, h, ox, oy, s, p) {
         var t = _kritaTexMask(p);
         if (!t) return false;
@@ -3462,6 +3556,7 @@
             var af = _max(0.01, _dyn(p, 'aspectRatio', 1, sc, 7));
             asp = _clamp(p.aspectThinsWidth ? asp * af : asp / af, 0.1, 20);
         }
+        if (p.kspray) { _ksprayDab(p, x, y, finalColor, sc, hard, asp, strokeAngle); return; }
         var tex = _clamp(_dyn(p, 'texture', p.texture, sc, 8), 0, 100);
         var scatterAmt = _dyn(p, 'scatter', p.scatter, sc, 5);
         /* The stroke's own frame. strokeAngle arrives in DEGREES -- every
@@ -3540,6 +3635,7 @@
             }
             if (p.shape === 'custom') _pickTipCell(p, dx, dy);
             var mask = _maskFor(p.shape, dsz, hard, dang, asp, dx, dy);
+            if (p.tipDensity < 1 || p.tipRandomness) mask = _noisyMask(mask, dx, dy, p);
 
             // Per-dab alpha. Both sensors now read the real pressure; the
             // taper is applied on top of whatever they produce, not smuggled
@@ -3743,6 +3839,31 @@
      * and a sixteenth left Line Marker's 1px line at IoU 0.72 where
      * exact is 0.98. Big ones cannot see the difference.
      * Krita-imported tips only (see below). */
+    /* A Krita generated tip's randomness and density, fresh every dab
+     * (kis_brush_mask_scalar_applicator.h): each pixel's alpha times
+     * 1 - r + r * u, then a pixel it leaves visible kept with chance density.
+     * Chalk, Pencil 4B and Dry Marker are density 0.5 and laid twice Krita's
+     * ink without it. Returns one shared canvas, so it drops the caches
+     * keyed on the mask object. */
+    var _nzCanvas = null, _nzCtx = null;
+    function _noisyMask(mask, x, y, p) {
+        var w = mask.width, h = mask.height, r = p.tipRandomness, dn = p.tipDensity;
+        if (!_nzCanvas) { _nzCanvas = new OffscreenCanvas(w, h); _nzCtx = _nzCanvas.getContext('2d', { willReadFrequently: true }); }
+        if (_nzCanvas.width !== w || _nzCanvas.height !== h) { _nzCanvas.width = w; _nzCanvas.height = h; }
+        else _nzCtx.clearRect(0, 0, w, h);
+        _nzCtx.drawImage(mask, 0, 0);
+        var img = _nzCtx.getImageData(0, 0, w, h), d = img.data;
+        var s = (_dabRand(x, y, 7) * 4294967296) >>> 0 || 1;
+        for (var i = 3; i < d.length; i += 4) {
+            if (!d[i]) continue;
+            if (r) { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; d[i] = ~~(d[i] * (1 - r + r * (s >>> 0) / 4294967296)); }
+            if (dn < 1 && d[i]) { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; if (dn < (s >>> 0) / 4294967296) d[i] = 0; }
+        }
+        _nzCtx.putImageData(img, 0, 0);
+        _nzCanvas._cx = mask._cx; _nzCanvas._cy = mask._cy;
+        _tintMask = null; _smMaskA.delete(_nzCanvas);
+        return _nzCanvas;
+    }
     function _maskFor(shape, sz, hardness, angleDeg, aspect, x, y) {
         var mask;
         if (shape === 'custom' && _tipCanvas()) {
@@ -5449,6 +5570,8 @@
         hatch: null,         // Krita's hatching brush: see _applyHatch
         pixelSteps: false,   // GIMP's sub-pixel spacing: one dab per pixel; see _stepFor
         grid: null,          // Krita's grid brush: see _gridDab
+        kspray: null,        // Krita's spray brush: see _ksprayDab
+        tipDensity: 1, tipRandomness: 0,   // a Krita generated tip's: see _noisyMask
         particle: null,      // Krita's particle brush: see _paintParticle
         hairy: null,         // Krita's hairy brush: see _paintHairy
         mypaint: null,       // a MyPaint brush's own settings: see _paintMyPaint
