@@ -1040,6 +1040,72 @@ await withPage(async (page) => {
         return n;
     })()`));
     check("a Krita tip's density keeps about that share of its pixels", dens > 120 && dens < 280, dens + ' of 400');
+    /* Clip Studio's continuous spray lays a dab at every pen report the
+     * spacing did not reach (cdp-csp pcp: size 40 at 150%, 70 reports over
+     * 800px, solid on and a dot every 60px off). Its sprays scatter each
+     * particle over the brush's patch whatever the particle's own random
+     * size (psz: 0-20px specks spread evenly over a 300 patch, where small
+     * ones bunched on the line). A ribbon of pictures picked at random lays
+     * each at its own length (Book's stood in clumps with gaps). */
+    const csp = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, out = {};
+        const base = { flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none', hardness: 100, opacity: 100, flow: 100 };
+        const run = (params, dy) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            for (const [k, v] of Object.entries(Object.assign({}, base, params))) b.setParam(k, v);
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(40, 100, 1, '#000000');
+            for (let x = 40 + dy; x <= 160; x += dy) b.moveStroke(x, 100, 1, '#000000');
+            b.endStroke();
+            return __B.layer().ctx.getImageData(0, 0, 200, 200).data;
+        };
+        const runs = (d) => { let n = 0; for (let x = 1; x < 200; x++) if (d[(100 * 200 + x) * 4 + 3] > 128 && !(d[(100 * 200 + x - 1) * 4 + 3] > 128)) n++; return n; };
+        out.each = runs(run({ size: 6, spacing: 1000, dabEachReport: true }, 10));
+        out.plain = runs(run({ size: 6, spacing: 1000 }, 10));
+        b._setStrokeSeed(7);
+        const d = run({ size: 4, spacing: 5, sprayEach: true, scatter: 1000, scatterAxis: 'disk', dabCount: 4,
+            sizeSrc: 'random', sizeMin: 0, sizeCurve: [[0, 0], [1, 1]] }, 1);
+        let tiny = 0;
+        for (let y = 0; y < 200; y++) for (let x = 2; x < 198; x++) {
+            if (Math.abs(y - 100) < 25 || !(d[(y * 200 + x) * 4 + 3] > 10)) continue;
+            let m = 0; for (let v = -2; v <= 2; v++) for (let u = -2; u <= 2; u++) if (y + v >= 0 && y + v < 200 && d[((y + v) * 200 + x + u) * 4 + 3] > 10) m++;
+            if (m <= 3) tiny++;
+        }
+        out.tinyFar = tiny;
+        const s = document.createElement('canvas'); s.width = 128; s.height = 64;
+        const g = s.getContext('2d'); g.fillRect(0, 0, 64, 64); g.fillRect(80, 0, 32, 64);   // a whole slot, and a half one centred
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        b.setParam('tipCells', 2);   // before the picture loads: it is cut into cells then
+        b.loadCustomTip(s.toDataURL('image/png'), null);
+        await new Promise(r => setTimeout(r, 400));
+        const gaps = {};
+        for (const lens of [null, [1, 0.5]]) {
+            for (const [k, v] of Object.entries(Object.assign({}, base, { size: 10, tipPick: 'random', spacing: 100,
+                spacingIsotropic: false, autoSpacing: 0, ribbonLens: lens }))) b.setParam(k, v);
+            b._setStrokeSeed(3);
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(10, 100, 1, '#000000');
+            for (let x = 12; x <= 190; x += 2) b.moveStroke(x, 100, 1, '#000000');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 200));
+            const r = __B.layer().ctx.getImageData(0, 100, 200, 1).data;
+            let first = -1, last = -1, n = 0;
+            for (let x = 0; x < 200; x++) if (r[x * 4 + 3] > 128) { if (first < 0) first = x; last = x; }
+            for (let x = first; x < last; x++) if (!(r[x * 4 + 3] > 128)) n++;
+            gaps[lens ? 'own' : 'slot'] = n;
+        }
+        out.gaps = gaps;
+        b._setStrokeSeed(null);
+        ['tipCells', 'tipPick', 'spacing', 'spacingIsotropic', 'autoSpacing', 'ribbonLens'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check("Clip Studio's continuous spray lays a dab at every pen report its spacing skips",
+        csp.each >= 10 && csp.plain <= 3, JSON.stringify(csp));
+    check("a Clip Studio spray throws its tiniest particles to the edge of the patch",
+        csp.tinyFar > 12, JSON.stringify(csp));
+    check("a Clip Studio ribbon of pictures at random lays each at its own length, end to end",
+        csp.gaps.own <= 2 && csp.gaps.slot > 5, JSON.stringify(csp.gaps));
     /* Dabs fainter than a few 8-bit levels still add up in Krita
      * (test/krita/probes/addop: X1BB at pressure 0.5, dabs 2.8 levels deep,
      * stacked to 17 in Krita and 9 here). The stroke buffer rounded every

@@ -7,7 +7,7 @@
 // packVar: page expression holding the pack's bytes; packName its filename.
 // importExpr: page expression for any other import ({ ok, added: [name] }).
 // Imported presets are deleted again, so a long run never fills storage.
-export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false, seed = null, selfSeed = null, refB = null }) {
+export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false, seed = null, selfSeed = null, refB = null, moves = 0 }) {
     return JSON.parse(await page.eval(`(async () => {
         const app = PaintApp, b = app.brush, W = ${W}, H = ${H};
         const imp = ${importExpr || `await b.importBrushPack(${packVar}, ${JSON.stringify(packName)},
@@ -52,7 +52,8 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         // (test/krita/probes/sketch), so it gets the same here.
         const oneSeg = /^(sketch|curve|particle|hairy)$/.test(b.getParams().engineKind);
         for (const [x0, y0, p0, x1, y1, p1] of ${JSON.stringify(c.lines)}) {
-            const n = oneSeg ? 1 : Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0)));
+            // moves: how many reports the reference program got (Clip Studio's drag posts 70)
+            const n = oneSeg ? 1 : ${moves} || Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0)));
             /* Node.paintLine starts from a blank KisSpacingInformation, whose
              * spacing 0 is floored to MIN_DISTANCE_SPACING: Krita's first dab
              * lands half a pixel along the line, not on its start (every

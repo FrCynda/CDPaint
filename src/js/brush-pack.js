@@ -1655,6 +1655,15 @@
                 var ac = opts.crop === 'h' ? 'h' : 'w', top = 0;
                 cells.forEach(function (c) { top = Math.max(top, c[ac]); });
                 cells = cells.map(function (c) { return c[ac] === top ? c : _scaleCell(c, top / c[ac]); });
+                /* At random, each picture still takes its own length: Book's
+                 * stand end to end in Clip Studio, where spaced by the
+                 * longest they stood in clumps with gaps between. */
+                var lens = null;
+                if (opts.join !== 0 && opts.join !== 1 && !opts.stack && cells.length > 1) {
+                    var al = ac === 'h' ? 'w' : 'h', ml = 0;
+                    cells.forEach(function (c) { ml = Math.max(ml, c[al]); });
+                    lens = cells.map(function (c) { return c[al] / ml; });
+                }
                 /* A second ribbon in normal mode is drawn over the first, not
                  * through it: Zipper's upper row of teeth is its second
                  * picture (one row with the second brush off in Clip Studio),
@@ -1748,7 +1757,7 @@
             var st2 = _strip(cells);
             if (exact) { st2.w = exact[0]; st2.h = exact[1]; }
             return { url: st2.url, size: st2.size, w: st2.w, h: st2.h, whole: whole,
-                     cells: cells.length, pick: pick, params: shaded || own ? { tipMode: 'color' } : _paper(cells) };
+                     cells: cells.length, pick: pick, lens: opts && opts.crop && pick === 'random' && lens || null, params: shaded || own ? { tipMode: 'color' } : _paper(cells) };
         });
     };
 
@@ -3594,6 +3603,7 @@
          * stroke, and a spray of 6px specks at 8% laid 775 over 800px --
          * one a pixel, where 0.48px would lay 1667. */
         out.minStep = 1;
+        if (_sutNum(v.BrushContinuousPlot, 0)) out.dabEachReport = true;   // see the engine's _each
         var ivt = _sutNum(v.BrushAutoIntervalType, 0);
         /* ...and a fixed interval is a share of the size whatever the tip's
          * shape: Droplet's 200x300 picture at size 20 and 300% lays a speck

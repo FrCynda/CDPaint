@@ -2542,7 +2542,7 @@
             dy += _sin(dir) * oa + _cos(dir) * oc;
         }
         if (scatterAmt > 0) {
-            var scatterDist = (scatterAmt / 100) * sz * (p.scatterAxis === 'disk'
+            var scatterDist = (scatterAmt / 100) * (p.sprayEach ? p.size : sz) * (p.scatterAxis === 'disk'
                 ? _diskR(p.sprayBias, _dabRand(sc.x, sc.y, 2)) : _dabRand(sc.x, sc.y, 2) * 2 - 1);
             var ax = p.scatterAxis;
             var scatterAngle = (ax === 'along' || ax === 'across')
@@ -3591,7 +3591,10 @@
                 var slot = di * 31;
                 var scatterDist = (scatterAmt / 100) * sz * (_dabRand(x, y, 2 + slot) * 2 - 1);
                 // 'disk': even over the whole patch, as Clip Studio sprays (its Spray's band is a semicircle across)
-                if (p.scatterAxis === 'disk') scatterDist = (scatterAmt / 100) * sz * _diskR(p.sprayBias, _dabRand(x, y, 2 + slot));
+                /* ...over the brush's patch, not the particle's: a random-size
+                 * particle lands anywhere in it whatever its size (Clip
+                 * Studio's 0-20px specks over a 300 patch, cdp-csp psz). */
+                if (p.scatterAxis === 'disk') scatterDist = (scatterAmt / 100) * (p.sprayEach ? p.size * tfSize : sz) * _diskR(p.sprayBias, _dabRand(x, y, 2 + slot));
                 /* Krita can scatter along ONE axis, and its axes are the
                  * stroke's own: along the line or across it. Spreading a
                  * one-axis preset in both directions turned a rake's clean
@@ -4815,6 +4818,7 @@
             _pxOff = pxLine ? [_ceil(prev.x - 0.5) - prev.x, _ceil(prev.y - 0.5) - prev.y] : null;
             _renderDab(prev.x + (_pxOff ? _pxOff[0] : 0), prev.y + (_pxOff ? _pxOff[1] : 0), _tp, colorHex, _firstAngle,
                 prev.pressure || 0.5, _tf0);
+            if (p.ribbonLens) step *= _ribbonStep(p);
             _fan = { a: p.originAngle ? _atan2(prev.y, prev.x) * 180 / _PI : (_firstAngle || 0), x: prev.x, y: prev.y, p: _tp };
         }
 
@@ -4861,6 +4865,14 @@
             var remaining = nextDist - _lastDabDist;
 
             var _eps = pxLine ? 1e-6 : 0;   // a pixel line reaches its end pixel
+            /* Clip Studio's continuous spray: a pen report that no dab
+             * reached gets one of its own, so a wide spacing still lays a
+             * dab a report (size 40 at 150%: one every 60px off, one every
+             * 11.4px on, over 70 reports in 800px; at 6px and 150% the
+             * spacing reaches every report and nothing is added). */
+            var _each = p.dabEachReport && remaining > 0 && remaining < step - _eps && !(_paintDeadline > 0 && _dabsThisPass > 0 &&
+                performance.now() >= _paintDeadline);
+            if (_each) { _lastDabDist = nextDist - step; remaining = step; }
             if (remaining >= step - _eps) {
                 var segStartDist = (points[segIdx].dist != null) ? points[segIdx].dist : (nextDist - segLen);
                 while (remaining >= step - _eps) {
@@ -4901,6 +4913,7 @@
                     _lastDabDist = dabDist;
                     _dabsThisPass++;
                     step = _stepFor(_rawPressure, ptx, pty, segAngle);
+                    if (p.ribbonLens) step *= _ribbonStep(p);
                     remaining = nextDist - _lastDabDist;
                 }
             }
@@ -5023,8 +5036,17 @@
     /* A mirror flips each dab at random whatever the order (_sliceCells puts
      * each picture's m flips after it): Pastel's one picture in Clip Studio
      * lands flipped at random, where cycling its flips laid them in turn. */
+    /* Pictures laid end to end, each at its own length: the step from this
+     * one's centre to the next's is half of each, as shares of the longest. */
+    function _ribbonStep(p) {
+        var c = _tipCells(), n = c ? c.length : 1, L = p.ribbonLens, k = n / L.length;
+        if (n < 2 || k % 1) return 1;
+        return ((L[(_tipCell / k) | 0] || 1) + (L[(_tipCellAt(p, _tipCycle, n, 0, 0) / k) | 0] || 1)) / 2;
+    }
     function _tipCellAt(p, t, n, x, y) {
         var m = p.tipMirror === 'both' ? 4 : p.tipMirror ? 2 : 1;
+        // a ribbon of pictures of their own lengths picks by count, so the next is known (_ribbonStep)
+        if (p.ribbonLens && p.tipPick !== 'cycle' && p.tipPick !== 'pingpong') return _min(n - 1, _floor(_dabRand(t, 0, 23) * n));
         if ((p.tipPick !== 'cycle' && p.tipPick !== 'pingpong') || n % m) return _min(n - 1, _floor(_dabRand(x, y, 23) * n));
         var f = _min(m - 1, _floor(_dabRand(x, y, 29) * m));
         n /= m;
@@ -5548,6 +5570,7 @@
         scatterAxis: 'both',
         sprayEach: false,        // Clip Studio sprays: each particle sized on its own, stops spaced by the plain size
         ribbonClip: false,       // Clip Studio ribbons: the last picture is cut off where the pen stops
+        ribbonLens: null,        // ...and its pictures' own lengths, when picked at random (_ribbonStep)
         /* Several dabs at every stop, and where each one lands relative to
          * the cursor -- both measured in the stroke's own frame. */
         dabCount: 1,
@@ -5677,6 +5700,7 @@
         spacingSrc: 'none',      spacingMin: 0,    spacingCurve: 1,
         softnessSrc: 'none',     softnessMin: 0,   softnessCurve: 1, softnessStrength: null,
         spacingStrength: null, sizeStrength: null,
+        dabEachReport: false,
         dabCountSrc: 'none',     dabCountMin: 0,   dabCountCurve: 1,
         offsetSrc: 'none',       offsetMin: 0,     offsetCurve: 1,
         /* How far the two stroke-position sensors reach: dabs for fade, the
@@ -9348,6 +9372,7 @@
                 ps._tipUrl = _tipStash(tip.url);
                 // a long ribbon cut into pieces is laid in turn, whatever its order (tipStrip)
                 if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = tip.pick === 'cycle' ? 'cycle' : ps.tipPick || tip.pick; }
+                if (tip.lens && ps.ribbonClip) ps.ribbonLens = tip.lens;
                 if (tip.params && tip.params.tipMode) ps.tipMode = tip.params.tipMode;
             }
             if (tip2 && tip2.url.length <= TIP_CAP) ps._tip2Url = _tipStash(tip2.url);
