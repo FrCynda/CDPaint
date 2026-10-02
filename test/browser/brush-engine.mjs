@@ -1094,6 +1094,19 @@ await withPage(async (page) => {
             for (let x = first; x < last; x++) if (!(r[x * 4 + 3] > 128)) n++;
             gaps[lens ? 'own' : 'slot'] = n;
         }
+        /* Glitter's lightening second brush (mode 2) is laid over the
+         * finished first, so its sparkles stay lit all along the stroke;
+         * laid in turn, each next report's dabs covered the last ones'. */
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        b.PRESETS[b._currentPreset].second = { op: 'destination-out', p: { size: 4, spacing: 300, hardness: 100, flowSrc: 'none', sizeSrc: 'none', cutByLight: true } };
+        for (const [k, v] of Object.entries(Object.assign({}, base, { size: 30, spacing: 5 }))) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(40, 100, 1, '#ffffff');
+        for (let x = 50; x <= 160; x += 10) b.moveStroke(x, 100, 1, '#ffffff');
+        b.endStroke();
+        delete b.PRESETS[b._currentPreset].second;
+        const lit = __B.layer().ctx.getImageData(50, 100, 90, 1).data;
+        out.lit = 0; for (let x = 0; x < 90; x++) if (lit[x * 4 + 3] < 128) out.lit++;
         out.gaps = gaps;
         b._setStrokeSeed(null);
         ['tipCells', 'tipPick', 'spacing', 'spacingIsotropic', 'autoSpacing', 'ribbonLens'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
@@ -1106,6 +1119,8 @@ await withPage(async (page) => {
         csp.tinyFar > 12, JSON.stringify(csp));
     check("a Clip Studio ribbon of pictures at random lays each at its own length, end to end",
         csp.gaps.own <= 2 && csp.gaps.slot > 5, JSON.stringify(csp.gaps));
+    check("Clip Studio's lightening second brush lights the whole stroke, not just its last stretch",
+        csp.lit > 10, 'lit ' + csp.lit);
     /* Dabs fainter than a few 8-bit levels still add up in Krita
      * (test/krita/probes/addop: X1BB at pressure 0.5, dabs 2.8 levels deep,
      * stacked to 17 in Krita and 9 here). The stroke buffer rounded every

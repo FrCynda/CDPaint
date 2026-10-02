@@ -6412,8 +6412,14 @@
                 _subCtx = _subCanvas.getContext('2d', { willReadFrequently: true });
             } else _subCtx.clearRect(0, 0, _subCanvas.width, _subCanvas.height);
         }
+        /* ...except mode 2's lightening second brush, laid over the finished
+         * first: Glitter's last dab carries the sparkles of the whole patch
+         * behind it (39% of it lit; in turn left 4%), where one click on
+         * its own gets its 2 (cdp-csp/pgl, pgc). */
+        var after = sec.p.cutByLight;
+        for (var pass = 0; pass < (after ? 2 : 1); pass++)
         for (var i = 0; i < _max(1, n - 1); i++) {
-            for (var w = 0; w < 2; w++) {
+            for (var w = after ? pass : 0; w < (after ? pass + 1 : 2); w++) {
                 if (w) { st = _swapState(st); if (_subOn) _flowCtx = _subCtx; else _flowCtx.globalCompositeOperation = sec.op; }
                 try {
                     if (n === 1) _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, color);
