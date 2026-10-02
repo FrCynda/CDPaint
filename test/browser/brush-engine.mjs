@@ -1107,6 +1107,22 @@ await withPage(async (page) => {
         delete b.PRESETS[b._currentPreset].second;
         const lit = __B.layer().ctx.getImageData(50, 100, 90, 1).data;
         out.lit = 0; for (let x = 0; x < 90; x++) if (lit[x * 4 + 3] < 128) out.lit++;
+        /* A preset's sub colour mix may be random (Generic Flower BG), and
+         * with a random opacity too each dab keeps its own colour: the
+         * opacity's buffer used to paint the whole stroke the last dab's. */
+        b.PRESETS.__mixTest = { size: 10, hardness: 100, opacity: 100, flow: 100, spacing: 400, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
+            dabOpacitySrc: 'random', dabOpacityMin: 100, subMix: 80, subMixSrc: 'random', subMixMin: 0, subMixCurve: [[0, 0], [1, 1]] };
+        b.loadPreset('__mixTest');
+        b._setStrokeSeed(5);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(20, 100, 1, '#000000');
+        for (let x = 30; x <= 180; x += 10) b.moveStroke(x, 100, 1, '#000000');
+        b.endStroke();
+        b._setStrokeSeed(null);
+        delete b.PRESETS.__mixTest;
+        const greys = new Set();
+        for (let x = 20; x <= 180; x += 40) greys.add(__B.layer().ctx.getImageData(x, 100, 1, 1).data[0] >> 3);
+        out.greys = greys.size;
         out.gaps = gaps;
         b._setStrokeSeed(null);
         ['tipCells', 'tipPick', 'spacing', 'spacingIsotropic', 'autoSpacing', 'ribbonLens'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
@@ -1121,6 +1137,8 @@ await withPage(async (page) => {
         csp.gaps.own <= 2 && csp.gaps.slot > 5, JSON.stringify(csp.gaps));
     check("Clip Studio's lightening second brush lights the whole stroke, not just its last stretch",
         csp.lit > 10, 'lit ' + csp.lit);
+    check("a Clip Studio sub colour mix at random gives each dab its own grey, random opacity or not",
+        csp.greys >= 3, 'greys ' + csp.greys);
     /* Dabs fainter than a few 8-bit levels still add up in Krita
      * (test/krita/probes/addop: X1BB at pressure 0.5, dabs 2.8 levels deep,
      * stacked to 17 in Krita and 9 here). The stroke buffer rounded every

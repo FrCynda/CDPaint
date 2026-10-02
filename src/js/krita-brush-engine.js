@@ -689,8 +689,13 @@
      * buffer. With o = 1 throughout this equals plain source-over, which is
      * why only presets with a per-dab opacity sensor take this path.
      *
-     * ponytail: one colour per stroke (the last dab's); colour jitter or
-     * smudge on such a preset would flatten.
+     * A stroke whose colour changes (a jitter, Clip Studio's sub colour
+     * mix) keeps its colours beside it in _adCol, each dab laid over the
+     * last at its own alpha -- Generic Flower BG's flowers went out at one
+     * grey, the last one's. Started the first time a dab's colour differs,
+     * so a one-colour stroke pays nothing.
+     * ponytail: a colour picture tip's own shading is flattened to its
+     * colour here; smudge on such a preset would too.
      *
      * Falling pressure: Krita caps the dab at the stroke's running opacity
      * instead, which jumps up with the dab's and eases a tenth of the way
@@ -698,6 +703,7 @@
      * stroke). Its alpha darken then reads a + (avg - a) * mask * flow * o/avg,
      * the same lighten at grey avg, the dab thinned by o/avg. */
     var _adCanvas = null, _adCtx = null, _adO = 1, _adAvg = 0, _adColor = '#000000';
+    var _adCol = null, _adColCtx = null, _adColOn = 0;   // 0 no dab yet, 1 one colour, 2 colours in _adCol
     function _alphaDarken(p) {
         return !!((p.dabOpacitySrc && p.dabOpacitySrc !== 'none') || p.dabOpacitySensors || p.maskOp || p.hatch)
             && p.engineKind !== 'shape' && p.engineKind !== 'deform';
@@ -823,9 +829,11 @@
         var img = _adCtx.getImageData(x, y, w, h), d = img.data, c = _hexToRgb(_adColor);
         var op = getParams().maskOp;
         var m = op && _mkCtx ? _mkCtx.getImageData(x, y, w, h).data : null;
+        var col = _adColOn === 2 ? _adColCtx.getImageData(x, y, w, h).data : null;
         for (var i = 0; i < d.length; i += 4) {
             d[i + 3] = !m ? d[i] : op === 'add' ? (d[i] ? _min(255, d[i] + m[i]) : 0) : _max(0, d[i] - m[i]);
-            d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2];
+            if (col) { d[i] = col[i]; d[i + 1] = col[i + 1]; d[i + 2] = col[i + 2]; }
+            else { d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; }
         }
         _flowCtx.putImageData(img, x, y);
     }
@@ -935,7 +943,7 @@
     // resident while idle. The _ensure* functions recreate them lazily on the next stroke.
     function _releaseOffscreenBuffers() {
         _flowCanvas = null; _flowCtx = null; _flowUsed = null;
-        _adCanvas = null; _adCtx = null; _mkCanvas = null; _mkCtx = null;
+        _adCanvas = null; _adCtx = null; _mkCanvas = null; _mkCtx = null; _adCol = null; _adColCtx = null;
         _covCanvas = null; _covCtx = null; _covUsed = null;
         _scratchCanvas = null; _scratchCtx = null;
         _tintMask = null; _tintColor = null;
@@ -2092,7 +2100,20 @@
 
         var ad = destCtx === _flowCtx && _alphaDarken(getParams());
         var adFlow = alpha;
-        if (ad) { _ensureAdBuffer(); _adColor = colorHex; colorHex = _greyHex(_adAvg); if (_adAvg > 0) alpha *= _adO / _adAvg; }
+        var adHex = colorHex;
+        if (ad) {
+            _ensureAdBuffer();
+            if (_adColOn === 1 && colorHex !== _adColor) {
+                if (!_adCol || _adCol.width !== _adCanvas.width || _adCol.height !== _adCanvas.height) {
+                    _adCol = new OffscreenCanvas(_adCanvas.width, _adCanvas.height);
+                    _adColCtx = _adCol.getContext('2d', { willReadFrequently: true });
+                }
+                _adColCtx.fillStyle = _adColor;   // every dab so far was this colour
+                _adColCtx.fillRect(0, 0, _adCol.width, _adCol.height);
+                _adColOn = 2;
+            } else if (!_adColOn) _adColOn = 1;
+            _adColor = colorHex; colorHex = _greyHex(_adAvg); if (_adAvg > 0) alpha *= _adO / _adAvg;
+        }
 
         if (_tintMask !== maskCanvas || _tintColor !== colorHex) {
             _colorizeMask(maskCanvas, colorHex);
@@ -2197,6 +2218,22 @@
          * only filtering is the subpixel shift -- where the expensive filter
          * buys nothing visible and cost a fifth of the stroke. */
         var dc = ad ? _adCtx : destCtx;
+        if (ad && _adColOn === 2) {
+            // this dab's colour over the stroke's, as far as the dab reaches
+            if (!_shiftCanvas || _shiftCanvas.width < mw || _shiftCanvas.height < mh) {
+                _shiftCanvas = new OffscreenCanvas(mw, mh);
+                _shiftCtx = _shiftCanvas.getContext('2d');
+            }
+            _shiftCtx.clearRect(0, 0, mw, mh);
+            _shiftCtx.fillStyle = adHex;
+            _shiftCtx.fillRect(0, 0, mw, mh);
+            _shiftCtx.globalCompositeOperation = 'destination-in';
+            _shiftCtx.drawImage(_scratchCanvas, 0, 0, mw, mh, 0, 0, mw, mh);
+            _shiftCtx.globalCompositeOperation = 'source-over';
+            _adColCtx.globalAlpha = _clamp(adFlow, 0, 1);
+            _adColCtx.drawImage(_shiftCanvas, 0, 0, mw, mh, ox, oy, mw, mh);
+            _adColCtx.globalAlpha = 1;
+        }
         if (ad && ox === _floor(ox) && oy === _floor(oy)) _adDab(ox, oy, mw, mh, adFlow);
         else if (_tp.dabMax && !ad) _maxDab(dc, _round(ox), _round(oy), mw, mh, _clamp(alpha, 0, 1));
         else {
@@ -5660,6 +5697,7 @@
         valJitter: 0,
         jitterSub: false,        // the jitter shades a colour tip's whites (Clip Studio's sub colour), not the ink
         subMix: 0,               // % each dab goes toward white (Clip Studio's sub colour mix)
+        subMixSrc: 'none', subMixMin: 0, subMixCurve: 1, subMixSensors: null, subMixCombine: 0,
         cutByLight: false,       // a cutting second brush takes away as much as its colour is light (Clip Studio mode 2)
         dabMax: false,           // each dab keeps the stronger of it and what is there (Clip Studio's blend by darken)
         colorJitterPer: 'dab',
@@ -5701,7 +5739,7 @@
         softnessSrc: 'none',     softnessMin: 0,   softnessCurve: 1, softnessStrength: null,
         spacingStrength: null, sizeStrength: null,
         dabEachReport: false,
-        dabCountSrc: 'none',     dabCountMin: 0,   dabCountCurve: 1,
+        dabCountSrc: 'none',     dabCountMin: 0,   dabCountCurve: 1, dabCountSensors: null, dabCountCombine: 0,
         offsetSrc: 'none',       offsetMin: 0,     offsetCurve: 1,
         /* How far the two stroke-position sensors reach: dabs for fade, the
          * way Photoshop counts, and pixels for distance, the way Krita does. */
@@ -6098,7 +6136,7 @@
     engine.beginStroke = function (x, y, pressure, color) {
         _strokeSeed = _pinnedSeed == null
             ? Math.floor(Math.random() * 2147483647) : _pinnedSeed;
-        _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null; _adAvg = 0;
+        _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null; _adAvg = 0; _adColOn = 0;
         /* Freeze the params for this stroke (see the getParams seam): a copy,
          * not the pointer — setParam mutates _params in place. Iterates _params
          * itself rather than _paramMeta so saved-override keys outside DEFAULTS
@@ -7716,7 +7754,7 @@
             _lastDabDist = 0;
             // The replay repaints the whole stroke, so the fade sensor has
             // to start counting again with it.
-            _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null; _adAvg = 0;
+            _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null; _adAvg = 0; _adColOn = 0;
             if (sec) {
                 _paintBoth(pts, _state.lastColor, sec);
                 if (tp.ribbonClip && pts.length > 1) _clipRibbonEnd(pts, tp.size);
