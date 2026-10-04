@@ -4546,6 +4546,30 @@ await withPage(async (page) => {
         kr.firstFlat >= 95 && kr.firstFlat <= 99 && kr.firstTurned >= 105, `flat ${kr.firstFlat}, turned ${kr.firstTurned}`);
     check("...and the second dab is spaced by that first dab's turned ellipse",
         kr.reachPlain === 0 && kr.reachOrigin >= 128, `alpha at 122: plain ${kr.reachPlain}, origin ${kr.reachOrigin}`);
+
+    // Clip Studio's watercolour edge (cdp-csp/we): power 5, radius 10 on a 40% stroke adds
+    // 0.5 * (11 - D) / 11 of full alpha D px in, over the opacity, not under it.
+    const we = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round');
+        __B.doc(200, 200);
+        b.setParam('size', 60); b.setParam('hardness', 100); b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none');
+        b.setParam('opacity', 40); b.setParam('edgeWidth', 10); b.setParam('edgeDensity', 5); b.setParam('edgeAdd', true);
+        b.beginStroke(50, 100, 1, '#000000');
+        for (let i = 1; i <= 100; i++) b.moveStroke(50 + i, 100, 1, '#000000');
+        b.endStroke();
+        await new Promise(r => setTimeout(r, 150));
+        const d = __B.layer().ctx.getImageData(100, 0, 1, 200).data;
+        let top = 0; while (top < 200 && !d[top * 4 + 3]) top++;
+        const col = [...Array(14)].map((_, i) => d[(top + i) * 4 + 3]);
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify({ col, mid: d[100 * 4 + 3] });
+    })()`, { awaitPromise: true }));
+    console.log('  ' + JSON.stringify(we));
+    const weAdd = D => Math.round(127.5 * (11 - D) / 11);
+    check("a Clip Studio watercolour edge adds power/10 at the rim, falling straight to nothing at its radius",
+        Math.abs(we.mid - 102) <= 2 && [1, 3, 5, 7].every(i => Math.abs(we.col[i] - we.mid - weAdd(i + 1)) <= 6) && Math.abs(we.col[12] - we.mid) <= 2,
+        `rows from the top ${we.col.join(' ')}, middle ${we.mid}; want +${[2, 4, 6, 8].map(weAdd).join(' +')} on rows 1 3 5 7`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

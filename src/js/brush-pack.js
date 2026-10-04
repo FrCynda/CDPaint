@@ -4043,7 +4043,8 @@
             var er = _sutNum(v.BrushWaterEdgeRadius, 0);
             var ea = _sutNum(v.BrushWaterEdgeAlphaPower, 0);
             if (er > 0 && ea > 0) {
-                out.edgeWidth = Math.max(1, Math.min(10, Math.round(er)));
+                out.edgeWidth = Math.max(1, Math.min(50, Math.round(er)));
+                out.edgeAdd = true;
                 out.edgeDensity = Math.max(1, Math.min(100, Math.round(ea)));
             }
             if (_sutNum(v.BrushWaterEdgeRadiusUnit, 0))

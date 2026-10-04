@@ -1907,6 +1907,46 @@
      * more times can't shift its own hue. Box blur is separable with a
      * sliding window — O(rect) with flat buffers, nothing allocated per
      * pixel. Deterministic in its inputs. */
+    /* Clip Studio's edge, measured (cdp-csp/we: a flat round stroke, texture
+     * off, radius 1-20, power 5-100, opacity 20/40): ink is ADDED, power/10
+     * of full alpha at the rim, falling in a straight line to nothing at
+     * the radius -- (r + 1 - D) / (r + 1) at D px from the nearest empty
+     * pixel -- whatever alpha the stroke has. The outermost pixel takes
+     * 0.29 of the rim's add at every radius. Alpha only, added after the
+     * stroke's opacity (an opacity 20 and 40 stroke gain the same), so the
+     * opacity is baked in here and the copy composites at 1. */
+    function _applyWaterEdgeAdd(ctx, x, y, w, h, width, density, opacity) {
+        var R = _max(1, _round(width)) + 1, k = density / 10;
+        var bw = ctx.canvas.width, bh = ctx.canvas.height;
+        var ex = _max(0, x - R), ey = _max(0, y - R);
+        var ew = _min(bw, x + w + R) - ex, eh = _min(bh, y + h + R) - ey;
+        if (ew <= 0 || eh <= 0 || k <= 0) return;
+        var img;
+        try { img = ctx.getImageData(ex, ey, ew, eh); } catch (e) { return; }
+        var d = img.data, n = ew * eh, D = new Float32Array(n), i, xx, yy, v, S = Math.SQRT2;
+        for (i = 0; i < n; i++) D[i] = d[i * 4 + 3] ? R : 0;
+        // Two-pass chamfer distance to the nearest empty pixel, capped at R.
+        for (yy = 0; yy < eh; yy++) for (xx = 0; xx < ew; xx++) {
+            i = yy * ew + xx; if (!D[i]) continue; v = D[i];
+            if (xx > 0) v = _min(v, D[i - 1] + 1);
+            if (yy > 0) { v = _min(v, D[i - ew] + 1); if (xx > 0) v = _min(v, D[i - ew - 1] + S); if (xx < ew - 1) v = _min(v, D[i - ew + 1] + S); }
+            D[i] = v;
+        }
+        for (yy = eh - 1; yy >= 0; yy--) for (xx = ew - 1; xx >= 0; xx--) {
+            i = yy * ew + xx; if (!D[i]) continue; v = D[i];
+            if (xx < ew - 1) v = _min(v, D[i + 1] + 1);
+            if (yy < eh - 1) { v = _min(v, D[i + ew] + 1); if (xx < ew - 1) v = _min(v, D[i + ew + 1] + S); if (xx > 0) v = _min(v, D[i + ew - 1] + S); }
+            D[i] = v;
+        }
+        var ox = x - ex, oy = y - ey;
+        for (yy = 0; yy < h; yy++) for (xx = 0; xx < w; xx++) {
+            i = (yy + oy) * ew + xx + ox; v = D[i];
+            if (!v) continue;
+            d[i * 4 + 3] = _min(255, _round(d[i * 4 + 3] * opacity + (v < R ? 255 * k * (v < 1.5 ? 0.29 : (R - v) / R) : 0)));
+        }
+        ctx.putImageData(img, ex, ey);
+    }
+
     function _applyWaterEdge(ctx, x, y, w, h, width, density) {
         /* Floor of 2, down from 8 and then 4: a wider floor did register a
          * real deficit (measured directly, not assumed) but spread the
@@ -4534,7 +4574,7 @@
              * stroke's real alpha, registers a false cliff exactly on the
              * rect's own border, and stamps a rim there: a rectangular seam
              * around every flush instead of a rim around the actual stroke. */
-            var _eR = _max(2, _round(_p.edgeWidth));
+            var _eR = _max(2, _round(_p.edgeWidth) + 1);
             var _eBw = _flowCanvas.width, _eBh = _flowCanvas.height;
             var _eX = _max(0, x - _eR), _eY = _max(0, y - _eR);
             var _eX2 = _min(_eBw, x + w + _eR), _eY2 = _min(_eBh, y + h + _eR);
@@ -4543,7 +4583,7 @@
                 _edgeCtx.clearRect(_eX, _eY, _eW, _eH);
                 _edgeCtx.drawImage(src, _eX, _eY, _eW, _eH, _eX, _eY, _eW, _eH);
             }
-            _applyWaterEdge(_edgeCtx, x, y, w, h, _p.edgeWidth, _p.edgeDensity);
+            if (!_p.edgeAdd) _applyWaterEdge(_edgeCtx, x, y, w, h, _p.edgeWidth, _p.edgeDensity);
             src = _edgeCanvas;
         }
         /* Paper grain belongs on the finished stroke, not on each dab: a
@@ -4583,6 +4623,12 @@
                 _applyTextureNoise(_gtx, w, h, _p.texture, _p.textureScale, _p.textureType, x, y);
                 _gtx.restore();
             }
+        }
+        /* Clip Studio's edge goes on over its paper (Round watercolor's rim
+         * stands 39 above the grained wash), so after the grain above. */
+        if (_p.edgeAdd && src === _edgeCanvas) {
+            _applyWaterEdgeAdd(_edgeCtx, x, y, w, h, _p.edgeWidth, _p.edgeDensity, opacity);
+            opacity = 1;
         }
         mainCtx.save();
         mainCtx.globalAlpha = opacity;
@@ -5728,6 +5774,7 @@
          * level does — never read live here (Item 5). */
         edgeWidth: 0,
         edgeDensity: 0,
+        edgeAdd: false,   // Clip Studio's measured edge (_applyWaterEdgeAdd) instead of ours
         /* Wet blend: one bit of memory per pixel — has this stroke already
          * painted here? Without it every live flush re-lands old dabs, so
          * smudge re-samples its own wet paint and a held stroke visibly
