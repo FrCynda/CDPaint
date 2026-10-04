@@ -120,7 +120,7 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         let diff = 0, n = 0, maxd = 0, both = 0, either = 0;
         const dc = new OffscreenCanvas(W, H * 3), dx = dc.getContext('2d');
         dx.fillStyle = '#fff'; dx.fillRect(0, 0, W, H * 3);
-        dx.drawImage(L.canvas, 0, 0); dx.drawImage(kc, 0, H);
+        dx.drawImage(L.canvas, ${OX}, ${OY}, W, H, 0, 0, W, H); dx.drawImage(kc, 0, H);
         const dd = dx.getImageData(0, H * 2, W, H);
         /* "Inked" is at least half Krita's darkest pixel -- a fixed 127
          * scored Pencil-1 (60% opacity, nothing past 153) as no overlap. */
