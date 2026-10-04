@@ -4934,7 +4934,13 @@
                 }
             }
             _pxOff = pxLine ? [_ceil(prev.x - 0.5) - prev.x, _ceil(prev.y - 0.5) - prev.y] : null;
-            _renderDab(prev.x + (_pxOff ? _pxOff[0] : 0), prev.y + (_pxOff ? _pxOff[1] : 0), _tp, colorHex, _firstAngle,
+            /* A Clip Studio spray lays nothing at the pen: its first stop is
+             * a quarter of a particle on, or a step if that is nearer, then
+             * one a step (Pointillism's particle of 263 first at 66px at
+             * steps 263 and 394; of 100 at 25px at a step of 200, 10 and 20
+             * at steps of 10 and 20; cdp-csp/po zpp*). */
+            if (p.firstDabAt && endIdx > startIdx) _lastDabDist = strokeDist + _min(step, p.firstDabAt * sz) - step;
+            else _renderDab(prev.x + (_pxOff ? _pxOff[0] : 0), prev.y + (_pxOff ? _pxOff[1] : 0), _tp, colorHex, _firstAngle,
                 prev.pressure || 0.5, _tf0);
             if (p.ribbonLens) step *= _ribbonStep(p);
             _fan = { a: p.originAngle ? _atan2(prev.y, prev.x) * 180 / _PI : (_firstAngle || 0), x: prev.x, y: prev.y, p: _tp };
@@ -5751,6 +5757,7 @@
         scatter: 0,
         scatterAxis: 'both',
         sprayEach: false,        // Clip Studio sprays: each particle sized on its own, stops spaced by the plain size
+        firstDabAt: 0,           // the first dab this many sizes along the stroke, none at the pen (Clip Studio sprays)
         ribbonClip: false,       // Clip Studio ribbons: the last picture is cut off where the pen stops
         ribbonLens: null,        // ...and its pictures' own lengths, when picked at random (_ribbonStep)
         /* Several dabs at every stop, and where each one lands relative to

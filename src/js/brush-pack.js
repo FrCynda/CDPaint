@@ -3823,6 +3823,8 @@
             out.scatter = Math.max(1, Math.round(size / 2 / out.size * 100));
             out.scatterAxis = 'disk';
             out.sprayEach = true;
+            // a quarter of a particle on (the engine's firstDabAt); a continuous spray lays one at the pen
+            if (!_sutNum(v.BrushContinuousPlot, 0)) out.firstDabAt = 0.25;
             out.dabCount = Math.max(1, Math.min(16, Math.round(_sutNum(v.BrushSprayDensity, 1))));
             var bias = Math.max(-100, Math.min(100, Math.round(_sutNum(v.BrushSprayBias, 0))));
             if (bias) out.sprayBias = bias;

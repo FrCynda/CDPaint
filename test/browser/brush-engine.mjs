@@ -3671,6 +3671,25 @@ await withPage(async (page) => {
         Math.abs(shrink.ink / shrink.want - 1) <= 0.02, 'ink ' + shrink.ink.toFixed(2) + ' of ' + shrink.want.toFixed(2));
     }
 
+    /* A Clip Studio spray lays nothing at the pen: the first stop is a
+     * quarter of a particle on (40px: at 10), or a step if nearer. */
+    const first = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, out = [];
+        for (const [spacing, at] of [[200, 0.25], [10, 0.25], [200, 0]]) {
+            __B.doc(400, 100);
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0); b.setParam('size', 40); b.setParam('hardness', 100);
+            b.setParam('spacing', spacing); b.setParam('firstDabAt', at);
+            const L = __B.layer();
+            await __B.stroke(20, 50, 380, 50, '#000000');
+            out.push([2, 5, 30].map(x => +__B.px(L, x, 50).split(',')[3]));
+        }
+        b.setParam('firstDabAt', 0); b.setParam('spacing', b.DEFAULTS.spacing);
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check('a Clip Studio spray starts a quarter of a particle on, or a step if nearer, not at the pen',
+        first[0][1] === 0 && first[0][2] > 200 && first[1][0] === 0 && first[1][1] > 200 && first[2][1] > 200, JSON.stringify(first));
+
     /* Clip Studio's auto spacing on a picture follows the size, squeezed
      * by thickness only, not the picture's own narrow side: Charcoal's
      * 105x147 picture lays the ink of a fixed 12% of its size. A 1:2 tip
