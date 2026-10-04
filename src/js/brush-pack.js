@@ -1545,6 +1545,7 @@
          * A list of them becomes one strip, the way a brush pipe does --
          * Clip Studio brushes hand us several tip pictures at once. */
         function _decode(one) {
+        if (one.layer) return _sutLayerCell(one.layer);
         var svg = /\.svg$/i.test(name), blob = new Blob([one], svg ? { type: 'image/svg+xml' } : {});
         /* createImageBitmap refuses an SVG blob; an <img> draws it at the
          * size the file declares (Krita's triangle.svg, a masking tip). */
@@ -1646,7 +1647,10 @@
                 }
                 return n > 0 && grey > 0.9 * n && g < 0.2 * s;
             };
-            var whole = many.every(function (b, i) { return b.real && b.real[0] <= cells[i].w || soft(cells[i]); });
+            /* judged on the thumbnail and the header, which the anti-aliasing rule was measured
+             * against (sutToPreset's aliased): Cross-hatching x4's header is its 271x300
+             * thumbnail's, of a 415x459 picture, and judged on that it inked 1.33 */
+            var whole = many.every(function (b, i) { var r = b.head || b.real; return r && r[0] <= (b.layer ? (b[16] << 24 | b[17] << 16 | b[18] << 8 | b[19]) : cells[i].w) || soft(cells[i]); });
             if (opts && opts.crop) {
                 /* ...and each picture spans the ribbon whole: Zipper's lone
                  * tooth is as tall as its pair of halves, Bead chain's oval
@@ -1719,6 +1723,15 @@
                     }
                     pick = 'cycle';
                 }
+            }
+            /* Clip Studio fits each picture to the brush by its own longer
+             * side: Grass patch's 485x611 clump stands as tall as its 997px
+             * ones in Clip Studio (rr-a), and kept at its own size it painted
+             * 0.70 of the ink over three seeds (1.08 so). */
+            if (opts && opts.csp && !opts.crop && cells.length > 1) {
+                var big = 0;
+                cells.forEach(function (c) { big = Math.max(big, c.w, c.h); });
+                cells = cells.map(function (c) { return Math.max(c.w, c.h) === big ? c : _scaleCell(c, big / Math.max(c.w, c.h)); });
             }
             /* Clip Studio's grey materials (Book, Building, Chain) are
              * pictures: stamped with black they show their own greys and
@@ -3387,6 +3400,117 @@
         return null;
     }
 
+    /* The material's own picture, at its own size, out of that .layer.
+     * It is a C2F container -- chunks of [length LE][type][data][crc] --
+     * whose dATA chunks together are an SQLite file: the first holds its
+     * header pages, scrambled, the second the rest as they are. Nothing
+     * says the page size, so it is the one under which the Offscreen rows
+     * read whole. Each Offscreen is a grid of 256px blocks, zlib each,
+     * its size in the Attribute's "Parameter"; the one with blocks is the
+     * picture. A block is planes of a byte or a bit a pixel (alpha, then
+     * grey), or alpha then BGRX. Chain's 4016x355 picture, where the
+     * thumbnail is 300x27. Returns null whenever the layout is not this. */
+    function _sutLayer(f) {
+        var at = _find(f, [0x2E, 0x6C, 0x61, 0x79, 0x65, 0x72], 0);    // ".layer"
+        at = at < 0 ? -1 : _find(f, [0x89, 0x43, 0x32, 0x46, 0x0D, 0x0A, 0x1A, 0x0A], at);
+        if (at < 0) return null;
+        var dv = new DataView(f.buffer, f.byteOffset, f.byteLength), base = -1;
+        for (var o = at + 8; o + 12 <= f.length; o += 12 + dv.getUint32(o, true)) {
+            if (f[o + 4] === 0x64 && f[o + 5] === 0x41 && f[o + 6] === 0x54 && f[o + 7] === 0x41 && !f[o + 8] && !f[o + 9]) { base = o + 10 - 5120; break; }
+        }
+        if (base < 0) return null;
+        var best = null, bestN = 0;
+        for (var U = 1024; U <= 65536; U *= 2) {
+            var got = _sutOffscreen(f, dv, base, U);
+            if (got && got.blocks.length > bestN) { best = got; bestN = got.blocks.length; }
+        }
+        return best;
+    }
+    function _find(f, sig, from) {
+        outer: for (var i = from; i + sig.length <= f.length; i++) {
+            for (var k = 0; k < sig.length; k++) if (f[i + k] !== sig[k]) continue outer;
+            return i;
+        }
+        return -1;
+    }
+    var _BLOCK_BEGIN = Array.prototype.concat.apply([], 'BlockDataBeginChunk'.split('').map(function (c) { return [0, c.charCodeAt(0)]; }));
+    var _PARAMETER = Array.prototype.concat.apply([], 'Parameter'.split('').map(function (c) { return [0, c.charCodeAt(0)]; }));
+    function _sutOffscreen(f, dv, base, U) {
+        var X = U - 35, M = Math.floor((U - 12) * 32 / 255) - 23, best = null, mw = 0, mh = 0;
+        for (var n = 3; base + n * U <= f.length; n++) {
+            var p = base + (n - 1) * U;
+            if (f[p] !== 0x0D) continue;
+            var nc = dv.getUint16(p + 3);
+            if (8 + 2 * nc > U) continue;
+            for (var ci = 0; ci < nc; ci++) {
+                var cp = p + dv.getUint16(p + 8 + 2 * ci);
+                if (cp + 18 > p + U) break;
+                var a = _sqliteVarint(f, cp), P = a[0], i = cp + a[1];
+                i += _sqliteVarint(f, i)[1];
+                var L = P, rec;
+                if (P > X) { var K = M + (P - M) % (U - 4); L = K <= X ? K : M; }
+                if (!(P > 0 && P <= f.length) || i + L + 4 > f.length) continue;
+                rec = new Uint8Array(P); rec.set(f.subarray(i, i + L));
+                for (var got = L, nx = L < P ? dv.getUint32(i + L) : 0; nx && got < P; ) {
+                    var q = base + (nx - 1) * U;
+                    if (q < 0 || q + U > f.length) break;
+                    var take = Math.min(U - 4, P - got);
+                    rec.set(f.subarray(q + 4, q + 4 + take), got); got += take; nx = dv.getUint32(q);
+                }
+                var row;
+                try { row = _sqliteRecord(rec, 0, [null, null, null, null, 'attr', 'data'], -1); } catch (e) { continue; }
+                if (!(row.attr instanceof Uint8Array) || !(row.data instanceof Uint8Array)) continue;
+                var pk = _find(row.attr, _PARAMETER, 0);
+                if (pk < 0 || pk + 18 + 52 > row.attr.length) continue;
+                var ad = new DataView(row.attr.buffer, row.attr.byteOffset, row.attr.byteLength), pa = pk + 18;
+                mw = Math.max(mw, ad.getUint32(pa)); mh = Math.max(mh, ad.getUint32(pa + 4));
+                var d = row.data, bd = new DataView(d.buffer, d.byteOffset, d.byteLength), blocks = [];
+                for (var j = _find(d, _BLOCK_BEGIN, 0); j >= 0; j = _find(d, _BLOCK_BEGIN, j + 38)) {
+                    var k = j + 38;
+                    if (k + 28 > d.length || !bd.getUint32(k + 16)) continue;
+                    var ln = bd.getUint32(k + 20);
+                    if (k + 28 + ln > d.length || bd.getUint32(k + 24 + ln) !== 0x11) return null;   // misread: wrong page size
+                    blocks.push({ idx: bd.getUint32(k), size: bd.getUint32(k + 4), bw: bd.getUint32(k + 8), bh: bd.getUint32(k + 12),
+                        z: d.subarray(k + 28, k + 24 + ln) });
+                }
+                if (blocks.length && (!best || blocks.length > best.blocks.length)) {
+                    best = { w: ad.getUint32(pa), h: ad.getUint32(pa + 4), cols: ad.getUint32(pa + 8), row: ad.getUint32(pa + 48), blocks: blocks };
+                }
+            }
+        }
+        /* The offscreen with blocks says a pixel less than the layer's other
+         * (Round watercolor's paper 1000 of 1001). Its pixels are the picture
+         * -- padded to 130 wide, Waved line's waves drift (0.62 -> 0.14) -- but
+         * a paper tiles by the other: every 280.28px at 28% in Clip Studio,
+         * and at 280 Round watercolor shares 0.21 of its pixels, not 0.58. */
+        if (best) best.full = [Math.max(best.w, mw), Math.max(best.h, mh)];
+        return best;
+    }
+
+    /* A paper at its own size, as a PNG (Round watercolor's is 1001px, its thumbnail 300). */
+    BrushPack.sutLayerUrl = function (png) {
+        return png && png.layer ? _sutLayerCell(png.layer).then(function (c) { return _canvasFromAlpha(c).toDataURL('image/png'); })
+            : Promise.resolve(null);
+    };
+
+    /* ...and the picture as a tip cell, once its blocks are inflated. */
+    function _sutLayerCell(L) {
+        return Promise.all(L.blocks.map(function (b) { return _inflate(b.z, 'deflate'); })).then(function (raw) {
+            var W = L.w, H = L.h, a = new Uint8ClampedArray(W * H), rgb = new Uint8ClampedArray(W * H * 3);
+            L.blocks.forEach(function (b, n) {
+                var d = raw[n], bit = L.row * 8 === b.bw, plane = L.row * b.bh, planes = Math.round(d.length / plane);
+                var x0 = (b.idx % L.cols) * b.bw, y0 = Math.floor(b.idx / L.cols) * b.bh;
+                for (var y = 0; y < b.bh && y0 + y < H; y++) for (var x = 0; x < b.bw && x0 + x < W; x++) {
+                    var s = y * b.bw + x, t = (y0 + y) * W + x0 + x, c;
+                    a[t] = bit ? (d[s >> 3] >> (7 - (s & 7)) & 1) * 255 : d[s];
+                    if (planes === 2) rgb[t * 3] = rgb[t * 3 + 1] = rgb[t * 3 + 2] = bit ? (d[plane + (s >> 3)] >> (7 - (s & 7)) & 1) * 255 : d[plane + s];
+                    else if (planes === 5) { c = plane + s * 4; rgb[t * 3] = d[c + 2]; rgb[t * 3 + 1] = d[c + 1]; rgb[t * 3 + 2] = d[c]; }
+                }
+            });
+            return { w: W, h: H, alpha: a, rgb: rgb, opaque: false };
+        });
+    }
+
     function _sutNum(v, dflt) {
         return (typeof v === 'number' && isFinite(v)) ? v : dflt;
     }
@@ -4157,6 +4281,9 @@
                 png.real = [rd(at + 16), rd(at + 20)];
                 break;
             }
+            if (png) png.layer = _sutLayer(f);
+            // the layer's size, not the header's: Fallen leaves' says 1000 of a 1075 picture
+            if (png && png.layer) { png.head = png.real; png.real = [png.layer.w, png.layer.h]; }
             return png;
         });
         var byPath = {}, byOrig = {}, named = 0, k;

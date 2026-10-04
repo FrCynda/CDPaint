@@ -42,6 +42,7 @@ const FILES = {
     'pixel-select.sut': b64('pixel-select.sut'),
     'library-tips.sut': b64('library-tips.sut'),
     'library-repeat.sut': b64('library-repeat.sut'),
+    'layer-tip.sut': b64('layer-tip.sut'),
     'masked-generated.kpp': b64('masked-generated.kpp'),
     'masked-file.kpp': b64('masked-file.kpp'),
     'itxt-binary-md5.kpp': b64('itxt-binary-md5.kpp'),
@@ -1379,6 +1380,37 @@ await withPage(async (page) => {
     check('a library brush takes each picture as often as it is listed, by where it came from',
         sutRep.cells === 3 && sutRep.tex && !/taken from their order/.test((sutRep.r.lines || []).join(' ')),
         JSON.stringify(sutRep));
+    /* The thumbnail beside a material is a quarter of Chain's picture and a
+     * thirteenth of its length; the picture itself is in the .layer, 256px
+     * blocks of it, a bit a pixel here, and the tip is that. */
+    const sutLayer = await page.eval(`(async () => {
+        const bytes = new Uint8Array(await window.__files['layer-tip.sut'].arrayBuffer());
+        const t = await BrushPack.tipStrip(BrushPack.readSut(bytes).presets[0].tips.slice(0, 1), 'tip.png', { csp: true });
+        const bmp = await createImageBitmap(await (await fetch(t.url)).blob());
+        const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+        const g = c.getContext('2d'); g.drawImage(bmp, 0, 0);
+        const a = (x, y) => g.getImageData(x, y, 1, 1).data[3];
+        return JSON.stringify({ w: t.w, h: t.h, px: [a(8, 8), a(24, 8), a(8, 24), a(300, 190), a(340, 190)] });
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('a Clip Studio picture is read at its own size from the .layer, not the thumbnail',
+        sutLayer.w === 384 && sutLayer.h === 200 && sutLayer.px.join() === '255,0,0,0,255', JSON.stringify(sutLayer));
+    // Clip Studio fits each picture to the brush by its own longer side: the 96px second tip stands as tall as the 384px first
+    const sutFit = await page.eval(`(async () => {
+        const bytes = new Uint8Array(await window.__files['layer-tip.sut'].arrayBuffer());
+        const t = await BrushPack.tipStrip(BrushPack.readSut(bytes).presets[0].tips, 'tip.png', { csp: true });
+        return JSON.stringify({ w: t.w, h: t.h, cells: t.cells });
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('...each picture fitted to the brush by its own longer side', sutFit.cells === 2 && sutFit.w === 384 && sutFit.h === 384, JSON.stringify(sutFit));
+    // ...its paper too, filed away like a tip: a 1001px paper is too big for the preset itself
+    const sutPaper = await page.eval(`(async () => {
+        for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
+        await PaintApp.brush.importFiles([window.__files['layer-tip.sut']]);
+        const p = PaintApp.brush.PRESETS[PaintApp.brush.userPresetNames()[0]] || {};
+        const u = await PaintApp.brush.tipUrl(p.texturePattern || '');
+        const bmp = u && await createImageBitmap(await (await fetch(u)).blob());
+        return JSON.stringify({ ref: String(p.texturePattern).slice(0, 4), w: bmp && bmp.width });
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('...and so is its paper, kept out of the preset', sutPaper.ref === 'idb:' && sutPaper.w === 320, JSON.stringify(sutPaper));
     /* Clip Studio has three switches for mixing and they usually agree, but
      * the markers and the flat watercolour brushes leave the two obvious
      * ones off and set the third. Reading only the obvious ones imported

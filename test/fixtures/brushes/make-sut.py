@@ -31,6 +31,7 @@ reader meets in practice:
     python make-sut.py pixel-select.sut tool     # not a brush at all
     python make-sut.py library-tips.sut library  # pictures with no path
     python make-sut.py library-repeat.sut repeat # library, one picture twice
+    python make-sut.py layer-tip.sut layer       # the picture at its own size
 
 The "tool" one is a selection tool: same tables, same Node, and a Variant
 with none of the brush columns in it. The "library" one names pictures that
@@ -40,6 +41,15 @@ how the real library brushes are stored (Droplet): still no catalogue path,
 but each material row keeps the path it came from, which the Variant's
 records carry too -- and the brush names its second picture twice, the way
 Droplet lists its smallest droplet five times to have it picked that often.
+
+The "layer" one stores its first tip the way Clip Studio stores every
+picture: in the material's .layer, a C2F container whose second dATA chunk
+is an SQLite file (the first, its header pages, scrambled -- junk here),
+the picture a grid of 256px zlib blocks, here a bit a pixel and two blocks
+wide. Beside it the thumbnail is a quarter the size, so a reader that takes
+the thumbnail paints a blur; and the first PNG in the blob is a blank at the
+picture's real size, as in a real file. Its paper is stored so too, 320px
+behind a 64px thumbnail.
 """
 import sqlite3, struct, zlib, sys, os
 
@@ -229,6 +239,57 @@ if KIND == 'repeat':
     LIVE = dict(LIVE, BrushPatternImageArray=ref([('scrape a', CAT['scrape a']),
                                                   ('scrape b', CAT['scrape b']),
                                                   ('scrape b', CAT['scrape b'])]))
+
+
+def layer(w, h, on):
+    """A .layer holding one w x h picture, a bit a pixel, in 256px blocks."""
+    import tempfile
+    cols, rows = -(-w // 256), -(-h // 256)
+    name = lambda t: u32(len(t)) + t.encode('utf-16-be')
+    blocks = b''
+    for r in range(rows):
+        for c in range(cols):
+            bits = bytearray(8192)
+            for y in range(256):
+                for x in range(256):
+                    if c * 256 + x < w and r * 256 + y < h and on(c * 256 + x, r * 256 + y):
+                        bits[(y * 256 + x) >> 3] |= 0x80 >> (x & 7)
+            z = zlib.compress(bytes(bits))
+            body = (name('BlockDataBeginChunk') + struct.pack('>IIIII', r * cols + c, 8192, 256, 256, 1)
+                    + u32(len(z) + 4) + struct.pack('<I', len(z)) + z + name('BlockDataEndChunk'))
+            blocks += u32(len(body) + 4) + body
+    attr = (u32(16) + name('Parameter') + struct.pack('>14I', w, h, cols, rows, 1, 1, 0, 1, 0, 0, 0, 1, 32, 0)
+            + name('InitColor') + bytes(20))
+    fd, path = tempfile.mkstemp(suffix='.db'); os.close(fd); os.remove(path)
+    db = sqlite3.connect(path)
+    db.execute('PRAGMA page_size=1024')
+    # Pages 1-5 travel scrambled in a real file: a table to fill them first.
+    db.execute('CREATE TABLE Canvas(_PW_ID INTEGER PRIMARY KEY AUTOINCREMENT, CanvasData BLOB DEFAULT NULL)')
+    db.execute('INSERT INTO Canvas(CanvasData) VALUES(?)', (bytes(6000),))
+    db.execute('CREATE TABLE Offscreen(_PW_ID INTEGER PRIMARY KEY AUTOINCREMENT, MainId INTEGER DEFAULT NULL, '
+               'CanvasId INTEGER DEFAULT NULL, LayerId INTEGER DEFAULT NULL, Attribute BLOB DEFAULT NULL, '
+               'BlockData BLOB DEFAULT NULL)')
+    db.execute('INSERT INTO Offscreen(MainId, CanvasId, LayerId, Attribute, BlockData) VALUES(2, 1, 3, ?, ?)',
+               (attr, blocks))
+    db.commit(); db.close()
+    raw = open(path, 'rb').read(); os.remove(path)
+
+    def chunk(tag, data):
+        return struct.pack('<I', len(data)) + tag + data + struct.pack('<I', zlib.crc32(data))
+
+    return (b'\x89C2F\r\n\x1a\n' + chunk(b'HEAD', b'') + chunk(b'dATA', b'\x01\x00' + bytes(5128))
+            + chunk(b'dATA', b'\x00\x00' + raw[5120:]) + chunk(b'TAIL', b''))
+
+
+if KIND == 'layer':
+    ON = lambda x, y: (x // 16 + y // 16) % 2 == 0     # 16px checks: shrunk to the thumbnail, grey
+    REAL = (b'data/canvas.png\0' + png(384, 200, lambda x, y: (0, 0, 0, 0))
+            + b'data/material_0.layer\0' + layer(384, 200, ON)
+            + b'thumbnail/thumbnail.png\0' + png(96, 50, lambda x, y: (0, 0, 0, 128)))
+    PAPER = (b'data/canvas.png\0' + png(320, 320, lambda x, y: (0, 0, 0, 0))
+             + b'data/material_0.layer\0' + layer(320, 320, lambda x, y: (x // 5 + y // 5) % 2 == 0)
+             + b'thumbnail/thumbnail.png\0' + TEXTURE)
+    material = (lambda m: lambda img: REAL if img is TIP else PAPER if img is TEXTURE else m(img))(material)
 
 out = sys.argv[1]
 if os.path.exists(out):

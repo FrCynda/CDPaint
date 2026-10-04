@@ -1189,7 +1189,8 @@
             } catch (e) { /* a pattern that will not decode just stays absent */ }
             done();
         };
-        img.src = url;
+        // an imported paper is filed away like a tip (Clip Studio's are 1001px)
+        _tipResolve(url, function (u) { if (u) img.src = u; else done(); });
     }
 
     /* Krita's Texture option, to the letter (KisTextureMaskInfo::
@@ -9219,7 +9220,7 @@
             var src = _userPresets[n], rec = {};
             for (var k in src) { if (src.hasOwnProperty(k)) rec[k] = src[k]; }
             out[n] = rec;
-            ['_tipUrl', '_tip2Url'].forEach(function (tk) {
+            ['_tipUrl', '_tip2Url', 'texturePattern'].forEach(function (tk) {
                 if (typeof rec[tk] !== 'string' || rec[tk].slice(0, 4) !== 'idb:') return;
                 jobs.push(new Promise(function (ok) {
                     _tipResolve(rec[tk], function (u) {
@@ -9254,6 +9255,7 @@
             else if (rec._tipUrl) rec._tipUrl = _tipStash(String(rec._tipUrl));
             if (rec._tip2Url && String(rec._tip2Url).length > TIP_CAP) delete rec._tip2Url;
             else if (rec._tip2Url) rec._tip2Url = _tipStash(String(rec._tip2Url));
+            if (rec.texturePattern && String(rec.texturePattern).slice(0, 5) === 'data:') rec.texturePattern = _tipStash(String(rec.texturePattern));
             var want = _cleanName(raw);
             if (!want) continue;
             // Never overwrite what is already there — an import that quietly
@@ -9458,12 +9460,14 @@
                   join: +v.DualPatternOrderType } : undefined).catch(function () { return null; })
             : Promise.resolve(null);
 
-        return Promise.all([tipP, tip2P]).then(function (both) {
+        var texP = pr.texture && pr.texture.layer ? BrushPack.sutLayerUrl(pr.texture).catch(function () { return null; }) : Promise.resolve(null);
+
+        return Promise.all([tipP, tip2P, texP]).then(function (both) {
             var tip = both[0], tip2 = both[1];
             var want = _packName(pr.name) || 'Clip Studio brush';
             var t = BrushPack.sutToPreset(pr.variant, want,
                 { hasTip: !!tip, hasTexture: !!pr.texture, hasTip2: !!tip2, dualStacked: stack, tipW: tip && tip.w, tipH: tip && tip.h, tipWhole: !!(tip && tip.whole),
-                  texReal: pr.texture && pr.texture.real && pr.texture.real[0] });
+                  texReal: pr.texture && (pr.texture.layer ? pr.texture.layer.full[0] : pr.texture.real && pr.texture.real[0]) });
             var ps = t.params;
             var skipped = [], notes = [];
             var warnings = (pack.warnings || []).concat(t.warnings);
@@ -9489,7 +9493,7 @@
                 ps.second = { op: sec.op, p: p2 };
             }
             if (ps.texture > 0 && pr.texture) {
-                ps.texturePattern = _bytesToPngUrl(pr.texture);
+                ps.texturePattern = both[2] ? _tipStash(both[2]) : _bytesToPngUrl(pr.texture);
             }
 
             var name = engine.PRESETS[want] ? _uniqueName(want) : want;
