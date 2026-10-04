@@ -1236,6 +1236,7 @@
                 scale: _num(P['HairyBristle/scale'], 2), shear: _num(P['HairyBristle/shear'], 0),
                 threshold: _bool(P['HairyBristle/threshold']), aa: _bool(P['HairyBristle/antialias']),
                 comp: _bool(P['HairyBristle/useCompositing']), connected: _bool(P['HairyBristle/isConnected']),
+                mouse: _bool(P['HairyBristle/useMousePressure']),
                 inkOn: _bool(P['HairyInk/enabled']), inkAmount: Math.max(2, Math.round(hk('inkAmount', 1024))),
                 inkCurve: BrushPack.parseCurve('<curve>' + (P['HairyInk/inkDepletionCurve'] || '0,0;1,1;') + '</curve>'),
                 useOpacity: P['HairyInk/useOpacity'] === undefined || _bool(P['HairyInk/useOpacity']),
@@ -1250,7 +1251,6 @@
                 delete out.dabOpacitySrc; delete out.dabOpacityMin; delete out.dabOpacityCurve;
             }
             if (_bool(P['HairyInk/useSaturation']) || _bool(P['HairyInk/soak'])) warn.push('dropped: its bristles taking colour from the canvas');
-            if (_bool(P['HairyBristle/useMousePressure'])) warn.push('dropped: its pressure from mouse speed');
         } else if (preset.paintop === 'particlebrush') {
             // see _paintParticle in the engine; Krita's own defaults
             out.engineKind = 'particle';

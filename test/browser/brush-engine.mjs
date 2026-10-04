@@ -1316,6 +1316,34 @@ await withPage(async (page) => {
     })()`));
     check('a hairy stroke is a comb of bristle lines spread by its scale', hr.runs >= 10 && hr.span > 70, JSON.stringify(hr));
     check("...and a 254 bristle at half opacity is Krita's 127, not 128", hr.max === 127, 'alpha ' + hr.max);
+    /* The bristles come from the tip as Krita's mask makes it, holes and
+     * all: Bristle Tapered's tip at density 0.3 laid 6x Krita's ink when
+     * every pixel became a hair. Pressure from mouse is a speed reading
+     * that scales the head, near nothing on a slow stroke (Bristle Details
+     * 4.6x -> 0.97). */
+    const hd = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = __B.layer().ctx;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        const hairy = { density: 1, random: 0, scale: 5, shear: 0, threshold: false, aa: true, comp: true, connected: false,
+            inkOn: false, inkAmount: 2, inkCurve: [[0, 0], [1, 1]], useOpacity: true, useWeights: false, pw: 0.5, blw: 0.5, biw: 0.5, idw: 50 };
+        for (const [k, v] of Object.entries({ engineKind: 'hairy', smoothingMode: 'none', size: 18, sizeSrc: 'none', flowSrc: 'none',
+            tipCurve: [[0, 1], [1, 0]], hardness: 0, hairy })) b.setParam(k, v);
+        const ink = (step, mouse, dn, end = 180) => {
+            b.setParam('tipDensity', dn); b.setParam('hairy', Object.assign({}, hairy, { mouse }));
+            L.clearRect(0, 0, 200, 200);
+            b.beginStroke(20, 100, 0.5, '#000000');
+            for (let x = 20 + step; x <= end; x += step) b.moveStroke(x, 100, 0.5, '#000000');
+            b.endStroke();
+            const d = L.getImageData(0, 0, 200, 200).data; let sum = 0, top = 200, bot = 0;
+            for (let i = 3; i < d.length; i += 4) if (d[i]) { sum += d[i]; if (((i - 3) / 4) % 200 === 170) { const y = ((i - 3) / 4 - 170) / 200; top = Math.min(top, y); bot = Math.max(bot, y); } }
+            return [sum, bot - top + 1];
+        };
+        const out = { full: ink(20, false, 1), thin: ink(20, false, 0.3), dot: ink(1, false, 1, 21), dotThin: ink(1, false, 0.3, 21), fast: ink(20, true, 1), slow: ink(2, true, 1) };
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    check('a hairy brush makes bristles only where its tip density left pixels', hd.dotThin[0] / hd.dot[0] > 0.2 && hd.dotThin[0] / hd.dot[0] < 0.4, JSON.stringify(hd));
+    check('...and pressure from mouse shrinks the head on a slow stroke', hd.fast[1] > 50 && hd.slow[1] < hd.fast[1] / 3, JSON.stringify(hd));
     /* Krita's curve brush (KisCurvePaintOp): no dabs, a line per input
      * segment on Qt's anti-aliased pen, a curve through the history once it
      * is full. It was painted as a round brush: 10x Krita's ink on Ink Pen. */

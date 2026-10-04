@@ -6846,7 +6846,7 @@
      *
      * ponytail: bristle colour is the stroke's -- soak ink and saturation
      * depletion (colours from the layer) are not modelled; the rotation
-     * option and mouse pressure neither. */
+     * option neither. */
     var _hrSt = null, _hrA = null;
     function _hairyTip(p) {
         var hs = p.size, asp = p.aspectRatio || 1, W, H, a;
@@ -6882,6 +6882,17 @@
         var W = _flowCanvas.width, H = _flowCanvas.height;
         if (from === 0 || !_hrSt) {
             var t = _hairyTip(p), rnd = _taus88(0), bx = [], by = [], bl = [];
+            /* The tip as Krita's mask hands it over, its randomness and
+             * density already in (see _noisyMask): Bristle Tapered's tip at
+             * density 0.3 keeps a third of its pixels, so a third the hairs. */
+            if (p.tipDensity < 1 || p.tipRandomness) {
+                var tr = p.tipRandomness, s = (_dabRand(pts[0].x, pts[0].y, 7) * 4294967296) >>> 0 || 1;
+                for (var ti = 0; ti < t.a.length; ti++) {
+                    if (!t.a[ti]) continue;
+                    if (tr) { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; t.a[ti] = ~~(t.a[ti] * (1 - tr + tr * (s >>> 0) / 4294967296)); }
+                    if (p.tipDensity < 1 && t.a[ti]) { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; if (p.tipDensity < (s >>> 0) / 4294967296) t.a[ti] = 0; }
+                }
+            }
             for (var y = 0; y < t.H; y++) {
                 for (var x = 0; x < t.W; x++) {
                     var al = t.a[y * t.W + x];
@@ -6892,7 +6903,7 @@
             var n = bx.length, dep = new Float64Array(hr.inkAmount);   // KisCubicCurve::floatTransfer
             for (var di = 0; di < dep.length; di++) dep[di] = _curveAt(hr.inkCurve, di / (dep.length - 1), true);
             _hrSt = { dep: dep, x: bx, y: by, len: bl, px: new Float64Array(n), py: new Float64Array(n),
-                      ink: new Float64Array(n), cnt: new Int32Array(n), first: true };
+                      ink: new Float64Array(n), cnt: new Int32Array(n), first: true, mp: 1 };
         }
         if (!_hrA || _hrA.length !== W * H) _hrA = new Uint8ClampedArray(W * H);
         var S = _hrSt, A = _hrA, nb = S.x.length, dep = S.dep;
@@ -6900,7 +6911,15 @@
             var a0 = pts[i - 1], b0 = pts[i], pr = b0.pressure == null ? 1 : b0.pressure;
             _dabIndex = i - 1;
             var sc = { pressure: pr, x: b0.x, y: b0.y };
-            var scale = _dyn(p, 'size', 1, sc, 0) * hr.scale, shear = pr * 2 * hr.shear, press = pr * 2;
+            var scale = _dyn(p, 'size', 1, sc, 0) * hr.scale, mp = 1;
+            /* "Pressure from mouse": a speed reading, each segment a fifth of
+             * the way to 1 - its length / 20 (0.02 the floor), the bristles
+             * scaled by what is left; it weighs shear and ink too. */
+            if (hr.mouse) {
+                S.mp = (4 * S.mp + 0.02 + _max(0, 1 - Math.hypot(b0.x - a0.x, b0.y - a0.y) / 20)) / 5;
+                mp = 1 - S.mp; scale *= mp;
+            }
+            var press = mp * pr * 2, shear = press * hr.shear;
             var x1 = W, y1 = H, x2 = -1, y2 = -1;
             for (var j = 0; j < nb; j++) {
                 var rx = hr.random ? (_dabRand(i, j, 31) * 2 - 1) * hr.random : 0;
