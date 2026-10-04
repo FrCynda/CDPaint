@@ -1522,6 +1522,8 @@ await withPage(async (page) => {
                 .concat(P({ BrushFlow: 50, BrushInterval: 5, BrushAdjustFlowByInterval: 1, BrushRibbon: 1 }, { hasTip: true, tipW: 10, tipH: 40 }).flow),
             paper: [[1], [2], [4], [0], [1, 1]].map(([m, r]) => P({ TextureDensity: 50, TextureCompositeMode: m, TextureReverseDensity: r || 0 }, { hasTexture: true }))
                 .map(o => [o.texture || 0, o.textureStroke ?? null]),
+            paperMods: (o => [o.textureBrightness, o.textureRotate, !!o.textureInvert])(P({ TextureDensity: 50, TextureCompositeMode: 1,
+                TextureReverseDensity: 1, TextureBrightness: 40, TextureRotate: 45 }, { hasTexture: true })),
             darken: [P({ BrushBlendPatternByDarken: 1, BrushWaterColor: 2, BrushUseWaterEdge: 1, BrushWaterEdgeRadius: 2, BrushWaterEdgeAlphaPower: 25 }),
                      P({ BrushBlendPatternByDarken: 1, TextureDensity: 50, TextureCompositeMode: 0 }, { hasTexture: true }),
                      P({ BrushBlendPatternByDarken: 1, TextureDensity: 0, TextureCompositeMode: 0, BrushFlow: 50 }, { hasTexture: true })]
@@ -1641,7 +1643,7 @@ await withPage(async (page) => {
      * named; none of them carves, as we used to. */
     check('a second brush becomes a brush of its own, laid under or cut out, never carved with',
         JSON.stringify(sm.dual) === JSON.stringify([[0, 'destination-over', 76, 20, '', false, 0], [0, 'destination-out', 76, 20, '', true, undefined],
-            [0, 'subtract', 76, 20, '', false, 0], [0, null, null, null, 'dropped: its second brush tip', false, null], [0, 'destination-out', 76, 20, '', false, 0]]), JSON.stringify(sm.dual));
+            [0, 'subtract', 76, 20, '', false, 0], [0, null, null, null, 'dropped: its second brush tip', false, null], [0, 'cut', 76, 20, '', false, 0]]), JSON.stringify(sm.dual));
     check('...mode 4 lays it under while it changes the colour, and with the change off keeps the lesser of the two strokes',
         JSON.stringify(sm.mask4) === '["destination-over","min"]', JSON.stringify(sm.mask4));
     /* Opacity caps each dab at its own level (cdp-csp/pr-dua zwiG); laid
@@ -1713,10 +1715,13 @@ await withPage(async (page) => {
      * again the flow even at density 0. */
     check('a brush laid by darken keeps its strongest dab and drops the wash, its paper on each dab',
         JSON.stringify(sm.darken) === '[[true,false,0,0,null,100],[true,false,0,50,0,100],[true,false,0,0,null,75]]', JSON.stringify(sm.darken));
-    /* Multiply and subtract on a plain paper blend once over the whole
-     * stroke (Round watercolor brush); the rest keep a strength per mode. */
+    /* Multiply and subtract blend once over the whole stroke (Round
+     * watercolor brush), reversed or not (cdp-csp/pa); the rest keep a
+     * strength per mode. */
     check('the paper shows as strongly as its blend lets it, multiply and subtract on the whole stroke',
-        JSON.stringify(sm.paper) === '[[50,1],[50,2],[3,null],[0,null],[50,null]]', JSON.stringify(sm.paper));
+        JSON.stringify(sm.paper) === '[[50,1],[50,2],[3,null],[0,null],[50,1]]', JSON.stringify(sm.paper));
+    check('...brightened, turned and reversed as Clip Studio does the paper on a whole stroke',
+        JSON.stringify(sm.paperMods) === '[0.2,45,true]', JSON.stringify(sm.paperMods));
     /* Clip Studio's pictures (Book, Building) stamp their own greys and
      * whites; a tip with no solid white is ink, its greys only density
      * (Crayon's grey blob paints solid black there). */

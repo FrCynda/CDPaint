@@ -4349,6 +4349,21 @@ await withPage(async (page) => {
             out.second[op] = [__B.px(L2, 200, 100), __B.px(L2, 380, 100), __B.px(L2, 200, 116)].map(s => +s.split(',')[3]);
             delete b.PRESETS.Round.second;
         }
+        // Clip Studio's cut: a solid line under a solid cut stays solid, a faint isolated dab goes
+        out.cut = [];
+        for (const [flow, spacing] of [[100, 10], [20, 400]]) {
+            __B.doc(400, 200);
+            b.PRESETS.Round.second = { op: 'cut', p: { size: 10, flow: 100, spacing: 10, hardness: 100 } };
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+            b.setParam('size', 40); b.setParam('hardness', 100); b.setParam('spacing', spacing); b.setParam('flow', flow);
+            const L3 = __B.layer();
+            await __B.stroke(20, 100, 380, 100, '#000000');
+            const x = flow === 100 ? 380 : 20;
+            out.cut.push([__B.px(L3, x, 100), __B.px(L3, x, 115)].map(s => +s.split(',')[3]));
+            delete b.PRESETS.Round.second;
+        }
+        b.setParam('flow', 100);
 
         b.loadPreset('Round');
         return JSON.stringify(out);
@@ -4371,6 +4386,8 @@ await withPage(async (page) => {
         sc.bias[0] < sc.bias[1] * 0.75 && sc.bias[2] > sc.bias[1] * 1.25, JSON.stringify(sc.bias));
     check('a Clip Studio second brush cuts in turn with the first: filled back in mid-stroke, cut at the end',
         sc.second['destination-out'][0] > 200 && sc.second['destination-out'][1] < 64, JSON.stringify(sc.second));
+    check('a Clip Studio cut leaves a solid stroke solid and takes a faint dab by its own alpha',
+        sc.cut[0][0] > 250 && sc.cut[0][1] > 250 && sc.cut[1][0] < 4 && sc.cut[1][1] > 40, JSON.stringify(sc.cut));
     check('...and one laid under a narrower first brush widens the stroke',
         sc.second['destination-over'][0] === 255 && sc.second['destination-over'][2] === 255, JSON.stringify(sc.second));
     /* Clip Studio's mode 3 (Dappled light): the second is a whole stroke taken

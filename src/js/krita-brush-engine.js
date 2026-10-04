@@ -722,9 +722,15 @@
      * with the second brush's colour change off ('min') keeps the lesser of
      * the two strokes: Watercolor splash's dense first stroke is left only
      * where its second dabs lie, and to their own levels (cdp-csp/pr-du,
-     * against min 0.005 off a pixel, against a x d 0.137). The second
-     * paints into _subCanvas; the final flush takes it off, or under. */
-    var _subCanvas = null, _subCtx = null, _subOn = false;   // false, 'subtract' or 'min'
+     * against min 0.005 off a pixel, against a x d 0.137). Mode 12 ('cut')
+     * takes d x min(a, 1 - a): faint ink goes as a x (1 - d), a dense
+     * stroke only loses what it lacks of solid, 2a - 1 under a solid cut,
+     * so Wet blotting ink's band stays black (to a level on three probes,
+     * cdp-csp/fitcut.py: isolated faint dabs, a dense flow-30 line, Wet
+     * blotting ink's own picture; a x (1 - d) missed the dense two by 66
+     * and 140). The second paints into _subCanvas; the final flush takes
+     * it off, or under. */
+    var _subCanvas = null, _subCtx = null, _subOn = false;   // false, 'subtract', 'min' or 'cut'
     /* Clip Studio's "blend by darken" lays each dab by the darker of it and
      * what is there: on one colour the stronger alpha wins and dabs never
      * pile up (cdp-csp/pr-sb, Soft bleed: a hard round at flow 25/50 holds
@@ -1837,7 +1843,8 @@
                 ta.mean = tsum / ta.length / 255;
                 _tileA.set(tile, ta);
             }
-            var tw = tile.width, th = tile.height, D = _min(1, textureLevel / 100), ct = getParams().textureContrast || 1, inv = getParams().textureInvert;
+            var tw = tile.width, th = tile.height, D = _min(1, textureLevel / 100), ct = getParams().textureContrast || 1, inv = getParams().textureInvert,
+                br = getParams().textureBrightness || 0, rot = (getParams().textureRotate || 0) * _PI / 180, rc = _cos(rot), rs = _sin(rot);
             /* Clip Studio's emphasised density (TextureStressDensity) lays the
              * paper at full, its contrast stretched density/10 times about the
              * paper's mean: a single 200px dab over Oil paint's paper, multiply,
@@ -1854,9 +1861,18 @@
                     var q = (j * w + i) * 4 + 3, a = dd[q] / 255 * (flow == null ? 1 : flow);
                     if (!a) continue;
                     var tx = ((_floor(((ox || 0) + i) / scale) % tw) + tw) % tw;
+                    if (rot) {
+                        var gx = (ox || 0) + i, gy = (oy || 0) + j;
+                        tx = ((_floor((gx * rc + gy * rs) / scale) % tw) + tw) % tw;
+                        ty = ((_floor((gy * rc - gx * rs) / scale) % th) + th) % th;
+                    }
                     var s = ta[ty * tw + tx] / 255;
-                    if (inv) s = 1 - s;
+                    /* Clip Studio's order (cdp-csp/pa, Round watercolor's
+                     * paper on a whole stroke): contrast about mid grey, then
+                     * brightness takes b/200 off, then reverse. */
                     if (ct !== 1) s = _clamp((s - 0.5) * ct + 0.5, 0, 1);
+                    if (br) s = _clamp(s - br, 0, 1);
+                    if (inv) s = 1 - s;
                     if (stress) s = _clamp(sm + stress * (s - sm), 0, 1);
                     dd[q] = _round(_clamp(_cspPaper(blend, a, s, D), 0, 1) * 255);
                 }
@@ -4507,7 +4523,8 @@
                 _washCtx.drawImage(src, x, y, w, h, x, y, w, h);
             }
             var wi = _washCtx.getImageData(x, y, w, h), wd = wi.data, sd = _subCtx.getImageData(x, y, w, h).data;
-            for (var si = 3; si < wd.length; si += 4) wd[si] = _subOn === 'min' ? _min(wd[si], sd[si]) : wd[si] - sd[si];
+            for (var si = 3; si < wd.length; si += 4) wd[si] = _subOn === 'min' ? _min(wd[si], sd[si])
+                : _subOn === 'cut' ? wd[si] - _round(sd[si] * _min(wd[si], 255 - wd[si]) / 255) : wd[si] - sd[si];
             _washCtx.putImageData(wi, x, y);
             _subOn = false;
             src = _washCanvas;
@@ -5842,7 +5859,7 @@
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
         tipShrink: '', tipSamples: 0, tipShift: 0, tipPaper: false, textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
-        textureInvert: false, textureSoft: false, textureCutoff: 0, textureCutoffLo: 0, textureCutoffHi: 255, textureOffsetX: 0, textureOffsetY: 0,
+        textureInvert: false, textureRotate: 0, textureSoft: false, textureCutoff: 0, textureCutoffLo: 0, textureCutoffHi: 255, textureOffsetX: 0, textureOffsetY: 0,
         /* Krita presets: curves are splines (_splineAt), and a round tip may
          * carry its own falloff curve (Krita's "soft" generator). */
         curveSmooth: false, tipCurve: null,
@@ -6528,11 +6545,9 @@
     /* Clip Studio's second brush (BrushPack.sutSecond), a brush of its own
      * whose dabs Clip Studio lays in turn with the first's on one stroke:
      * under what is there (op 'destination-over': Rose's leaves sit behind
-     * every flower) or cut out of it ('destination-out'). In turn, not
-     * after: a cut takes the first's isolated dabs down to nothing, but a
-     * dense first brush fills its own cut back in as the pen moves on
-     * (cdp-csp/wb, dmL12 and dmM12). The flow buffer holds this stroke
-     * alone, so a cut takes nothing from what was on the layer before.
+     * every flower). Clip Studio's cut (mode 12, 'cut') is taken off the
+     * finished first instead, see _subCanvas. The flow buffer holds this
+     * stroke alone, so a cut takes nothing from what was on the layer before.
      * _secondState swaps the running brush's state for the other's.
      * ponytail: painted in the pen-up replay only, so it is missing while
      * the stroke is drawn and from the swatches; and in turn a pen report
@@ -6568,7 +6583,7 @@
     // Both brushes along pts, a segment of each in turn.
     function _paintBoth(pts, color, sec) {
         var st = _secondState(sec), n = pts.length, main = _flowCtx;
-        _subOn = sec.op === 'subtract' || sec.op === 'min' ? sec.op : false;
+        _subOn = sec.op === 'subtract' || sec.op === 'min' || sec.op === 'cut' ? sec.op : false;
         if (_subOn) {
             if (!_subCanvas || _subCanvas.width !== _flowCanvas.width || _subCanvas.height !== _flowCanvas.height) {
                 _subCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);

@@ -3655,8 +3655,8 @@
      * column is the same setting as its Brush (or bare) twin, so it is read
      * by sutToPreset like any brush. Measured in Clip Studio on round tips
      * (cdp-csp/dm*): modes 0, 1 and 4 lay it over the first, a 0.3 dab on a
-     * 0.3 one making 0.51; mode 12 cuts it out of the first by its alpha,
-     * 0.3 leaving 0.21. Mode 3 subtracts it, a - d (Dappled light on one dab,
+     * 0.3 one making 0.51; mode 12 cuts it out of the finished first (0.3
+     * leaving 0.21; the engine's 'cut' has the whole rule). Mode 3 subtracts it, a - d (Dappled light on one dab,
      * cdp-csp/pr-dt: 0.90 of ink under its dab leaves 0.25, 0.45 leaves
      * nothing); laid under solid ink it had seemed to move none. Mode 11
      * (burns) changes the colour only and moves no ink; it returns null. Mode 2 adds its colour: with
@@ -3667,7 +3667,7 @@
      * each dab's lightness (cutByLight).
      * ponytail: a cut, not an add -- over a darker layer it shows what is
      * under it rather than a lighter colour. */
-    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'destination-out', 3: 'subtract', 4: 'destination-over', 12: 'destination-out' };
+    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'destination-out', 3: 'subtract', 4: 'destination-over', 12: 'cut' };
     BrushPack.sutSecond = function (v) {
         var op = _sutNum(v.UseDualBrush, 0) && SUT_SECOND_OP[_sutNum(v.DualBrushCompositeMode, 0)];
         if (!op) return null;
@@ -3921,14 +3921,26 @@
                  * plain dab with Pastel's paper, a strength per mode:
                  * subtract at half density matched multiply, 3 showed a
                  * sixth as much, 4 and 5 a twentieth, 0 and 6 no grain. */
-                if ((tm === 1 || tm === 2) && !_sutNum(v.TextureReverseDensity, 0) && !_sutNum(v.TextureBrightness, 0) && !_sutNum(v.TextureContrast, 0)) {
+                if (tm === 1 || tm === 2) {
                     out.texture = Math.max(0, Math.min(100, Math.round(dens)));
                     out.textureStroke = tm;
+                    /* Its modifiers, measured on Round watercolor's paper
+                     * (cdp-csp/pa): contrast spreads the paper about mid grey
+                     * as on a dab, brightness b takes b/200 off it after that,
+                     * and reverse turns it over last. */
+                    var tcs = Math.max(-99, Math.min(99, _sutNum(v.TextureContrast, 0)));
+                    if (tcs) out.textureContrast = tcs < 0 ? 1 + tcs / 100 : 1 / (1 - tcs / 100);
+                    if (_sutNum(v.TextureReverseDensity, 0)) out.textureInvert = true;
                 } else {
                     var tk = { 0: 0, 1: 1, 2: 2, 3: 0.17, 4: 0.05, 5: 0.05, 6: 0 }[tm];
                     out.texture = Math.max(0, Math.min(100, Math.round(dens * (tk === undefined ? 1 : tk))));
                     if (!out.texture) delete out.texture;
                 }
+            }
+            if (dens > 0 && (out.textureBlend != null || out.textureStroke != null)) {   // ponytail: brightness and rotation measured on a whole stroke's paper only
+                var tb = Math.max(-100, Math.min(100, _sutNum(v.TextureBrightness, 0)));
+                if (tb) out.textureBrightness = tb / 200;
+                if (_sutNum(v.TextureRotate, 0)) out.textureRotate = _sutNum(v.TextureRotate, 0);
             }
             if (dens > 0) {
                 /* Its strength has its own rule, dab by dab: Chalk's takes a
@@ -3965,17 +3977,14 @@
                 /* The density, scale and paper picture come over; how Clip
                  * Studio blends and distorts that paper has no equivalent
                  * here, so each active modifier is named. */
-                if (_sutNum(v.TextureCompositeMode, 1) !== 1 && !perDab)
+                var whole = out.textureStroke != null;
+                if (_sutNum(v.TextureCompositeMode, 1) !== 1 && !perDab && !whole)
                     warn.push('changed: how its paper texture blends');
-                if (_sutNum(v.TextureReverseDensity, 0) && !perDab)
+                if (_sutNum(v.TextureReverseDensity, 0) && !perDab && !whole)
                     warn.push('changed: paper texture reverse density');
                 if (_sutNum(v.TextureStressDensity, 0) && !perDab)
                     warn.push('changed: paper texture stress density');
-                if (_sutNum(v.TextureRotate, 0))
-                    warn.push('changed: paper texture rotation');
-                if (_sutNum(v.TextureBrightness, 0))
-                    warn.push('changed: paper texture brightness');
-                if (_sutNum(v.TextureContrast, 0) && !perDab)
+                if (_sutNum(v.TextureContrast, 0) && !perDab && !whole)
                     warn.push('changed: paper texture contrast');
             }
         }
