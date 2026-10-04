@@ -1470,6 +1470,7 @@ await withPage(async (page) => {
             opac2: 'BrushOpacityEffector' in BrushPack.sutSecond({ UseDualBrush: 1, DualBrushCompositeMode: 4, BrushOpacityEffector: rndE }).variant,
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', pingpong: P({ BrushPatternOrderType: 1 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
+            stress: [plot.textureStress || false, P({ TextureDensity: 12, TextureCompositeMode: 1, TextureForPlot: 1, TextureStressDensity: 1 }, { hasTexture: true }).textureStress],
             erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
             gap: [0, 1, 2, 3].map(m => P({ BrushInterval: 1, BrushAutoIntervalType: m }).spacing),
             minStep: P({ BrushInterval: 1 }).minStep,
@@ -1644,6 +1645,8 @@ await withPage(async (page) => {
     check('blend mode 27 erases', JSON.stringify(sm.erase) === '["erase","normal"]', JSON.stringify(sm.erase));
     check('paper on each dab keeps its blend, its scale and its own strength rule',
         JSON.stringify(sm.plot) === '[80,2,"random",40,1.6]', JSON.stringify(sm.plot));
+    check('a paper on each dab keeps its emphasised density (Oil paint)',
+        JSON.stringify(sm.stress) === '[false,true]', JSON.stringify(sm.stress));
     /* Wide, normal and narrow spacing ignore the interval: faint strokes
      * at sizes 20-200 in Clip Studio laid dabs 12, 8 and 4% apart; read
      * as the interval, Oil paint (1 on narrow) packed four times too many. */

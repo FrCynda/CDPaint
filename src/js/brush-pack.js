@@ -3767,6 +3767,7 @@
                  * Studio's own, measured dab by dab -- see _cspPaper. */
                 out.texture = Math.min(100, Math.round(dens));
                 out.textureBlend = tm;
+                if (_sutNum(v.TextureStressDensity, 0)) out.textureStress = true;
                 /* Contrast spreads the paper about its mid grey: -30 and +30
                  * took Pastel's paper under a flat dab to 0.70 and 1/0.70 of
                  * its spread (cdp-csp/pr-dab pfC30, pfCp30). */
@@ -3834,7 +3835,7 @@
                     warn.push('changed: how its paper texture blends');
                 if (_sutNum(v.TextureReverseDensity, 0) && !perDab)
                     warn.push('changed: paper texture reverse density');
-                if (_sutNum(v.TextureStressDensity, 0))
+                if (_sutNum(v.TextureStressDensity, 0) && !perDab)
                     warn.push('changed: paper texture stress density');
                 if (_sutNum(v.TextureRotate, 0))
                     warn.push('changed: paper texture rotation');

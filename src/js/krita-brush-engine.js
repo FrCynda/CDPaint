@@ -1831,10 +1831,21 @@
             if (!ta) {
                 var tdat = tile.getContext('2d').getImageData(0, 0, tile.width, tile.height).data;
                 ta = new Uint8Array(tile.width * tile.height);
-                for (var k = 0; k < ta.length; k++) ta[k] = tdat[k * 4 + 3];
+                var tsum = 0;
+                for (var k = 0; k < ta.length; k++) tsum += ta[k] = tdat[k * 4 + 3];
+                ta.mean = tsum / ta.length / 255;
                 _tileA.set(tile, ta);
             }
             var tw = tile.width, th = tile.height, D = _min(1, textureLevel / 100), ct = getParams().textureContrast || 1, inv = getParams().textureInvert;
+            /* Clip Studio's emphasised density (TextureStressDensity) lays the
+             * paper at full, its contrast stretched density/10 times about the
+             * paper's mean: a single 200px dab over Oil paint's paper, multiply,
+             * ran 0.1/1/2.5/5/9.9x steep at density 0/10/25/50/100, every line
+             * through 0.347 (the paper's mean, 0.3476), cut at 0 and 1.
+             * ponytail: measured on one paper and multiply only; the floor at
+             * density 0 (0.1) is that one point. */
+            var stress = getParams().textureStress ? _max(0.1, 10 * D) : 0, sm = ta.mean;
+            if (stress) D = 1;
             var img = ctx.getImageData(at ? ox : 0, at ? oy : 0, w, h), dd = img.data;
             for (var j = 0; j < h; j++) {
                 var ty = ((_floor(((oy || 0) + j) / scale) % th) + th) % th;
@@ -1845,6 +1856,7 @@
                     var s = ta[ty * tw + tx] / 255;
                     if (inv) s = 1 - s;
                     if (ct !== 1) s = _clamp((s - 0.5) * ct + 0.5, 0, 1);
+                    if (stress) s = _clamp(sm + stress * (s - sm), 0, 1);
                     dd[q] = _round(_clamp(_cspPaper(blend, a, s, D), 0, 1) * 255);
                 }
             }
@@ -5626,6 +5638,7 @@
         mixAlpha: null,      // Clip Studio's density of paint, 0..100; see _smudgeDab
         textureStroke: null,   // Clip Studio's paper blend (0..7) on the finished stroke, not on each dab
         textureBlend: null,  // Clip Studio's paper blend on each dab, 0..7; see _cspPaper
+        textureStress: false, // Clip Studio's emphasised density; see _applyTextureNoise
         mixStretch: 0,       // Clip Studio's colour stretch, 0..100
         hatch: null,         // Krita's hatching brush: see _applyHatch
         pixelSteps: false,   // GIMP's sub-pixel spacing: one dab per pixel; see _stepFor

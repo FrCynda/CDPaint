@@ -492,6 +492,9 @@ await withPage(async (page) => {
         b.setParam('texture', 100); b.setParam('textureContrast', 0.7);
         const ct = dab(50);
         b.setParam('textureContrast', 1);
+        b.setParam('textureBlend', 1); b.setParam('texture', 20); b.setParam('textureStress', true);
+        const st = dab(100);
+        b.setParam('textureStress', false);
         b.setParam('flow', 100); b.setParam('textureBlend', 1); b.setParam('mixAlpha', 100);
         L.ctx.clearRect(0, 0, 200, 200);
         b.beginStroke(20, 100, 1, '#000000');
@@ -500,7 +503,7 @@ await withPage(async (page) => {
         const mixed = levels(100);
         b.setParam('mixAlpha', null); b.setParam('textureBlend', null); b.setParam('texture', 0);
         b.setParam('texturePattern', null); b.forgetSaved('Round');
-        return JSON.stringify({ full, half, mixed, m0, m4, ct });
+        return JSON.stringify({ full, half, mixed, m0, m4, ct, st });
     })()`, { awaitPromise: true }));
     /* Clip Studio's paper on the whole stroke: a dense line takes the
      * paper's own levels once (multiply at full: a x s, 0.3 and 0.8 of
@@ -552,6 +555,12 @@ await withPage(async (page) => {
         pp.m4.length === 2 && pp.m4[0] === 0 && Math.abs(pp.m4[1] - 71) <= 3, JSON.stringify(pp.m4));
     check('...and contrast spreads the paper about its mid grey',
         pp.ct.length === 2 && Math.abs(pp.ct[0] - 92) <= 3 && Math.abs(pp.ct[1] - 181) <= 3, JSON.stringify(pp.ct));
+    /* Emphasised density (Oil paint) lays the paper at full, stretched
+     * density/10 times about its mean (cdp-csp/pst): at 20 the 0.3/0.8
+     * paper (mean 0.55) goes to 0.05 and 1; plain multiply at 20 left
+     * 0.86 and 0.96, and Oil paint lay 248 where Clip Studio lays 238. */
+    check("Clip Studio's emphasised paper density stretches the paper about its mean",
+        pp.st.length === 2 && Math.abs(pp.st[0] - 13) <= 3 && pp.st[1] >= 252, JSON.stringify(pp.st));
     check('Clip Studio paper: linear light is solid at full flow', pp.full.length === 1 && pp.full[0] === 255,
         JSON.stringify(pp));
     check('...and the bare paper at half flow', pp.half.length >= 2 && pp.half[0] < 100 && pp.half[pp.half.length - 1] > 180,
