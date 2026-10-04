@@ -3828,6 +3828,13 @@
                  * nothing downstream ever wanted an integer. */
                 var ts = _sutNum(v.TextureScale2, 0);
                 if (ts > 0) out.textureScale = Math.max(0.1, Math.min(16, ts / 12.5));
+                /* ...of the paper's real size, where the file keeps a 300px
+                 * preview of it: Round watercolor's 1001px paper at 28 tiles
+                 * Clip Studio's stroke every 280 pixels from the canvas
+                 * corner (its grain matched to the preview so, 0.65; at the
+                 * 262 the dial alone gave, nowhere). The engine lays a tile
+                 * dial x 64 x 1.83 pixels wide (_TEX_SIZE, _TEX_GRAIN_SCALE). */
+                if (ts > 0 && opts.texReal > 0) out.textureScale = Math.max(0.1, Math.min(16, opts.texReal * ts / 100 / (64 * 1.83)));
                 /* The density, scale and paper picture come over; how Clip
                  * Studio blends and distorts that paper has no equivalent
                  * here, so each active modifier is named. */

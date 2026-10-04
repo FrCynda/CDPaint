@@ -1470,6 +1470,7 @@ await withPage(async (page) => {
             opac2: 'BrushOpacityEffector' in BrushPack.sutSecond({ UseDualBrush: 1, DualBrushCompositeMode: 4, BrushOpacityEffector: rndE }).variant,
             cycle: P({ BrushPatternOrderType: 0 }).tipPick || '', pingpong: P({ BrushPatternOrderType: 1 }).tipPick || '', random: P({ BrushPatternOrderType: 3 }).tipPick || '',
             plot: [plot.texture, plot.textureBlend, plot.textureSrc, plot.textureMin, plot.textureScale],
+            paperPx: P({ TextureDensity: 70, TextureScale2: 28 }, { hasTexture: true, texReal: 1001 }).textureScale * 64 * 1.83,
             stress: [plot.textureStress || false, P({ TextureDensity: 12, TextureCompositeMode: 1, TextureForPlot: 1, TextureStressDensity: 1 }, { hasTexture: true }).textureStress],
             erase: [P({ CompositeMode: 27 }).blendMode, P({}).blendMode || 'normal'],
             gap: [0, 1, 2, 3].map(m => P({ BrushInterval: 1, BrushAutoIntervalType: m }).spacing),
@@ -1649,6 +1650,8 @@ await withPage(async (page) => {
     check('blend mode 27 erases', JSON.stringify(sm.erase) === '["erase","normal"]', JSON.stringify(sm.erase));
     check('paper on each dab keeps its blend, its scale and its own strength rule',
         JSON.stringify(sm.plot) === '[80,2,"random",40,1.6]', JSON.stringify(sm.plot));
+    check("a Clip Studio paper's scale is of its real picture, not its preview: 1001px at 28% tiles every 280",
+        Math.abs(sm.paperPx - 280.28) < 0.01, sm.paperPx);
     check('a paper on each dab keeps its emphasised density (Oil paint)',
         JSON.stringify(sm.stress) === '[false,true]', JSON.stringify(sm.stress));
     /* Wide, normal and narrow spacing ignore the interval: faint strokes

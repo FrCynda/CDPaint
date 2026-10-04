@@ -9462,7 +9462,8 @@
             var tip = both[0], tip2 = both[1];
             var want = _packName(pr.name) || 'Clip Studio brush';
             var t = BrushPack.sutToPreset(pr.variant, want,
-                { hasTip: !!tip, hasTexture: !!pr.texture, hasTip2: !!tip2, dualStacked: stack, tipW: tip && tip.w, tipH: tip && tip.h, tipWhole: !!(tip && tip.whole) });
+                { hasTip: !!tip, hasTexture: !!pr.texture, hasTip2: !!tip2, dualStacked: stack, tipW: tip && tip.w, tipH: tip && tip.h, tipWhole: !!(tip && tip.whole),
+                  texReal: pr.texture && pr.texture.real && pr.texture.real[0] });
             var ps = t.params;
             var skipped = [], notes = [];
             var warnings = (pack.warnings || []).concat(t.warnings);
