@@ -4807,8 +4807,13 @@
             var t0 = (p.angle || 0) * _PI / 180, c0 = _abs(_cos(t0)), s0 = _abs(_sin(t0));
             var bw = w * c0 + h * s0, bh = w * s0 + h * c0;
             var g;
-            if (p.spacingByWidth) {   // Clip Studio: the tip's own width, however it is turned
-                g = _gap(w);
+            /* Clip Studio: the tip's width as its thickness squeezes it, however
+             * it is turned -- not the picture's own shape: Charcoal's 105x147
+             * picture on auto (12%) lays the ink of a fixed 12% of the size,
+             * not of its narrow side (cdp-csp/ch zcsa, zcs12: 12526 / 12510;
+             * by the narrow side 13404). */
+            if (p.spacingByWidth) {
+                g = _gap(asp < 1 ? d * asp : d);
             } else if (p.spacingIsotropic || bw === bh) {   // GIMP spaces a 164x166 tip by its 164
                 g = _gap(_max(bw, bh));
             } else {

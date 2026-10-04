@@ -3671,6 +3671,33 @@ await withPage(async (page) => {
         Math.abs(shrink.ink / shrink.want - 1) <= 0.02, 'ink ' + shrink.ink.toFixed(2) + ' of ' + shrink.want.toFixed(2));
     }
 
+    /* Clip Studio's auto spacing on a picture follows the size, squeezed
+     * by thickness only, not the picture's own narrow side: Charcoal's
+     * 105x147 picture lays the ink of a fixed 12% of its size. A 1:2 tip
+     * spaced by width lays what one spaced by its 40px size does. */
+    const tall = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, out = [];
+        const c = document.createElement('canvas'); c.width = 32; c.height = 64;
+        const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, 32, 64);
+        b.loadCustomTip(c.toDataURL('image/png'), null);
+        await new Promise(r => setTimeout(r, 400));
+        for (const byWidth of [true, false]) {
+            __B.doc(300, 100);
+            ['texture', 'opacity', 'scatter', 'sizeSrc', 'taperStart', 'taperEnd', 'tip2Depth', 'angle', 'aspectRatio'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+            b.setParam('dynamicsMode', 'off'); b.setParam('size', 40); b.setParam('spacing', 50); b.setParam('flow', 5);
+            b.setParam('spacingIsotropic', !byWidth); b.setParam('spacingByWidth', byWidth);
+            await __B.stroke(50, 50, 250, 50, '#000000');
+            const d = __B.layer().ctx.getImageData(0, 0, 300, 100).data;
+            let s = 0; for (let i = 3; i < d.length; i += 4) s += d[i];
+            out.push(s);
+        }
+        b.setParam('spacingByWidth', false); b.setParam('spacingIsotropic', b.DEFAULTS.spacingIsotropic); b.setParam('flow', 100);
+        b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check('a Clip Studio picture on auto spacing steps by its size, not its narrow side',
+        Math.abs(tall[0] / tall[1] - 1) < 0.05, JSON.stringify(tall));
+
     /* Krita draws a picture tip once from its halving pyramid, bilinear at
      * the true scale and the dab's sub-pixel phase (KisQImagePyramid): a
      * 64px tip at 22px comes from its 32px level at 0.69, so a 2px line
