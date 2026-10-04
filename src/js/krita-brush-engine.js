@@ -5206,8 +5206,8 @@
      * turned 1 degree (cdp-csp/pbm) at size 32: within 0.8% and 2% of Clip
      * Studio's pixels, only whole levels and quarters. Shrinking first and
      * placing after smoothed it twice.
-     * ponytail: levels 2 and 3 are neither (8x8 is 13% off) and stay on
-     * the shrink. */
+     * Medium and high are 4x4 (brush-pack's AntiAlias rule).
+     * ponytail: a ribbon's dab there is unplaced and stays on the shrink. */
     function _cspTipMask(src, sz, ang, asp, x, y, n) {
         var mode = _params.tipMode || 'alpha', sh = _params.tipShift || 0;
         if (x != null) { x += sh; y += sh; }
@@ -5219,23 +5219,29 @@
         var bw = _max(0, TW * c, -TH * s, TW * c - TH * s) - bx, bh = _max(0, TW * s, TH * c, TW * s + TH * c) - by;
         var fx = x == null ? 0 : _round((((x - bw / 2) % 1) + 1) % 1 * 16) / 16 % 1;
         var fy = x == null ? 0 : _round((((y - bh / 2) % 1) + 1) % 1 * 16) / 16 % 1;
-        var key = 'c|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + '|' + n + '|' + sh + '|' + fx + ',' + fy + (st ? '|' + st : '');
+        var rq = _params.ribbonClip ? ((_round((_params.angle || 0) / 90) % 4) + 4) % 4 : -1;
+        var key = 'c|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + '|' + n + '|' + sh + '|' + fx + ',' + fy + (st ? '|' + st : '') + '|' + rq;
         var hit = _customTipSizeCache[key];
         if (hit) return hit;
         var lv = _kritaTipLevel(src, 1), v = lv.v, LW = lv.w, LH = lv.h, nn = n * n;
-        var rq = _params.ribbonClip ? ((_round((_params.angle || 0) / 90) % 4) + 4) % 4 : -1;
-        var dw = _max(1, _ceil(fx + bw - 1e-6)), dh = _max(1, _ceil(fy + bh - 1e-6));
+        // a ribbon's carried pixel (below) can fall past the picture's own box: a clear pixel all round
+        var m = rq >= 0 ? 1 : 0, cut = (_params.tipCells || 1) > 1 ? 1 : 0;
+        var dw = _max(1, _ceil(fx + bw - 1e-6)) + 2 * m, dh = _max(1, _ceil(fy + bh - 1e-6)) + 2 * m;
+        bx -= m; by -= m;
         var out = new OffscreenCanvas(dw, dh), oc = out.getContext('2d'), img = oc.createImageData(dw, dh), r = img.data;
         for (var j = 0; j < dh; j++) for (var i = 0; i < dw; i++) {
             var R = 0, G = 0, B = 0, A = 0;
             for (var k = 0; k < nn; k++) {
                 var qx = i + ((k % n) + 0.5) / n - fx + bx, qy = j + (_floor(k / n) + 0.5) / n - fy + by;
                 var ux = (qx * c + qy * s) / kx, uy = (qy * c - qx * s) / ky, xi = _floor(ux), yi = _floor(uy);
-                if (rq >= 0) {   // a ribbon's end ahead is carried a pixel on, as in _getCustomTipMask
+                /* A ribbon's end ahead is carried a pixel on, as in _getCustomTipMask,
+                 * where inked -- and, a whole picture, its other end too (Dashed line's
+                 * gaps). A piece of a cut picture runs on into the next piece. */
+                if (rq >= 0) {
                     if (rq % 2 === 0 && yi >= 0 && yi < LH && (rq ? ux < 0 && ux >= -1 / kx : ux >= LW && ux < LW + 1 / kx)
-                        && _min(v[(yi * LW) * 4 + 3], v[(yi * LW + LW - 1) * 4 + 3]) >= 64) xi = rq ? 0 : LW - 1;
+                        && _min(v[(yi * LW + (rq ? 0 : LW - 1)) * 4 + 3], cut ? 255 : v[(yi * LW + (rq ? LW - 1 : 0)) * 4 + 3]) >= 64) xi = rq ? 0 : LW - 1;
                     else if (rq % 2 && xi >= 0 && xi < LW && (rq === 1 ? uy < 0 && uy >= -1 / ky : uy >= LH && uy < LH + 1 / ky)
-                        && _min(v[xi * 4 + 3], v[((LH - 1) * LW + xi) * 4 + 3]) >= 64) yi = rq === 1 ? 0 : LH - 1;
+                        && _min(v[((rq === 1 ? 0 : LH - 1) * LW + xi) * 4 + 3], cut ? 255 : v[((rq === 1 ? LH - 1 : 0) * LW + xi) * 4 + 3]) >= 64) yi = rq === 1 ? 0 : LH - 1;
                 }
                 if (xi < 0 || yi < 0 || xi >= LW || yi >= LH) continue;
                 var q = (yi * LW + xi) * 4;
@@ -5249,7 +5255,7 @@
             r[t + 3] = A / nn;
         }
         oc.putImageData(img, 0, 0);
-        if (x != null) { out._cx = bw / 2 + fx - sh; out._cy = bh / 2 + fy - sh; }
+        if (x != null) { out._cx = bw / 2 + fx - sh + m; out._cy = bh / 2 + fy - sh + m; }
         return _tipCacheKeep(key, out);
     }
     function _tipKey() {

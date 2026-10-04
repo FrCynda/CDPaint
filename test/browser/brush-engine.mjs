@@ -3801,12 +3801,15 @@ await withPage(async (page) => {
      * Thin chain. A solid bar laid as a ribbon is solid; one inked on its
      * left half only (Dashed line's gaps are its blank ends) keeps its gaps.
      * The same through Clip Studio's low anti-aliasing (tipSamples): Rough
-     * pen's ribbon showed a seam every piece. */
+     * pen's ribbon showed a seam every piece. And a dash cut in two pieces
+     * (blank only at its outer ends, Dashed line) meets itself whole. */
     const rib = JSON.parse(await page.eval(`(async () => {
         const b = PaintApp.brush, out = {};
-        for (const ss of [0, 2]) for (const half of [false, true]) {
-            const c = document.createElement('canvas'); c.width = 64; c.height = 16;
-            const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, half ? 32 : 64, 16);
+        for (const ss of [0, 2, 4]) for (const half of [false, true, 'cut']) {
+            if (half === 'cut' && !ss) continue;
+            const c = document.createElement('canvas'); c.width = half === 'cut' ? 128 : 64; c.height = 16;
+            const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(half === 'cut' ? 16 : 0, 0, half === 'cut' ? 96 : half ? 32 : 64, 16);
+            b.setParam('tipCells', half === 'cut' ? 2 : 1); b.setParam('tipPick', half === 'cut' ? 'cycle' : b.DEFAULTS.tipPick);   // cut as the tip loads
             b.loadCustomTip(c.toDataURL('image/png'), null);
             await new Promise(r => setTimeout(r, 400));
             ['texture', 'opacity', 'flow', 'scatter', 'sizeSrc', 'taperStart', 'taperEnd', 'tip2Depth', 'angleSrc', 'tipShrink'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
@@ -3820,16 +3823,25 @@ await withPage(async (page) => {
             let min = 255, clear = 0;
             for (let i = 3; i < row.length; i += 4) { min = Math.min(min, row[i]); if (row[i] < 10) clear++; }
             const all = []; for (let i = 3; i < row.length; i += 4) all.push(row[i]);
+            if (half === 'cut') {   // the faintest pixel inside each dash, its two edge pixels aside
+                let worst = 255;
+                for (let i = 0, run = []; i <= all.length; i++) {
+                    if (i < all.length && all[i] > 10) { run.push(all[i]); continue; }
+                    if (run.length > 6) worst = Math.min(worst, ...run.slice(2, -2));
+                    run = [];
+                }
+                out['cut' + ss] = worst; continue;
+            }
             out[(half ? 'dash' : 'bar') + ss] = [min, clear, all.sort((p, q) => p - q)[all.length >> 1]];
         }
-        ['spacing', 'spacingIsotropic', 'autoSpacing', 'angle', 'angleSrc', 'ribbonClip', 'tipSamples', 'tipShift'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        ['spacing', 'spacingIsotropic', 'autoSpacing', 'angle', 'angleSrc', 'ribbonClip', 'tipSamples', 'tipShift', 'tipCells', 'tipPick'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
         b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
         return JSON.stringify(out);
     })()`, { awaitPromise: true }));
     check('a ribbon of solid pictures has no seams where they meet',
-        [rib.bar0, rib.bar2].every(r => r[1] === 0 && r[0] >= r[2] - 5), JSON.stringify(rib));
+        [rib.bar0, rib.bar2, rib.bar4].every(r => r[1] === 0 && r[0] >= r[2] - 5) && rib.cut2 >= rib.bar2[2] - 5 && rib.cut4 >= rib.bar4[2] - 5, JSON.stringify(rib));
     check('...and one whose pictures end blank keeps its gaps',
-        rib.dash0[1] > 100 && rib.dash2[1] > 100, JSON.stringify(rib));
+        rib.dash0[1] > 100 && rib.dash2[1] > 100 && rib.dash4[1] > 100, JSON.stringify(rib));
 
     /* A picture turned a quarter turn keeps its pixels: turned about the
      * middle of a square as wide as its diagonal, an odd-by-even picture

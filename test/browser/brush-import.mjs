@@ -1534,7 +1534,8 @@ await withPage(async (page) => {
                                                            return (o.tipFlip || '-') + '/' + (o.tipMirror || '-'); }).join(' '),
             crispPic: [P({ AntiAlias: 0, TextureDensity: 60, TextureCompositeMode: 4, TextureForPlot: 1 }, { hasTip: true, hasTexture: true }),
                        P({ AntiAlias: 1 }, { hasTip: true }), P({ AntiAlias: 0 })].map(o => o.tipShrink || ''),
-            lowAA: [P({ AntiAlias: 1 }, { hasTip: true }), P({ AntiAlias: 1, BrushRibbon: 1 }, { hasTip: true }), P({ AntiAlias: 2 }, { hasTip: true }), P({ AntiAlias: 1 })]
+            lowAA: [P({ AntiAlias: 1 }, { hasTip: true }), P({ AntiAlias: 1, BrushRibbon: 1 }, { hasTip: true }), P({ AntiAlias: 2 }, { hasTip: true }), P({ AntiAlias: 1 }),
+                    P({ AntiAlias: 3 }, { hasTip: true }), P({ AntiAlias: 2, BrushRibbon: 1 }, { hasTip: true })]
                 .map(o => [o.tipSamples || 0, o.tipShift || 0]),
             contrast: [-30, 30].map(c => P({ TextureDensity: 60, TextureCompositeMode: 4, TextureForPlot: 1, TextureContrast: c }, { hasTexture: true }).textureContrast),
             reverse: [0, 1].map(r => !!P({ TextureDensity: 50, TextureCompositeMode: 4, TextureForPlot: 1, TextureReverseDensity: r }, { hasTexture: true }).textureInvert),
@@ -1562,7 +1563,10 @@ await withPage(async (page) => {
     check('anti-aliasing off shrinks a picture it does not ink solid without smoothing',
         JSON.stringify(sm.crispPic) === '["nearest","",""]', JSON.stringify(sm.crispPic));
     check("a Clip Studio picture at low anti-aliasing is point-sampled, a dab half a pixel on and a ribbon a quarter",
-        JSON.stringify(sm.lowAA) === '[[2,0.5],[2,0.25],[0,0],[0,0]]', JSON.stringify(sm.lowAA));
+        JSON.stringify(sm.lowAA.slice(0, 2)) === '[[2,0.5],[2,0.25]]' && JSON.stringify(sm.lowAA[3]) === '[0,0]', JSON.stringify(sm.lowAA));
+    // one Bumpy dab at medium and high is all sixteenths, a quarter pixel on (cdp-csp/aa4fit.py)
+    check("...and at medium and high 4x4, a quarter pixel on (not yet a ribbon)",
+        JSON.stringify([sm.lowAA[2], sm.lowAA[4], sm.lowAA[5]]) === '[[4,0.25],[4,0.25],[0,0]]', JSON.stringify(sm.lowAA));
     check('paper contrast -30 and +30 spread the paper 0.7 and 1/0.7 times',
         Math.abs(sm.contrast[0] - 0.7) < 1e-9 && Math.abs(sm.contrast[1] - 1 / 0.7) < 1e-9, JSON.stringify(sm.contrast));
     /* Dry ink with reverse on lays 24.7k of ink in Clip Studio, 29.6k off
