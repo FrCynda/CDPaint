@@ -4570,6 +4570,24 @@ await withPage(async (page) => {
     check("a Clip Studio watercolour edge adds power/10 at the rim, falling straight to nothing at its radius",
         Math.abs(we.mid - 102) <= 2 && [1, 3, 5, 7].every(i => Math.abs(we.col[i] - we.mid - weAdd(i + 1)) <= 6) && Math.abs(we.col[12] - we.mid) <= 2,
         `rows from the top ${we.col.join(' ')}, middle ${we.mid}; want +${[2, 4, 6, 8].map(weAdd).join(' +')} on rows 1 3 5 7`);
+
+    // 200 steps of 0.8px sum to a hair past 160 in floats: the dab on the pen must still land.
+    const pe = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round');
+        __B.doc(200, 200);
+        b.setParam('size', 20); b.setParam('spacing', 4); b.setParam('hardness', 100);
+        b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
+        b.beginStroke(20, 100, 1, '#000000');
+        for (let i = 1; i <= 70; i++) b.moveStroke(20 + 160 * i / 70, 100, 1, '#000000');
+        b.endStroke();
+        await new Promise(r => setTimeout(r, 150));
+        const d = __B.layer().ctx.getImageData(0, 100, 200, 1).data;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify({ start: d[10 * 4 + 3], end: d[189 * 4 + 3] });
+    })()`, { awaitPromise: true }));
+    check('a stroke reaches as far past the pen-up as past the pen-down',
+        Math.abs(pe.end - pe.start) <= 8, `alpha a radius before the start ${pe.start}, after the end ${pe.end}`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

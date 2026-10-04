@@ -4960,7 +4960,11 @@
             var nextDist = (next.dist != null) ? next.dist : _lastDabDist + segLen;
             var remaining = nextDist - _lastDabDist;
 
-            var _eps = pxLine ? 1e-6 : 0;   // a pixel line reaches its end pixel
+            /* A pixel line reaches its end pixel; and steps summed in floats
+             * must not lose the dab on the pen: 250 steps of 3.2px came to a
+             * hair past 800, and Round watercolor ended 3px short of Clip
+             * Studio's. */
+            var _eps = 1e-6;
             /* Clip Studio's continuous spray: a pen report that no dab
              * reached gets one of its own, so a wide spacing still lays a
              * dab a report (size 40 at 150%: one every 60px off, one every
