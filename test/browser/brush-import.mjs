@@ -1527,6 +1527,8 @@ await withPage(async (page) => {
                 .map(o => [!!o.dabMax, !!o.watercolor, o.edgeWidth || 0, o.texture || 0, o.textureBlend == null ? null : o.textureBlend, o.flow]),
             darkMix: !!P({ BrushBlendPatternByDarken: 1, BrushUseWaterColor: 1, BrushUseWaterColor2: 1, BrushMixColor: 70, BrushMixAlpha: 50 }).dabMax,
             picHard: [P({ BrushHardness: 1 }, { hasTip: true }).hardness, P({ BrushHardness: 1 }).hardness],
+            ribbonFlip: [P({ BrushPatternReverseVertical: 2 }, { hasTip: true }), P({ BrushPatternReverseVertical: 2, BrushRibbon: 1 }, { hasTip: true, tipW: 10, tipH: 40 })]
+                .map(o => o.tipMirror || ''),
             flips: [[2, 2], [1, 0], [0, 2], [3, 0]].map(([h, v]) => { const o = P({ BrushPatternReverseHorizontal: h, BrushPatternReverseVertical: v }, { hasTip: true });
                                                            return (o.tipFlip || '-') + '/' + (o.tipMirror || '-'); }).join(' '),
             crispPic: [P({ AntiAlias: 0, TextureDensity: 60, TextureCompositeMode: 4, TextureForPlot: 1 }, { hasTip: true, hasTexture: true }),
@@ -1675,6 +1677,8 @@ await withPage(async (page) => {
     /* G-pen is 5.1: six rows there, five when rounded to 5. */
     check('a fractional size is kept', sm.fracSize === 5.1, `${sm.fracSize}`);
     /* Real G-Pen's picture at thickness 85 was a full-height line here. */
+    check("a ribbon's pieces are not flipped one by one at random: Rough pen lays one unbroken band",
+        JSON.stringify(sm.ribbonFlip) === '["v",""]', JSON.stringify(sm.ribbonFlip));
     check('a picture tip is squeezed by its thickness, the way the file says',
         JSON.stringify(sm.pic) === '[[1.18,0],[0.5,0]]', JSON.stringify(sm.pic));
     check("...and past 100 stretches it: Feather's 150 lays each picture half again as wide, or tall with the vertical flag, a ribbon's across its stroke (Rough pen), not a generated tip",

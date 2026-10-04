@@ -3799,10 +3799,12 @@ await withPage(async (page) => {
     /* A ribbon's pictures meet end to end at fractions of a pixel, and
      * where two met each half covered the pixel: a light seam every link of
      * Thin chain. A solid bar laid as a ribbon is solid; one inked on its
-     * left half only (Dashed line's gaps are its blank ends) keeps its gaps. */
+     * left half only (Dashed line's gaps are its blank ends) keeps its gaps.
+     * The same through Clip Studio's low anti-aliasing (tipSamples): Rough
+     * pen's ribbon showed a seam every piece. */
     const rib = JSON.parse(await page.eval(`(async () => {
         const b = PaintApp.brush, out = {};
-        for (const half of [false, true]) {
+        for (const ss of [0, 2]) for (const half of [false, true]) {
             const c = document.createElement('canvas'); c.width = 64; c.height = 16;
             const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, half ? 32 : 64, 16);
             b.loadCustomTip(c.toDataURL('image/png'), null);
@@ -3811,22 +3813,23 @@ await withPage(async (page) => {
             b.setParam('dynamicsMode', 'off'); b.setParam('size', 21.3); b.setParam('hardness', 100);
             b.setParam('spacing', 100); b.setParam('spacingIsotropic', false); b.setParam('autoSpacing', 0);
             b.setParam('angle', 0); b.setParam('angleSrc', 'direction'); b.setParam('ribbonClip', true);
+            b.setParam('tipSamples', ss); b.setParam('tipShift', ss ? 0.25 : 0);
             const L = __B.doc(400, 100);
             await __B.stroke(20.3, 50, 380, 50, '#000000');
             const row = L.ctx.getImageData(60, 50, 280, 1).data;
             let min = 255, clear = 0;
             for (let i = 3; i < row.length; i += 4) { min = Math.min(min, row[i]); if (row[i] < 10) clear++; }
             const all = []; for (let i = 3; i < row.length; i += 4) all.push(row[i]);
-            out[half ? 'dash' : 'bar'] = [min, clear, all.sort((p, q) => p - q)[all.length >> 1]];
+            out[(half ? 'dash' : 'bar') + ss] = [min, clear, all.sort((p, q) => p - q)[all.length >> 1]];
         }
-        ['spacing', 'spacingIsotropic', 'autoSpacing', 'angle', 'angleSrc', 'ribbonClip'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        ['spacing', 'spacingIsotropic', 'autoSpacing', 'angle', 'angleSrc', 'ribbonClip', 'tipSamples', 'tipShift'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
         b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
         return JSON.stringify(out);
     })()`, { awaitPromise: true }));
     check('a ribbon of solid pictures has no seams where they meet',
-        rib.bar[1] === 0 && rib.bar[0] >= rib.bar[2] - 5, JSON.stringify(rib));
+        [rib.bar0, rib.bar2].every(r => r[1] === 0 && r[0] >= r[2] - 5), JSON.stringify(rib));
     check('...and one whose pictures end blank keeps its gaps',
-        rib.dash[1] > 100, JSON.stringify(rib));
+        rib.dash0[1] > 100 && rib.dash2[1] > 100, JSON.stringify(rib));
 
     /* A picture turned a quarter turn keeps its pixels: turned about the
      * middle of a square as wide as its diagonal, an odd-by-even picture
@@ -3854,7 +3857,8 @@ await withPage(async (page) => {
         quarter.length === 1, JSON.stringify(quarter));
 
     /* Clip Studio's thickness past 100 stretches a picture (Feather's 150):
-     * a solid 20x40 picture at size 40 lays 30 wide, as tall as it was. */
+     * a solid 20x40 picture at size 40 lays 30 wide, as tall as it was --
+     * through Clip Studio's low anti-aliasing too (Rough pen). */
     const stretch = JSON.parse(await page.eval(`(async () => {
         const b = PaintApp.brush, L = __B.doc(200, 200);
         const c = document.createElement('canvas'); c.width = 20; c.height = 40;
@@ -3864,16 +3868,21 @@ await withPage(async (page) => {
         ['texture', 'opacity', 'flow', 'scatter', 'taperStart', 'taperEnd', 'tip2Depth', 'angleSrc', 'tipShrink', 'ribbonClip', 'angle'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
         b.setParam('dynamicsMode', 'off'); b.setParam('size', 40); b.setParam('hardness', 100); b.setParam('sizeSrc', 'none');
         b.setParam('tipStretch', [1.5, 1]);
-        b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
-        await new Promise(r => setTimeout(r, 180));
-        const d = L.ctx.getImageData(0, 0, 200, 200).data; let w = 0, h = 0;
-        for (let i = 0; i < 200; i++) { if (d[(100 * 200 + i) * 4 + 3] > 128) w++; if (d[(i * 200 + 100) * 4 + 3] > 128) h++; }
-        b.setParam('tipStretch', null);
+        const out = [];
+        for (const ss of [0, 2]) {
+            b.setParam('tipSamples', ss); L.ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+            await new Promise(r => setTimeout(r, 180));
+            const d = L.ctx.getImageData(0, 0, 200, 200).data; let w = 0, h = 0;
+            for (let i = 0; i < 200; i++) { if (d[(100 * 200 + i) * 4 + 3] > 128) w++; if (d[(i * 200 + 100) * 4 + 3] > 128) h++; }
+            out.push(w, h);
+        }
+        b.setParam('tipStretch', null); b.setParam('tipSamples', 0);
         b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
-        return JSON.stringify([w, h]);
+        return JSON.stringify(out);
     })()`, { awaitPromise: true }));
     check("a picture tip's stretch widens it and leaves its height (Clip Studio's thickness past 100)",
-        stretch[0] === 30 && stretch[1] === 40, JSON.stringify(stretch));
+        JSON.stringify(stretch) === '[30,40,30,40]', JSON.stringify(stretch));
 
     /* At precision 1-3 Krita reuses the last dab while the next is close
      * enough, sub-pixel phase and all, just moved to the new whole pixel. A

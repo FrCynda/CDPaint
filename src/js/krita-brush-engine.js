@@ -5212,23 +5212,31 @@
         var mode = _params.tipMode || 'alpha', sh = _params.tipShift || 0;
         if (x != null) { x += sh; y += sh; }
         sz = _max(0.25, _round(sz * 16) / 16);
-        var sc = sz / _max(src.width, src.height), kx = sc * _min(1, asp), ky = sc / _max(1, asp);
+        var sc = sz / _max(src.width, src.height), kx = sc * _min(1, asp), ky = sc / _max(1, asp), st = _params.tipStretch;
+        if (st) { kx *= st[0]; ky *= st[1]; }
         var c = _cos(ang), s = _sin(ang), TW = src.width * kx, TH = src.height * ky;
         var bx = _min(0, TW * c, -TH * s, TW * c - TH * s), by = _min(0, TW * s, TH * c, TW * s + TH * c);
         var bw = _max(0, TW * c, -TH * s, TW * c - TH * s) - bx, bh = _max(0, TW * s, TH * c, TW * s + TH * c) - by;
         var fx = x == null ? 0 : _round((((x - bw / 2) % 1) + 1) % 1 * 16) / 16 % 1;
         var fy = x == null ? 0 : _round((((y - bh / 2) % 1) + 1) % 1 * 16) / 16 % 1;
-        var key = 'c|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + '|' + n + '|' + sh + '|' + fx + ',' + fy;
+        var key = 'c|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + '|' + n + '|' + sh + '|' + fx + ',' + fy + (st ? '|' + st : '');
         var hit = _customTipSizeCache[key];
         if (hit) return hit;
         var lv = _kritaTipLevel(src, 1), v = lv.v, LW = lv.w, LH = lv.h, nn = n * n;
+        var rq = _params.ribbonClip ? ((_round((_params.angle || 0) / 90) % 4) + 4) % 4 : -1;
         var dw = _max(1, _ceil(fx + bw - 1e-6)), dh = _max(1, _ceil(fy + bh - 1e-6));
         var out = new OffscreenCanvas(dw, dh), oc = out.getContext('2d'), img = oc.createImageData(dw, dh), r = img.data;
         for (var j = 0; j < dh; j++) for (var i = 0; i < dw; i++) {
             var R = 0, G = 0, B = 0, A = 0;
             for (var k = 0; k < nn; k++) {
                 var qx = i + ((k % n) + 0.5) / n - fx + bx, qy = j + (_floor(k / n) + 0.5) / n - fy + by;
-                var xi = _floor((qx * c + qy * s) / kx), yi = _floor((qy * c - qx * s) / ky);
+                var ux = (qx * c + qy * s) / kx, uy = (qy * c - qx * s) / ky, xi = _floor(ux), yi = _floor(uy);
+                if (rq >= 0) {   // a ribbon's end ahead is carried a pixel on, as in _getCustomTipMask
+                    if (rq % 2 === 0 && yi >= 0 && yi < LH && (rq ? ux < 0 && ux >= -1 / kx : ux >= LW && ux < LW + 1 / kx)
+                        && _min(v[(yi * LW) * 4 + 3], v[(yi * LW + LW - 1) * 4 + 3]) >= 64) xi = rq ? 0 : LW - 1;
+                    else if (rq % 2 && xi >= 0 && xi < LW && (rq === 1 ? uy < 0 && uy >= -1 / ky : uy >= LH && uy < LH + 1 / ky)
+                        && _min(v[xi * 4 + 3], v[((LH - 1) * LW + xi) * 4 + 3]) >= 64) yi = rq === 1 ? 0 : LH - 1;
+                }
                 if (xi < 0 || yi < 0 || xi >= LW || yi >= LH) continue;
                 var q = (yi * LW + xi) * 4;
                 R += v[q]; G += v[q + 1]; B += v[q + 2]; A += v[q + 3];
@@ -5332,7 +5340,7 @@
         var asp = aspectRatio || 1;
         if (_params.tipShrink === 'area' && (hardness == null || hardness >= 99))
             return _kritaTipMask(_tipCanvas(), sz, (angleDeg || 0) * _PI / 180, asp, sz <= 64 ? x : null, y);
-        if (_params.tipSamples && !_params.tipStretch)
+        if (_params.tipSamples)
             return _cspTipMask(_tipCanvas(), sz, (angleDeg || 0) * _PI / 180, asp, x, y, _params.tipSamples);
         var hard = (hardness != null ? hardness : 100) / 100;
         var mode = _params.tipMode || 'alpha', st = _params.tipStretch;

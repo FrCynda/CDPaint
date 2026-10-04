@@ -3861,11 +3861,14 @@
         else if (order === 1) out.tipPick = 'pingpong';
         /* Reverse horizontal/vertical: 1 flips every dab, 2 each one at
          * random (Pastel, one picture, lays no two dabs alike in Clip
-         * Studio). 3 painted a level stroke unflipped. */
+         * Studio). 3 painted a level stroke unflipped. A ribbon's pieces are
+         * not flipped one by one: Rough pen (2, 2) lays one unbroken ragged
+         * band in Clip Studio, and flipped piece by piece ours stepped.
+         * ponytail: a flip of the whole ribbon once a stroke is not made. */
         var rvx = _sutNum(v.BrushPatternReverseHorizontal, 0), rvy = _sutNum(v.BrushPatternReverseVertical, 0);
         var both = function (x, y) { return x && y ? 'both' : x ? 'h' : y ? 'v' : ''; };
         if (both(rvx === 1, rvy === 1)) out.tipFlip = both(rvx === 1, rvy === 1);
-        if (both(rvx === 2, rvy === 2)) out.tipMirror = both(rvx === 2, rvy === 2);
+        if (both(rvx === 2, rvy === 2) && !out.ribbonClip) out.tipMirror = both(rvx === 2, rvy === 2);
 
         /* Starting and ending is NOT a taper here. Real Clip Studio 5 draws
          * a mouse stroke of G-pen, Calligraphy or Mapping pen (all UseIn/
