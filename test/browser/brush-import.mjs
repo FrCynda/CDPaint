@@ -1417,6 +1417,12 @@ await withPage(async (page) => {
         const rndE = new Uint8Array(rnd.buffer), sp = { BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 10 };
         const sprayRnd = P(Object.assign({ BrushIntervalEffector: rndE, BrushThicknessEffector: rndE, BrushSprayDensityEffector: rndE }, sp));
         const plainRnd = P({ BrushIntervalEffector: rndE, BrushThicknessEffector: rndE });
+        // Oil paint's thickness: speed, falling to a floor of 59 (its curve in the speed slot).
+        const spdE = new DataView(new ArrayBuffer(48 + 44));
+        [48, 0xf0, 0x40, 0, 0, 59, 0, 0, 0, 0, 0, 44].forEach((x, i) => spdE.setUint32(i * 4, x));
+        spdE.setUint32(48, 12); spdE.setUint32(52, 2); spdE.setUint32(56, 16); spdE.setFloat64(60, 0); spdE.setFloat64(68, 1); spdE.setFloat64(76, 1); spdE.setFloat64(84, 0);
+        const plainSpd = P({ BrushThicknessEffector: new Uint8Array(spdE.buffer) }, { hasTip: true, tipW: 100, tipH: 100 });
+        const tallRnd = P(Object.assign({ BrushThicknessEffector: rndE, BrushVerticalThicknes: 1 }, sp), { hasTip: true, tipW: 100, tipH: 100 });
         const rib = { BrushSize: 30, BrushRibbon: 1, BrushRotation: 0 };
         const ribbon = P(rib, { hasTip: true, tipW: 30, tipH: 90 });
         const ribbonNote = W(rib, { hasTip: true, tipW: 30, tipH: 90 });
@@ -1440,6 +1446,7 @@ await withPage(async (page) => {
             sprayPr: P(Object.assign({ BrushIntervalEffector: eff(0x10, [[0, 1], [1, 0]]) }, sp)).spacingSrc || 'none',
             sprayRnd: [sprayRnd.spacingSrc, sprayRnd.aspectRatioSrc, sprayRnd.dabCountSrc].map(s => s || 'none'),
             plainRnd: [plainRnd.spacingSrc, plainRnd.aspectRatioSrc].map(s => s || 'none'),
+            plainSpd: [plainSpd.aspectRatioSrc, plainSpd.aspectRatioMin, !!plainSpd.aspectThinsWidth], tallRnd: tallRnd.aspectRatioSrc || 'none',
             iso: [P({ BrushAutoIntervalType: 2 }, { hasTip: true }), P({ BrushAutoIntervalType: 0 }, { hasTip: true }),
                   P({ BrushAutoIntervalType: 2 })].map(p => p.spacingIsotropic),
             byWidth: [P({ BrushSize: 100, BrushAutoIntervalType: 1 }, { hasTip: true, tipW: 100, tipH: 100 }).spacingByWidth || false,
@@ -1549,6 +1556,13 @@ await withPage(async (page) => {
         JSON.stringify(sm.sprayRnd) === '["none","random","random"]', JSON.stringify(sm.sprayRnd));
     check('a plain brush takes a random interval, not random thickness',
         JSON.stringify(sm.plainRnd) === '["random","none"]', JSON.stringify(sm.plainRnd));
+    /* Oil paint (thickness on speed, floor 59) is 68px across in Clip
+     * Studio and was 72 here; a spray picture squeezed top to bottom kept
+     * Clip Studio's ink unthinned (Ground 0.98, thinned 0.79). */
+    check('a plain picture brush takes a speed thickness, by width',
+        JSON.stringify(sm.plainSpd) === '["speed",59,true]', JSON.stringify(sm.plainSpd));
+    check('a spray picture squeezed top to bottom takes no random thickness',
+        sm.tallRnd === 'none', sm.tallRnd);
     check('...but its pressure does (Leaves closes its gaps to half at full pressure)',
         sm.sprayPr === 'pressure', sm.sprayPr);
     /* A picture tip on automatic spacing follows its squeezed width (Chalk);

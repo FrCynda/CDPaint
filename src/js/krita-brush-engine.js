@@ -2560,7 +2560,7 @@
 
         var hard = _clamp(_dyn(p, 'hardness', p.hardness, sc, 6), 0, 100);
         var asp = p.aspectRatio;
-        if (p.aspectRatioSrc && p.aspectRatioSrc !== 'none') {
+        if ((p.aspectRatioSrc && p.aspectRatioSrc !== 'none') || p.aspectRatioSensors) {
             var af = _max(0.01, _dyn(p, 'aspectRatio', 1, sc, 7));
             asp = _clamp(p.aspectThinsWidth ? asp * af : asp / af, 0.1, 20);
         }
@@ -3584,7 +3584,7 @@
          * divided by it -- driving the aspect directly would round a flat
          * tip off under light pressure, which is backwards. */
         var asp = p.aspectRatio;
-        if (p.aspectRatioSrc && p.aspectRatioSrc !== 'none') {
+        if ((p.aspectRatioSrc && p.aspectRatioSrc !== 'none') || p.aspectRatioSensors) {
             /* Floor of 0.1, not 1: both mask paths already squash the OTHER
              * axis below 1 (_generateMask, _getCustomTipMask), so a tip
              * flatter the other way round is a tip they can build -- clamping

@@ -3970,10 +3970,18 @@
          * by it, which thins too -- but a tip already squeezed side to side
          * (aspect under 1) would round off instead, so that one is left.
          * A picture squeezed by width (vertical flag 0) thins by width:
-         * Droplet's round blobs land as thin lenses in Clip Studio. */
-        var thinW = spraying && opts.hasTip && !vert;
-        if (spraying && (thinW || (out.aspectRatio || 1) >= 1) &&
-            _sutDrive(out, 'aspectRatio', v.BrushThicknessEffector, warn, 'its thickness') && thinW) out.aspectThinsWidth = true;
+         * Droplet's round blobs land as thin lenses in Clip Studio.
+         * A plain stroke takes no random thinning (Dry Gouache is 74px
+         * either way) but does take speed: Oil paint (speed floor 59) is
+         * 68px across in Clip Studio, and was 72 here before. Nor does a
+         * picture squeezed top to bottom (vertical flag 1) take a random
+         * one: thinned, Ground, Generic Flower and Generic Flower BG all
+         * lay ~0.78 of Clip Studio's ink over four draws each; unthinned,
+         * 0.98, 0.84 and 0.78 (that last one short of flowers anyway).
+         * ponytail: read off the draws, not probed one setting at a time. */
+        var thinW = opts.hasTip && !vert;
+        if ((thinW || (out.aspectRatio || 1) >= 1) &&
+            _sutDrive(out, 'aspectRatio', v.BrushThicknessEffector, warn, 'its thickness', spraying && !vert ? null : 'random') && thinW) out.aspectThinsWidth = true;
         if (spraying) _sutDrive(out, 'dabCount', v.BrushSprayDensityEffector, warn, 'its spray density');
 
         /* Colour that wanders. Clip Studio sets a range either side of the

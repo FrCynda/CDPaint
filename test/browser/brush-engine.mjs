@@ -1123,6 +1123,19 @@ await withPage(async (page) => {
         const greys = new Set();
         for (let x = 20; x <= 180; x += 40) greys.add(__B.layer().ctx.getImageData(x, 100, 1, 1).data[0] >> 3);
         out.greys = greys.size;
+        /* A thickness driven by two inputs at once (Oil paint: pressure and
+         * speed) thins the tip like one input does; with two, the engine
+         * skipped it, and Oil paint lay 72px wide where Clip Studio's is 68. */
+        b.PRESETS.__aspTest = { size: 30, hardness: 100, opacity: 100, flow: 100, spacing: 5, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
+            aspectRatio: 1, aspectRatioSensors: [{ src: 'pressure', curve: [[0, 0.5], [1, 0.5]] }, { src: 'pressure', curve: [[0, 0.5], [1, 0.5]] }] };
+        b.loadPreset('__aspTest');
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(40, 100, 1, '#000000');
+        for (let x = 50; x <= 160; x += 10) b.moveStroke(x, 100, 1, '#000000');
+        b.endStroke();
+        delete b.PRESETS.__aspTest;
+        const col = __B.layer().ctx.getImageData(100, 0, 1, 200).data;
+        out.tall = 0; for (let y = 0; y < 200; y++) if (col[y * 4 + 3] > 128) out.tall++;
         out.gaps = gaps;
         b._setStrokeSeed(null);
         ['tipCells', 'tipPick', 'spacing', 'spacingIsotropic', 'autoSpacing', 'ribbonLens'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
@@ -1139,6 +1152,8 @@ await withPage(async (page) => {
         csp.lit > 10, 'lit ' + csp.lit);
     check("a Clip Studio sub colour mix at random gives each dab its own grey, random opacity or not",
         csp.greys >= 3, 'greys ' + csp.greys);
+    check("a Clip Studio thickness driven by two inputs thins the tip",
+        csp.tall > 0 && csp.tall < 15, 'tall ' + csp.tall);
     /* Dabs fainter than a few 8-bit levels still add up in Krita
      * (test/krita/probes/addop: X1BB at pressure 0.5, dabs 2.8 levels deep,
      * stacked to 17 in Krita and 9 here). The stroke buffer rounded every
