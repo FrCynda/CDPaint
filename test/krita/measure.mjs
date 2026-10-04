@@ -7,17 +7,19 @@
 // packVar: page expression holding the pack's bytes; packName its filename.
 // importExpr: page expression for any other import ({ ok, added: [name] }).
 // Imported presets are deleted again, so a long run never fills storage.
-export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false, seed = null, selfSeed = null, refB = null, moves = 0 }) {
+export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false, seed = null, selfSeed = null, refB = null, moves = 0, origin = null }) {
+    // origin: where the reference's frame sits on its program's canvas, so canvas-anchored paper lands in phase
+    const [OX, OY] = origin || [0, 0];
     return JSON.parse(await page.eval(`(async () => {
         const app = PaintApp, b = app.brush, W = ${W}, H = ${H};
         const imp = ${importExpr || `await b.importBrushPack(${packVar}, ${JSON.stringify(packName)},
                                             { only: ${JSON.stringify([c.preset, c.preset.replace(/ /g, '_')])} })`};   // the file says b)_Basic-2, Krita shows b) Basic-2
         if (!imp.ok || !imp.added.length) return JSON.stringify({ error: imp.error || 'not imported', skipped: imp && imp.skipped });
         app.layerMgr.collapseToBase({ fresh: true });
-        app.setSize(W, H); app.config.zoom = 1; app.updateBounds();
+        app.setSize(W + ${OX}, H + ${OY}); app.config.zoom = 1; app.updateBounds();
         document.getElementById('lsys-add').click();
         // Krita's createDocument puts an opaque white layer under ours; a merged smudge picks it up
-        { const bg = app.layerMgr.layers[0].ctx; bg.fillStyle = '#fff'; bg.fillRect(0, 0, W, H); }
+        { const bg = app.layerMgr.layers[0].ctx; bg.fillStyle = '#fff'; bg.fillRect(0, 0, W + ${OX}, H + ${OY}); }
         app.state.selection = null;
         const L = app.layerMgr.layers[app.layerMgr.activeIdx];
         b.loadPreset(imp.added[0]);
@@ -39,7 +41,7 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         // seed pins the stroke's random numbers (null: a fresh draw, as a user gets)
         const paint = async (seed) => {
         if (seed != null) b._setStrokeSeed(seed);
-        L.ctx.clearRect(0, 0, W, H);
+        L.ctx.clearRect(0, 0, W + ${OX}, H + ${OY});
         if (${under}) for (let x = 0; x < W; x += 16) { L.ctx.fillStyle = 'rgb(' + STRIPES[x / 16 % 3] + ')'; L.ctx.fillRect(x, 0, 16, H); }
         // Krita's paintLine interpolates pressure along the line; a
         // tablet reports about one sample a pixel at this speed.
@@ -51,7 +53,7 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         // them; Krita's paintLine hands it the two ends and nothing between
         // (test/krita/probes/sketch), so it gets the same here.
         const oneSeg = /^(sketch|curve|particle|hairy)$/.test(b.getParams().engineKind);
-        for (const [x0, y0, p0, x1, y1, p1] of ${JSON.stringify(c.lines)}) {
+        for (const [x0, y0, p0, x1, y1, p1] of ${JSON.stringify(c.lines.map(([a, b, p, d, e, q]) => [a + OX, b + OY, p, d + OX, e + OY, q]))}) {
             // moves: how many reports the reference program got (Clip Studio's drag posts 70)
             const n = oneSeg ? 1 : ${moves} || Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0)));
             /* Node.paintLine starts from a blank KisSpacingInformation, whose
@@ -74,7 +76,7 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         performance.now = clock;
         await new Promise(res => setTimeout(res, 250));
         b.distanceFrom = 0;
-        const ours = L.ctx.getImageData(0, 0, W, H).data;
+        const ours = L.ctx.getImageData(${OX}, ${OY}, W, H).data;
         if (${under}) moved(ours);
         // A reference captured as ink on white (Clip Studio) scores darkness
         // over white, so a stamp's own white parts are paper there too.
@@ -83,11 +85,11 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         b._setStrokeSeed(null);
         return ours;
         };
-        const ours = await paint(${seed == null ? 'null' : seed}), shown = L.ctx.getImageData(0, 0, W, H);
+        const ours = await paint(${seed == null ? 'null' : seed}), shown = L.ctx.getImageData(${OX}, ${OY}, W, H);
         // selfSeed: the same stroke on other random numbers, to say how far a
         // random brush agrees with itself (second, once a picture tip has loaded)
         const self = ${selfSeed == null ? 'null' : 'await paint(' + selfSeed + ')'};
-        if (self) L.ctx.putImageData(shown, 0, 0);
+        if (self) L.ctx.putImageData(shown, ${OX}, ${OY});
         const params = JSON.parse(JSON.stringify(b.getParams(), (k, v) =>
             typeof v === 'string' && v.length > 80 ? v.slice(0, 40) + '...' : v));
         const sec = b.PRESETS[b._currentPreset] && b.PRESETS[b._currentPreset].second;   // a Clip Studio second brush lives on the preset
