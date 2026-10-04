@@ -4058,6 +4058,12 @@
          * stroke, the strongest of each pixel's dabs, takes a quarter again
          * the ink (cdp-csp/pr-dab paR0n). */
         else if (_sutNum(v.AntiAlias, 1) === 0 && opts.hasTip) out.tipShrink = 'nearest';
+        /* Low (1), it point-samples the picture 2x2 a pixel (the engine's
+         * _cspTipMask), a ribbon's a quarter pixel right and down of the pen
+         * -- one Bumpy dab at 32px within 3% of Clip Studio's pixels
+         * (cdp-csp/pbm) -- and a dab's half a pixel: Thin Gouache's stroke
+         * shares 0.998 of its pixels so, 0.88 at a quarter or none. */
+        else if (_sutNum(v.AntiAlias, 1) === 1 && opts.hasTip) { out.tipSamples = 2; out.tipShift = _sutNum(v.BrushRibbon, 0) ? 0.25 : 0.5; }
         /* On, it fades a round dab's rim over AA + 0.5 px at every size (a
          * 20px G-pen line's edge 163/111/84 at levels 1/2/3): a 5px spray
          * speck at level 2 carries a third of a hard disc's ink. */

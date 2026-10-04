@@ -3753,6 +3753,20 @@ await withPage(async (page) => {
             let m = 0; for (let i = 3; i < d.length; i += 4) m = Math.max(m, d[i]);
             out.max.push(m);
         }
+        g.clearRect(0, 0, 64, 64);
+        for (let y = 0; y < 64; y++) for (let x = (y & 1); x < 64; x += 2) g.fillRect(x, y, 1, 1);   // a one-pixel checker
+        b.loadCustomTip(c.toDataURL('image/png'), null);
+        await new Promise(r => setTimeout(r, 400));
+        b.setParam('tipShrink', '');
+        for (const n of [2, 0]) {
+            const L = __B.doc(200, 200); b.setParam('tipSamples', n); b.setParam('tipShift', 0.5);
+            b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+            await new Promise(r => setTimeout(r, 200));
+            const d = L.ctx.getImageData(80, 80, 40, 40).data;
+            let m = 0; for (let i = 3; i < d.length; i += 4) m = Math.max(m, d[i]);
+            out.max.push(m);
+        }
+        b.setParam('tipSamples', 0); b.setParam('tipShift', 0);
         const s = document.createElement('canvas'); s.width = 128; s.height = 64;
         const sg = s.getContext('2d'); sg.fillRect(0, 0, 12, 64); sg.fillRect(0, 48, 64, 16);   // an L: its foot finds the dab, its bar the side
         b.loadCustomTip(s.toDataURL('image/png'), null);
@@ -3775,6 +3789,9 @@ await withPage(async (page) => {
     })()`, { awaitPromise: true }));
     check("a picture shrunk without smoothing keeps its specks whole (Clip Studio's anti-aliasing off)",
         crisp.max[0] > 100 && crisp.max[1] < 60, JSON.stringify(crisp.max));
+    // a pixel's four samples land the checker's pitch apart: all on its black or all off
+    check("Clip Studio's low anti-aliasing point-samples a picture, not averages it",
+        crisp.max[2] > 250 && crisp.max[3] < 160, JSON.stringify(crisp.max));
     const dabs = crisp.dabs.map(d => d[1]).join(''), mgaps = crisp.dabs.slice(1).map((d, i) => d[0] - crisp.dabs[i][0]);
     check('a mirrored tip taken in turn keeps its turn and flips each dab at random',
         dabs.length >= 4 && Math.max(...mgaps) - Math.min(...mgaps) <= 2 && dabs.includes('L') && dabs.includes('R'), dabs + ' ' + mgaps);

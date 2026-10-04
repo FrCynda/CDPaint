@@ -5199,6 +5199,50 @@
         if (_kReuse && x != null && pl >= 1 && pl <= 3) _kReuse.mask = out;
         return _tipCacheKeep(key, out);
     }
+    /* Clip Studio's picture tip with anti-aliasing off or low: each pixel
+     * point-samples the full picture where it lands -- once, or at 2x2 --
+     * turned and shrunk in one go. Single dabs of Bumpy's 100x160 picture
+     * turned 1 degree (cdp-csp/pbm) at size 32: within 0.8% and 2% of Clip
+     * Studio's pixels, only whole levels and quarters. Shrinking first and
+     * placing after smoothed it twice.
+     * ponytail: levels 2 and 3 are neither (8x8 is 13% off) and stay on
+     * the shrink. */
+    function _cspTipMask(src, sz, ang, asp, x, y, n) {
+        var mode = _params.tipMode || 'alpha', sh = _params.tipShift || 0;
+        if (x != null) { x += sh; y += sh; }
+        sz = _max(0.25, _round(sz * 16) / 16);
+        var sc = sz / _max(src.width, src.height), kx = sc * _min(1, asp), ky = sc / _max(1, asp);
+        var c = _cos(ang), s = _sin(ang), TW = src.width * kx, TH = src.height * ky;
+        var bx = _min(0, TW * c, -TH * s, TW * c - TH * s), by = _min(0, TW * s, TH * c, TW * s + TH * c);
+        var bw = _max(0, TW * c, -TH * s, TW * c - TH * s) - bx, bh = _max(0, TW * s, TH * c, TW * s + TH * c) - by;
+        var fx = x == null ? 0 : _round((((x - bw / 2) % 1) + 1) % 1 * 16) / 16 % 1;
+        var fy = x == null ? 0 : _round((((y - bh / 2) % 1) + 1) % 1 * 16) / 16 % 1;
+        var key = 'c|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + '|' + n + '|' + sh + '|' + fx + ',' + fy;
+        var hit = _customTipSizeCache[key];
+        if (hit) return hit;
+        var lv = _kritaTipLevel(src, 1), v = lv.v, LW = lv.w, LH = lv.h, nn = n * n;
+        var dw = _max(1, _ceil(fx + bw - 1e-6)), dh = _max(1, _ceil(fy + bh - 1e-6));
+        var out = new OffscreenCanvas(dw, dh), oc = out.getContext('2d'), img = oc.createImageData(dw, dh), r = img.data;
+        for (var j = 0; j < dh; j++) for (var i = 0; i < dw; i++) {
+            var R = 0, G = 0, B = 0, A = 0;
+            for (var k = 0; k < nn; k++) {
+                var qx = i + ((k % n) + 0.5) / n - fx + bx, qy = j + (_floor(k / n) + 0.5) / n - fy + by;
+                var xi = _floor((qx * c + qy * s) / kx), yi = _floor((qy * c - qx * s) / ky);
+                if (xi < 0 || yi < 0 || xi >= LW || yi >= LH) continue;
+                var q = (yi * LW + xi) * 4;
+                R += v[q]; G += v[q + 1]; B += v[q + 2]; A += v[q + 3];
+            }
+            var t = (j * dw + i) * 4;
+            if (A > 0) {
+                if (mode === 'alpha') r[t] = r[t + 1] = r[t + 2] = 255;
+                else { r[t] = R * 255 / A; r[t + 1] = G * 255 / A; r[t + 2] = B * 255 / A; }
+            }
+            r[t + 3] = A / nn;
+        }
+        oc.putImageData(img, 0, 0);
+        if (x != null) { out._cx = bw / 2 + fx - sh; out._cy = bh / 2 + fy - sh; }
+        return _tipCacheKeep(key, out);
+    }
     function _tipKey() {
         var t = _tipCanvas();
         if (!t) return 'none';
@@ -5287,6 +5331,8 @@
         var asp = aspectRatio || 1;
         if (_params.tipShrink === 'area' && (hardness == null || hardness >= 99))
             return _kritaTipMask(_tipCanvas(), sz, (angleDeg || 0) * _PI / 180, asp, sz <= 64 ? x : null, y);
+        if (_params.tipSamples && !_params.tipStretch)
+            return _cspTipMask(_tipCanvas(), sz, (angleDeg || 0) * _PI / 180, asp, x, y, _params.tipSamples);
         var hard = (hardness != null ? hardness : 100) / 100;
         var mode = _params.tipMode || 'alpha', st = _params.tipStretch;
         var key = _tipKey() + '|' + _round(sz) + '|' + _round(angleDeg || 0) + '|' + asp.toFixed(2) + '|' + _round(hardness || 100) + '|' + mode + '|' + (_params.tipShrink || '') + (st ? '|' + st : '');
@@ -5729,7 +5775,7 @@
         angleSensors: null, angleCombine: 0, angleReach: null, sizeSensors: null, sizeCombine: 0, colorRateSensors: null, colorRateCombine: 0, spacingSensors: null, spacingCombine: 0, aspectRatioSensors: null, aspectRatioCombine: 0, textureSensors: null, textureCombine: 0, scatterSensors: null, scatterCombine: 0, smudgeRateSensors: null, smudgeRateCombine: 0, flowSensors: null, flowCombine: 0, dabOpacitySensors: null, dabOpacityCombine: 0,
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
-        tipShrink: '', tipPaper: false, textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
+        tipShrink: '', tipSamples: 0, tipShift: 0, tipPaper: false, textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
         textureInvert: false, textureSoft: false, textureCutoff: 0, textureCutoffLo: 0, textureCutoffHi: 255, textureOffsetX: 0, textureOffsetY: 0,
         /* Krita presets: curves are splines (_splineAt), and a round tip may
          * carry its own falloff curve (Krita's "soft" generator). */
