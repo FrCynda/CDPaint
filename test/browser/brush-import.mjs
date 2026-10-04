@@ -1518,7 +1518,8 @@ await withPage(async (page) => {
                   P({ BrushThickness: 50 }, { hasTip: true })].map(p => [p.aspectRatio, p.angle || 0]),
             stretch: [P({ BrushThickness: 150 }, { hasTip: true }), P({ BrushThickness: 150, BrushVerticalThicknes: 1 }, { hasTip: true }),
                       P({ BrushThickness: 150, BrushRibbon: 1 }, { hasTip: true, tipW: 10, tipH: 40 }), P({ BrushThickness: 150 })].map(o => o.tipStretch || null),
-            adj: [5, 20, 40].map(i => P({ BrushFlow: 50, BrushInterval: i, BrushAdjustFlowByInterval: 1 }).flow),
+            adj: [5, 20, 40].map(i => P({ BrushFlow: 50, BrushInterval: i, BrushAdjustFlowByInterval: 1 }).flow)
+                .concat(P({ BrushFlow: 50, BrushInterval: 5, BrushAdjustFlowByInterval: 1, BrushRibbon: 1 }, { hasTip: true, tipW: 10, tipH: 40 }).flow),
             paper: [[1], [2], [4], [0], [1, 1]].map(([m, r]) => P({ TextureDensity: 50, TextureCompositeMode: m, TextureReverseDensity: r || 0 }, { hasTexture: true }))
                 .map(o => [o.texture || 0, o.textureStroke ?? null]),
             darken: [P({ BrushBlendPatternByDarken: 1, BrushWaterColor: 2, BrushUseWaterEdge: 1, BrushWaterEdgeRadius: 2, BrushWaterEdgeAlphaPower: 25 }),
@@ -1699,8 +1700,9 @@ await withPage(async (page) => {
      * spacing, flow x spacing / 33.1: a single hard dab at 10 and 23.8%
      * takes 0.30 and 0.72 off solid ink in Clip Studio (cdp-csp/pr-dc,
      * zdah*), and 40% at 50 lays the flow. Soft had twice Clip Studio's ink without it. */
-    check('density adjusted by interval thins each dab with the spacing',
-        JSON.stringify(sm.adj) === '[8,30,50]', JSON.stringify(sm.adj));
+    // ...but not a ribbon's pictures, laid end to end: Braid's outlines are black in Clip Studio
+    check("density adjusted by interval thins each dab with the spacing, not a ribbon's",
+        JSON.stringify(sm.adj) === '[8,30,50,50]', JSON.stringify(sm.adj));
     /* Blend by darken (Soft bleed, measured in Clip Studio): dabs never pile
      * up, its watercolour and edge move no ink on an empty layer, and its
      * paper blends on each dab as it would on the stroke -- blend 0 half
@@ -1774,7 +1776,7 @@ await withPage(async (page) => {
         const im2 = new Image(); im2.src = g2.url; await im2.decode();
         const cv2 = new OffscreenCanvas(im2.width, im2.height), cx2 = cv2.getContext('2d'); cx2.drawImage(im2, 0, 0);
         const halves = await Promise.all([0, 5].map(y => png(10, 10, x => { x.fillStyle = '#000'; x.fillRect(0, y, 10, 5); })));
-        const st = await BrushPack.tipStrip(halves, 'tip.png', { csp: true, crop: 'w', stack: true });
+        const st = await BrushPack.tipStrip(halves, 'tip.png', { csp: true, crop: 'w', stack: 0.5 });
         const sm = new Image(); sm.src = st.url; await sm.decode();
         const sv = new OffscreenCanvas(sm.width, sm.height), sx = sv.getContext('2d'); sx.drawImage(sm, 0, 0);
         return JSON.stringify({ cut: [cut.w, cut.h, cut.cells, cut.pick], bounce: [bounce.cells, bounce.w, bounce.h],
@@ -1798,8 +1800,9 @@ await withPage(async (page) => {
         JSON.stringify(rib.own) === '["color",255,128,192]', JSON.stringify(rib.own));
     /* Zipper's second ribbon is its upper row of teeth: laid over the first,
      * not cut through it (one row with the second brush off there). */
-    check('a second ribbon in normal mode is laid over the first',
-        JSON.stringify(rib.stack) === '[1,255,255]', JSON.stringify(rib.stack));
+    // ...at its own flow: Braid's hatching (50) is faint over its black outlines
+    check('a second ribbon in normal mode is laid over the first, at its own flow',
+        rib.stack[0] === 1 && rib.stack[1] === 255 && Math.abs(rib.stack[2] - 128) <= 1, JSON.stringify(rib.stack));
 
     /* The pack chooser. It lists what is in a pack before anything is
      * installed, then installs only what was ticked -- so the two halves

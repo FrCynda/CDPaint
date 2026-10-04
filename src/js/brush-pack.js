@@ -1671,12 +1671,13 @@
                 /* A second ribbon in normal mode is drawn over the first, not
                  * through it: Zipper's upper row of teeth is its second
                  * picture (one row with the second brush off in Clip Studio),
-                 * Braid's second strand too. Same size, so one picture. */
+                 * Braid's second strand too. Same size, so one picture, the
+                 * second at its own flow (Braid's hatching, 50, is faint). */
                 if (opts.stack && cells.length === 2) {
                     var sc2 = document.createElement('canvas');
                     sc2.width = Math.max(cells[0].w, cells[1].w); sc2.height = Math.max(cells[0].h, cells[1].h);
                     var sg2 = sc2.getContext('2d');
-                    cells.forEach(function (c) { sg2.drawImage(_canvasFromAlpha(c), 0, 0); });
+                    cells.forEach(function (c, i) { sg2.globalAlpha = i ? opts.stack : 1; sg2.drawImage(_canvasFromAlpha(c), 0, 0); });
                     cells = [_cellOf(sc2, cells[0].opaque)];
                 }
                 /* Laid in a fixed order, each picture takes its own length
@@ -3751,8 +3752,9 @@
         /* "Adjust density by interval": each dab lays flow x spacing / 33.1,
          * never more than the flow -- one hard dab at 10 and 23.8% takes 0.30
          * and 0.72 off solid ink in Clip Studio (cdp-csp/pr-dc, zdah*). The
-         * 35.36 fitted to whole strokes before left Soft 7% light. */
-        if (_sutNum(v.BrushAdjustFlowByInterval, 0))
+         * 35.36 fitted to whole strokes before left Soft 7% light. Not a
+         * ribbon's, laid end to end: Braid (25.8) inks its outlines black. */
+        if (_sutNum(v.BrushAdjustFlowByInterval, 0) && !_sutNum(v.BrushRibbon, 0))
             out.flow = Math.max(1, Math.round(out.flow * Math.min(1, out.spacing / 33.1)));
 
         /* Thickness is how wide the tip stays, as a percentage; ours is how
