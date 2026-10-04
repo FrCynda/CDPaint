@@ -3770,11 +3770,9 @@
         /* Past 100 it stretches instead: Feather's 150 lays its pictures
          * 83x121, 180x108 and 105x84 where they were 56x120, 120x109 and
          * 69x84 here, and half again as tall with the vertical flag on
-         * (probes zfA, zfC). Not a ribbon: Rough pen (150) lays half again
-         * the ink of itself at 100 in Clip Studio, but ours, from a preview
-         * cut to a 2px sliver, is already as wide as its 150 -- stretched,
-         * it painted half again too thick. */
-        if (thick > 101 && opts.hasTip && !_sutNum(v.BrushRibbon, 0))
+         * (probes zfA, zfC). A ribbon too: Rough pen (150) lays half again
+         * the ink of itself at 100 in Clip Studio, across its stroke. */
+        if (thick > 101 && opts.hasTip)
             out.tipStretch = vert ? [1, Math.min(10, thick / 100)] : [Math.min(10, thick / 100), 1];
 
         /* A thin generated tip stands upright there at 0 and lies flat here:

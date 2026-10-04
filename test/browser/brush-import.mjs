@@ -1677,8 +1677,8 @@ await withPage(async (page) => {
     /* Real G-Pen's picture at thickness 85 was a full-height line here. */
     check('a picture tip is squeezed by its thickness, the way the file says',
         JSON.stringify(sm.pic) === '[[1.18,0],[0.5,0]]', JSON.stringify(sm.pic));
-    check("...and past 100 stretches it: Feather's 150 lays each picture half again as wide, or tall with the vertical flag (not a ribbon's, nor a generated tip)",
-        JSON.stringify(sm.stretch) === '[[1.5,1],[1,1.5],null,null]', JSON.stringify(sm.stretch));
+    check("...and past 100 stretches it: Feather's 150 lays each picture half again as wide, or tall with the vertical flag, a ribbon's across its stroke (Rough pen), not a generated tip",
+        JSON.stringify(sm.stretch) === '[[1.5,1],[1,1.5],[1.5,1],null]', JSON.stringify(sm.stretch));
     check('blend mode 27 erases', JSON.stringify(sm.erase) === '["erase","normal"]', JSON.stringify(sm.erase));
     check('paper on each dab keeps its blend, its scale and its own strength rule',
         JSON.stringify(sm.plot) === '[80,2,"random",40,1.6]', JSON.stringify(sm.plot));
