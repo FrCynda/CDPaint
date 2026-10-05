@@ -1179,11 +1179,15 @@ await withPage(async (page) => {
         b.setParam('tipCells', 2);   // before the picture loads: it is cut into cells then
         b.loadCustomTip(s.toDataURL('image/png'), null);
         await new Promise(r => setTimeout(r, 400));
-        const gaps = {};
-        for (const lens of [null, [1, 0.5]]) {
+        /* ...and, as imported, half a picture on (offsetAlong): the first
+         * starts on the pen whichever is picked (Book, cdp-csp: every Clip
+         * Studio draw starts there; centred as the longest, a short first
+         * began a quarter of the size late). */
+        const gaps = { firsts: [] };
+        for (const [lens, seed] of [[null, 3], [[1, 0.5], 3], [[1, 0.5], 8], [[1, 0.5], 11]]) {
             for (const [k, v] of Object.entries(Object.assign({}, base, { size: 10, tipPick: 'random', spacing: 100,
-                spacingIsotropic: false, autoSpacing: 0, ribbonLens: lens }))) b.setParam(k, v);
-            b._setStrokeSeed(3);
+                spacingIsotropic: false, autoSpacing: 0, ribbonLens: lens, offsetAlong: 50 }))) b.setParam(k, v);
+            b._setStrokeSeed(seed);
             __B.layer().ctx.clearRect(0, 0, 200, 200);
             b.beginStroke(10, 100, 1, '#000000');
             for (let x = 12; x <= 190; x += 2) b.moveStroke(x, 100, 1, '#000000');
@@ -1193,8 +1197,10 @@ await withPage(async (page) => {
             let first = -1, last = -1, n = 0;
             for (let x = 0; x < 200; x++) if (r[x * 4 + 3] > 128) { if (first < 0) first = x; last = x; }
             for (let x = first; x < last; x++) if (!(r[x * 4 + 3] > 128)) n++;
-            gaps[lens ? 'own' : 'slot'] = n;
+            if (seed === 3) gaps[lens ? 'own' : 'slot'] = n;
+            if (lens) gaps.firsts.push(first);
         }
+        b.setParam('offsetAlong', 0);
         /* Glitter's lightening second brush (mode 2) is laid over the
          * finished first, so its sparkles stay lit all along the stroke;
          * laid in turn, each next report's dabs covered the last ones'. */
@@ -1248,7 +1254,7 @@ await withPage(async (page) => {
     check("a Clip Studio spray throws its tiniest particles to the edge of the patch",
         csp.tinyFar > 12, JSON.stringify(csp));
     check("a Clip Studio ribbon of pictures at random lays each at its own length, end to end",
-        csp.gaps.own <= 2 && csp.gaps.slot > 5, JSON.stringify(csp.gaps));
+        csp.gaps.own <= 2 && csp.gaps.slot > 5 && csp.gaps.firsts.every(x => x === 10), JSON.stringify(csp.gaps));
     check("Clip Studio's lightening second brush lights the whole stroke, not just its last stretch",
         csp.lit > 10, 'lit ' + csp.lit);
     check("a Clip Studio sub colour mix at random gives each dab its own grey, random opacity or not",

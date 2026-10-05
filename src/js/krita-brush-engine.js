@@ -2699,6 +2699,7 @@
         if (p.offsetAlong || p.offsetAcross) {
             var om = _dyn(p, 'offset', 1, sc, 13);
             var oa = (p.offsetAlong / 100) * sz * om;
+            if (p.ribbonLens) oa *= _ribbonLen(p, true);
             var oc = (p.offsetAcross / 100) * sz * om;
             dx += _cos(dir) * oa - _sin(dir) * oc;
             dy += _sin(dir) * oa + _cos(dir) * oc;
@@ -3749,6 +3750,7 @@
             if (p.offsetAlong || p.offsetAcross) {
                 var om = _dyn(p, 'offset', 1, sc, 13);
                 var oa = (p.offsetAlong / 100) * sz * om;
+                if (p.ribbonLens) oa *= _ribbonLen(p, true);
                 var oc = (p.offsetAcross / 100) * sz * om;
                 dx += _cos(dir) * oa - _sin(dir) * oc;
                 dy += _sin(dir) * oa + _cos(dir) * oc;
@@ -5067,7 +5069,7 @@
             if (p.firstDabAt && endIdx > startIdx) _lastDabDist = strokeDist + _min(step, p.firstDabAt * sz) - step;
             else _renderDab(prev.x + (_pxOff ? _pxOff[0] : 0), prev.y + (_pxOff ? _pxOff[1] : 0), _tp, colorHex, _firstAngle,
                 prev.pressure || 0.5, _tf0);
-            if (p.ribbonLens) step *= _ribbonStep(p);
+            if (p.ribbonLens) step *= _ribbonLen(p, false);
             _fan = { a: p.originAngle ? _atan2(prev.y, prev.x) * 180 / _PI : (_firstAngle || 0), x: prev.x, y: prev.y, p: _tp };
         }
 
@@ -5166,7 +5168,7 @@
                     _lastDabDist = dabDist;
                     _dabsThisPass++;
                     step = _stepFor(_rawPressure, ptx, pty, segAngle);
-                    if (p.ribbonLens) step *= _ribbonStep(p);
+                    if (p.ribbonLens) step *= _ribbonLen(p, false);
                     remaining = nextDist - _lastDabDist;
                 }
             }
@@ -5289,12 +5291,15 @@
     /* A mirror flips each dab at random whatever the order (_sliceCells puts
      * each picture's m flips after it): Pastel's one picture in Clip Studio
      * lands flipped at random, where cycling its flips laid them in turn. */
-    /* Pictures laid end to end, each at its own length: the step from this
-     * one's centre to the next's is half of each, as shares of the longest. */
-    function _ribbonStep(p) {
+    /* Pictures laid end to end, each at its own length, as a share of the
+     * longest: each starts where the last ended, so the step on from one is
+     * its own length and its centre half that past the pen (offsetAlong).
+     * Centred as the longest, Book's first short spine began 42px past the
+     * pen, where Clip Studio's every first picture starts on it. */
+    function _ribbonLen(p, next) {
         var c = _tipCells(), n = c ? c.length : 1, L = p.ribbonLens, k = n / L.length;
         if (n < 2 || k % 1) return 1;
-        return ((L[(_tipCell / k) | 0] || 1) + (L[(_tipCellAt(p, _tipCycle, n, 0, 0) / k) | 0] || 1)) / 2;
+        return L[((next ? _tipCellAt(p, _tipCycle, n, 0, 0) : _tipCell) / k) | 0] || 1;
     }
     function _tipCellAt(p, t, n, x, y, pr) {
         var m = p.tipMirror === 'both' ? 4 : p.tipMirror ? 2 : 1;
@@ -5306,7 +5311,7 @@
             var q = n / m;
             return _min(q - 1, _floor(_clamp(pr, 0, 1) * (q - 1) + 0.5)) * m + _min(m - 1, _floor(_dabRand(x, y, 29) * m));
         }
-        // a ribbon of pictures of their own lengths picks by count, so the next is known (_ribbonStep)
+        // a ribbon of pictures of their own lengths picks by count, so the next is known (_ribbonLen)
         if (p.ribbonLens && p.tipPick !== 'cycle' && p.tipPick !== 'pingpong') return _min(n - 1, _floor(_dabRand(t, 0, 23) * n));
         if ((p.tipPick !== 'cycle' && p.tipPick !== 'pingpong') || n % m) return _min(n - 1, _floor(_dabRand(x, y, 23) * n));
         var f = _min(m - 1, _floor(_dabRand(x, y, 29) * m));
@@ -5892,7 +5897,7 @@
         sprayEach: false,        // Clip Studio sprays: each particle sized on its own, stops spaced by the plain size
         firstDabAt: 0,           // the first dab this many sizes along the stroke, none at the pen (Clip Studio sprays)
         ribbonClip: false,       // Clip Studio ribbons: the last picture is cut off where the pen stops
-        ribbonLens: null,        // ...and its pictures' own lengths, when picked at random (_ribbonStep)
+        ribbonLens: null,        // ...and its pictures' own lengths, when picked at random (_ribbonLen)
         /* Several dabs at every stop, and where each one lands relative to
          * the cursor -- both measured in the stroke's own frame. */
         dabCount: 1,
