@@ -1344,6 +1344,38 @@ await withPage(async (page) => {
     })()`));
     check('a hairy brush makes bristles only where its tip density left pixels', hd.dotThin[0] / hd.dot[0] > 0.2 && hd.dotThin[0] / hd.dot[0] < 0.4, JSON.stringify(hd));
     check('...and pressure from mouse shrinks the head on a slow stroke', hd.fast[1] > 50 && hd.slow[1] < hd.fast[1] / 3, JSON.stringify(hd));
+    /* A small Krita tip, read one bristle a pixel (scale 10, one 0.25px
+     * step): Krita's own bytes (probes/hairtip). Its box is the size cut to
+     * whole pixels, centred at W / 2 -- ours had a faint ring a row and a
+     * column further out, and a 5px tip half a pixel off -- and its 3x3
+     * samples add up whole bytes of transparency (245 where Krita has 246).
+     * Half opacity is Krita's u8 multiply: 249 makes 125, not 124. */
+    const hb = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = __B.layer().ctx;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        const hairy = { density: 1, random: 0, scale: 10, shear: 0, threshold: false, aa: true, comp: false, connected: true,
+            inkOn: false, inkAmount: 2, inkCurve: [[0, 0], [1, 1]], useOpacity: true, useWeights: false, pw: 0.5, blw: 0.5, biw: 0.5, idw: 50 };
+        for (const [k, v] of Object.entries({ engineKind: 'hairy', smoothingMode: 'none', sizeSrc: 'none', flowSrc: 'pressure',
+            flowCurve: [[0, 0], [1, 1]], shape: 'circle', falloff: 'krita-aa', hardness: 50, hairy })) b.setParam(k, v);
+        const grid = (sz, pr) => {
+            b.setParam('size', sz); L.clearRect(0, 0, 200, 200);
+            b.beginStroke(100, 100, pr, '#000000'); b.moveStroke(100.25, 100, pr, '#000000'); b.endStroke();
+            const d = L.getImageData(0, 0, 200, 200).data, g = [];
+            for (let oy = -3; oy <= 2; oy++) for (let ox = -3; ox <= 2; ox++) g.push(d[((100 + oy * 10) * 200 + 100 + ox * 10) * 4 + 3]);
+            return g;
+        };
+        const out = { d4: grid(4, 1), d5: grid(5, 1) };
+        b.setParam('tipCurve', [[0, 249 / 255], [1, 0]]); b.setParam('size', 1); L.clearRect(0, 0, 200, 200);
+        b.beginStroke(20, 100, 0.5, '#000000'); b.moveStroke(180, 100, 0.5, '#000000'); b.endStroke();
+        out.half = L.getImageData(100, 100, 1, 1).data[3];
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    // rows -3..2, columns -3..2
+    const kd4 = [0, 0, 0, 0, 0, 0, 0, 82, 167, 123, 12, 0, 0, 167, 246, 208, 51, 0, 0, 123, 208, 166, 26, 0, 0, 12, 51, 26, 0, 0, 0, 0, 0, 0, 0, 0];
+    const kd5 = [0, 0, 0, 0, 0, 0, 0, 39, 129, 143, 73, 3, 0, 129, 223, 235, 171, 32, 0, 143, 235, 246, 185, 41, 0, 73, 171, 185, 114, 9, 0, 3, 32, 41, 9, 0];
+    check("a small Krita tip's bristles are Krita's own bytes, box and middle", JSON.stringify(hb.d4) === JSON.stringify(kd4) && JSON.stringify(hb.d5) === JSON.stringify(kd5), JSON.stringify(hb));
+    check("...and a 249 bristle at half opacity is Krita's 125", hb.half === 125, 'alpha ' + hb.half);
     /* Krita's curve brush (KisCurvePaintOp): no dabs, a line per input
      * segment on Qt's anti-aliased pen, a curve through the history once it
      * is full. It was painted as a round brush: 10x Krita's ink on Ink Pen. */

@@ -15,7 +15,10 @@ const KPP_XML = [
     '  n=int.from_bytes(d[i:i+4],"big"); t=d[i+4:i+8]; c=d[i+8:i+8+n]; i+=12+n',
     '  if t in (b"zTXt",b"tEXt"):',
     '    k,_,v=c.partition(bytes(1))',
-    '    if k==b"preset": sys.stdout.buffer.write(zlib.decompress(v[1:]) if t==b"zTXt" else v)'].join('\n');
+    '    if k==b"preset": sys.stdout.buffer.write(zlib.decompress(v[1:]) if t==b"zTXt" else v)',
+    '  if t==b"iTXt":',   // keyword, compressed flag, method, language, translated keyword, text
+    '    k,_,v=c.partition(bytes(1)); f=v[0]; v=v[2:].split(bytes(1),2)[2]',
+    '    if k==b"preset": sys.stdout.buffer.write(zlib.decompress(v) if f else v)'].join('\n');
 const SUBS = 'import re,sys,json\nx=sys.stdin.read()\nfor p,r in json.loads(sys.argv[1]): x=re.sub(p,r,x)\nsys.stdout.write(x)';
 const names = fs.readdirSync(root).filter(d => fs.existsSync(path.join(root, d, 'job.json')));
 const xmls = {}, jobs = {};

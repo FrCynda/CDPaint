@@ -329,14 +329,14 @@
         var ctx = canvas.getContext('2d'), img = ctx.createImageData(W, H), d = img.data;
         for (var j = 0; j < H; j++) {
             for (var i = 0; i < W; i++) {
-                var sum = 0;
+                var sum = 0, tsum = 0;
                 for (var sy = 0; sy < ss; sy++) {
                     var y0 = j + 0.5 - cy + sy / ss;
                     for (var sx = 0; sx < ss; sx++) {
                         var x0 = i + 0.5 - cx + sx / ss;
                         var x = ca * x0 - sa * y0, y = sa * x0 + ca * y0;
                         var n = (x / rx) * (x / rx) + (y / ry) * (y / ry), ay = (_abs(y) + e) * fy;
-                        if (n > 1) continue;
+                        if (n > 1) { tsum += 255; continue; }
                         if (gauss) {
                             var dist = Math.sqrt(n) * rx;
                             sum += aa && dist > fs ? fsv * (rx - dist) / (rx - fs) : _gaussAt(dist / rx, hard);
@@ -344,8 +344,13 @@
                         }
                         var ax = (_abs(x) + e) * fx, nf = ax * ax + ay * ay;
                         sum += nf < 1 ? 1 : 1 - n * (nf - 1) / (nf - n);
+                        if (nf >= 1) tsum += Math.trunc(255 * n * (nf - 1) / (nf - n));
                     }
                 }
+                /* Supersampled, Krita adds up each sample's transparency as a
+                 * whole byte, cut down, and cuts the mean down again: a level
+                 * above a rounded mean of the coverage (hairy probes, 245 -> 246). */
+                if (ss > 1 && !gauss) sum = (255 - _floor(tsum / (ss * ss))) / 255 * ss * ss;
                 if (sum) { var k = (j * W + i) * 4; d[k] = d[k + 1] = d[k + 2] = 255; d[k + 3] = _round(sum / (ss * ss) * 255); }
             }
         }
@@ -6797,14 +6802,18 @@
     /* An alpha array's box, in the stroke colour, over the flow buffer at
      * `o`: how a Krita paintop that builds its own dab (particle, hairy)
      * hands it to the painter. Clears the box for the next pass. The
-     * opacity goes into the bytes, rounded as Krita's float over rounds:
-     * a canvas globalAlpha of 0.5 made 254 into 127.5, not 127, and a
-     * bristle row a grey level too dark. */
+     * opacity goes into the bytes as Krita's u8 painter multiplies: the
+     * opacity a byte (0.5 is 128), then (a * o + 128) folded by 257 -- a
+     * canvas globalAlpha of 0.5 made 254 into 127.5, not 127, and 249 * 0.5
+     * rounds half to even into 124 where Krita has 125 (鬃毛-4p). */
     var _ptCv = null;
     function _blitAlpha(A, W, x1, y1, x2, y2, o) {
-        var c = _flowCtx, bw = x2 - x1 + 1, bh = y2 - y1 + 1, im = new ImageData(bw, bh), d = im.data;
+        var c = _flowCtx, bw = x2 - x1 + 1, bh = y2 - y1 + 1, im = new ImageData(bw, bh), d = im.data, ob = _round(o * 255);
         for (var yy = 0; yy < bh; yy++) {
-            for (var xx = 0, q = (y1 + yy) * W + x1; xx < bw; xx++, q++) { d[(yy * bw + xx) * 4 + 3] = A[q] * o; A[q] = 0; }
+            for (var xx = 0, q = (y1 + yy) * W + x1; xx < bw; xx++, q++) {
+                var t = A[q] * ob + 128;
+                d[(yy * bw + xx) * 4 + 3] = ((t >> 8) + t) >> 8; A[q] = 0;
+            }
         }
         if (!_ptCv || _ptCv.width < bw || _ptCv.height < bh) _ptCv = new OffscreenCanvas(_max(bw, _ptCv ? _ptCv.width : 0), _max(bh, _ptCv ? _ptCv.height : 0));
         var pctx = _ptCv.getContext('2d');
@@ -6868,13 +6877,21 @@
             }
             return { W: W, H: H, a: a, cx: _floor(W * 0.5), cy: _floor(H * 0.5) };
         }
+        /* Krita's dab at no sub-pixel offset: its size cut to whole pixels across, the middle
+         * half a pixel before W / 2, and nothing past that box -- our mask's
+         * extra faint ring came first in scan order and took the few
+         * bristles a 1% density keeps (鬃毛-4p: probes/hairtip). */
         _sharpNow = p.sharpness;
-        var m = _maskFor(p.shape || 'circle', hs, p.hardness, p.angle || 0, asp, 0, 0);
+        var KW = _max(1, Math.trunc(hs)), KH = _max(1, Math.trunc(hs / asp)), clip = !(p.angle % 180);
+        var m = _maskFor(p.shape || 'circle', hs, p.hardness, p.angle || 0, asp, KW / 2, KH / 2);
         W = m.width; H = m.height;
-        var dd = m.getContext('2d').getImageData(0, 0, W, H).data;
+        var dd = m.getContext('2d').getImageData(0, 0, W, H).data, cx = _floor(m._cx != null ? m._cx : W / 2), cy = _floor(m._cy != null ? m._cy : H / 2);
         a = new Uint8Array(W * H);
-        for (var i = 0; i < W * H; i++) a[i] = dd[i * 4 + 3];
-        return { W: W, H: H, a: a, cx: _floor(m._cx != null ? m._cx : W / 2), cy: _floor(m._cy != null ? m._cy : H / 2) };
+        for (var i = 0; i < W * H; i++) {
+            var ox = i % W - cx + (KW >> 1), oy = _floor(i / W) - cy + (KH >> 1);
+            if (!clip || (ox >= 0 && oy >= 0 && ox < KW && oy < KH)) a[i] = dd[i * 4 + 3];
+        }
+        return { W: W, H: H, a: a, cx: cx, cy: cy };
     }
     function _paintHairy(pts, from, to) {
         var p = getParams(), hr = p.hairy;
