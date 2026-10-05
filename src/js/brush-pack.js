@@ -3700,6 +3700,11 @@
          * both brushes held still: 198k of ink alone or in mode 0, 18k in
          * mode 4, 198k again with the change switched on (cdp-csp/pr-du). */
         if (_sutNum(v.DualBrushCompositeMode, 0) === 4 && !_sutNum(v.ChangeRGBByDual, 1)) op = 'min';
+        /* Mode 12 likewise: with the colour change on it cuts (the probes
+         * above, all on); off, it pushes ink away from half -- darker where
+         * the second brush is under half, lighter where over -- which is
+         * Wet blotting ink's dark rim (cdp-csp/qw, fitcut3.py). */
+        if (_sutNum(v.DualBrushCompositeMode, 0) === 12 && !_sutNum(v.ChangeRGBByDual, 1)) op = 'contrast';
         var v2 = {}, k;
         for (k in v) v2[k] = v[k];
         for (k in v) {

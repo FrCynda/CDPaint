@@ -760,9 +760,13 @@
      * so Wet blotting ink's band stays black (to a level on three probes,
      * cdp-csp/fitcut.py: isolated faint dabs, a dense flow-30 line, Wet
      * blotting ink's own picture; a x (1 - d) missed the dense two by 66
-     * and 140). The second paints into _subCanvas; the final flush takes
-     * it off, or under. */
-    var _subCanvas = null, _subCtx = null, _subOn = false;   // false, 'subtract', 'min' or 'cut'
+     * and 140). With the colour change off ('contrast') it is
+     * a + (1 - 2d) x min(a, 1 - a): under half a second brush the ink
+     * gains, over half it loses -- Wet blotting ink's dark rim round a
+     * lighter band (cdp-csp/qw: fitcut3.py 0.6 levels; the cut rule
+     * missed by 15, and by 0.06 with the change on). The second paints
+     * into _subCanvas; the final flush takes it off, or under. */
+    var _subCanvas = null, _subCtx = null, _subOn = false;   // false, 'subtract', 'min', 'cut' or 'contrast'
     /* Clip Studio's "blend by darken" lays each dab by the darker of it and
      * what is there: on one colour the stronger alpha wins and dabs never
      * pile up (cdp-csp/pr-sb, Soft bleed: a hard round at flow 25/50 holds
@@ -4581,7 +4585,7 @@
          * keeps its dots from one flush to the next.
          * ponytail: over-inks thin hatching by up to a third; a real tip
          * at full resolution would need no guessing. */
-        if (_subOn && isFinal && _flowCanvas && _secondOf()) {
+        if (_subOn && _subOn !== 'contrast' && isFinal && _flowCanvas && _secondOf()) {
             _ensureWashCanvas(_flowCanvas.width, _flowCanvas.height);
             if (src !== _washCanvas) {
                 _washCtx.clearRect(x, y, w, h);
@@ -4705,6 +4709,23 @@
                 _applyTextureNoise(_gtx, w, h, _p.texture, _p.textureScale, _p.textureType, x, y);
                 _gtx.restore();
             }
+        }
+        /* 'contrast' reads the stroke WITH its paper: Wet blotting ink's
+         * band is 215 with paper and no second brush, 254 with neither, and
+         * the second brush moves the papered 215 (to 178 under it, 244 at
+         * its fading edge) but not the solid 254 (cdp-csp/zx, qw). */
+        if (_subOn === 'contrast' && isFinal && _flowCanvas && _secondOf()) {
+            if (src !== _washCanvas && src !== _edgeCanvas) {
+                _ensureWashCanvas(_flowCanvas.width, _flowCanvas.height);
+                _washCtx.clearRect(x, y, w, h);
+                _washCtx.drawImage(src, x, y, w, h, x, y, w, h);
+                src = _washCanvas;
+            }
+            var cctx = src === _edgeCanvas ? _edgeCtx : _washCtx;
+            var ci = cctx.getImageData(x, y, w, h), cd = ci.data, csd = _subCtx.getImageData(x, y, w, h).data;
+            for (var cj = 3; cj < cd.length; cj += 4) cd[cj] += _round((255 - 2 * csd[cj]) * _min(cd[cj], 255 - cd[cj]) / 255);
+            cctx.putImageData(ci, x, y);
+            _subOn = false;
         }
         /* Clip Studio's edge goes on over its paper (Round watercolor's rim
          * stands 39 above the grained wash), so after the grain above. */
@@ -6674,7 +6695,7 @@
     // Both brushes along pts, a segment of each in turn.
     function _paintBoth(pts, color, sec) {
         var st = _secondState(sec), n = pts.length, main = _flowCtx;
-        _subOn = sec.op === 'subtract' || sec.op === 'min' || sec.op === 'cut' ? sec.op : false;
+        _subOn = sec.op === 'subtract' || sec.op === 'min' || sec.op === 'cut' || sec.op === 'contrast' ? sec.op : false;
         if (_subOn) {
             if (!_subCanvas || _subCanvas.width !== _flowCanvas.width || _subCanvas.height !== _flowCanvas.height) {
                 _subCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);

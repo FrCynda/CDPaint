@@ -1497,6 +1497,7 @@ await withPage(async (page) => {
                                                    ['dropped: the colour its second brush blends in', 'dropped: its second brush tip'].find(t => W(d, { hasTip2: true }).includes(t)) || '',
                                                    !!(sec && sec.light), sec ? sec.variant.BrushChangePatternColor : null]; }),
             mask4: [1, 0].map(c => (BrushPack.sutSecond({ UseDualBrush: 1, DualBrushCompositeMode: 4, ChangeRGBByDual: c }) || {}).op),
+            mode12: [1, 0].map(c => (BrushPack.sutSecond({ UseDualBrush: 1, DualBrushCompositeMode: 12, ChangeRGBByDual: c }) || {}).op),
             opac: [{}, { BrushBlendPatternByDarken: 1 }, { UseDualBrush: 1, DualBrushCompositeMode: 12 }, { UseDualBrush: 1, DualBrushCompositeMode: 4, ChangeRGBByDual: 0 }]
                 .map(x => P(Object.assign({ BrushOpacityEffector: rndE }, x))).map(q => [q.dabOpacitySrc || 'none', q.dabOpacityAvg === false, q.flowSrc]),
             opac2: 'BrushOpacityEffector' in BrushPack.sutSecond({ UseDualBrush: 1, DualBrushCompositeMode: 4, BrushOpacityEffector: rndE }).variant,
@@ -1646,6 +1647,9 @@ await withPage(async (page) => {
             [0, 'subtract', 76, 20, '', false, 0], [0, null, null, null, 'dropped: its second brush tip', false, null], [0, 'cut', 76, 20, '', false, 0]]), JSON.stringify(sm.dual));
     check('...mode 4 lays it under while it changes the colour, and with the change off keeps the lesser of the two strokes',
         JSON.stringify(sm.mask4) === '["destination-over","min"]', JSON.stringify(sm.mask4));
+    // Wet blotting ink: mode 12 cuts with the colour change on, pushes from half with it off (cdp-csp/qw)
+    check('...and mode 12 cuts while it changes the colour, and with the change off pushes ink away from half',
+        JSON.stringify(sm.mode12) === '["cut","contrast"]', JSON.stringify(sm.mode12));
     /* Opacity caps each dab at its own level (cdp-csp/pr-dua zwiG); laid
      * by darken, or under a second brush cut in turn, it stays on flow. */
     check("a Clip Studio brush's opacity is a per-dab cap; laid by darken or under a cutting second brush it stays on flow",

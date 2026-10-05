@@ -541,6 +541,50 @@ await withPage(async (page) => {
     /* Reverse density reads 0.3 and 0.8 paper as 0.7 and 0.2. */
     check("Clip Studio's reversed paper lays the paper's levels inverted",
         Math.abs(ps[2][0] - 51) <= 4 && Math.abs(ps[2][2] - 179) <= 4, JSON.stringify(ps));
+    /* Clip Studio's mode-12 second brush with its colour change off
+     * ('contrast'): a + (1 - 2d) min(a, 1 - a), on the stroke WITH its
+     * paper. Under a solid second brush the 0.3 and 0.8 paper go to 0 and
+     * 0.6; read before the paper, the solid line moved nothing (Wet
+     * blotting ink, cdp-csp/qw). Where the second brush is absent, faint
+     * ink doubles: a lone faint dab's rim gains as much again. */
+    const pc = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush;
+        const sc = new OffscreenCanvas(64, 64), sx = sc.getContext('2d');
+        for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) {
+            sx.fillStyle = (x + y) & 1 ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.8)'; sx.fillRect(x, y, 1, 1);
+        }
+        const url = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); sc.convertToBlob().then(bl => fr.readAsDataURL(bl)); });
+        const out = {};
+        b.forgetSaved('Round'); b.loadPreset('Round'); b.setParam('texture', 100); b.setParam('texturePattern', url);
+        await new Promise(r => setTimeout(r, 700));
+        for (const paper of [true, false, 'none']) { const P = paper === true;
+            __B.doc(400, 200);
+            if (paper !== 'none') b.PRESETS.Round.second = { op: 'contrast', p: { size: P ? 60 : 10, flow: 100, spacing: 10, hardness: 100 } };
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0);
+            b.setParam('size', 40); b.setParam('hardness', 100);
+            if (P) {
+                for (const [k, v] of Object.entries({ spacing: 5, texture: 100, texturePattern: url, textureScale: 1, textureStroke: 1 })) b.setParam(k, v);
+                await new Promise(r => setTimeout(r, 800));
+            } else { b.setParam('spacing', 400); b.setParam('flow', 20); }
+            const L = __B.layer();
+            await __B.stroke(20, 100, 380, 100, '#000000');
+            if (P) {
+                const d = L.ctx.getImageData(190, 95, 20, 10).data, v = [];
+                for (let i = 3; i < d.length; i += 4) v.push(d[i]);
+                v.sort((p, q) => p - q);
+                out.paper = [v[0], v[v.length - 1]];
+            } else out[paper ? 'bare' : 'lone'] = [__B.px(L, 20, 100), __B.px(L, 20, 115)].map(s => +s.split(',')[3]);
+            delete b.PRESETS.Round.second;
+        }
+        b.setParam('texture', 0); b.setParam('textureStroke', null); b.setParam('texturePattern', null); b.setParam('flow', 100); b.forgetSaved('Round');
+        b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check("Clip Studio's second brush with its colour change off pushes the papered stroke away from half",
+        pc.paper[0] <= 4 && Math.abs(pc.paper[1] - 153) <= 5, JSON.stringify(pc));
+    check("...and doubles faint ink where it is absent",
+        pc.lone[0] <= 4 && Math.abs(pc.lone[1] - 2 * pc.bare[1]) <= 3, JSON.stringify(pc));
 
     /* Blend 0 at half density scales the paper in, a (1.5 - d (1 - s)):
      * 0.3 and 0.8 paper under a 0.5 dab give 0.58 and 0.70 (Soft bleed's
