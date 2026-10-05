@@ -1420,7 +1420,7 @@
         }
         if (!cells.length) return null;
         return { cells: cells, spacing: cells[0].spacing,
-                 pick: (sel && sel[1] === 'incremental') ? 'cycle' : 'random' };
+                 pick: !sel ? 'random' : sel[1] === 'incremental' ? 'cycle' : sel[1] === 'pressure' ? 'pressure' : 'random' };
     }
 
     function _canvasFromAlpha(cell) {

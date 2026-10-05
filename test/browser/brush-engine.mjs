@@ -2030,6 +2030,17 @@ await withPage(async (page) => {
         await pick();
         out.cycle = [first, second, dot(), r.ok, r.name];
         b.deleteUserPreset(r.name);
+        // paint_smudge_blurry: a pipe picked by pressure takes picture round(p * (n - 1))
+        const headP = new TextEncoder().encode('p\\n3 ncells:3 cellwidth:4 cellheight:4 step:100 dim:1 cols:1 rows:1 placement:constant rank0:3 sel0:pressure\\n');
+        const gihP = new Uint8Array(headP.length + 3 * cells[0].length);
+        gihP.set(headP); cells.forEach((c, i) => gihP.set(c, headP.length + i * c.length));
+        const rp = await b.importBrushTip(gihP, 'press.gih');
+        b.loadPreset(rp.name); b.setParam('size', 4); b.setParam('spacing', 100); b.setParam('sizeSrc', 'none'); b.setParam('flowSrc', 'none');
+        await new Promise(res => setTimeout(res, 300));
+        const dotAt = (pr) => { L().clearRect(0, 0, 200, 200); b.beginStroke(100, 100, pr, '#000000'); b.endStroke();
+            const d = L().getImageData(90, 100, 20, 1).data; let x = 0; for (let i = 1; i < 20; i++) if (d[i * 4 + 3] > d[x * 4 + 3]) x = i; return x; };
+        out.pressPick = [0.1, 0.3, 0.5, 0.9, 1].map(dotAt);
+        b.deleteUserPreset(rp.name);
         // GIMP's pixel.gbr: a 1px tip at a whole coordinate straddles four pixels.
         const one = (() => { const nm = new TextEncoder().encode('p' + String.fromCharCode(0)), h = 28 + nm.length, u = new Uint8Array(h + 1);
             const dv = new DataView(u.buffer); [h, 2, 1, 1, 1, 0x47494D50, 100].forEach((v, i) => dv.setUint32(i * 4, v));
@@ -2041,6 +2052,9 @@ await withPage(async (page) => {
         b.deleteUserPreset(r1.name);
         return JSON.stringify(out);
     })()`, { awaitPromise: true }));
+    check('a pipe picked by pressure takes the picture at round(pressure * (n - 1)) (paint_smudge_blurry)',
+        bank.pressPick.join() === [0, 1, 1, 2, 2].map(i => bank.pressPick[0] + i).join(),
+        JSON.stringify(bank.pressPick));
     check('the first gap is measured along the stroke too, not across it (GIMP goat)',
         bank.runs === 3, `${bank.runs} dabs`);
     check('a Krita tip a hundredth of a pixel wide still paints its pixel (EO Pixel Perfect)',

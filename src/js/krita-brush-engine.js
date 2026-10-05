@@ -3770,7 +3770,7 @@
                 sc.x = x; sc.y = y;
                 if (dsz < 0.5) continue;
             }
-            if (p.shape === 'custom') _pickTipCell(p, dx, dy);
+            if (p.shape === 'custom') _pickTipCell(p, dx, dy, sc.pressure);
             var mask = _maskFor(p.shape, dsz, hard, dang, asp, dx, dy);
             if (p.tipDensity < 1 || p.tipRandomness) mask = _noisyMask(mask, dx, dy, p);
 
@@ -5184,11 +5184,11 @@
      * angle jitter use, so a dab at a given spot always draws the same shape
      * however many times the stroke is re-rendered -- otherwise the live
      * passes and the final one would disagree and the stroke would flicker. */
-    function _pickTipCell(p, x, y) {
+    function _pickTipCell(p, x, y, pr) {
         var c = _tipCells();
         var n = c ? c.length : 1;
         if (n < 2) { _tipCell = 0; return; }
-        _tipCell = _tipCellAt(p, _tipCycle++, n, x, y);
+        _tipCell = _tipCellAt(p, _tipCycle++, n, x, y, pr);
     }
     /* 'cycle' takes the cells in turn, 'pingpong' out and back (0,1,2,1,0,1..:
      * Clip Studio's order 1, measured on Grass patch), else one at random. */
@@ -5202,8 +5202,16 @@
         if (n < 2 || k % 1) return 1;
         return ((L[(_tipCell / k) | 0] || 1) + (L[(_tipCellAt(p, _tipCycle, n, 0, 0) / k) | 0] || 1)) / 2;
     }
-    function _tipCellAt(p, t, n, x, y) {
+    function _tipCellAt(p, t, n, x, y, pr) {
         var m = p.tipMirror === 'both' ? 4 : p.tipMirror ? 2 : 1;
+        /* A pipe picked by pressure (sel0:pressure): the picture at
+         * pressure * (count - 1), rounded, in Krita (KisImagePipeBrush) and
+         * GIMP alike. paint_smudge_blurry's 25 pictures run ragged to a
+         * clean oval; picked at random its stroke came out in blotches. */
+        if (p.tipPick === 'pressure' && pr != null && !(n % m)) {
+            var q = n / m;
+            return _min(q - 1, _floor(_clamp(pr, 0, 1) * (q - 1) + 0.5)) * m + _min(m - 1, _floor(_dabRand(x, y, 29) * m));
+        }
         // a ribbon of pictures of their own lengths picks by count, so the next is known (_ribbonStep)
         if (p.ribbonLens && p.tipPick !== 'cycle' && p.tipPick !== 'pingpong') return _min(n - 1, _floor(_dabRand(t, 0, 23) * n));
         if ((p.tipPick !== 'cycle' && p.tipPick !== 'pingpong') || n % m) return _min(n - 1, _floor(_dabRand(x, y, 23) * n));
