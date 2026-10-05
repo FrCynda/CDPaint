@@ -833,12 +833,19 @@
          * its line 209, where a ceiling held ours at 128. So it rides flow. */
         if (measured && buildUp) {
             // Krita's own flow and its sensor play no part here.
-            delete out.flowSrc; delete out.flowMin; delete out.flowCurve;
+            delete out.flowSrc; delete out.flowMin; delete out.flowCurve; delete out.flowSensors; delete out.flowCombine;
             if (out.dabOpacitySrc) {
                 out.flowSrc = out.dabOpacitySrc;
                 out.flowMin = out.dabOpacityMin;
                 if (out.dabOpacityCurve) out.flowCurve = out.dabOpacityCurve;
                 delete out.dabOpacitySrc; delete out.dabOpacityMin; delete out.dabOpacityCurve;
+            }
+            /* ...and a list of inputs with it: X2AF Charcoal Soft (T)'s
+             * pressure-and-tilt list kept a ceiling, 28 where Krita's line
+             * stacks to 122 at half pressure. */
+            if (out.dabOpacitySensors) {
+                out.flowSensors = out.dabOpacitySensors; out.flowCombine = out.dabOpacityCombine;
+                delete out.dabOpacitySensors; delete out.dabOpacityCombine;
             }
         }
 

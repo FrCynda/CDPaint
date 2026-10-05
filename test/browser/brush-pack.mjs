@@ -412,6 +412,9 @@ await withPage(async (page) => {
                 buildPress: BP.toPreset({ params: { brush_definition: round, PaintOpAction: '1', OpacityUseCurve: 'true',
                     OpacitySensor: '<params id="pressure"><curve>0,0;0.5,0.25;1,1;</curve></params>',
                     PressureFlow: 'true', FlowUseCurve: 'true', FlowSensor: '<params id="speed"><curve>0,0;1,1;</curve></params>' } }).params,
+                // X2AF Charcoal Soft (T): build up, opacity on pressure and tilt.
+                buildList: BP.toPreset({ params: { brush_definition: round, PaintOpAction: '1', OpacityUseCurve: 'true',
+                    OpacitySensor: '<params id="sensorslist"><ChildSensor id="pressure"><curve>0,0;1,1;</curve></ChildSensor><ChildSensor id="declination"><curve>0,0;1,1;</curve></ChildSensor></params>' } }).params,
                 blocks: BP.toPreset({ params: { brush_definition: bd('gauss', 'rect', 0.43, 0.82) } }).params,
                 gchar: BP.toPreset({ params: { brush_definition: bd('default', 'rect', 1, 0.31) } }).params,
                 // Ink-1 Precision with its spacing option on, as the spacing probe rendered it.
@@ -532,6 +535,9 @@ await withPage(async (page) => {
         check('a "build up" pressure opacity scales each dab through flow, not as a ceiling',
             B.buildPress.flowSrc === 'pressure' && !B.buildPress.dabOpacitySrc && B.buildPress.flowCurve &&
             B.buildPress.flowCurve[1][1] === 0.25, JSON.stringify([B.buildPress.flowSrc, B.buildPress.dabOpacitySrc, B.buildPress.flowCurve]));
+        check('...and a list of inputs on its opacity rides flow too, not a ceiling (X2AF Charcoal Soft (T) 0.53 -> 0.94)',
+            B.buildList.flowSensors && B.buildList.flowSensors.length === 2 && !B.buildList.dabOpacitySensors,
+            JSON.stringify([B.buildList.flowSensors, B.buildList.dabOpacitySensors]));
         /* Measured on Krita's own renders (test/krita/probes/spacing): the
          * spacing option multiplies the gap by its strength times its curve,
          * and with the curve box clear by the strength alone. */
