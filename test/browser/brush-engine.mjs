@@ -1578,6 +1578,56 @@ await withPage(async (page) => {
     })()`);
     check('a masking stroke spaces its own dabs, not only where the brush lays one',
         mkGap < 40, 'alpha ' + mkGap);
+    /* Krita's plain square, measured against lone Krita dabs (test/krita/
+     * probes/chalk, gchar2): turned 270 it is square to the pixel grid
+     * (the cache's 3.82-degree step for a 30px tip had it at 271.2, its
+     * ends leaning a pixel), it sits at its sub-pixel phase like the
+     * circle, and a thin one spaces on a slant by an ellipse whose axes
+     * are each floored at half a pixel (MIN_DISTANCE_SPACING), not the
+     * ellipse floored after. X1DC Chalk 0.64 -> 1, Grease Charcoal 1.09 -> 0.99. */
+    const ksq = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = () => __B.layer().ctx;
+        const base = () => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            b.setParam('shape', 'square'); b.setParam('falloff', 'krita'); b.setParam('hardness', 90);
+            b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none'); b.setParam('angleSrc', 'none');
+            L().clearRect(0, 0, 200, 200);
+        };
+        const ink = (x0, y0, w, h) => { let s = 0; const d = L().getImageData(x0, y0, w, h).data; for (let i = 3; i < d.length; i += 4) s += d[i]; return s; };
+        // a 30x9 bar turned 270: its end row the same all along
+        base(); b.setParam('size', 30); b.setParam('aspectRatio', 3.33); b.setParam('angle', 270);
+        b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+        let end = [];
+        for (let y = 80; y < 120 && !end.length; y++) {
+            const r = Array.from(L().getImageData(80, y, 40, 1).data).filter((v, i) => i % 4 === 3);
+            if (r.filter(v => v > 0).length > 4) end = r.slice(r.findIndex(v => v > 0), 40 - r.slice().reverse().findIndex(v => v > 0));
+        }
+        // a 9px square a quarter pixel right of a pixel centre: its middle there too
+        base(); b.setParam('size', 9);
+        b.beginStroke(100.75, 100.5, 1, '#000000'); b.endStroke();
+        const d = L().getImageData(90, 90, 20, 20).data; let s = 0, sx = 0;
+        for (let i = 0; i < 400; i++) { s += d[i * 4 + 3]; sx += d[i * 4 + 3] * (90 + i % 20 + 0.5); }
+        const row = Array.from(L().getImageData(92, 100, 16, 1).data).filter((v, i) => i % 4 === 3), col = Array.from(L().getImageData(100, 92, 1, 16).data).filter((v, i) => i % 4 === 3);
+        // a 40x4 bar at 10% spacing, along and on the diagonal, the same length
+        const bar = (x1, y1) => {
+            base(); b.setParam('size', 40); b.setParam('aspectRatio', 10); b.setParam('angle', 90); b.setParam('spacing', 10); b.setParam('flow', 1);
+            b.beginStroke(50, 50, 1, '#000000');
+            for (let t = 1; t <= 100; t++) b.moveStroke(50 + x1 * t / 100, 50 + y1 * t / 100, 1, '#000000');
+            b.endStroke();
+            return ink(0, 0, 200, 200);
+        };
+        return JSON.stringify({ end, cx: sx / s, row: [row, col],
+            slant: bar(70.71, 70.71) / bar(100, 0) });
+    })()`));
+    check("a Krita square turned square stays square to the pixels",
+        ksq.end.every((v, i) => Math.abs(v - ksq.end[ksq.end.length - 1 - i]) <= 2), JSON.stringify(ksq.end));
+    // Krita's mask is built at the phase: one soft column, none across.
+    // Drawn whole and slid there, it smeared both edges (64/191, 128/128).
+    check("...sits at its sub-pixel phase, built there rather than smeared",
+        Math.abs(ksq.cx - 100.75) < 0.1 && ksq.row.flat().filter(v => v > 0 && v < 255).length <= 1,
+        ksq.cx + ' ' + JSON.stringify(ksq.row));
+    check("...and spaces a thin bar on a slant by an ellipse with each axis floored at half a pixel",
+        ksq.slant < 0.85, String(ksq.slant));
     /* Krita spaces dabs by the box around the tip turned by its fixed angle
      * (KisBrush::characteristicSize). A 20x5 tip at 45 degrees has a
      * 17.7px box, so at 100% spacing its dabs stand apart along a line; an

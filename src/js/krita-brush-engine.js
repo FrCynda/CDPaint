@@ -128,8 +128,11 @@
          * into one brush swatch against 8 for a brush that does not turn,
          * which is most of why the brush panel stuttered on those tiles. */
         function _quantAngle(angle, size) {
-            var step = _clamp(114.6 / _max(1, size), 0.25, 6);
-            return _round((angle || 0) / step) * step;
+            var step = _clamp(114.6 / _max(1, size), 0.25, 6), a = angle || 0, r = _round(a / 90) * 90;
+            /* A square turned square stays square: the 3.82-degree step (30px)
+             * put X1DC Chalk's 270 at 271.2, its edges leaning a pixel, and
+             * its grain ate the leaning edge. */
+            return _abs(a - r) < step / 2 ? r : _round(a / step) * step;
         }
 
         function _key(shape, size, hardness, angle, aspect, phase) {
@@ -4034,11 +4037,8 @@
             // Sharpness snaps dabs to whole pixels in Krita, so it keeps the old path.
             // Krita's own tips only: the built-in brushes keep the look they have.
             if (x != null && sz <= 32 && !(_params.sharpness > 0) &&
-                /^(k(circle|gauss|grect|marker)|[rc]?curve|cspaa)/.test(shape)) {
-                /* ponytail: Krita places its plain square (klrect) at its
-                 * phase too, but with it the two Grease Charcoals swap: the
-                 * auto-spaced one 0.90 -> 0.98, the 0.05-spaced one 0.98 ->
-                 * 0.90 (grain holes fill). Open until Krita's dab origin is. */
+                /^(k(circle|gauss|grect|lrect|marker)|[rc]?curve|cspaa)/.test(shape)) {
+                // The plain square (klrect) too: lone Krita dabs sit at their phase.
                 ph = [x % 1, y % 1];
             } else if (x != null && (/^k(circle|gauss)/.test(shape) || _params.sharpness > 0 && /^(k(grect|lrect)|rcurve)/.test(shape))) {
                 /* Sharpness: Krita rounds the dab's corner (cursor minus half
@@ -4845,7 +4845,10 @@
             } else if (p.spacingIsotropic || bw === bh) {   // GIMP spaces a 164x166 tip by its 164
                 g = _gap(_max(bw, bh));
             } else {
-                var a = _gap(bw), b = _gap(bh);
+                // Krita floors each axis (MIN_DISTANCE_SPACING): floored after,
+                // a thin bar's ellipse came in under it on a slant. GIMP does
+                // not (Block 03's slant 0.99 of GIMP's ink unfloored, 0.95 floored).
+                var f = p.pixelSteps ? 0 : 0.5, a = _max(f, _gap(bw)), b = _max(f, _gap(bh));
                 var phi = ((ang || 0) - _dynAngle(p, p.angle, sc) + (p.angle || 0)) * _PI / 180;
                 g = 1 / Math.sqrt(_pow(_cos(phi) / a, 2) + _pow(_sin(phi) / b, 2));
             }
