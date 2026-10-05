@@ -1536,7 +1536,8 @@ await withPage(async (page) => {
             flips: [[2, 2], [1, 0], [0, 2], [3, 0]].map(([h, v]) => { const o = P({ BrushPatternReverseHorizontal: h, BrushPatternReverseVertical: v }, { hasTip: true });
                                                            return (o.tipFlip || '-') + '/' + (o.tipMirror || '-'); }).join(' '),
             crispPic: [P({ AntiAlias: 0, TextureDensity: 60, TextureCompositeMode: 4, TextureForPlot: 1 }, { hasTip: true, hasTexture: true }),
-                       P({ AntiAlias: 1 }, { hasTip: true }), P({ AntiAlias: 0 })].map(o => o.tipShrink || ''),
+                       P({ AntiAlias: 1 }, { hasTip: true }), P({ AntiAlias: 0 }), P({ AntiAlias: 0 }, { hasTip: true, tipWhole: true })]
+                .map(o => [o.tipSamples || 0, o.tipShift || 0, o.tipShrink || '']),
             lowAA: [P({ AntiAlias: 1 }, { hasTip: true }), P({ AntiAlias: 1, BrushRibbon: 1 }, { hasTip: true }), P({ AntiAlias: 2 }, { hasTip: true }), P({ AntiAlias: 1 }),
                     P({ AntiAlias: 3 }, { hasTip: true }), P({ AntiAlias: 2, BrushRibbon: 1 }, { hasTip: true })]
                 .map(o => [o.tipSamples || 0, o.tipShift || 0]),
@@ -1565,8 +1566,8 @@ await withPage(async (page) => {
     check('a picture tip takes no hardness', JSON.stringify(sm.picHard) === '[100,1]', JSON.stringify(sm.picHard));
     check('reverse 1 flips every dab, 2 flips each at random',
         sm.flips === '-/both h/- -/v -/-', sm.flips);
-    check('anti-aliasing off shrinks a picture it does not ink solid without smoothing',
-        JSON.stringify(sm.crispPic) === '["nearest","",""]', JSON.stringify(sm.crispPic));
+    check("anti-aliasing off point-samples a picture once a pixel, unshifted (Cross-hatching for tone scraping lands on Clip Studio's pixels)",
+        JSON.stringify(sm.crispPic) === '[[1,0,""],[2,0.25,""],[0,0,""],[1,0,""]]', JSON.stringify(sm.crispPic));
     check("a Clip Studio picture at low anti-aliasing is point-sampled a quarter pixel on, a dab as a ribbon (Chalk's 30px picture is 30 rows)",
         JSON.stringify(sm.lowAA.slice(0, 2)) === '[[2,0.25],[2,0.25]]' && JSON.stringify(sm.lowAA[3]) === '[0,0]', JSON.stringify(sm.lowAA));
     // one Bumpy dab at medium and high is all sixteenths, a quarter pixel on (cdp-csp/aa4fit.py)

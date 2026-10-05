@@ -4236,12 +4236,14 @@
             !_sutNum(v.BrushChangePatternColor, 0) &&
             // a soft round tip keeps its greys: hardness 50 with it off or on, the same dab
             (opts.hasTip ? !opts.tipWhole : _sutNum(v.BrushHardness, 100) >= 100)) out.aliased = true;
-        /* ...and a picture it does not ink solid is shrunk without smoothing:
-         * one Pastel dab keeps its ink with it off, in sharper specks (46
-         * pixels over 112 of 128 where anti-aliased it has 4), and its
-         * stroke, the strongest of each pixel's dabs, takes a quarter again
-         * the ink (cdp-csp/pr-dab paR0n). */
-        else if (_sutNum(v.AntiAlias, 1) === 0 && opts.hasTip) out.tipShrink = 'nearest';
+        /* ...and a picture is point-sampled, once a pixel where it lands,
+         * unshifted (_cspTipMask): one Pastel dab keeps its ink with it off,
+         * in sharper specks (46 pixels over 112 of 128 where anti-aliased it
+         * has 4; cdp-csp/pr-dab paR0n), and Cross-hatching (for tone
+         * scraping)'s 1112px picture at 200 lands on Clip Studio's pixels at
+         * IoU 0.99 -- shrunk unsmoothed and placed after, 0.80, grey at every
+         * line's edge. */
+        if (_sutNum(v.AntiAlias, 1) === 0 && opts.hasTip) out.tipSamples = 1;
         /* Low (1), it point-samples the picture 2x2 a pixel (the engine's
          * _cspTipMask), a quarter pixel right and down of the pen -- one
          * Bumpy dab at 32px within 3% of Clip Studio's pixels (cdp-csp/pbm).
