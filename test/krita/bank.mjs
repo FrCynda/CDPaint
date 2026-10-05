@@ -85,7 +85,7 @@ async function scoreRandom(page, p, e, row, refDir, meta) {
     row.size = meta[e.key + 'a'].size;
     let r;
     try {
-        r = await measureCase(page, { preset: e.name, size: row.size, lines: LINES, bands: BANDS },
+        r = await measureCase(page, { preset: e.name, file: e.file, size: row.size, lines: LINES, bands: BANDS },
             { packVar: 'window.__pk', packName: path.basename(p.zip), refB64: A, refB: B, W, H, seed: 1 });
     } catch (err) { row.status = 'harness error'; row.why = [err.message]; return; }
     if (r.error) { row.status = 'CDPaint could not import it'; row.why = [r.error, ...(r.skipped || []).map(s => s.why)]; return; }
@@ -221,7 +221,7 @@ async function scorePack(page, p) {
             if (!(fs.readFileSync(path.join(refDir, e.key + 'a.png')).length > 0)) { row.status = 'no render'; continue; }
             let r;
             try {
-                r = await measureCase(page, { preset: e.name, size: row.size, lines: LINES, bands: BANDS },
+                r = await measureCase(page, { preset: e.name, file: e.file, size: row.size, lines: LINES, bands: BANDS },
                     { packVar: 'window.__pk', packName: path.basename(p.zip), refB64: A, W, H });
             } catch (err) { row.status = 'harness error'; row.why = [err.message]; continue; }
             if (r.error) { row.status = 'CDPaint could not import it'; row.why = [r.error, ...(r.skipped || []).map(s => s.why)]; continue; }

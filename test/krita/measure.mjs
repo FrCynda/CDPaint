@@ -2,7 +2,7 @@
 // PNG. Shared by compare.mjs (the fixed corpus) and bank.mjs (every
 // downloadable brush).
 //
-// c: { preset, size?, params?, lines: [[x0,y0,p0,x1,y1,p1], ...],
+// c: { preset, file?, size?, params?, lines: [[x0,y0,p0,x1,y1,p1], ...],
 //      bands?: [[y0,y1], ...] }         bands: ink ratio per horizontal strip
 // packVar: page expression holding the pack's bytes; packName its filename.
 // importExpr: page expression for any other import ({ ok, added: [name] }).
@@ -13,7 +13,7 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
     return JSON.parse(await page.eval(`(async () => {
         const app = PaintApp, b = app.brush, W = ${W}, H = ${H};
         const imp = ${importExpr || `await b.importBrushPack(${packVar}, ${JSON.stringify(packName)},
-                                            { only: ${JSON.stringify([c.preset, c.preset.replace(/ /g, '_')])} })`};   // the file says b)_Basic-2, Krita shows b) Basic-2
+                                            { only: ${JSON.stringify(c.file ? [c.file] : [c.preset, c.preset.replace(/ /g, '_')])} })`};   // the file says b)_Basic-2, Krita shows b) Basic-2
         if (!imp.ok || !imp.added.length) return JSON.stringify({ error: imp.error || 'not imported', skipped: imp && imp.skipped });
         app.layerMgr.collapseToBase({ fresh: true });
         app.setSize(W + ${OX}, H + ${OY}); app.config.zoom = 1; app.updateBounds();

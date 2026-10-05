@@ -9730,7 +9730,8 @@
             var tipCache = {};
             if (only) {
                 pack.presets = pack.presets.filter(function (pr) {
-                    return only.indexOf(pr.name) !== -1;
+                    // a file name too: one pack can hold several presets of one name
+                    return only.indexOf(pr.name) !== -1 || only.indexOf((pr.file || '').split('/').pop()) !== -1;
                 });
             }
 
