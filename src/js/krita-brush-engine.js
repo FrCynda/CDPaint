@@ -4020,6 +4020,13 @@
             if (r) { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; d[i] = ~~(d[i] * (1 - r + r * (s >>> 0) / 4294967296)); }
             if (dn < 1 && d[i]) { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; if (dn < (s >>> 0) / 4294967296) d[i] = 0; }
         }
+        /* Krita's mask generator lays the noise, the sharpness threshold
+         * runs on the finished dab (postProcessDab): X1CI Sketch's speckled
+         * 1px dabs come out solid where kept, not dimmed (_sharpenMask). */
+        if (p.sharpness > 0) {
+            var tol = _floor(255 - _clamp(_sharpNow / 100, 0, 1) * 255), lo = (100 - _clamp(p.sharpSoftness || 0, 0, 100)) * tol / 100;
+            for (i = 3; i < d.length; i += 4) d[i] = d[i] > tol ? 255 : d[i] <= lo ? 0 : d[i];
+        }
         _nzCtx.putImageData(img, 0, 0);
         _nzCanvas._cx = mask._cx; _nzCanvas._cy = mask._cy;
         _tintMask = null; _smMaskA.delete(_nzCanvas);
@@ -4059,9 +4066,13 @@
             if (/^(k(grect|lrect)|[rc]curve|cspaa)/.test(shape)) sz = sz <= 32 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);
             if (_params.spikes > 2 && /^(k(circle|gauss|grect|lrect)|[rc]curve)/.test(shape)) shape += '*' + _params.spikes;
             var ph = null;
-            // Sharpness snaps dabs to whole pixels in Krita, so it keeps the old path.
-            // Krita's own tips only: the built-in brushes keep the look they have.
-            if (x != null && sz <= 32 && !(_params.sharpness > 0) &&
+            /* Sharpness snaps a dab to whole pixels only with "align outline"
+             * ticked (KisSharpnessOption::apply), which no banked preset
+             * does; a 1px sharp tip (its pixel line, _pxOff) still snaps.
+             * Snapped, X1CI Sketch's 2px oval fell between pixel centres
+             * and painted nothing. Krita's own tips only: the built-in
+             * brushes keep the look they have. */
+            if (x != null && sz <= 32 && !(_params.sharpness > 0 && sz <= 1) &&
                 /^(k(circle|gauss|grect|lrect|marker)|[rc]?curve|cspaa)/.test(shape)) {
                 // The plain square (klrect) too: lone Krita dabs sit at their phase.
                 ph = [x % 1, y % 1];
@@ -4077,8 +4088,9 @@
             }
             mask = _dabCache.get(shape, sz, hardness, angleDeg, aspect, ph);
         }
-        // the option is on whatever its sensor reads: at 0 the threshold keeps nothing
-        if (_params.sharpness > 0) mask = _sharpenMask(mask, _sharpNow, _params.sharpSoftness);
+        // the option is on whatever its sensor reads: at 0 the threshold keeps nothing.
+        // A noisy tip is thresholded after its noise, in _noisyMask.
+        if (_params.sharpness > 0 && !(_params.tipDensity < 1 || _params.tipRandomness)) mask = _sharpenMask(mask, _sharpNow, _params.sharpSoftness);
         return mask;
     }
 

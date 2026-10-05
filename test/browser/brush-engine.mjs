@@ -1645,6 +1645,32 @@ await withPage(async (page) => {
     })()`));
     check("a Krita tip with 3 spikes is a triangle: one point along its axis, the far side short",
         spk.right >= 14 && spk.left <= 10, JSON.stringify(spk));
+    /* Sharpness snaps a dab to whole pixels only with "align outline"
+     * ticked (KisSharpnessOption::apply), which no banked preset does; and
+     * it thresholds the dab after the generator's noise. X1CI Sketch's 2px
+     * oval, snapped, fell between pixel centres and painted nothing; its
+     * density speckle, thresholded first, came out dimmed where Krita's is
+     * solid (test/krita/probes/x1ci: lone dabs 0 -> 1.01, line 0.73 -> 0.98). */
+    const ksh = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = () => __B.layer().ctx;
+        const line = (dn) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            b.setParam('falloff', 'krita-gauss'); b.setParam('size', 2); b.setParam('aspectRatio', 2.86); b.setParam('angle', 270);
+            b.setParam('sharpness', 100); b.setParam('tipDensity', dn); b.setParam('tipRandomness', dn < 1 ? 0.5 : 0);
+            b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none'); b.setParam('angleSrc', 'none');
+            L().clearRect(0, 0, 200, 200);
+            b.beginStroke(20, 100, 1, '#000000');
+            for (let t = 1; t <= 50; t++) b.moveStroke(20 + t * 3, 100, 1, '#000000');
+            b.endStroke();
+            return Array.from(L().getImageData(0, 90, 200, 20).data).filter((v, i) => i % 4 === 3 && v > 0);
+        };
+        const a = line(1), n = line(0.7);
+        return JSON.stringify({ plain: a.length, partial: n.filter(v => v < Math.max(...n)).length, noisy: n.length });
+    })()`));
+    check("a sharp 2px Krita oval paints off the pixel grid",
+        ksh.plain > 100, JSON.stringify(ksh));
+    check("...and its density speckle is thresholded solid, not dimmed",
+        ksh.noisy > 50 && ksh.partial === 0, JSON.stringify(ksh));
     /* Krita spaces dabs by the box around the tip turned by its fixed angle
      * (KisBrush::characteristicSize). A 20x5 tip at 45 degrees has a
      * 17.7px box, so at 100% spacing its dabs stand apart along a line; an
