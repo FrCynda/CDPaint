@@ -183,13 +183,17 @@
         if (aspect < 1) { w = _max(1, _round(size * aspect)); h = _max(1, _round(size)); }
 
         var ang = (angleDeg || 0) * _PI / 180;
+        // '*n': Krita's spikes, for the generator below (_fold)
+        var si = shape.indexOf('*');
+        _spk = si < 0 ? 2 : +shape.slice(si + 1);
+        if (si >= 0) shape = shape.slice(0, si);
         /* A round tip is the same tip whichever way you turn it, so turning
          * it buys nothing and costs the accuracy of a second resample --
          * which at the sizes a swatch draws at (a pixel or two across) is
          * the difference between a visible stroke and an empty tile. */
         var tc = shape.indexOf('curve:') === 0;
         var kc = shape.indexOf('kcircle') === 0 || shape.indexOf('kgauss') === 0;
-        if ((shape === 'circle' || kc || shape === 'gauss' || shape === 'gimp' || tc) && w === h) ang = 0;
+        if ((shape === 'circle' || kc || shape === 'gauss' || shape === 'gimp' || tc) && w === h && _spk < 3) ang = 0;
         var needRotation = _abs(ang) > 0.001;
         if (shape.indexOf('kgrect') === 0 || shape.indexOf('klrect') === 0) {
             var hy = shape.split(':')[1];
@@ -313,6 +317,19 @@
      * `gauss` is its gauss generator (KisGaussCircleMaskGenerator), whose
      * anti-aliasing is instead a linear fade over the last pixel of the
      * radius (KisAntialiasingFadeMaker1D). */
+    /* Krita's spikes (KisMaskGenerator::fixRotation): a point past the
+     * first wedge (pi / spikes either side of the tip's axis) is turned back
+     * a whole wedge at a time until it lies in it, so every wedge repeats
+     * the first -- a star of `spikes` points, each the shape's own tip.
+     * The circles fold (x, |y|), the plain square (|x|, |y|). BB-Chalk
+     * pencil's 3-spiked oval is a rounded triangle in Krita, not an oval.
+     * _spk is set for the one generator call (_generateMask). */
+    var _spk = 2, _sfx = 0, _sfy = 0;
+    function _fold(x, y) {
+        var a = Math.atan2(y, x), w = _PI / _spk, c = _cos(-2 * w), s = _sin(-2 * w);
+        while (a > w) { var t = x; x = c * t - s * y; y = s * t + c * y; a -= 2 * w; }
+        _sfx = x; _sfy = y;
+    }
     function _kritaCircleMask(size, aspect, hard, phase, aa, gauss, ang) {
         var rx = size / 2, ry = size / aspect / 2;
         if (aspect < 1) { rx = size * aspect / 2; ry = size / 2; }
@@ -321,6 +338,7 @@
         var c0 = _cos(ang || 0), s0 = _sin(ang || 0);
         var W = _ceil(2 * Math.sqrt(rx * rx * c0 * c0 + ry * ry * s0 * s0)) + 3;
         var H = _ceil(2 * Math.sqrt(rx * rx * s0 * s0 + ry * ry * c0 * c0)) + 3;
+        if (_spk > 2) W = H = _ceil(2 * _max(rx, ry)) + 3;   // a star reaches its radius every way
         var canvas = new OffscreenCanvas(W, H), cx = W / 2, cy = H / 2;
         if (phase) { canvas._cx = cx = _floor(W / 2) + phase[0]; canvas._cy = cy = _floor(H / 2) + phase[1]; }
         var ss = aa && (rx < 5 || ry < 5) ? (rx < 0.5 || ry < 0.5 ? 6 : 3) : 1, e = aa ? 1 : 0;
@@ -338,6 +356,7 @@
                     for (var sx = 0; sx < ss; sx++) {
                         var x0 = i + 0.5 - cx + sx / ss;
                         var x = ca * x0 - sa * y0, y = sa * x0 + ca * y0;
+                        if (_spk > 2) { _fold(x, _abs(y)); x = _sfx; y = _sfy; }
                         var n = (x / rx) * (x / rx) + (y / ry) * (y / ry), ay = (_abs(y) + e) * fy;
                         if (n > 1) { tsum += 255; continue; }
                         if (gauss) {
@@ -451,6 +470,7 @@
                     for (var sy = 0; sy < ss; sy++) for (var sx = 0; sx < ss; sx++) {
                         var x1 = i + 0.5 - c + sx / ss, y1 = j + 0.5 - cy + sy / ss;
                         var ux = _abs(ca * x1 - sa * y1), uy = _abs(sa * x1 + ca * y1);
+                        if (_spk > 2) { _fold(ux, uy); ux = _abs(_sfx); uy = _abs(_sfy); }
                         var nx = ux * 2 / w, ny = uy * 2 / h;
                         if (nx > 1 || ny > 1) continue;
                         var Fx = (ux + ea) * tfx, Fy = (uy + ea) * tfy;
@@ -468,6 +488,7 @@
                     for (var sy2 = 0; sy2 < ss; sy2++) for (var sx2 = 0; sx2 < ss; sx2++) {
                         var x0 = i + 0.5 - c + sx2 / ss, y0 = j + 0.5 - cy + sy2 / ss;
                         var x = _abs(ca * x0 - sa * y0), y = _abs(sa * x0 + ca * y0);
+                        if (_spk > 2) { _fold(ca * x0 - sa * y0, y); x = _abs(_sfx); y = _abs(_sfy); }
                         if (x > w / 2 || y > h / 2) continue;
                         var g = af * (_erf((hw + x) * kx) + _erf((hw - x) * kx)) * (_erf((hh + y) * ky) + _erf((hh - y) * ky));
                         if (aa) g *= _min(1, w / 2 - x) * _min(1, h / 2 - y);
@@ -507,7 +528,9 @@
                 var t = 0;
                 for (var sy = 0; sy < ss; sy++) for (var sx = 0; sx < ss; sx++) {
                     var x0 = i + 0.5 - c + sx / ss, y0 = j + 0.5 - cy + sy / ss;
-                    var x = (ca * x0 - sa * y0) * xc, y = (sa * x0 + ca * y0) * yc, dist = x * x + y * y;
+                    var x = ca * x0 - sa * y0, y = sa * x0 + ca * y0;
+                    if (_spk > 2) { _fold(x, _abs(y)); x = _sfx; y = _sfy; }
+                    x *= xc; y *= yc; var dist = x * x + y * y;
                     t += dist > 1 ? 255 : aa && dist > fs ? _min(255, _floor(f0 + (dist - fs) * fk)) : tr(dist);
                 }
                 var a = 255 - _floor(t / (ss * ss));
@@ -538,6 +561,7 @@
                 for (var sy = 0; sy < ss; sy++) for (var sx = 0; sx < ss; sx++) {
                     var x0 = i + 0.5 - c + sx / ss, y0 = j + 0.5 - cy + sy / ss;
                     var x = _abs(ca * x0 - sa * y0), y = _abs(sa * x0 + ca * y0);
+                    if (_spk > 2) { _fold(ca * x0 - sa * y0, y); x = _abs(_sfx); y = _abs(_sfy); }
                     if (x > w / 2 || y > h / 2) continue;
                     var si = _round(x * 2 / w * N), ti = _round(y * 2 / h * N);
                     var g = lut[si] * (1 - lut[N - si]) * lut[ti] * (1 - lut[N - ti]);
@@ -4020,7 +4044,7 @@
              * small (EO Pixel Perfect) -- unless anti-aliased, when Krita's
              * edge fades its last pixel: Grease Pencil Square's 3px-tall dab
              * is rows 104, 254, 188 in Krita, not a solid bar. */
-            if (shape === 'square' && kf && (kf[1] || kf[2] || hardness < 100 || (_params.hardnessY != null && _params.hardnessY < 100)))
+            if (shape === 'square' && kf && (kf[1] || kf[2] || hardness < 100 || (_params.hardnessY != null && _params.hardnessY < 100) || _params.spikes > 2))
                 shape = (kf[1] ? 'kgrect' : 'klrect') + (kf[2] ? 'a' : '') + (_params.hardnessY != null ? ':' + _params.hardnessY : '');
             if (shape === 'circle' && _params.edgeRamp) {
                 shape = 'cspaa' + _params.edgeRamp;
@@ -4033,6 +4057,7 @@
             /* A square too, to an eighth up to 32px: rounded to whole pixels,
              * Poska Square's line thickened in steps where Krita's tapers. */
             if (/^(k(grect|lrect)|[rc]curve|cspaa)/.test(shape)) sz = sz <= 32 ? _max(0.05, _round(sz * 8) / 8) : _round(sz);
+            if (_params.spikes > 2 && /^(k(circle|gauss|grect|lrect)|[rc]curve)/.test(shape)) shape += '*' + _params.spikes;
             var ph = null;
             // Sharpness snaps dabs to whole pixels in Krita, so it keeps the old path.
             // Krita's own tips only: the built-in brushes keep the look they have.
@@ -4819,7 +4844,8 @@
             var d = p.sprayEach ? sz : _max(0.5, _dyn(p, 'size', sz, sc, 1));
             var w = d, h = d;
             if (_tipAsp >= 1) h = d / _tipAsp; else w = d * _tipAsp;
-            var asp = p.aspectRatio || 1;
+            // a star is its diameter every way (KisMaskGenerator::height)
+            var asp = p.spikes > 2 ? 1 : p.aspectRatio || 1;
             if (asp >= 1) h /= asp; else w *= asp;
             /* Krita builds a generated tip at the brush's size and keeps its
              * width and height as whole pixels (KisBrush::setWidth takes an
@@ -5837,6 +5863,7 @@
         textureType: 'grain',
         sharpness: 0,
         sharpSoftness: 0,
+        spikes: 2,           // Krita's star-shaped generated tip, see _fold
         sharpnessSrc: 'none', sharpnessMin: 0, sharpnessCurve: 1, sharpnessSensors: null, sharpnessCombine: 0,
         texturePattern: '',
         /* Watercolour edge: the dark ring pooled paint leaves at the ink

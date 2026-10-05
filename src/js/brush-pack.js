@@ -615,7 +615,7 @@
             // see the engine's _noisyMask
             if (_num(bd.density, 1) < 1) out.tipDensity = Math.max(0, _num(bd.density, 1));
             if (_num(bd.randomness, 0) > 0) out.tipRandomness = Math.min(1, _num(bd.randomness, 0));
-            if (_num(mask.spikes, 2) > 2) warn.push('a star-shaped tip became a plain one');
+            if (_num(mask.spikes, 2) > 2) out.spikes = Math.round(_num(mask.spikes, 2));   // see the engine's _fold
         } else if (bd.filename && !noTip) {
             out.shape = 'custom';
             out.hardness = 100;      // the image is the shape; do not fade it

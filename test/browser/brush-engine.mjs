@@ -1628,6 +1628,23 @@ await withPage(async (page) => {
         ksq.cx + ' ' + JSON.stringify(ksq.row));
     check("...and spaces a thin bar on a slant by an ellipse with each axis floored at half a pixel",
         ksq.slant < 0.85, String(ksq.slant));
+    /* Krita's spikes fold every point back into the first wedge, so a 30x15
+     * oval with 3 spikes is a rounded triangle: one point reaching 15px
+     * along its axis, the far side only the oval's 8px at 60 degrees
+     * (KisMaskGenerator::fixRotation; test/krita/probes/bbchalk, BB-Chalk
+     * pencil 2 ink 1.7 -> 1.01). It was drawn as the plain oval. */
+    const spk = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = () => __B.layer().ctx;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        b.setParam('falloff', 'krita'); b.setParam('hardness', 100); b.setParam('size', 30); b.setParam('aspectRatio', 2); b.setParam('spikes', 3);
+        b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none'); b.setParam('angleSrc', 'none');
+        L().clearRect(0, 0, 200, 200);
+        b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+        const r = Array.from(L().getImageData(80, 100, 40, 1).data).filter((v, i) => i % 4 === 3);
+        return JSON.stringify({ left: 20 - r.findIndex(v => v > 0), right: 40 - r.slice().reverse().findIndex(v => v > 0) - 20 });
+    })()`));
+    check("a Krita tip with 3 spikes is a triangle: one point along its axis, the far side short",
+        spk.right >= 14 && spk.left <= 10, JSON.stringify(spk));
     /* Krita spaces dabs by the box around the tip turned by its fixed angle
      * (KisBrush::characteristicSize). A 20x5 tip at 45 degrees has a
      * 17.7px box, so at 100% spacing its dabs stand apart along a line; an
