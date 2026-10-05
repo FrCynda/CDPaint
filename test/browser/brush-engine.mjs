@@ -452,6 +452,28 @@ await withPage(async (page) => {
         JSON.stringify(mx));
     check('...and colour stretch fades it in', mx.fade[0] < mx.fade[1] - 30 && mx.flat[0] > mx.fade[0] + 30,
         JSON.stringify(mx));
+    /* ...and a spray's load fades as the pen moves, not as its particles
+     * jump: Pointillism climbs to 229 at most along Clip Studio's stroke
+     * (cdp-csp/qp qpc). A pen that barely moves keeps its first load, so
+     * its particles stay near the density's half. */
+    const msp = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = __B.layer();
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ size: 30, hardness: 100, spacing: 10, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
+            sprayEach: true, scatter: 60, scatterAxis: 'disk', dabCount: 4, mixAlpha: 50, mixStretch: 15 })) b.setParam(k, v);
+        b._setStrokeSeed(7);
+        L.ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(100, 100, 1, '#000000');
+        for (let i = 1; i <= 20; i++) b.moveStroke(100 + i * 0.5, 100, 1, '#000000');
+        b.endStroke();
+        b.setParam('mixAlpha', null); b.setParam('mixStretch', 0); b.setParam('sprayEach', false); b.setParam('dabCount', 1); b.setParam('scatter', 0);
+        b._setStrokeSeed(null);
+        const d = L.ctx.getImageData(0, 0, 200, 200).data;
+        let max = 0, n = 0;
+        for (let q = 3; q < d.length; q += 4) { if (d[q] > max) max = d[q]; if (d[q]) n++; }
+        return JSON.stringify({ max, n });
+    })()`));
+    check("...and a spray's load fades as the pen moves, not as its particles jump", msp.n > 2000 && msp.max < 215, JSON.stringify(msp));   // 240 fading particle to particle
 
     /* Clip Studio's paper on each dab blends with the dab's alpha, flow
      * and all: linear light (4) is solid at full flow and the bare paper

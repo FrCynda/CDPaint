@@ -3296,7 +3296,7 @@
      *
      * Straight onto the layer, like the deform brush: each dab has to read
      * what the one before it left. */
-    var _smPrev = null, _smCar = null, _mixTex = null, _mixTexA = null;
+    var _smPrev = null, _smCar = null, _smPx = NaN, _smPy = NaN, _mixTex = null, _mixTexA = null;
     var _smMaskA = new WeakMap();
 
     /* Krita smudges on a precise copy of the layer kept for the whole stroke
@@ -3524,7 +3524,13 @@
                 ua += f[(qy2 * rw + qx2) * 4 + 3] * mm; uw += mm;
             }
             var ub = uw ? ua / uw / 255 : 0, hl = 0.65 * (sz || mw) * _clamp(p.mixStretch, 0, 100) / 100;
-            _smCar = _smCar == null || !(hl > 0) ? ub : ub + (_smCar - ub) * _pow(0.5, _hypot(x - prev[0], y - prev[1]) / hl);
+            /* A spray's load fades as the pen travels, not as its particles
+             * jump about: Pointillism with colour change off (cdp-csp/qp qpc)
+             * climbs from 133 to 229 at most along Clip Studio's stroke, where
+             * fading particle to particle ours reached 252, ink 1.11 -> 1.01. */
+            var mvx = x - prev[0], mvy = y - prev[1];
+            if (p.sprayEach) { mvx = sc.x - _smPx; mvy = sc.y - _smPy; _smPx = sc.x; _smPy = sc.y; }
+            _smCar = _smCar == null || !(hl > 0) ? ub : ub + (_smCar - ub) * _pow(0.5, (_hypot(mvx, mvy) || 0) / hl);
             var A = _clamp(p.mixAlpha, 0, 100) / 100;
             c = A + (1 - A) * _smCar;    // opacity is in the dab's k0 already
             pr = rgb[0] * c; pg = rgb[1] * c; pb = rgb[2] * c; pa = 255 * c;
@@ -6400,7 +6406,7 @@
             if (_params.hasOwnProperty(_fk)) _strokeParams[_fk] = _isArray(_params[_fk]) ? _cloneCurve(_params[_fk]) : _params[_fk];
         }
         _wet = [];                // the brush is loaded fresh each stroke
-        _smPrev = null; _smT = null; _smS = null; _smPic = null; _smCar = null;
+        _smPrev = null; _smT = null; _smS = null; _smPic = null; _smCar = null; _smPx = _smPy = NaN;
         _wetPos = [];
         _smoothAngle = NaN;
         _lastDabDist = 0;
