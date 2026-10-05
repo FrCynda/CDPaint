@@ -3532,7 +3532,7 @@
             if (p.sprayEach) { mvx = sc.x - _smPx; mvy = sc.y - _smPy; _smPx = sc.x; _smPy = sc.y; }
             _smCar = _smCar == null || !(hl > 0) ? ub : ub + (_smCar - ub) * _pow(0.5, (_hypot(mvx, mvy) || 0) / hl);
             var A = _clamp(p.mixAlpha, 0, 100) / 100;
-            c = A + (1 - A) * _smCar;    // opacity is in the dab's k0 already
+            c = A + (1 - A) * (p.mixFlat ? 0 : _smCar);    // opacity is in the dab's k0 already; mixFlat: Clip Studio's BrushWaterColor 1
             pr = rgb[0] * c; pg = rgb[1] * c; pb = rgb[2] * c; pa = 255 * c;
         }
         // What the brush picked up, premultiplied; off the canvas is transparent.
@@ -4521,6 +4521,35 @@
          * nothing rather than punching holes — same as Krita. */
         if (_alphaLocked() && getParams().blendMode === 'erase') {
             if (_flowCtx) _flowCtx.clearRect(x, y, w, h);
+            _dirtyRect = null;
+            return;
+        }
+        /* A mixing or smudging first brush writes the layer itself
+         * (_smudgeDab), so only its second brush is in the buffers: laid on
+         * the layer once, at the end, by its own rule -- restoring the
+         * untouched layer first wiped the first brush out (Wet wash, once
+         * its second stopped mixing). */
+        var gp0 = getParams(), sec0 = (gp0.smudgeMode != null || gp0.mixAlpha != null) && _secondOf();
+        if (sec0) {
+            if (isFinal) {
+                if (app.layerMgr && app.layerMgr.markDirty && mainCtx === app.ctx) app.layerMgr.markDirty(x, y, w, h);
+                if (_subOn) {
+                    var li = mainCtx.getImageData(x, y, w, h), ld = li.data, lsd = _subCtx.getImageData(x, y, w, h).data;
+                    for (var lj = 3; lj < ld.length; lj += 4) {
+                        var la = ld[lj], ls = lsd[lj];
+                        ld[lj] = _subOn === 'contrast' ? la + _round((255 - 2 * ls) * _min(la, 255 - la) / 255)
+                            : _subOn === 'min' ? _min(la, ls) : _subOn === 'cut' ? la - _round(ls * _min(la, 255 - la) / 255) : la - ls;
+                    }
+                    mainCtx.putImageData(li, x, y);
+                    _subOn = false;
+                } else {
+                    mainCtx.save();
+                    mainCtx.globalCompositeOperation = sec0.op;
+                    mainCtx.drawImage(_flowCanvas, x, y, w, h, x, y, w, h);
+                    mainCtx.restore();
+                }
+                _flowCtx.clearRect(x, y, w, h);
+            }
             _dirtyRect = null;
             return;
         }
@@ -5880,6 +5909,7 @@
         smudgeSample: 0,     // Krita's smudge radius, 0..3: how much of the last dab dulling averages    // Krita's new smudge engine (_smudgeDab)
         smudgeSmearAlpha: true,   // Krita's smudge rate switched off: smears at full strength
         mixAlpha: null,      // Clip Studio's density of paint, 0..100; see _smudgeDab
+        mixFlat: false,      // ...laid flat at that density, nothing picked up (BrushWaterColor 1)
         textureStroke: null,   // Clip Studio's paper blend (0..7) on the finished stroke, not on each dab
         textureBlend: null,  // Clip Studio's paper blend on each dab, 0..7; see _cspPaper
         textureStress: false, // Clip Studio's emphasised density; see _applyTextureNoise

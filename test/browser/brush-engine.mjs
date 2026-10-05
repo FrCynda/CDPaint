@@ -474,6 +474,32 @@ await withPage(async (page) => {
         return JSON.stringify({ max, n });
     })()`));
     check("...and a spray's load fades as the pen moves, not as its particles jump", msp.n > 2000 && msp.max < 215, JSON.stringify(msp));   // 240 fading particle to particle
+    /* A mixing brush lays its paint on the layer itself; its second brush,
+     * laid at the end, wiped it out (Wet wash, cdp-csp/qv). Mixing kind 1
+     * lays the density flat, nothing picked up (cdp-csp/qo qod: 127). */
+    const mxs = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = __B.layer();
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        const run = (flat, sec) => {
+            for (const [k, v] of Object.entries({ size: 30, hardness: 100, spacing: 10, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
+                mixAlpha: 50, mixStretch: 0, mixFlat: flat })) b.setParam(k, v);
+            b.PRESETS.Round.second = sec ? { op: 'contrast', p: { size: 10, flow: 30, spacing: 10, hardness: 100 } } : undefined;
+            L.ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(40, 100, 1, '#000000');
+            for (let i = 1; i <= 30; i++) b.moveStroke(40 + i * 4, 100, 1, '#000000');
+            b.endStroke();
+            const d = L.ctx.getImageData(0, 0, 200, 200).data;
+            let n = 0, mid = d[(100 * 200 + 140) * 4 + 3];
+            for (let q = 3; q < d.length; q += 4) if (d[q]) n++;
+            return { n, mid };
+        };
+        const r = { sec: run(false, true), flat: run(true, false) };
+        delete b.PRESETS.Round.second;
+        b.setParam('mixAlpha', null); b.setParam('mixFlat', false);
+        return JSON.stringify(r);
+    })()`));
+    check('a mixing brush keeps its paint under its second brush', mxs.sec.n > 3000, JSON.stringify(mxs.sec));
+    check("...and Clip Studio's mixing kind 1 lays its density flat", Math.abs(mxs.flat.mid - 128) < 6, JSON.stringify(mxs.flat));
 
     /* Clip Studio's paper on each dab blends with the dab's alpha, flow
      * and all: linear light (4) is solid at full flow and the bare paper

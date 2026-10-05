@@ -3713,8 +3713,10 @@
             if (('Brush' + x) in v) v2['Brush' + x] = v[k];
             else if (x in v) v2[x] = v[k];
         }
-        // It has no second brush, mixing, opacity or colour change of its own.
-        v2.UseDualBrush = 0; v2.BrushUseWaterColor = 0; delete v2.BrushOpacityEffector;
+        /* It has no second brush, mixing, opacity or colour change of its own.
+         * Either mixing switch alone mixes (Pointillism, cdp-csp/qp qpa), so
+         * both go: Wet wash's second brush mixed and took 0.15 off its ink. */
+        v2.UseDualBrush = 0; v2.BrushUseWaterColor = v2.BrushUseWaterColor2 = 0; delete v2.BrushOpacityEffector;
         var light = _sutNum(v.DualBrushCompositeMode, 0) === 2;
         if (!light) v2.BrushChangePatternColor = 0;   // mode 2's colour is the point
         return { op: op, variant: v2, light: light };
@@ -4053,10 +4055,18 @@
                  * wash -- given this rule, Rough wash fell near -> off. */
                 var ma = v.BrushMixAlpha == null || !(_sutNum(v.BrushUseWaterColor, 0) || _sutNum(v.BrushUseWaterColor2, 0))
                     ? null : Math.max(0, Math.min(100, _sutNum(v.BrushMixAlpha, 100)));
+                /* ...as BrushWaterColor says. Round mixing brush at density 50
+                 * (cdp-csp/qo): at 0 the rule above, fading in to 234; at 1 a
+                 * flat 127, the density alone with nothing picked up; at 2
+                 * solid, the density ignored -- Thick oil paint's 2 lays 255
+                 * from its first pixel, 225 at 0. */
+                var wck = _sutNum(v.BrushWaterColor, 0);
+                if (ma != null && wck === 2) ma = 100;
                 if (ma != null) {
                     if (ma < 100) {
                         out.mixAlpha = ma;
                         out.mixStretch = Math.max(0, Math.min(100, _sutNum(v.BrushMixColorExtension, 0)));
+                        if (wck === 1) out.mixFlat = true;
                     }
                 } else if (v.BrushMixAlpha == null) {
                     /* The watercolour kind alone (BrushWaterColor, no colour

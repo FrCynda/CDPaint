@@ -1547,8 +1547,10 @@ await withPage(async (page) => {
             mix: [P({ BrushUseWaterColor: 1, BrushMixColor: 80, BrushMixAlpha: 50, BrushMixColorExtension: 100 }),
                   P({ BrushUseWaterColor: 1, BrushMixColor: 80, BrushMixAlpha: 100 }),
                   P({ BrushWaterColor: 2, BrushMixColor: 30, BrushMixAlpha: 50 }),
-                  P({ BrushUseWaterColor: 1, BrushMixColor: 0, BrushMixAlpha: 0 })]
-                .map(p => [p.mixAlpha ?? -1, p.mixStretch ?? -1, p.watercolor || 0]) });
+                  P({ BrushUseWaterColor: 1, BrushMixColor: 0, BrushMixAlpha: 0 }),
+                  P({ BrushUseWaterColor: 1, BrushWaterColor: 1, BrushMixColor: 80, BrushMixAlpha: 50 }),
+                  P({ BrushUseWaterColor: 1, BrushWaterColor: 2, BrushMixColor: 80, BrushMixAlpha: 50 })]
+                .map(p => [p.mixAlpha ?? -1, p.mixStretch ?? -1, p.watercolor || 0, +!!p.mixFlat]) });
     })()`).then(JSON.parse);
     console.log('  ' + JSON.stringify(sm));
     /* Clip Studio's tilt is how upright the pen stands, so a mouse reads 1;
@@ -1668,11 +1670,13 @@ await withPage(async (page) => {
         JSON.stringify(sm.aliased) === '[true,false,false]', JSON.stringify(sm.aliased));
     /* Density of paint and colour stretch, measured in Clip Studio; at
      * full density its line is the plain one. The watercolour kind alone
-     * moves no ink (Round watercolor brush the same pixels at 2 and 0). */
+     * moves no ink (Round watercolor brush the same pixels at 2 and 0).
+     * Mixing, its watercolour kind 1 lays the density flat and 2 is solid
+     * (cdp-csp/qo: Thick oil paint's 2 lays 255 from its first pixel). */
     /* A blender (no paint, density 0: Gouache blender) mixes too -- as a
      * plain brush it painted a solid line where Clip Studio paints nothing. */
     check('colour mixing brings its density of paint, the watercolour kind alone no wash',
-        JSON.stringify(sm.mix) === '[[50,100,0],[-1,-1,0],[-1,-1,0],[0,0,0]]', JSON.stringify(sm.mix));
+        JSON.stringify(sm.mix) === '[[50,100,0,0],[-1,-1,0,0],[-1,-1,0,0],[0,0,0,0],[50,0,0,1],[-1,-1,0,0]]', JSON.stringify(sm.mix));
     /* Blend mode 27 (Watery brush) thins paint in place and lays none. */
     /* 1% of 20 and 4% of 20 paint the same stroke there. */
     check('dabs never land closer than a pixel', sm.minStep === 1, `${sm.minStep}`);
