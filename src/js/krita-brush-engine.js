@@ -6758,29 +6758,17 @@
     }
 
     /* How far out a Clip Studio spray particle lands, as a share of the
-     * patch's radius, from a uniform u. Bias 0 is even over the disk. Fitted
-     * to Clip Studio's own sprays across the stroke (cdp-csp/sb, round
-     * particles, bias -100..100): below 0, even over a ring whose inner
-     * edge is -bias% of the radius; above, the density thins to the rim as
-     * (1 - r)^(bias / 50). Each bias's inverse CDF is tabled once. */
-    var _diskTabs = {};
+     * patch's radius, from a uniform u. Bias 0 is even over the disk; below
+     * 0, even over a ring whose inner edge is -bias% of the radius (cdp-csp/sb).
+     * At 100 the distance itself thins evenly to the rim, density 2(1 - r):
+     * Glitter's sparse 3px particles (cdp-csp/qg, twelve draws) and sb's at
+     * 100 once their overlap is undone, where the r(1 - r)^2 we had put too
+     * few on the line and Glitter's 10px sparkles overlapped too little (ink
+     * 1.1). Between, the two draws blend (sb at 50 as well as any rule). */
     function _diskR(bias, u) {
-        if (!bias) return Math.sqrt(u);
-        var t = _diskTabs[bias], N = 256, i;
-        if (!t) {
-            t = _diskTabs[bias] = new Float32Array(N + 1);
-            var a = bias < 0 ? _min(0.99, -bias / 100) : 0, k = bias > 0 ? bias / 50 : 0, M = 4096,
-                cdf = new Float64Array(M + 1), r;
-            for (i = 1; i <= M; i++) { r = (i - 0.5) / M; cdf[i] = cdf[i - 1] + (r >= a ? r * Math.pow(1 - r, k) : 0); }
-            for (var j = 0, q = 0; j <= N; j++) {
-                var want = j / N * cdf[M];
-                while (q < M && cdf[q + 1] < want) q++;
-                var span = cdf[q + 1] - cdf[q];
-                t[j] = Math.min(1, (q + (span > 0 ? (want - cdf[q]) / span : 0)) / M);
-            }
-        }
-        var f = u * N; i = _min(N - 1, f | 0);
-        return t[i] + (t[i + 1] - t[i]) * (f - i);
+        if (bias < 0) { var a = _min(0.99, -bias / 100); return Math.sqrt(a * a + u * (1 - a * a)); }
+        var b = _min(1, bias / 100);
+        return (1 - b) * Math.sqrt(u) + b * (1 - Math.sqrt(1 - u));
     }
 
     function _needsReplay(p, pts) {

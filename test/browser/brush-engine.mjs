@@ -4591,7 +4591,9 @@ await withPage(async (page) => {
          * second brush widens the stroke. */
         /* Clip Studio's spray bias moves its particles to the rim (-100: a
          * ring) or the middle (+100) of the patch (cdp-csp/sb): the share
-         * of the ink in the middle 60px of a 200px patch's stroke. */
+         * of the ink in the middle 60px of a 200px patch's stroke. At 100 the
+         * distance thins evenly to the rim (cdp-csp/qg): 0.69 here, where
+         * r(1 - r)^2 gave 0.63. */
         out.bias = [];
         for (const bias of [-100, 0, 100]) {
             __B.doc(400, 300);
@@ -4725,7 +4727,7 @@ await withPage(async (page) => {
     check('a Clip Studio spray can point each particle away from its patch centre',
         sc.radial[0] > sc.radial[1] * 1.15, JSON.stringify(sc.radial));
     check('a Clip Studio spray bias moves particles to the rim or the middle',
-        sc.bias[0] < sc.bias[1] * 0.75 && sc.bias[2] > sc.bias[1] * 1.25, JSON.stringify(sc.bias));
+        sc.bias[0] < sc.bias[1] * 0.75 && sc.bias[2] > 0.67, JSON.stringify(sc.bias));
     check('a Clip Studio second brush cuts in turn with the first: filled back in mid-stroke, cut at the end',
         sc.second['destination-out'][0] > 200 && sc.second['destination-out'][1] < 64, JSON.stringify(sc.second));
     check('a Clip Studio cut leaves a solid stroke solid and takes a faint dab by its own alpha',
