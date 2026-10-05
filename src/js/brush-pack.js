@@ -660,16 +660,22 @@
          * Waterpaint presets hollow their strokes out that way. Linear dodge
          * is the same second stroke added on instead (Charcoal Pencil). */
         var mop = { subtract: 'subtract', linear_dodge: 'add' }[P['MaskingBrush/MaskingCompositeOp']];
-        if (mb && mb.mask && mop) {
+        if (mb && (mb.mask || mb.filename) && mop) {
             var MP = {}, pre = 'MaskingBrush/Preset/';
             Object.keys(P).forEach(function (k) { if (k.indexOf(pre) === 0) MP[k.slice(pre.length)] = P[k]; });
             out.maskOp = mop;
-            if (mb.mask.id === 'default' || !mb.mask.id)
+            /* A picture tip strokes the mask as well (Dry Bristles Eroded's
+             * random-debris.gbr): resolved as the second tip, never carved
+             * with (tip2Depth stays 0). Its stroke laid as stamps through
+             * each dab wore the brush to a fifth of Krita's ink. */
+            if (!mb.mask) { out._tip2File = mb.filename; out.maskPicture = true; }
+            else if (mb.mask.id === 'default' || !mb.mask.id)
                 out.maskHardness = Math.round((_num(mb.mask.hfade, 1) + _num(mb.mask.vfade, 1)) / 2 * 100);
             out.maskSize = Math.round(_num(P['MaskingBrush/MasterSizeCoeff'], 1) * 100);
             out.maskFlow = Math.round(_num(MP.FlowValue, 1) * 100);
+            out.maskOpacity = Math.round(_num(MP.OpacityValue, 1) * 100);
             out.maskSpacing = Math.max(1, Math.round(_num(mb.spacing, 0.1) * 100));
-            out.maskTipCurve = (mb.mask.id === 'soft' &&
+            out.maskTipCurve = (mb.mask && mb.mask.id === 'soft' &&
                 BrushPack.parseCurve('<curve>' + (mb.mask.softness_curve || '') + '</curve>')) || null;
             ['Size', 'Flow', 'Opacity'].forEach(function (o) {
                 var s = _sensorFor(MP, o);

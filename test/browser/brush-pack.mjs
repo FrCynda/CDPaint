@@ -272,7 +272,11 @@ await withPage(async (page) => {
                     'MaskingBrush/MasterSizeCoeff': '0.45',
                     'MaskingBrush/Preset/brush_definition': soft.replace('id="soft"', 'id="default"'),
                     'MaskingBrush/Preset/PressureOpacity': 'true', 'MaskingBrush/Preset/OpacityUseCurve': 'true',
-                    'MaskingBrush/Preset/OpacitySensor': '<params id="pressure"><curve>0,0;0.8,0.35;1,0.76;</curve></params>' } }).params
+                    'MaskingBrush/Preset/OpacitySensor': '<params id="pressure"><curve>0,0;0.8,0.35;1,0.76;</curve></params>' } }).params,
+                pic: BP.toPreset({ params: { brush_definition: soft,
+                    'MaskingBrush/Enabled': 'true', 'MaskingBrush/MaskingCompositeOp': 'subtract', 'MaskingBrush/MasterSizeCoeff': '1',
+                    'MaskingBrush/Preset/brush_definition': '<Brush scale="1.3" type="gbr_brush" spacing="0.73" filename="random-debris.gbr"/>',
+                    'MaskingBrush/Preset/OpacityValue': '0.8' } }).params
             };
         };
         const W = JSON.parse(await page.eval(`JSON.stringify((${wp})(BrushPack))`));
@@ -289,6 +293,11 @@ await withPage(async (page) => {
             W.dodge.maskOp === 'add' && W.dodge.maskSize === 45 && W.dodge.maskHardness === 50 &&
             W.dodge.maskOpacitySrc === 'pressure' && W.dodge.maskOpacityCurve.length === 3 && !W.dodge._tip2Url,
             JSON.stringify([W.dodge.maskOp, W.dodge.maskSize, W.dodge.maskHardness, W.dodge.maskOpacitySrc]));
+        // Dry Bristles Eroded: a picture masking tip stamped through each dab wore it to a fifth of Krita's ink
+        check('a picture masking tip strokes the mask too, at its own opacity',
+            W.pic.maskOp === 'subtract' && W.pic.maskPicture === true && W.pic._tip2File === 'random-debris.gbr' &&
+            !(W.pic.tip2Depth > 0) && W.pic.maskOpacity === 80 && W.pic.maskSpacing === 73,
+            JSON.stringify([W.pic.maskOp, W.pic.maskPicture, W.pic._tip2File, W.pic.tip2Depth, W.pic.maskOpacity, W.pic.maskSpacing]));
         check("a Krita preset reads speed against Krita's 30 px/ms ceiling", W.soft.speedMax === 30, W.soft.speedMax);
         // Krita turns its tip the other way from ctx.rotate; a lone Charcoal Pencil dab leaned wrong.
         const turned = await page.eval(`BrushPack.toPreset({ params: { brush_definition:

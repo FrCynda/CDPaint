@@ -1376,6 +1376,24 @@ await withPage(async (page) => {
     const kd5 = [0, 0, 0, 0, 0, 0, 0, 39, 129, 143, 73, 3, 0, 129, 223, 235, 171, 32, 0, 143, 235, 246, 185, 41, 0, 73, 171, 185, 114, 9, 0, 3, 32, 41, 9, 0];
     check("a small Krita tip's bristles are Krita's own bytes, box and middle", JSON.stringify(hb.d4) === JSON.stringify(kd4) && JSON.stringify(hb.d5) === JSON.stringify(kd5), JSON.stringify(hb));
     check("...and a 249 bristle at half opacity is Krita's 125", hb.half === 125, 'alpha ' + hb.half);
+    /* An anti-aliased hard square is Krita's rectangle (KisRectangleMaskGenerator),
+     * its last pixel fading: Grease Pencil Square's 6 x 2.9 dab is rows
+     * 104, 254, 188 in Krita (probes/gpsq). Drawn as a plain box it was a
+     * solid bar, and its subtract texture kept 1.8x Krita's ink. */
+    const sq = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = __B.layer().ctx;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        for (const [k, v] of Object.entries({ smoothingMode: 'none', sizeSrc: 'none', flowSrc: 'none', shape: 'square',
+            falloff: 'krita-aa', hardness: 100, aspectRatio: 1 / 0.47, size: 6.2, spacing: 1000 })) b.setParam(k, v);
+        L.clearRect(0, 0, 200, 200);
+        b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+        const d = L.getImageData(100, 95, 1, 10).data, col = [];
+        for (let i = 3; i < d.length; i += 4) if (d[i]) col.push(d[i]);
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(col);
+    })()`));
+    check("an anti-aliased hard Krita square fades its edge pixels, as Krita's rectangle does",
+        sq.filter(a => a >= 240).length === 1 && Math.abs(sq.reduce((a, b) => a + b, 0) - 546) < 30, JSON.stringify(sq));
     /* Krita's curve brush (KisCurvePaintOp): no dabs, a line per input
      * segment on Qt's anti-aliased pen, a curve through the history once it
      * is full. It was painted as a round brush: 10x Krita's ink on Ink Pen. */

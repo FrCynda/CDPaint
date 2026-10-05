@@ -789,8 +789,8 @@
      * main step. No scatter, mirror or rotation on the mask. */
     var _mkCanvas = null, _mkCtx = null, _mkLast = null, _mkStamp = null, _mkDab = null;
     function _maskStrokeDab(p, x, y, sc) {
-        var d = p.size * p.maskSize / 100 * _dyn(p, 'maskSize', 1, sc, 15);
-        if (d < 0.5) return;
+        var d = p.size * p.maskSize / 100 * _dyn(p, 'maskSize', 1, sc, 15), pic = p.maskPicture && _tip2CanvasFor();
+        if (d < 0.5 || (p.maskPicture && !pic)) return;
         if (_mkLast && Math.hypot(x - _mkLast.x, y - _mkLast.y) < _max(0.5, d * p.maskSpacing / 100)) return;
         _mkLast = { x: x, y: y };
         if (!_mkCanvas || _mkCanvas.width !== _flowCanvas.width || _mkCanvas.height !== _flowCanvas.height) {
@@ -813,7 +813,7 @@
             _mkStamp = { curve: p.maskTipCurve, hard: hard, canvas: c };
         }
         // The dab in grey at its opacity, then lightened on: alpha darken.
-        var o = _clamp(_dyn(p, 'maskOpacity', 1, sc, 17), 0, 1);
+        var o = _clamp(p.maskOpacity / 100 * _dyn(p, 'maskOpacity', 1, sc, 17), 0, 1);
         var n = _max(1, _ceil(d) + 2);
         if (!_mkDab || _mkDab.width < n || _mkDab.height < n) _mkDab = new OffscreenCanvas(n, n);
         var dc = _mkDab.getContext('2d');
@@ -821,7 +821,10 @@
         dc.fillStyle = _greyHex(o);
         dc.fillRect(0, 0, n, n);
         dc.globalCompositeOperation = 'destination-in';
-        dc.drawImage(_mkStamp.canvas, n / 2 - d / 2, n / 2 - d / 2, d, d);
+        if (pic) {   // a picture keeps its shape, its long side the dab's size
+            var pk = d / _max(pic.width, pic.height), pw = pic.width * pk, ph = pic.height * pk;
+            dc.drawImage(pic, n / 2 - pw / 2, n / 2 - ph / 2, pw, ph);
+        } else dc.drawImage(_mkStamp.canvas, n / 2 - d / 2, n / 2 - d / 2, d, d);
         dc.globalCompositeOperation = 'source-over';
         _mkCtx.globalCompositeOperation = 'lighten';
         _mkCtx.globalAlpha = _clamp(_dyn(p, 'maskFlow', p.maskFlow / 100, sc, 16), 0, 1);
@@ -3993,8 +3996,11 @@
             if (shape === 'square' && _isArray(_params.tipCurve))
                 shape = 'rcurve' + (/-aa$/.test(_params.falloff || '') ? 'a' : '') + _tipCurveKey(_tcNow = _softCurve(_params.tipCurve, _softNow));
             var kf = /^krita(-gauss)?(-aa)?$/.exec(_params.falloff || '');
-            // a hard square keeps the plain box: it paints its pixel however small (EO Pixel Perfect)
-            if (shape === 'square' && kf && (kf[1] || hardness < 100 || (_params.hardnessY != null && _params.hardnessY < 100)))
+            /* a hard square keeps the plain box: it paints its pixel however
+             * small (EO Pixel Perfect) -- unless anti-aliased, when Krita's
+             * edge fades its last pixel: Grease Pencil Square's 3px-tall dab
+             * is rows 104, 254, 188 in Krita, not a solid bar. */
+            if (shape === 'square' && kf && (kf[1] || kf[2] || hardness < 100 || (_params.hardnessY != null && _params.hardnessY < 100)))
                 shape = (kf[1] ? 'kgrect' : 'klrect') + (kf[2] ? 'a' : '') + (_params.hardnessY != null ? ':' + _params.hardnessY : '');
             if (shape === 'circle' && _params.edgeRamp) {
                 shape = 'cspaa' + _params.edgeRamp;
@@ -5884,7 +5890,7 @@
          * alpha comes off this one (see _maskStrokeDab). Sizes are % of the
          * brush, spacing % of the mask dab. */
         speedMax: 3,             // px/ms that reads as full speed
-        maskOp: '', maskSize: 100, maskFlow: 100, maskSpacing: 10, maskTipCurve: null, maskHardness: 100,
+        maskOp: '', maskSize: 100, maskFlow: 100, maskOpacity: 100, maskSpacing: 10, maskTipCurve: null, maskHardness: 100, maskPicture: false,
         maskOpacitySrc: 'none', maskOpacityMin: 0, maskOpacityCurve: 1,
         maskSizeSrc: 'none', maskSizeMin: 0, maskSizeCurve: 1,
         maskFlowSrc: 'none', maskFlowMin: 0, maskFlowCurve: 1,
