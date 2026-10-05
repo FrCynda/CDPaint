@@ -1565,8 +1565,8 @@ await withPage(async (page) => {
         sm.flips === '-/both h/- -/v -/-', sm.flips);
     check('anti-aliasing off shrinks a picture it does not ink solid without smoothing',
         JSON.stringify(sm.crispPic) === '["nearest","",""]', JSON.stringify(sm.crispPic));
-    check("a Clip Studio picture at low anti-aliasing is point-sampled, a dab half a pixel on and a ribbon a quarter",
-        JSON.stringify(sm.lowAA.slice(0, 2)) === '[[2,0.5],[2,0.25]]' && JSON.stringify(sm.lowAA[3]) === '[0,0]', JSON.stringify(sm.lowAA));
+    check("a Clip Studio picture at low anti-aliasing is point-sampled a quarter pixel on, a dab as a ribbon (Chalk's 30px picture is 30 rows)",
+        JSON.stringify(sm.lowAA.slice(0, 2)) === '[[2,0.25],[2,0.25]]' && JSON.stringify(sm.lowAA[3]) === '[0,0]', JSON.stringify(sm.lowAA));
     // one Bumpy dab at medium and high is all sixteenths, a quarter pixel on (cdp-csp/aa4fit.py)
     check("...and at medium and high 4x4, a quarter pixel on (not yet a ribbon)",
         JSON.stringify([sm.lowAA[2], sm.lowAA[4], sm.lowAA[5]]) === '[[4,0.25],[4,0.25],[0,0]]', JSON.stringify(sm.lowAA));
