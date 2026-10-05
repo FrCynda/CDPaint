@@ -343,6 +343,22 @@ await withPage(async (page) => {
         })()`, { awaitPromise: true });
         check("a grey Krita tip is ink where it is dark, whatever its alpha says",
             knife === '0,255', knife);
+        /* Krita reads a tip's bytes and ignores its colour profile; the
+         * browser applied square_rough.png's, and Waterpaint Hard Edges'
+         * eroding tip came out a third too light. */
+        const rough = await page.eval(`(async () => {
+            const u8 = new Uint8Array(await (await fetch('brushes/krita/square_rough.png')).arrayBuffer());
+            const tip = await BrushPack.tipStrip(u8, 'square_rough.png', { krita: true });
+            const img = new Image(); img.src = tip.url; await img.decode();
+            const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+            const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+            const d = g.getImageData(0, 0, c.width, c.height).data; let s = 0;
+            for (let i = 3; i < d.length; i += 4) s += d[i];
+            return s;
+        })()`, { awaitPromise: true });
+        // 21577448 is the sum of 255 - grey over the file's own bytes
+        check("a Krita tip is read from its bytes, its colour profile ignored",
+            Math.abs(rough / 21577448 - 1) < 0.01, String(rough));
     }
     check('an eraser still erases',
         E.blendMode === 'erase' && tr.blendKnown, String(E.blendMode));

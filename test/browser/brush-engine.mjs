@@ -1559,6 +1559,25 @@ await withPage(async (page) => {
         dodge.one[0] > 160 && dodge.one[0] < 200 && dodge.one[1] === 0, JSON.stringify(dodge));
     check('...and its dabs build up to their own opacity, not past it',
         dodge.many[0] - dodge.one[0] < 90 && dodge.many[1] === 0, JSON.stringify(dodge));
+    /* The masking stroke keeps its own spacing between the main dabs:
+     * riding them, Waterpaint Hard Edges' mask, spaced closer than its
+     * brush, eroded a quarter too little. Main dabs 20px apart, mask dabs
+     * 6px at a flow of 0.3: ten of them over the centre clear it, three
+     * leave a third of the ink. */
+    const mkGap = await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        b.setParam('size', 20); b.setParam('hardness', 100); b.setParam('spacing', 100);
+        b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
+        b.setParam('maskOp', 'subtract'); b.setParam('maskSize', 300); b.setParam('maskSpacing', 10); b.setParam('maskFlow', 30);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(60, 100, 1, '#000000');
+        for (let x = 61; x <= 140; x++) b.moveStroke(x, 100, 1, '#000000');
+        b.endStroke();
+        return __B.layer().ctx.getImageData(100, 100, 1, 1).data[3];
+    })()`);
+    check('a masking stroke spaces its own dabs, not only where the brush lays one',
+        mkGap < 40, 'alpha ' + mkGap);
     /* Krita spaces dabs by the box around the tip turned by its fixed angle
      * (KisBrush::characteristicSize). A 20x5 tip at 45 degrees has a
      * 17.7px box, so at 100% spacing its dabs stand apart along a line; an

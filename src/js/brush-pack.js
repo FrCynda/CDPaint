@@ -677,7 +677,14 @@
             out.maskSpacing = Math.max(1, Math.round(_num(mb.spacing, 0.1) * 100));
             out.maskTipCurve = (mb.mask && mb.mask.id === 'soft' &&
                 BrushPack.parseCurve('<curve>' + (mb.mask.softness_curve || '') + '</curve>')) || null;
-            ['Size', 'Flow', 'Opacity'].forEach(function (o) {
+            /* Its own scatter (a multiple of its dab) and a turn at random
+             * per dab: Waterpaint Hard Edges' square_rough mask, kept in
+             * one orientation on the stroke, ate a fifth too little. */
+            if (_bool(MP.PressureScatter)) out.maskScatter = Math.round(_num(MP.ScatterValue, 0) * 100);
+            var mr = _bool(MP.PressureRotation) && /id="fuzzy(dab)?"/.test(MP.RotationSensor || '');
+            if (mr) out.maskSpin = _num(MP.RotationValue, 1);
+            ['Size', 'Flow', 'Opacity', 'Scatter'].forEach(function (o) {
+                if (o === 'Scatter' && !out.maskScatter) return;
                 var s = _sensorFor(MP, o);
                 if (!s || !s.src) return;
                 out['mask' + o + 'Src'] = s.src;
@@ -1554,13 +1561,16 @@
         if (one.layer) return _sutLayerCell(one.layer);
         var svg = /\.svg$/i.test(name), blob = new Blob([one], svg ? { type: 'image/svg+xml' } : {});
         /* createImageBitmap refuses an SVG blob; an <img> draws it at the
-         * size the file declares (Krita's triangle.svg, a masking tip). */
+         * size the file declares (Krita's triangle.svg, a masking tip).
+         * Krita reads a PNG's bytes, its colour profile ignored; the
+         * browser would apply it (square_rough.png's GIMP one took a
+         * third off Waterpaint Hard Edges' eroding tip). */
         return (svg ? new Promise(function (ok, no) {
             var im = new Image(), u = URL.createObjectURL(blob);
             im.onload = function () { URL.revokeObjectURL(u); ok(im); };
             im.onerror = function () { URL.revokeObjectURL(u); no(new Error('unreadable SVG tip')); };
             im.src = u;
-        }) : createImageBitmap(blob)).then(function (bmp) {
+        }) : createImageBitmap(blob, opts && opts.krita ? { colorSpaceConversion: 'none' } : {})).then(function (bmp) {
             var c = document.createElement('canvas');
             c.width = bmp.width; c.height = bmp.height;
             var g = c.getContext('2d');

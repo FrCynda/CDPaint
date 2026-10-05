@@ -784,15 +784,23 @@
      * cap at their own opacity. Applied in _adToFlow, which rebuilds the
      * stroke from the grey buffer on every flush, so it never compounds.
      *
-     * ponytail: mask dabs land on main dab positions once their own spacing
-     * is covered; the main brush is far denser, so the error is under one
-     * main step. No scatter, mirror or rotation on the mask. */
+     * The mask keeps its own spacing between main dabs: Waterpaint Hard
+     * Edges' main step outruns its mask's, and riding the main dabs took a
+     * quarter off its erosion. No mirror on the mask. */
     var _mkCanvas = null, _mkCtx = null, _mkLast = null, _mkStamp = null, _mkDab = null;
     function _maskStrokeDab(p, x, y, sc) {
         var d = p.size * p.maskSize / 100 * _dyn(p, 'maskSize', 1, sc, 15), pic = p.maskPicture && _tip2CanvasFor();
         if (d < 0.5 || (p.maskPicture && !pic)) return;
-        if (_mkLast && Math.hypot(x - _mkLast.x, y - _mkLast.y) < _max(0.5, d * p.maskSpacing / 100)) return;
-        _mkLast = { x: x, y: y };
+        var step = _max(0.5, d * p.maskSpacing / 100), l = _mkLast, dx = l ? x - l.x : 0, dy = l ? y - l.y : 0, len = Math.hypot(dx, dy), t;
+        if (!l) { _mkLast = { x: x, y: y }; _maskDabAt(p, x, y, sc, d, pic); return; }
+        for (t = step; t <= len; t += step) _maskDabAt(p, l.x + dx * t / len, l.y + dy * t / len, sc, d, pic);
+        if (t > step) _mkLast = { x: l.x + dx * (t - step) / len, y: l.y + dy * (t - step) / len };
+    }
+    function _maskDabAt(p, x, y, sc, d, pic) {
+        if (p.maskScatter) {   // as the brush's own scatter, in a direction at random
+            var sd = p.maskScatter / 100 * _dyn(p, 'maskScatter', 1, sc, 18) * d * (_dabRand(x, y, 41) * 2 - 1), sa = _dabRand(x, y, 42) * _PI * 2;
+            x += _cos(sa) * sd; y += _sin(sa) * sd;
+        }
         if (!_mkCanvas || _mkCanvas.width !== _flowCanvas.width || _mkCanvas.height !== _flowCanvas.height) {
             _mkCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);
             _mkCtx = _mkCanvas.getContext('2d', { willReadFrequently: true });
@@ -814,7 +822,7 @@
         }
         // The dab in grey at its opacity, then lightened on: alpha darken.
         var o = _clamp(p.maskOpacity / 100 * _dyn(p, 'maskOpacity', 1, sc, 17), 0, 1);
-        var n = _max(1, _ceil(d) + 2);
+        var n = _max(1, _ceil(d * (pic && p.maskSpin ? Math.SQRT2 : 1)) + 2);
         if (!_mkDab || _mkDab.width < n || _mkDab.height < n) _mkDab = new OffscreenCanvas(n, n);
         var dc = _mkDab.getContext('2d');
         dc.clearRect(0, 0, n, n);
@@ -823,7 +831,9 @@
         dc.globalCompositeOperation = 'destination-in';
         if (pic) {   // a picture keeps its shape, its long side the dab's size
             var pk = d / _max(pic.width, pic.height), pw = pic.width * pk, ph = pic.height * pk;
-            dc.drawImage(pic, n / 2 - pw / 2, n / 2 - ph / 2, pw, ph);
+            dc.save(); dc.translate(n / 2, n / 2);
+            if (p.maskSpin) dc.rotate((_dabRand(x, y, 43) * 2 - 1) * _PI * p.maskSpin);
+            dc.drawImage(pic, -pw / 2, -ph / 2, pw, ph); dc.restore();
         } else dc.drawImage(_mkStamp.canvas, n / 2 - d / 2, n / 2 - d / 2, d, d);
         dc.globalCompositeOperation = 'source-over';
         _mkCtx.globalCompositeOperation = 'lighten';
@@ -1165,6 +1175,13 @@
         return _texTile(type);
     }
 
+    /* A tip or paper is its bytes. Krita reads a PNG's pixels as they are,
+     * its colour profile ignored; the browser applies it, and square_rough.png's
+     * GIMP profile took a third off Waterpaint Hard Edges' eroding tip. */
+    function _drawRaw(img, use) {
+        createImageBitmap(img, { colorSpaceConversion: 'none' }).then(use, function () { use(img); });
+    }
+
     /* Defined locally and published next to the other engine methods: this
      * sits far above `var engine`, and assigning onto it here would throw at
      * module evaluation and take the whole brush engine down with it. */
@@ -1178,7 +1195,7 @@
             if (i >= 0) _pendingLoads.splice(i, 1);
         }
         img.onerror = done;
-        img.onload = function () {
+        img.onload = function () { _drawRaw(img, function (img) {
             try {
                 var oc = new OffscreenCanvas(img.width, img.height);
                 oc.getContext('2d').drawImage(img, 0, 0);
@@ -1202,7 +1219,7 @@
                 }
             } catch (e) { /* a pattern that will not decode just stays absent */ }
             done();
-        };
+        }); };
         // an imported paper is filed away like a tip (Clip Studio's are 1001px)
         _tipResolve(url, function (u) { if (u) img.src = u; else done(); });
     }
@@ -5891,6 +5908,7 @@
          * brush, spacing % of the mask dab. */
         speedMax: 3,             // px/ms that reads as full speed
         maskOp: '', maskSize: 100, maskFlow: 100, maskOpacity: 100, maskSpacing: 10, maskTipCurve: null, maskHardness: 100, maskPicture: false,
+        maskScatter: 0, maskSpin: 0, maskScatterSrc: 'none', maskScatterMin: 0, maskScatterCurve: 1,
         maskOpacitySrc: 'none', maskOpacityMin: 0, maskOpacityCurve: 1,
         maskSizeSrc: 'none', maskSizeMin: 0, maskSizeCurve: 1,
         maskFlowSrc: 'none', maskFlowMin: 0, maskFlowCurve: 1,
@@ -6115,7 +6133,7 @@
             console.error('[KritaEngine] Failed to load custom tip:', url, '— shape stays as', _params.shape);
             _cleanup();
         };
-        img.onload = function () {
+        img.onload = function () { _drawRaw(img, function (img) {
             try {
                 console.log('[KritaEngine] Tip image loaded:', img.width + 'x' + img.height);
                 var oc = new OffscreenCanvas(img.width, img.height);
@@ -6152,7 +6170,7 @@
                 console.error('[KritaEngine] Error processing custom tip:', e);
             }
             _cleanup();
-        };
+        }); };
         // Only use convertFileSrc for absolute file:// paths — relative URLs
         // work directly via the page's base URL and the dev server / Tauri
         // custom protocol handler.
@@ -8062,7 +8080,7 @@
         var url = preset && (which === '2' ? preset._tip2Url : preset._tipUrl);
         if (!url) { _previewTipCache[slot] = null; if (callback) callback(); return; }
         var img = new Image();
-        img.onload = function () {
+        img.onload = function () { _drawRaw(img, function (img) {
             try {
                 var oc = new OffscreenCanvas(img.width, img.height);
                 var ox = oc.getContext('2d');
@@ -8098,7 +8116,7 @@
                 _previewTipCache[slot] = null;
             }
             if (callback) callback();
-        };
+        }); };
         img.onerror = function () {
             _previewTipCache[slot] = null;
             if (callback) callback();
