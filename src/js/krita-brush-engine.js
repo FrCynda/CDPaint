@@ -726,8 +726,8 @@
      * last at its own alpha -- Generic Flower BG's flowers went out at one
      * grey, the last one's. Started the first time a dab's colour differs,
      * so a one-colour stroke pays nothing.
-     * ponytail: a colour picture tip's own shading is flattened to its
-     * colour here; smudge on such a preset would too.
+     * A colour picture tip lays its own shading there from its first dab.
+     * ponytail: smudge on such a preset flattens it to one colour.
      *
      * Falling pressure: Krita caps the dab at the stroke's running opacity
      * instead, which jumps up with the dab's and eases a tenth of the way
@@ -736,6 +736,7 @@
      * the same lighten at grey avg, the dab thinned by o/avg. */
     var _adCanvas = null, _adCtx = null, _adO = 1, _adAvg = 0, _adColor = '#000000';
     var _adCol = null, _adColCtx = null, _adColOn = 0;   // 0 no dab yet, 1 one colour, 2 colours in _adCol
+    var _adPic = null, _adPicCtx = null;                 // a colour picture's dab, its own shading
     function _alphaDarken(p) {
         return !!((p.dabOpacitySrc && p.dabOpacitySrc !== 'none') || p.dabOpacitySensors || p.maskOp || p.hatch)
             && p.engineKind !== 'shape' && p.engineKind !== 'deform';
@@ -998,7 +999,7 @@
     // resident while idle. The _ensure* functions recreate them lazily on the next stroke.
     function _releaseOffscreenBuffers() {
         _flowCanvas = null; _flowCtx = null; _flowUsed = null;
-        _adCanvas = null; _adCtx = null; _mkCanvas = null; _mkCtx = null; _adCol = null; _adColCtx = null;
+        _adCanvas = null; _adCtx = null; _mkCanvas = null; _mkCtx = null; _adCol = null; _adColCtx = null; _adPic = null; _adPicCtx = null;
         _covCanvas = null; _covCtx = null; _covUsed = null;
         _scratchCanvas = null; _scratchCtx = null;
         _tintMask = null; _tintColor = null;
@@ -1107,7 +1108,7 @@
      * a clean tint. */
     var _tintMask = null, _tintColor = null;
 
-    function _colorizeMask(maskCanvas, colorHex) {
+    function _colorizeMask(maskCanvas, colorHex, mode) {
         var mw = maskCanvas.width;
         var mh = maskCanvas.height;
         _ensureScratch(mw, mh);
@@ -1115,7 +1116,7 @@
          * largest mask the session has seen, so clearing all of it charged
          * every small dab for the biggest brush ever loaded. */
         _scratchCtx.clearRect(0, 0, mw, mh);
-        var mode = _params.tipMode || 'alpha';
+        mode = mode || _params.tipMode || 'alpha';
         if (mode === 'color') {
             /* The tip paints itself: its picture IS the dab, and the chosen
              * colour has no say. Krita calls this an image stamp. */
@@ -1986,8 +1987,13 @@
      * pixel -- whatever alpha the stroke has. The outermost pixel takes
      * 0.29 of the rim's add at every radius. Alpha only, added after the
      * stroke's opacity (an opacity 20 and 40 stroke gain the same), so the
-     * opacity is baked in here and the copy composites at 1. */
-    function _applyWaterEdgeAdd(ctx, x, y, w, h, width, density, opacity) {
+     * opacity is baked in here and the copy composites at 1.
+     * Its tone (value power V) takes the same amount off the colour's value
+     * whatever the colour: V (0.737 x / (1 + x) + 0.056 t), x = power/10 * t,
+     * t the straight line above -- a grey and a near-white stroke darken by
+     * the same levels, and twice the tone takes twice as many (cdp-csp/kv,
+     * kv2: 10 opaque greys, power 0-100, tone 0-100, within 3 levels). */
+    function _applyWaterEdgeAdd(ctx, x, y, w, h, width, density, opacity, value) {
         var R = _max(1, _round(width)) + 1, k = density / 10;
         var bw = ctx.canvas.width, bh = ctx.canvas.height;
         var ex = _max(0, x - R), ey = _max(0, y - R);
@@ -2014,7 +2020,13 @@
         for (yy = 0; yy < h; yy++) for (xx = 0; xx < w; xx++) {
             i = (yy + oy) * ew + xx + ox; v = D[i];
             if (!v) continue;
-            d[i * 4 + 3] = _min(255, _round(d[i * 4 + 3] * opacity + (v < R ? 255 * k * (v < 1.5 ? 0.29 : (R - v) / R) : 0)));
+            var t = v < R ? (v < 1.5 ? 0.29 : (R - v) / R) : 0, kt = k * t;
+            d[i * 4 + 3] = _min(255, _round(d[i * 4 + 3] * opacity + 255 * kt));
+            if (value && t) {
+                var j = i * 4, m = _max(d[j], d[j + 1], d[j + 2]) / 255;
+                var f = m > 0 ? _max(0, m - value / 100 * (0.737 * kt / (1 + kt) + 0.056 * t)) / m : 0;
+                d[j] *= f; d[j + 1] *= f; d[j + 2] *= f;
+            }
         }
         ctx.putImageData(img, ex, ey);
     }
@@ -2225,10 +2237,10 @@
 
         var ad = destCtx === _flowCtx && _alphaDarken(getParams());
         var adFlow = alpha;
-        var adHex = colorHex;
+        var adHex = colorHex, pic = ad && getParams().tipMode === 'color';
         if (ad) {
             _ensureAdBuffer();
-            if (_adColOn === 1 && colorHex !== _adColor) {
+            if ((_adColOn === 1 && colorHex !== _adColor) || (pic && _adColOn !== 2)) {
                 if (!_adCol || _adCol.width !== _adCanvas.width || _adCol.height !== _adCanvas.height) {
                     _adCol = new OffscreenCanvas(_adCanvas.width, _adCanvas.height);
                     _adColCtx = _adCol.getContext('2d', { willReadFrequently: true });
@@ -2240,7 +2252,20 @@
             _adColor = colorHex; colorHex = _greyHex(_adAvg); if (_adAvg > 0) alpha *= _adO / _adAvg;
         }
 
-        if (_tintMask !== maskCanvas || _tintColor !== colorHex) {
+        if (pic) {
+            /* A picture keeps its own shading in _adCol and gives the alpha
+             * buffer only its shape: flattened to one colour, WC Generic
+             * Flower's white hearts went the grey of its petals. */
+            _colorizeMask(maskCanvas, adHex);
+            if (!_adPic || _adPic.width < mw || _adPic.height < mh) {
+                _adPic = new OffscreenCanvas(mw, mh);
+                _adPicCtx = _adPic.getContext('2d');
+            }
+            _adPicCtx.clearRect(0, 0, mw, mh);
+            _adPicCtx.drawImage(_scratchCanvas, 0, 0, mw, mh, 0, 0, mw, mh);
+            _colorizeMask(maskCanvas, colorHex, 'alpha');
+            _tintMask = null;
+        } else if (_tintMask !== maskCanvas || _tintColor !== colorHex) {
             _colorizeMask(maskCanvas, colorHex);
             _tintMask = maskCanvas;
             _tintColor = colorHex;
@@ -2356,7 +2381,7 @@
             _shiftCtx.drawImage(_scratchCanvas, 0, 0, mw, mh, 0, 0, mw, mh);
             _shiftCtx.globalCompositeOperation = 'source-over';
             _adColCtx.globalAlpha = _clamp(adFlow, 0, 1);
-            _adColCtx.drawImage(_shiftCanvas, 0, 0, mw, mh, ox, oy, mw, mh);
+            _adColCtx.drawImage(pic ? _adPic : _shiftCanvas, 0, 0, mw, mh, ox, oy, mw, mh);
             _adColCtx.globalAlpha = 1;
         }
         if (ad && ox === _floor(ox) && oy === _floor(oy)) _adDab(ox, oy, mw, mh, adFlow);
@@ -4768,7 +4793,7 @@
         /* Clip Studio's edge goes on over its paper (Round watercolor's rim
          * stands 39 above the grained wash), so after the grain above. */
         if (_p.edgeAdd && src === _edgeCanvas) {
-            _applyWaterEdgeAdd(_edgeCtx, x, y, w, h, _p.edgeWidth, _p.edgeDensity, opacity);
+            _applyWaterEdgeAdd(_edgeCtx, x, y, w, h, _p.edgeWidth, _p.edgeDensity, opacity, _p.edgeValue);
             opacity = 1;
         }
         mainCtx.save();
@@ -4939,6 +4964,8 @@
              * by the narrow side 13404). */
             if (p.spacingByWidth) {
                 g = _gap(asp < 1 ? d * asp : d);
+            } else if (p.spacingBySize) {
+                g = _gap(d);
             } else if (p.spacingIsotropic || bw === bh) {   // GIMP spaces a 164x166 tip by its 164
                 g = _gap(_max(bw, bh));
             } else {
@@ -5956,6 +5983,7 @@
         edgeWidth: 0,
         edgeDensity: 0,
         edgeAdd: false,   // Clip Studio's measured edge (_applyWaterEdgeAdd) instead of ours
+        edgeValue: 0,     // ...and how much it darkens the colour, 0-100 (Clip Studio's edge tone)
         /* Wet blend: one bit of memory per pixel — has this stroke already
          * painted here? Without it every live flush re-lands old dabs, so
          * smudge re-samples its own wet paint and a held stroke visibly
@@ -6008,6 +6036,7 @@
         aspectThinsWidth: false, // Clip Studio picture tips: the aspect input narrows the width, not the height
         tipStretch: null,        // [x, y]: Clip Studio's thickness past 100 stretches a picture tip
         spacingByWidth: false,   // Clip Studio picture tips on auto spacing: spaced by the tip's unturned width
+        spacingBySize: false,    // Clip Studio's fixed interval: a share of the size, whatever the tip's shape or turn
         sizeSrc: 'pressure',     sizeMin: 50,      sizeCurve: 1,
         flowSrc: 'pressure',     flowMin: 0,       flowCurve: 1,
         /* Krita's per-dab opacity: the level a stroke's ink stops building

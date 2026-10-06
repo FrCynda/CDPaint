@@ -3771,9 +3771,12 @@
          * however it is turned: Pointillism's 263px particle, squeezed to 79
          * and turned to lie along the line, stops every 12% of 79 in Clip
          * Studio (a fixed 12% of it paints the same ink), three times as
-         * often as spacing by its length along the line did. */
-        out.spacingIsotropic = !(opts.hasTip && ivt >= 1 && ivt <= 3);
-        if (!out.spacingIsotropic) out.spacingByWidth = true;
+         * often as spacing by its length along the line did. Turned, a fixed
+         * interval still stops every share of the size: WC Generic Flower's
+         * flowers, at 291 degrees, every 209px in Clip Studio (cdp-csp/kw,
+         * kwa: four stops in 800px), where the turned picture's box spaced
+         * ours 260 apart. */
+        if (opts.hasTip && ivt >= 1 && ivt <= 3) out.spacingByWidth = true; else out.spacingBySize = true;
         out.spacing = ivt >= 1 && ivt <= 3 ? [12, 8, 4][ivt - 1]
             : Math.max(1, Math.min(400, Math.round(_sutNum(v.BrushInterval, 10))));
         /* ...and those three open up as a round tip softens: 1 + 2 x its
@@ -3880,8 +3883,7 @@
             // to a hundredth: Waved line's 10 x 300/117 is 25.64, and 26 drifted a wave in 20
             out.size = Math.max(1, Math.min(5000, Math.round(100 * size * Math.max(opts.tipW, opts.tipH) / across) / 100));
             out.spacing = 100;
-            out.spacingIsotropic = false;
-            delete out.spacingByWidth;   // a ribbon is spaced by its length along the line
+            delete out.spacingByWidth; delete out.spacingBySize;   // a ribbon is spaced by its length along the line
             // The first picture starts at the stroke's start, not centred on it (Dashed line's first dash 3.5px in).
             // unrounded: Zipper's 21.61 taken as 22 laid every tooth 0.19px late
             out.offsetAlong = 50 * (side ? opts.tipW : opts.tipH) / Math.max(opts.tipW, opts.tipH);
@@ -4100,11 +4102,10 @@
                 out.edgeWidth = Math.max(1, Math.min(50, Math.round(er)));
                 out.edgeAdd = true;
                 out.edgeDensity = Math.max(1, Math.min(100, Math.round(ea)));
+                out.edgeValue = Math.max(0, Math.min(100, _sutNum(v.BrushWaterEdgeValuePower, 0)));
             }
             if (_sutNum(v.BrushWaterEdgeRadiusUnit, 0))
                 warn.push('changed: watercolour edge width unit');
-            if (_sutNum(v.BrushWaterEdgeValuePower, 0))
-                warn.push('changed: watercolour edge tone');
             if (_sutNum(v.BrushWaterEdgeAfterDrag, 0))
                 warn.push('changed: watercolour edge timing');
             if (_sutNum(v.BrushWaterEdgeBlur, 0) || _sutNum(v.BrushWaterEdgeBlurUnit, 0))
@@ -4161,19 +4162,18 @@
          * (aspect under 1) would round off instead, so that one is left.
          * A picture squeezed by width (vertical flag 0) thins by width:
          * Droplet's round blobs land as thin lenses in Clip Studio.
-         * A plain stroke takes no random thinning (Dry Gouache is 74px
-         * either way) but does take speed: Oil paint (speed floor 59) is
-         * 68px across in Clip Studio, and was 72 here before. Nor does a
-         * picture squeezed top to bottom (vertical flag 1) take a random
-         * one: thinned, Ground, Generic Flower and Generic Flower BG all
-         * lay ~0.78 of Clip Studio's ink over four draws each; unthinned,
-         * 0.98, 0.84 and 0.78 (that last one short of flowers anyway).
+         * A plain stroke squeezed by width takes no random thinning (Dry
+         * Gouache is 74px either way) but does take speed: Oil paint (speed
+         * floor 59) is 68px across in Clip Studio, and was 72 here before.
+         * Squeezed top to bottom (vertical flag 1) it does, sprayed or not:
+         * WC Generic Flower's flowers, laid one at a time with only their
+         * random thickness on (floor 88), stand 0.90-0.98 of their height
+         * (cdp-csp/kx, four draws), and Grass patch's ink 1.20 -> 1.02.
          * A ribbon does take it, each picture laid once with nothing over
-         * it: Rough pen (floor 85) is 0.92 our unthinned width all along.
-         * ponytail: read off the draws, not probed one setting at a time. */
+         * it: Rough pen (floor 85) is 0.92 our unthinned width all along. */
         var thinW = opts.hasTip && !vert;
         if ((thinW || (out.aspectRatio || 1) >= 1) &&
-            _sutDrive(out, 'aspectRatio', v.BrushThicknessEffector, warn, 'its thickness', (spraying && !vert) || out.ribbonClip ? null : 'random') && thinW) out.aspectThinsWidth = true;
+            _sutDrive(out, 'aspectRatio', v.BrushThicknessEffector, warn, 'its thickness', !spraying && !vert && !out.ribbonClip ? 'random' : null) && thinW) out.aspectThinsWidth = true;
         if (spraying) _sutDrive(out, 'dabCount', v.BrushSprayDensityEffector, warn, 'its spray density');
 
         /* Colour that wanders. Clip Studio sets a range either side of the

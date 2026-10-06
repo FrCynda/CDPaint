@@ -3840,12 +3840,13 @@ await withPage(async (page) => {
             b.loadCustomTip(url, null);
             await new Promise(r => setTimeout(r, 400));
             ['texture', 'opacity', 'flow', 'scatter', 'colorRate', 'sizeSrc',
-             'taperStart', 'taperEnd', 'tip2Depth', 'valJitter', 'jitterSub', 'colorJitterRange', 'subMix'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+             'taperStart', 'taperEnd', 'tip2Depth', 'valJitter', 'jitterSub', 'colorJitterRange', 'subMix', 'dabOpacitySrc', 'dabOpacityMin'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
             b.setParam('dynamicsMode', 'off');
             b.setParam('size', 80); b.setParam('hardness', 100);
             b.setParam('tipMode', mode);
             // the sub colour (white) taken half down, every dab
             if (sub === 'mix') b.setParam('subMix', 50);
+            else if (sub === 'ad') { b.setParam('dabOpacitySrc', 'random'); b.setParam('dabOpacityMin', 100); }
             else if (sub) { b.setParam('valJitter', 50); b.setParam('colorJitterRange', [[0, 0], [0, 0], [-1, -1]]); b.setParam('jitterSub', true); }
             const L = __B.layer();
             b.beginStroke(100, 100, 1, '#808080');
@@ -3854,8 +3855,9 @@ await withPage(async (page) => {
             return { left: __B.px(L, 80, 100), right: __B.px(L, 120, 100), half: __B.px(L, 80, 128) };
         };
         const out = { alpha: await run('alpha'), light: await run('lightness'),
-                      color: await run('color'), sub: await run('color', true), mix: await run('color', 'mix') };
-        b.setParam('subMix', 0);
+                      color: await run('color'), sub: await run('color', true), mix: await run('color', 'mix'),
+                      ad: await run('color', 'ad') };
+        b.setParam('subMix', 0); b.setParam('dabOpacitySrc', 'none'); b.setParam('dabOpacityMin', b.DEFAULTS.dabOpacityMin);
         b.forgetSaved(b._currentPreset || 'Round');
         b.loadPreset('Round');
         return JSON.stringify(out);
@@ -3869,6 +3871,9 @@ await withPage(async (page) => {
         redOf(tm.light.left) < 100 && redOf(tm.light.right) > 160, JSON.stringify(tm.light));
     check('a tip that stamps its own picture ignores the colour entirely',
         redOf(tm.color.left) < 60 && redOf(tm.color.right) > 200, JSON.stringify(tm.color));
+    // A random opacity a dab flattened it to one colour: WC Generic Flower's white hearts went grey.
+    check('...and keeps its own shading under a random opacity a dab',
+        redOf(tm.ad.left) < 60 && redOf(tm.ad.right) > 200, JSON.stringify(tm.ad));
     /* Clip Studio's sub colour is a picture's whites: changed by value it
      * greys Building's faces and leaves the lines as they were. */
     // its darks in the half-mixed ink (128 -> 192), its lights toward white: 32 -> 200, 224 -> 247
@@ -4122,6 +4127,7 @@ await withPage(async (page) => {
         await new Promise(r => setTimeout(r, 400));
         b.setParam('tipShrink', ''); b.setParam('size', 20); b.setParam('spacing', 200); b.setParam('autoSpacing', 0);
         const L = __B.doc(400, 100);
+        b._setStrokeSeed(1);   // flips at random: a seed whose seven dabs show both sides
         await __B.stroke(20, 50, 380, 50, '#000000');
         const foot = L.ctx.getImageData(0, 54, 400, 1).data, bar = L.ctx.getImageData(0, 46, 400, 1).data;
         for (let x = 0; x < 400; x++) {
@@ -4131,7 +4137,7 @@ await withPage(async (page) => {
             for (let i = x; i <= e; i++) (i < m ? (l += bar[i * 4 + 3]) : (r += bar[i * 4 + 3]));
             out.dabs.push([x, l > r ? 'L' : 'R']); x = e;
         }
-        ['tipCells', 'tipPick', 'tipMirror', 'spacing', 'autoSpacing'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        ['tipCells', 'tipPick', 'tipMirror', 'spacing', 'autoSpacing'].forEach(k => b.setParam(k, b.DEFAULTS[k])); b._setStrokeSeed(null);
         b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
         return JSON.stringify(out);
     })()`, { awaitPromise: true }));
@@ -4937,6 +4943,49 @@ await withPage(async (page) => {
     check("a Clip Studio watercolour edge adds power/10 at the rim, falling straight to nothing at its radius",
         Math.abs(we.mid - 102) <= 2 && [1, 3, 5, 7].every(i => Math.abs(we.col[i] - we.mid - weAdd(i + 1)) <= 6) && Math.abs(we.col[12] - we.mid) <= 2,
         `rows from the top ${we.col.join(' ')}, middle ${we.mid}; want +${[2, 4, 6, 8].map(weAdd).join(' +')} on rows 1 3 5 7`);
+
+    // ...and its tone takes value off the colour, the same levels whatever the colour (cdp-csp/kv: 97 -> 13 and 55, 18px in)
+    const wt = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, out = {};
+        for (const v of [0, 50, 100]) {
+            b.forgetSaved('Round');
+            __B.doc(200, 200);
+            b.setParam('size', 100); b.setParam('hardness', 100); b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none');
+            b.setParam('edgeWidth', 20); b.setParam('edgeDensity', 50); b.setParam('edgeAdd', true); b.setParam('edgeValue', v);
+            b.beginStroke(100, 100, 1, '#616161'); b.endStroke();
+            await new Promise(r => setTimeout(r, 150));
+            const d = __B.layer().ctx.getImageData(100, 0, 1, 200).data;
+            let top = 0; while (top < 200 && !d[top * 4 + 3]) top++;
+            out[v] = [d[(top + 17) * 4], d[100 * 4]];
+        }
+        b.setParam('edgeValue', 0); b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check("a Clip Studio watercolour edge's tone darkens an opaque stroke's rim, not its middle",
+        wt[0][0] === 97 && Math.abs(wt[50][0] - 55) <= 6 && Math.abs(wt[100][0] - 13) <= 6 && wt[100][1] === 97,
+        JSON.stringify(wt));
+
+    // Clip Studio's fixed interval is a share of the size however the tip is turned (cdp-csp/kw: WC Generic Flower at 291 degrees).
+    const sbs = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, out = [];
+        for (const on of [false, true]) {
+            b.forgetSaved('Round');
+            __B.doc(500, 200);
+            b.setParam('size', 20); b.setParam('hardness', 100); b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none');
+            b.setParam('spacing', 200); b.setParam('angle', 45); b.setParam('spacingBySize', on);
+            b.beginStroke(50, 100, 1, '#000000');
+            for (let i = 1; i <= 80; i++) b.moveStroke(50 + 5 * i, 100, 1, '#000000');
+            b.endStroke();
+            await new Promise(r => setTimeout(r, 150));
+            const d = __B.layer().ctx.getImageData(0, 100, 500, 1).data;
+            let n = 0; for (let x = 1; x < 500; x++) if (d[x * 4 + 3] && !d[x * 4 - 1]) n++;
+            out.push(n);
+        }
+        b.setParam('spacingBySize', false); b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check('a turned tip spaced by its size stops every share of the size, not of its turned box',
+        sbs[1] >= 10 && sbs[1] > sbs[0], `dabs over 400px at 40px: turned box ${sbs[0]}, by size ${sbs[1]}`);
 
     // 200 steps of 0.8px sum to a hair past 160 in floats: the dab on the pen must still land.
     const pe = JSON.parse(await page.eval(`(async () => {

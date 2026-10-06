@@ -1495,6 +1495,7 @@ await withPage(async (page) => {
         spdE.setUint32(48, 12); spdE.setUint32(52, 2); spdE.setUint32(56, 16); spdE.setFloat64(60, 0); spdE.setFloat64(68, 1); spdE.setFloat64(76, 1); spdE.setFloat64(84, 0);
         const plainSpd = P({ BrushThicknessEffector: new Uint8Array(spdE.buffer) }, { hasTip: true, tipW: 100, tipH: 100 });
         const tallRnd = P(Object.assign({ BrushThicknessEffector: rndE, BrushVerticalThicknes: 1 }, sp), { hasTip: true, tipW: 100, tipH: 100 });
+        const tallPlain = P({ BrushThicknessEffector: rndE, BrushVerticalThicknes: 1 }, { hasTip: true, tipW: 100, tipH: 100 });
         const ribRnd = P({ BrushSize: 30, BrushRibbon: 1, BrushThickness: 150, BrushThicknessEffector: rndE }, { hasTip: true, tipW: 30, tipH: 90 });
         const rib = { BrushSize: 30, BrushRibbon: 1, BrushRotation: 0 };
         const ribbon = P(rib, { hasTip: true, tipW: 30, tipH: 90 });
@@ -1520,9 +1521,9 @@ await withPage(async (page) => {
             sprayPr: P(Object.assign({ BrushIntervalEffector: eff(0x10, [[0, 1], [1, 0]]) }, sp)).spacingSrc || 'none',
             sprayRnd: [sprayRnd.spacingSrc, sprayRnd.aspectRatioSrc, sprayRnd.dabCountSrc].map(s => s || 'none'),
             plainRnd: [plainRnd.spacingSrc, plainRnd.aspectRatioSrc].map(s => s || 'none'),
-            plainSpd: [plainSpd.aspectRatioSrc, plainSpd.aspectRatioMin, !!plainSpd.aspectThinsWidth], tallRnd: tallRnd.aspectRatioSrc || 'none', ribRnd: ribRnd.aspectRatioSrc || 'none',
+            plainSpd: [plainSpd.aspectRatioSrc, plainSpd.aspectRatioMin, !!plainSpd.aspectThinsWidth], tallRnd: [tallRnd.aspectRatioSrc || 'none', tallPlain.aspectRatioSrc || 'none'], ribRnd: ribRnd.aspectRatioSrc || 'none',
             iso: [P({ BrushAutoIntervalType: 2 }, { hasTip: true }), P({ BrushAutoIntervalType: 0 }, { hasTip: true }),
-                  P({ BrushAutoIntervalType: 2 })].map(p => p.spacingIsotropic),
+                  P({ BrushAutoIntervalType: 2 })].map(p => !!p.spacingBySize),
             byWidth: [P({ BrushSize: 100, BrushAutoIntervalType: 1 }, { hasTip: true, tipW: 100, tipH: 100 }).spacingByWidth || false,
                 P({ BrushSize: 100, BrushAutoIntervalType: 1 }).spacingByWidth || false, ribbon.spacingByWidth || false],
             ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc, ribbon.offsetAlong], ribbonNote,
@@ -1689,8 +1690,9 @@ await withPage(async (page) => {
      * Clip Studio's ink unthinned (Ground 0.98, thinned 0.79). */
     check('a plain picture brush takes a speed thickness, by width',
         JSON.stringify(sm.plainSpd) === '["speed",59,true]', JSON.stringify(sm.plainSpd));
-    check('a spray picture squeezed top to bottom takes no random thickness',
-        sm.tallRnd === 'none', sm.tallRnd);
+    // WC Generic Flower's flowers, one at a time, stand 0.90-0.98 of their height at random floor 88 (cdp-csp/kx)
+    check('a picture squeezed top to bottom takes random thickness, sprayed or not',
+        JSON.stringify(sm.tallRnd) === '["random","random"]', JSON.stringify(sm.tallRnd));
     /* A ribbon lays each picture once, nothing over it to hide a thin one:
      * Rough pen (random floor 85) paints 0.92 the width of ours unthinned,
      * over every stretch of its line (ink 1.049 -> 1.01 of Clip Studio's). */
@@ -1699,8 +1701,8 @@ await withPage(async (page) => {
     check('...but its pressure does (Leaves closes its gaps to half at full pressure)',
         sm.sprayPr === 'pressure', sm.sprayPr);
     /* A picture tip on automatic spacing follows its squeezed width (Chalk);
-     * a fixed interval and a generated tip go by the size. */
-    check('only a picture tip on automatic spacing spaces by its squeezed width',
+     * a fixed interval and a generated tip go by the size, however turned. */
+    check('a fixed interval or a generated tip is spaced by the size alone',
         JSON.stringify(sm.iso) === '[false,true,true]', JSON.stringify(sm.iso));
     /* A ribbon tiles its picture end to end, as wide as the brush, the
      * first starting at the stroke's start (Dashed line's first dash). */
