@@ -1681,6 +1681,58 @@ await withPage(async (page) => {
     })()`);
     check('a masking stroke spaces its own dabs, not only where the brush lays one',
         mkGap < 40, 'alpha ' + mkGap);
+    /* RGBA Impasto multiplies its stroke by its masking stroke, and its
+     * masking tip is a pipe of seven rocks: one at random a dab, not the
+     * whole strip squeezed into one. A two-square strip stamped whole is a
+     * bar half as tall as the dab, and cut it is the square. */
+    const mul = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, c = document.createElement('canvas');
+        c.width = 64; c.height = 32; c.getContext('2d').fillRect(0, 0, 64, 32);
+        const run = async (set) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            b.setParam('size', 40); b.setParam('hardness', 100);
+            b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
+            b.setParam('maskOp', 'multiply'); b.setParam('maskSize', 100); b.setParam('maskSpin', 0);
+            await set();
+            __B.layer().ctx.clearRect(0, 0, 200, 200);
+            b.beginStroke(100, 100, 1, '#000000');
+            b.endStroke();
+            return [100, 114].map(y => __B.layer().ctx.getImageData(100, y, 1, 1).data[3]);
+        };
+        return JSON.stringify({
+            quarter: await run(() => b.setParam('maskOpacity', 25)),
+            cells: await run(async () => { b.loadDualTip(c.toDataURL()); await new Promise(r => setTimeout(r, 300));
+                b.setParam('maskPicture', true); b.setParam('maskCells', 2); })
+        });
+    })()`, { awaitPromise: true }));
+    check('a multiply masking brush keeps the stroke times its mask',
+        mul.quarter[0] > 55 && mul.quarter[0] < 75, JSON.stringify(mul.quarter));
+    check("...and a strip of masking tips lays one of them a dab, at the dab's size",
+        mul.cells[0] > 240 && mul.cells[1] > 240, JSON.stringify(mul.cells));
+    /* Fuzzy is additive in Krita: it scales the size whatever the option's
+     * mode. Impasto-details takes the max of fuzzy and pressure, and at full
+     * pressure painted every dab full size here, random ones in Krita. */
+    const fzAdd = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush;
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        b.setParam('size', 30); b.setParam('hardness', 100); b.setParam('spacing', 300);
+        b.setParam('flowSrc', 'none'); b.setParam('smoothingMode', 'none');
+        b.setParam('sizeSrc', 'random'); b.setParam('sizeMin', 0); b.setParam('sizeCombine', 2);
+        b.setParam('sizeSensors', [{ src: 'random', curve: null, kind: 'scale' }, { src: 'pressure', curve: [[0, 0], [1, 1]], kind: 'scale' }]);
+        const L = __B.layer().ctx;
+        L.clearRect(0, 0, 200, 200);
+        b.beginStroke(10, 100, 1, '#000000');
+        for (let x = 11; x <= 190; x++) b.moveStroke(x, 100, 1, '#000000');
+        b.endStroke();
+        const d = L.getImageData(0, 0, 200, 200).data, h = [];
+        let run = 0;   // each dab's height: the tallest column of each run of inked columns
+        for (let x = 0; x < 200; x++) { let n = 0; for (let y = 0; y < 200; y++) if (d[(y * 200 + x) * 4 + 3] > 128) n++;
+            if (n) run = Math.max(run, n); else if (run) { h.push(run); run = 0; } }
+        b.setParam('sizeSensors', null); b.setParam('sizeCombine', 0); b.setParam('sizeSrc', 'none');
+        return JSON.stringify([Math.min(...h), Math.max(...h)]);
+    })()`));
+    check("Krita's fuzzy scales the size even under the max of it and pressure",
+        fzAdd[1] - fzAdd[0] > 8, JSON.stringify(fzAdd));
     /* Krita's plain square, measured against lone Krita dabs (test/krita/
      * probes/chalk, gchar2): turned 270 it is square to the pixel grid
      * (the cache's 3.82-degree step for a 30px tip had it at 271.2, its

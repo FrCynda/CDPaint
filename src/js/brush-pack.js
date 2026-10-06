@@ -209,6 +209,13 @@
         return out;
     };
 
+    /* How a Krita tip's pixels are read: 0 coverage, 1 lightness, 2 gradient,
+     * 3 the picture itself. A 4.x preset's preserveLightness wins over
+     * brushApplication (kis_predefined_brush_factory). */
+    BrushPack.kritaTipApp = function (bd) {
+        return bd && bd.preserveLightness === '1' ? 1 : _num(bd && bd.brushApplication, 0);
+    };
+
     /* Krita's masking brush is a whole second preset, and half of them
      * generate their tip rather than stamp one. Our second tip is a picture,
      * so the generated one is drawn here -- once, at import -- and the engine
@@ -640,7 +647,7 @@
          * stamps -- the one kind of wrong that is worth a warning, because
          * nothing about the imported brush says it happened. None of the 46
          * presets in Revoy's 25.01 bundle asks for one. */
-        var app = _num(bd.brushApplication, 0);
+        var app = BrushPack.kritaTipApp(bd);
         if (app === 1) out.tipMode = 'lightness';
         else if (app === 3) out.tipMode = 'color';
         else if (app === 2) {
@@ -658,8 +665,11 @@
          * masking brush as a whole second stroke of its own and takes its
          * alpha off the finished stroke (KisMaskingBrushRenderer). The
          * Waterpaint presets hollow their strokes out that way. Linear dodge
-         * is the same second stroke added on instead (Charcoal Pencil). */
-        var mop = { subtract: 'subtract', linear_dodge: 'add' }[P['MaskingBrush/MaskingCompositeOp']];
+         * is the same second stroke added on instead (Charcoal Pencil), and
+         * multiply the stroke times it: RGBA Impasto's rock specks, 12% of
+         * each cell, pile up dab on dab into whole rocks there, where
+         * stamped through each dab they left a third of Krita's ink. */
+        var mop = { subtract: 'subtract', linear_dodge: 'add', multiply: 'multiply' }[P['MaskingBrush/MaskingCompositeOp']];
         if (mb && (mb.mask || mb.filename) && mop) {
             var MP = {}, pre = 'MaskingBrush/Preset/';
             Object.keys(P).forEach(function (k) { if (k.indexOf(pre) === 0) MP[k.slice(pre.length)] = P[k]; });
@@ -805,6 +815,11 @@
          * the engine divides). EO Pixel Taper's light strokes are a pixel or
          * two thick in Krita because of it: a 0.2 ratio at pressure 0.1,
          * turned along the stroke by its drawing-angle rotation. */
+        /* Its strength squashes the tip as well, curve or none (KisCurveOption's
+         * constant): the Impasto presets hold 0.68 with the curve box clear, and
+         * their light strokes lay dabs half as thick as ours in Krita. */
+        var rk = _bool(P.PressureRatio) ? _num(P.RatioValue, 1) : 1;
+        if (rk > 0 && rk < 1) out.aspectRatio = Math.round((out.aspectRatio || 1) / rk * 100) / 100;
         var rts = _sensorFor(P, 'Ratio');
         if (rts && !rts.src) warn.push('Ratio followed ' + rts.id + ', which we have no input for');
         else if (rts) {
@@ -1536,7 +1551,10 @@
         function gimpCells(cells) {
             var color = !(opts && opts.krita) && cells.some(function (c) { return c.rgb; });
             return { color: color, params: color ? { tipMode: 'color' } : _paper(cells), cells: cells.map(function (c) {
-                return color && c.rgb ? { w: c.w, h: c.h, alpha: c.clear, rgb: c.rgb }
+                /* Lightness and picture tips keep the file's own alpha in
+                 * Krita, their greys the shading: dark-as-ink left RGBA
+                 * Impasto's grey paint 0.87 of Krita's ink. */
+                return (color || opts && opts.ownAlpha) && c.rgb ? { w: c.w, h: c.h, alpha: c.clear, rgb: c.rgb }
                                       : { w: c.w, h: c.h, alpha: c.alpha };
             }) };
         }
@@ -1605,7 +1623,7 @@
              * Its oil_knife.png is dark on opaque white bar eleven stray
              * pixels at alpha 192, and trusting the alpha stamped the whole
              * white square. */
-            var gray = opts && opts.krita;
+            var gray = opts && opts.krita && !opts.ownAlpha;
             for (i = 0; gray && i < d.length; i += 4) { if (d[i] !== d[i + 1] || d[i] !== d[i + 2]) gray = false; }
             if (gray) {
                 for (i = 0; i < a.length; i++) a[i] = Math.round((255 - d[i * 4]) * d[i * 4 + 3] / 255);

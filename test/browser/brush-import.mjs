@@ -270,16 +270,17 @@ await withPage(async (page) => {
                 w = bmp.width;
             }
             out[f] = { lines: r.lines, ref: String(p._tip2Url || '').slice(0, 4),
-                       w, depth: p.tip2Depth || 0, size: p.tip2Size || 0 };
+                       w, op: p.maskOp || '', pic: !!p.maskPicture, size: p.maskSize || 0 };
         }
         return JSON.stringify(out);
     })()`, { awaitPromise: true }).then(JSON.parse);
     console.log('  ' + JSON.stringify(msk));
-    check('a masking brush that generates its tip gets one drawn for it',
-        msk['masked-generated.kpp'].w > 0 && msk['masked-generated.kpp'].depth === 100,
+    // multiply is a second stroke, as subtract is: a generated tip strokes with its own falloff, no picture
+    check('a masking brush that generates its tip strokes the mask with it',
+        msk['masked-generated.kpp'].op === 'multiply' && !msk['masked-generated.kpp'].pic,
         JSON.stringify(msk['masked-generated.kpp']));
     check('a masking brush that names a tip resolves it like any other',
-        msk['masked-file.kpp'].w > 0 && msk['masked-file.kpp'].depth === 100,
+        msk['masked-file.kpp'].w > 0 && msk['masked-file.kpp'].op === 'multiply' && msk['masked-file.kpp'].pic,
         JSON.stringify(msk['masked-file.kpp']));
     /* MasterSizeCoeff is the mask's size over the brush's: 8.5415 against
      * 250 is the 0.034166 the file holds, to the digit. */
@@ -933,6 +934,31 @@ await withPage(async (page) => {
         appn[3][0] === 'color', appn[3].join(' | '));
     check('the one we cannot do -- reading a gradient -- still says so',
         appn[2][0] === 'alpha' && /gradient/.test(appn[2][1]), appn[2].join(' | '));
+    /* Krita 4 wrote lightness as its own flag, and its ratio option at a
+     * fixed strength squashes the tip with no curve at all (RGBA Impasto:
+     * preserveLightness="1", ratio 0.68 with the curve box clear). An RGBA
+     * tip read as lightness keeps the file's own alpha, its greys the
+     * shading: read dark-as-ink, Impasto's grey paint was 0.87 of Krita's. */
+    const k4 = await page.eval(`(async () => {
+        const t = BrushPack.toPreset({ name: 'x', params: {
+            brush_definition: '<Brush type="gbr_brush" preserveLightness="1" ColorAsMask="1" filename="t.gih" scale="1" spacing="0.1"/>',
+            PressureRatio: 'true', RatioUseCurve: 'false', RatioValue: '0.5' } }, { tipSize: 30 });
+        const g = new Uint8Array(34), v = new DataView(g.buffer);
+        [30, 2, 1, 1, 4].forEach((n, i) => v.setUint32(i * 4, n)); g.set([71, 73, 77, 80], 20); v.setUint32(24, 10);
+        g.set([120, 0, 128, 128, 128, 255], 28);   // a name, then one grey pixel, wholly opaque
+        const alpha = async (o) => {
+            const s = await BrushPack.tipStrip(g, 't.gbr', o), bmp = await createImageBitmap(await (await fetch(s.url)).blob());
+            const c = new OffscreenCanvas(1, 1), x = c.getContext('2d'); x.drawImage(bmp, 0, 0);
+            return x.getImageData(0, 0, 1, 1).data[3];
+        };
+        return JSON.stringify([t.params.tipMode, t.params.aspectRatio, await alpha({ krita: true }), await alpha({ krita: true, ownAlpha: true })]);
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check("a Krita 4 preset's lightness flag reads its tip as lightness",
+        k4[0] === 'lightness', JSON.stringify(k4));
+    check("...its ratio's strength squashes the tip with the curve box clear",
+        k4[1] === 2, JSON.stringify(k4));
+    check('...and its RGBA tip keeps its own alpha as lightness, where a coverage tip reads grey as half ink',
+        k4[2] > 120 && k4[2] < 135 && k4[3] === 255, JSON.stringify(k4));
 
     console.log('\n== dropping a file on the panel ==');
     /* Same importer, reached the way a downloaded pack actually arrives.

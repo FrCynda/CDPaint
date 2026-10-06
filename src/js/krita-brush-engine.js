@@ -810,7 +810,8 @@
      * whole stroke of its own into a separate buffer, which is then laid on
      * the finished stroke's alpha --
      *   subtract:     max(0, a - mask)   Waterpaint Soft Edges, hollow;
-     *   add:          a ? min(1, a + mask) : 0   (linear dodge), Charcoal.
+     *   add:          a ? min(1, a + mask) : 0   (linear dodge), Charcoal;
+     *   multiply:     a * mask           RGBA Impasto.
      * The mask is built the way Krita builds any stroke, alpha darken
      * included, so it is kept as grey on black like _adCanvas and its dabs
      * cap at their own opacity. Applied in _adToFlow, which rebuilds the
@@ -861,11 +862,12 @@
         dc.fillStyle = _greyHex(o);
         dc.fillRect(0, 0, n, n);
         dc.globalCompositeOperation = 'destination-in';
-        if (pic) {   // a picture keeps its shape, its long side the dab's size
-            var pk = d / _max(pic.width, pic.height), pw = pic.width * pk, ph = pic.height * pk;
+        if (pic) {   // a picture keeps its shape, its long side the dab's size; a strip, one cell of it
+            var nc = p.maskCells > 1 ? p.maskCells : 1, cw = pic.width / nc, ci = nc > 1 ? _floor(_dabRand(x, y, 44) * nc) : 0;
+            var pk = d / _max(cw, pic.height), pw = cw * pk, ph = pic.height * pk;
             dc.save(); dc.translate(n / 2, n / 2);
             if (p.maskSpin) dc.rotate((_dabRand(x, y, 43) * 2 - 1) * _PI * p.maskSpin);
-            dc.drawImage(pic, -pw / 2, -ph / 2, pw, ph); dc.restore();
+            dc.drawImage(pic, ci * cw, 0, cw, pic.height, -pw / 2, -ph / 2, pw, ph); dc.restore();
         } else dc.drawImage(_mkStamp.canvas, n / 2 - d / 2, n / 2 - d / 2, d, d);
         dc.globalCompositeOperation = 'source-over';
         _mkCtx.globalCompositeOperation = 'lighten';
@@ -887,7 +889,8 @@
         var m = op && _mkCtx ? _mkCtx.getImageData(x, y, w, h).data : null;
         var col = _adColOn === 2 ? _adColCtx.getImageData(x, y, w, h).data : null;
         for (var i = 0; i < d.length; i += 4) {
-            d[i + 3] = !m ? d[i] : op === 'add' ? (d[i] ? _min(255, d[i] + m[i]) : 0) : _max(0, d[i] - m[i]);
+            d[i + 3] = !m ? d[i] : op === 'add' ? (d[i] ? _min(255, d[i] + m[i]) : 0)
+                : op === 'multiply' ? _round(d[i] * m[i] / 255) : _max(0, d[i] - m[i]);
             if (col) { d[i] = col[i]; d[i + 1] = col[i + 1]; d[i + 2] = col[i + 2]; }
             else { d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; }
         }
@@ -3114,9 +3117,13 @@
                 if (v > 1) v -= 1;
                 abs = _wrap1(_curveAt(e.curve, _wrap1(v + 0.5), p.curveSmooth) + 0.5);
                 continue;
-            } else if (e.kind === 'add') {
+            } else if (e.kind === 'add' || e.src === 'random') {
+                /* Fuzzy is additive in Krita (KisDynamicSensorFuzzyBase), so it
+                 * scales whatever the mode: max(fuzzy, pressure) at full pressure
+                 * is pressure times fuzzy there -- RGBA Impasto-details' dabs came
+                 * out all full size here and a random 0..1 of it in Krita. */
                 var r = ((_penTwist % 360) + 540) % 360 - 180;       // -180..180, 0 upright
-                add += 2 * _curveAt(e.curve, 0.5 * (1 + r / 180), p.curveSmooth) - 1;
+                add += 2 * _curveAt(e.curve, e.kind === 'add' ? 0.5 * (1 + r / 180) : _sensor(e.src, sc, seed, p, e), p.curveSmooth) - 1;
                 hasAdd = true;
                 continue;
             } else v = _curveAt(e.curve, _sensor(e.src, sc, seed, p, e), p.curveSmooth);
@@ -6061,7 +6068,7 @@
          * alpha comes off this one (see _maskStrokeDab). Sizes are % of the
          * brush, spacing % of the mask dab. */
         speedMax: 3,             // px/ms that reads as full speed
-        maskOp: '', maskSize: 100, maskFlow: 100, maskOpacity: 100, maskSpacing: 10, maskTipCurve: null, maskHardness: 100, maskPicture: false,
+        maskOp: '', maskCells: 1, maskSize: 100, maskFlow: 100, maskOpacity: 100, maskSpacing: 10, maskTipCurve: null, maskHardness: 100, maskPicture: false,
         maskScatter: 0, maskSpin: 0, maskScatterSrc: 'none', maskScatterMin: 0, maskScatterCurve: 1,
         maskOpacitySrc: 'none', maskOpacityMin: 0, maskOpacityCurve: 1,
         maskSizeSrc: 'none', maskSizeMin: 0, maskSizeCurve: 1,
@@ -9901,22 +9908,23 @@
                 });
             }
 
-            function tipFor(preset, file) {
+            function tipFor(preset, file, own) {   // own: the tip keeps its own alpha (lightness or picture)
                 if (!file) return Promise.resolve(null);
-                if (tipCache[file]) return tipCache[file];
+                var ck = own ? file + '|own' : file, to = { krita: true, ownAlpha: !!own };
+                if (tipCache[ck]) return tipCache[ck];
                 var src = (preset.resources && preset.resources[file] &&
                            preset.resources[file].bytes) || pack.tips[file];
                 var p = src
-                    ? BrushPack.tipStrip(src, file, { krita: true }).catch(function () { return null; })
+                    ? BrushPack.tipStrip(src, file, to).catch(function () { return null; })
                     : _abrTip(file) || _shippedTip(file).then(function (t) {
                         return t || _kritaDefault(file).then(function (b) {
-                            return b && BrushPack.tipStrip(b, file, { krita: true }).then(function (k) {
+                            return b && BrushPack.tipStrip(b, file, to).then(function (k) {
                                 k.shipped = true;
                                 return k;
                             }, function () { return null; });
                         });
                     });
-                tipCache[file] = p;
+                tipCache[ck] = p;
                 return p;
             }
 
@@ -9939,7 +9947,7 @@
             pack.presets.forEach(function (pr) {
                 chain = chain.then(function () {
                     var bd = BrushPack.brushDefinition(pr) || {};
-                    return tipFor(pr, bd.filename).then(function (tip) {
+                    return tipFor(pr, bd.filename, BrushPack.kritaTipApp(bd) % 2 === 1).then(function (tip) {
                         var want = _packName(pr.name) || _packName(pr.file) || 'Imported brush';
                         var t = BrushPack.toPreset(pr, { tipSize: tip ? tip.size : 0 });
                         var ps = t.params;
@@ -9957,6 +9965,7 @@
                             pf0 && !ps.texturePatternData && !pack.tips[pf0] ? _kritaDefault(pf0) : null]).then(function (got) {
                         var m2 = got[0], kpat = got[1];
                         if (m2f) {
+                            if (m2 && m2.cells > 1 && ps.maskOp) ps.maskCells = m2.cells;   // one at random a mask dab
                             if (m2 && m2.url) ps._tip2Url = m2.url;
                             else t.warnings.push('its masking tip "' + m2f +
                                 '" is not in this pack; the brush stamps unmasked');
