@@ -1241,12 +1241,15 @@
                 intervals: Math.max(1, Math.round(_num(P['Hatching/separationintervals'], 2))),
                 aa: _bool(P['Hatching/bool_antialias']),
                 whole: P['Hatching/bool_subpixelprecision'] !== undefined && !_bool(P['Hatching/bool_subpixelprecision']),
-                cross: _bool(P['Hatching/bool_perpendicular']),
+                /* The first style ticked wins, and a preset that does not
+                 * untick "none" has none (KisHatchingOptionsData). The
+                 * crosshatching option, when on, gates the extra passes by
+                 * its sensor; moire turns the lines by it instead. */
+                style: P['Hatching/bool_nocrosshatching'] === undefined || _bool(P['Hatching/bool_nocrosshatching']) ? null
+                    : ['perpendicular', 'minusthenplus', 'plusthenminus', 'moirepattern'].filter(function (k) { return _bool(P['Hatching/bool_' + k]); })[0] || null,
+                xs: _bool(P.PressureCrosshatching) ? hsens('Crosshatching') : null,
                 thick: hsens('Thickness'), sep: hsens('Separation')
             };
-            ['minusthenplus', 'plusthenminus', 'moirepattern'].forEach(function (k) {
-                if (_bool(P['Hatching/bool_' + k])) warn.push('dropped: its ' + k + ' cross-hatching, painted as single lines');
-            });
         } else if (preset.paintop === 'hairybrush') {
             // see _paintHairy in the engine; Krita's own defaults
             out.engineKind = 'hairy';

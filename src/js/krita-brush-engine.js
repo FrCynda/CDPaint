@@ -1356,10 +1356,8 @@
      * each pixel composited over the last in 8 bits. The dab's mask then cuts
      * the box, and the lines are the dab's alpha: every dab's line rounds its
      * ends a little differently, and alpha darken builds each one's soft edge
-     * toward the full opacity, so a 1px line lands about 2px solid (low01).
-     * ponytail: only the single and perpendicular styles; the others and
-     * their crosshatching sensor fall back to single lines. */
-    var _hatchT = 1, _hatchSep = 6, _hatchD = 1, _hatchAsp = 1, _hatchBuf = new Uint8Array(4096);
+     * toward the full opacity, so a 1px line lands about 2px solid (low01). */
+    var _hatchT = 1, _hatchSep = 6, _hatchD = 1, _hatchAsp = 1, _hatchX = -1, _hatchBuf = new Uint8Array(4096);
     function _hq(v) { return _floor(v + 0.5); }   // qRound
     function _hput(W, H, x, y, a) {   // COMPOSITE_OVER, one pixel, 8 bits
         if (x < 0 || y < 0 || x >= W || y >= H) return;
@@ -1488,8 +1486,15 @@
         var W = _max(1, _ceil(px - bx + dw - 1e-6)), H = _max(1, _ceil(py - by + dh - 1e-6));
         if (_hatchBuf.length < W * H) _hatchBuf = new Uint8Array(W * H * 2);
         _hatchBuf.fill(0, 0, W * H);
-        if (P.cross) _hatchInto(W, H, bx, by, _hSpin(P.angle, 90), _hatchSep, T, P);
-        _hatchInto(W, H, bx, by, P.angle, _hatchSep, T, P);
+        // KisHatchingPaintOp::paintAt's passes: X is the crosshatching sensor, or -1 with the option off
+        var X = _hatchX, S = P.style, pass = function (spin) { _hatchInto(W, H, bx, by, _hSpin(P.angle, spin), _hatchSep, T, P); };
+        if (S === 'perpendicular' && (X < 0 || X > 0.5)) pass(90);
+        else if (S === 'minusthenplus' || S === 'plusthenminus') {
+            var s1 = S === 'minusthenplus' ? -45 : 45;
+            if (X < 0 || X > 0.33) pass(s1);
+            if (X < 0 || X > 0.67) pass(-s1);
+        } else if (S === 'moirepattern') pass(X < 0 ? -10 : X * 360);
+        if (S !== 'moirepattern') _hatchInto(W, H, bx, by, P.angle, _hatchSep, T, P);
         var img = ctx.getImageData(0, 0, w, h), d = img.data;
         for (var j = 0; j < h; j++) {
             var yy = oy + j - by;
@@ -3851,7 +3856,7 @@
                 var hv = function (o) { return o.src ? _curveAt(o.curve, _sensor(o.src, sc, 16, p), p.curveSmooth) : o.v; };
                 var H = p.hatch, iv = H.intervals;
                 _hatchT = H.thickness * hv(H.thick);
-                _hatchD = sz; _hatchAsp = asp || 1;
+                _hatchD = sz; _hatchAsp = asp || 1; _hatchX = H.xs ? hv(H.xs) : -1;
                 _hatchSep = H.separation * Math.pow(2, Math.floor((iv - 1) / 2) - _clamp(Math.ceil(hv(H.sep) * iv) - 1, 0, iv - 1));
             }
             if (p.smudgeMode != null || p.mixAlpha != null) _smudgeDab(p, dx, dy, mask, finalColor, alpha, sc, dsz, tex, asp);

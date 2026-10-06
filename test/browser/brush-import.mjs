@@ -847,7 +847,7 @@ await withPage(async (page) => {
         const t = BrushPack.toPreset({ paintop: 'hatchingbrush', name: 'Hatch', params: {
             'Hatching/angle': '-60', 'Hatching/separation': '6', 'Hatching/thickness': '4',
             'Hatching/origin_x': '50', 'Hatching/origin_y': '50', 'Hatching/separationintervals': '3',
-            'Hatching/bool_antialias': 'true', 'Hatching/bool_perpendicular': 'true',
+            'Hatching/bool_antialias': 'true', 'Hatching/bool_perpendicular': 'true', 'Hatching/bool_nocrosshatching': 'false',
             'Hatching/bool_subpixelprecision': 'false',
             PressureThickness: 'false', PressureSeparation: 'true', SeparationUseCurve: 'true',
             SeparationSensor: '<params id="pressure"> <curve>0,0;1,1;</curve> </params>'
@@ -900,9 +900,17 @@ await withPage(async (page) => {
         grid && grid.w === 25 && grid.h === 20 && grid.div === 2 && grid.shape === 0, JSON.stringify(grid));
     check('a hatching preset imports its lines, not a round brush',
         hat.h && hat.h.angle === -60 && hat.h.separation === 6 && hat.h.thickness === 4 && hat.h.ox === 50 &&
-            hat.h.intervals === 3 && hat.h.cross && hat.h.whole && hat.h.thick.v === 0.5 && hat.h.sep.src === 'pressure' &&
+            hat.h.intervals === 3 && hat.h.style === 'perpendicular' && !hat.h.xs && hat.h.whole && hat.h.thick.v === 0.5 && hat.h.sep.src === 'pressure' &&
             !/hatchingbrush/.test(hat.w.join(' ')),
         JSON.stringify(hat));
+    const hstyle = await page.eval(`(() => JSON.stringify([
+        { 'Hatching/bool_nocrosshatching': 'false', 'Hatching/bool_moirepattern': 'true', PressureCrosshatching: 'true',
+          CrosshatchingUseCurve: 'true', CrosshatchingSensor: '<params id="fuzzy"> <curve>0,0;1,1;</curve> </params>' },
+        { 'Hatching/bool_perpendicular': 'true' }
+    ].map(params => { const h = BrushPack.toPreset({ paintop: 'hatchingbrush', name: 'H', params }); return [h.params.hatch.style, h.params.hatch.xs, h.warnings]; })))()`).then(JSON.parse);
+    check("a hatching preset's moire style imports with its crosshatching sensor, and one that never unticks 'none' has none, as in Krita",
+        hstyle[0][0] === 'moirepattern' && hstyle[0][1].src === 'random' && !hstyle[0][2].some(w => /hatch/.test(w)) && hstyle[1][0] === null,
+        JSON.stringify(hstyle));
 
     /* A Krita tip can be read as coverage, as lightness, as a gradient, or
      * painted as it stands. Three of the four are what the engine does with
