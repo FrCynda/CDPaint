@@ -32,6 +32,7 @@ reader meets in practice:
     python make-sut.py library-tips.sut library  # pictures with no path
     python make-sut.py library-repeat.sut repeat # library, one picture twice
     python make-sut.py layer-tip.sut layer       # the picture at its own size
+    python make-sut.py dot-pen.sut dot           # a pen with no size at all
 
 The "tool" one is a selection tool: same tables, same Node, and a Variant
 with none of the brush columns in it. The "library" one names pictures that
@@ -225,6 +226,13 @@ if KIND == 'tool':
             'SelectFillTargetType': 1, 'SelectAreaScalingSize': 0}
     DEFAULTS = dict(LIVE, VariantID=2831, AntiAlias=1)
 
+if KIND == 'dot':
+    # Dot pen, as Clip Studio ships it: a pen whose Variant keeps only its
+    # opacity and flow -- no BrushSize, no AntiAlias.
+    NODE = {'NodeName': 'Dot pen', 'NodeVariantID': 483, 'NodeInitVariantID': 484}
+    LIVE = {'VariantID': 483, 'Opacity': 100, 'CompositeMode': 0, 'BrushFlow': 100}
+    DEFAULTS = dict(LIVE, VariantID=484)
+
 if KIND == 'library':
     # Two more things a real brush does, on the file that already has to be
     # built by hand: the markers and the flat watercolour brushes leave both
@@ -316,7 +324,7 @@ con.execute('CREATE TABLE MaterialFile(_PW_ID INTEGER PRIMARY KEY AUTOINCREMENT,
 # Deliberately NOT the order the brush names them: the paper texture the
 # brush lists first is stored last. Only the catalogue path pairs them up.
 MATERIALS = (
-    () if KIND == 'tool' else
+    () if KIND in ('tool', 'dot') else
     # A library brush has no paths at all, and there the order IS the answer,
     # so that one is stored the way the brush names them.
     (('rough paper', TEXTURE), ('scrape a', TIP),

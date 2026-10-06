@@ -40,6 +40,7 @@ const FILES = {
     'seed-csp2pc.brush': b64('seed-csp2pc.brush'),
     'rough-scrape.sut': b64('rough-scrape.sut'),
     'pixel-select.sut': b64('pixel-select.sut'),
+    'dot-pen.sut': b64('dot-pen.sut'),
     'library-tips.sut': b64('library-tips.sut'),
     'library-repeat.sut': b64('library-repeat.sut'),
     'layer-tip.sut': b64('layer-tip.sut'),
@@ -1348,6 +1349,45 @@ await withPage(async (page) => {
     check('a Clip Studio tool that is not a brush is refused, and says why',
         sutTool.brushes === 0 && /tool rather than a brush/.test(JSON.stringify(sutTool)),
         JSON.stringify(sutTool));
+
+    /* Dot pen keeps no size at all, only its opacity and flow, and Clip
+     * Studio paints it a pixel a column: the pixel the line is in where it
+     * crosses the column's middle (cdp-csp/qd, every pixel of two slants
+     * drawn from whole-pixel mouse reports). */
+    const dot = await page.eval(`(async () => {
+        const app = PaintApp, br = app.brush;
+        const r = await br.importFiles([window.__files['dot-pen.sut']]);
+        app.layerMgr.collapseToBase({ fresh: true });
+        app.setSize(300, 120); app.config.zoom = 1; app.updateBounds();
+        app.state.selection = null;
+        br.loadPreset('Dot pen');
+        await new Promise(r => setTimeout(r, 400));
+        app.ctx.clearRect(0, 0, 300, 120);
+        const P = [];
+        for (let i = 0; i <= 20; i++) P.push([20 + Math.trunc(200 * i / 20 + i % 3 * 0.4), 30 + Math.trunc(67 * i / 20)]);
+        br.beginStroke(P[0][0], P[0][1], 1, '#000000');
+        for (const [x, y] of P.slice(1)) br.moveStroke(x, y, 1, '#000000');
+        br.endStroke();
+        await new Promise(r => setTimeout(r, 200));
+        const d = app.ctx.getImageData(0, 0, 300, 120).data;
+        let bad = 0, grey = 0, n = 0;
+        for (let c = 20; c < 220; c++) {
+            const m = c + 0.5; let k = 0;
+            while (P[k + 1][0] < m) k++;
+            const want = Math.floor(P[k][1] + (P[k + 1][1] - P[k][1]) * (m - P[k][0]) / (P[k + 1][0] - P[k][0]));
+            for (let y = 0; y < 120; y++) {
+                const a = d[(y * 300 + c) * 4 + 3];
+                if (a) n++;
+                if (a && a < 255) grey++;
+                if (!!a !== (y === want)) bad++;
+            }
+        }
+        br.forgetSaved('Dot pen'); br.loadPreset('Round');
+        return JSON.stringify({ brushes: r.brushes, bad, grey, n });
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check("Clip Studio's Dot pen imports, though it keeps no size", dot.brushes === 1, JSON.stringify(dot));
+    check("...and paints a solid pixel a column, the one the line is in at the column's middle",
+        dot.bad === 0 && dot.grey === 0 && dot.n === 200, JSON.stringify(dot));
 
     /* A brush built on Clip Studio's own library stores no catalogue path:
      * the material lives in the program. Then the order is all there is,

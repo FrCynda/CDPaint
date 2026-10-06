@@ -4956,7 +4956,7 @@
             /* Krita's floor (MIN_DISTANCE_SPACING, kis_distance_information.cpp).
              * At 1px Ink-1 Precision's 3px dabs, due every 0.45px, stacked to
              * 159 where Krita's reach 225. */
-            if (pxLine) { var ar = (ang || 0) * _PI / 180; g = _max(g, 1 / _max(_abs(_cos(ar)), _abs(_sin(ar)))); }
+            if (pxLine && !p.pxFloor) { var ar = (ang || 0) * _PI / 180; g = _max(g, 1 / _max(_abs(_cos(ar)), _abs(_sin(ar)))); }
             /* GIMP below a pixel's spacing (test/gimp/probe.mjs, "tiny"): the
              * first dab sits on the start point, every later one on the next
              * pixel centre along the line's main axis at least a pixel on.
@@ -5060,7 +5060,7 @@
                         p.originAngle ? _atan2(prev.y, prev.x) * 180 / _PI : null);
                 }
             }
-            _pxOff = pxLine ? [_ceil(prev.x - 0.5) - prev.x, _ceil(prev.y - 0.5) - prev.y] : null;
+            _pxOff = pxLine ? (p.pxFloor ? [-0.5, -0.5] : [_ceil(prev.x - 0.5) - prev.x, _ceil(prev.y - 0.5) - prev.y]) : null;
             /* A Clip Studio spray lays nothing at the pen: its first stop is
              * a quarter of a particle on, or a step if that is nearer, then
              * one a step (Pointillism's particle of 263 first at 66px at
@@ -5146,6 +5146,12 @@
                     var fr = _clamp((dabDist - segStartDist) / (segLen || 1), 0, 1);
                     var ptx = _lerp(prev.x, next.x, fr);
                     var pty = _lerp(prev.y, next.y, fr);
+                    /* Clip Studio's Dot pen: each column (row, on a steep
+                     * line) takes the line where it crosses the pixel's
+                     * middle, the pixel it is in (cdp-csp/qd diagonals, every
+                     * pixel). Steps of a pixel along the line never skip one. */
+                    if (p.pxFloor && _abs(next.x - prev.x) >= _abs(next.y - prev.y)) { ptx = _floor(ptx) + 0.5; pty = prev.y + (next.y - prev.y) * (ptx - prev.x) / (next.x - prev.x); }
+                    else if (p.pxFloor) { pty = _floor(pty) + 0.5; ptx = prev.x + (next.x - prev.x) * (pty - prev.y) / (next.y - prev.y); }
                     if (_pxOff) { ptx += _pxOff[0]; pty += _pxOff[1]; }
                     var _rawPressure = _lerp(prev.pressure || 0.5, next.pressure || 0.5, fr);
                     /* Krita's fan corners (KisPaintOpUtils::paintFan): a turn
@@ -5936,6 +5942,7 @@
         textureScale: 4,
         textureType: 'grain',
         sharpness: 0,
+        pxFloor: false,   // a 1px sharp line lays each pixel where the pen is (Clip Studio's Dot pen), not the nearest
         sharpSoftness: 0,
         spikes: 2,           // Krita's star-shaped generated tip, see _fold
         sharpnessSrc: 'none', sharpnessMin: 0, sharpnessCurve: 1, sharpnessSensors: null, sharpnessCombine: 0,

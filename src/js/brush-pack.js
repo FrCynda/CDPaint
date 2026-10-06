@@ -4239,6 +4239,8 @@
             !_sutNum(v.BrushChangePatternColor, 0) &&
             // a soft round tip keeps its greys: hardness 50 with it off or on, the same dab
             (opts.hasTip ? !opts.tipWhole : _sutNum(v.BrushHardness, 100) >= 100)) out.aliased = true;
+        // Dot pen: the sharp 1px line, each pixel the one the line is in at the column's middle
+        if (v._dotPen) { out.sharpness = 50; out.pxFloor = true; }
         /* ...and a picture is point-sampled, once a pixel where it lands,
          * unshifted (_cspTipMask): one Pastel dab keeps its ink with it off,
          * in sharper specks (46 pixels over 112 of 128 where anti-aliased it
@@ -4342,7 +4344,10 @@
         /* Not every .sut is a brush. A fill or a selection tool is stored
          * the same way and has no brush settings at all -- no BrushSize,
          * none of the 150-odd dials around it -- so importing one would
-         * make a plain round brush out of a tool that never painted. */
+         * make a plain round brush out of a tool that never painted. Dot pen
+         * is the one pen that keeps only its opacity and flow: Clip Studio
+         * paints it 1px, aliased, a pixel a column (cdp-csp/qd). */
+        if (!('BrushSize' in v) && 'BrushFlow' in v) v = Object.assign({ BrushSize: 1, AntiAlias: 0, _dotPen: 1 }, v);
         if (!('BrushSize' in v)) {
             throw new Error('"' + String(node.NodeName || 'That sub tool') +
                 '" is a Clip Studio tool rather than a brush, so there is ' +

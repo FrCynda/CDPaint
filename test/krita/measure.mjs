@@ -7,7 +7,7 @@
 // packVar: page expression holding the pack's bytes; packName its filename.
 // importExpr: page expression for any other import ({ ok, added: [name] }).
 // Imported presets are deleted again, so a long run never fills storage.
-export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false, seed = null, selfSeed = null, refB = null, moves = 0, origin = null }) {
+export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false, seed = null, selfSeed = null, refB = null, moves = 0, origin = null, intMoves = false }) {
     // origin: where the reference's frame sits on its program's canvas, so canvas-anchored paper lands in phase
     const [OX, OY] = origin || [0, 0];
     return JSON.parse(await page.eval(`(async () => {
@@ -69,7 +69,9 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
             for (let i = 1; i <= n; i++) {
                 const t = i / n;
                 tick += ${msPerPx} * len / n;
-                b.moveStroke(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, p0 + (p1 - p0) * t, '#000000');
+                // intMoves: Clip Studio's drag posts whole pixels, (x1 - x0) * i / n in integers
+                if (${intMoves}) b.moveStroke(x0 + Math.trunc((x1 - x0) * i / n), y0 + Math.trunc((y1 - y0) * i / n), p0 + (p1 - p0) * t, '#000000');
+                else b.moveStroke(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, p0 + (p1 - p0) * t, '#000000');
             }
             b.endStroke();
         }
