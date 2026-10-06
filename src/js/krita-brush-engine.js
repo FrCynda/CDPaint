@@ -5422,11 +5422,11 @@
      * turned 1 degree (cdp-csp/pbm) at size 32: within 0.8% and 2% of Clip
      * Studio's pixels, only whole levels and quarters. Shrinking first and
      * placing after smoothed it twice.
-     * Medium and high are 4x4 (brush-pack's AntiAlias rule).
-     * ponytail: a ribbon's dab there is unplaced and stays on the shrink. */
+     * Medium and high are 4x4 (brush-pack's AntiAlias rule); tipShiftY, when
+     * set, moves it across apart from along (a ribbon at 4x4, an eighth). */
     function _cspTipMask(src, sz, ang, asp, x, y, n) {
-        var mode = _params.tipMode || 'alpha', sh = _params.tipShift || 0;
-        if (x != null) { x += sh; y += sh; }
+        var mode = _params.tipMode || 'alpha', sh = _params.tipShift || 0, shY = _params.tipShiftY != null ? _params.tipShiftY : sh;
+        if (x != null) { x += sh; y += shY; }
         sz = _max(0.25, _round(sz * 16) / 16);
         var sc = sz / _max(src.width, src.height), kx = sc * _min(1, asp), ky = sc / _max(1, asp), st = _params.tipStretch;
         if (st) { kx *= st[0]; ky *= st[1]; }
@@ -5436,7 +5436,7 @@
         var fx = x == null ? 0 : _round((((x - bw / 2) % 1) + 1) % 1 * 16) / 16 % 1;
         var fy = x == null ? 0 : _round((((y - bh / 2) % 1) + 1) % 1 * 16) / 16 % 1;
         var rq = _params.ribbonClip ? ((_round((_params.angle || 0) / 90) % 4) + 4) % 4 : -1;
-        var key = 'c|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + '|' + n + '|' + sh + '|' + fx + ',' + fy + (st ? '|' + st : '') + '|' + rq;
+        var key = 'c|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + '|' + n + '|' + sh + ',' + shY + '|' + fx + ',' + fy + (st ? '|' + st : '') + '|' + rq;
         var hit = _customTipSizeCache[key];
         if (hit) return hit;
         var lv = _kritaTipLevel(src, 1), v = lv.v, LW = lv.w, LH = lv.h, nn = n * n;
@@ -5471,7 +5471,7 @@
             r[t + 3] = A / nn;
         }
         oc.putImageData(img, 0, 0);
-        if (x != null) { out._cx = bw / 2 + fx - sh + m; out._cy = bh / 2 + fy - sh + m; }
+        if (x != null) { out._cx = bw / 2 + fx - sh + m; out._cy = bh / 2 + fy - shY + m; }
         return _tipCacheKeep(key, out);
     }
     function _tipKey() {
@@ -6010,7 +6010,7 @@
         angleSensors: null, angleCombine: 0, angleReach: null, sizeSensors: null, sizeCombine: 0, colorRateSensors: null, colorRateCombine: 0, spacingSensors: null, spacingCombine: 0, aspectRatioSensors: null, aspectRatioCombine: 0, textureSensors: null, textureCombine: 0, scatterSensors: null, scatterCombine: 0, smudgeRateSensors: null, smudgeRateCombine: 0, flowSensors: null, flowCombine: 0, dabOpacitySensors: null, dabOpacityCombine: 0,
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
-        tipShrink: '', tipSamples: 0, tipShift: 0, tipPaper: false, textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
+        tipShrink: '', tipSamples: 0, tipShift: 0, tipShiftY: null, tipPaper: false, textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
         textureInvert: false, textureRotate: 0, textureSoft: false, textureCutoff: 0, textureCutoffLo: 0, textureCutoffHi: 255, textureOffsetX: 0, textureOffsetY: 0,
         /* Krita presets: curves are splines (_splineAt), and a round tip may
          * carry its own falloff curve (Krita's "soft" generator). */

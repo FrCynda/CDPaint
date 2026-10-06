@@ -1539,8 +1539,11 @@ await withPage(async (page) => {
                        P({ AntiAlias: 1 }, { hasTip: true }), P({ AntiAlias: 0 }), P({ AntiAlias: 0 }, { hasTip: true, tipWhole: true })]
                 .map(o => [o.tipSamples || 0, o.tipShift || 0, o.tipShrink || '']),
             lowAA: [P({ AntiAlias: 1 }, { hasTip: true }), P({ AntiAlias: 1, BrushRibbon: 1 }, { hasTip: true }), P({ AntiAlias: 2 }, { hasTip: true }), P({ AntiAlias: 1 }),
-                    P({ AntiAlias: 3 }, { hasTip: true }), P({ AntiAlias: 2, BrushRibbon: 1 }, { hasTip: true })]
-                .map(o => [o.tipSamples || 0, o.tipShift || 0]),
+                    P({ AntiAlias: 3 }, { hasTip: true }), P({ AntiAlias: 2, BrushRibbon: 1 }, { hasTip: true }),
+                    P({ AntiAlias: 2, BrushRibbon: 1, BrushSize: 50 }, { hasTip: true, tipW: 1469, tipH: 635 }),
+                    P({ AntiAlias: 1, BrushRibbon: 1, BrushSize: 50 }, { hasTip: true, tipW: 1469, tipH: 635 })]
+                .map(o => [o.tipSamples || 0, o.tipShift || 0, o.tipShiftY ?? null]),
+            zipAlong: P({ BrushRibbon: 1, BrushSize: 50 }, { hasTip: true, tipW: 1469, tipH: 635 }).offsetAlong,
             contrast: [-30, 30].map(c => P({ TextureDensity: 60, TextureCompositeMode: 4, TextureForPlot: 1, TextureContrast: c }, { hasTexture: true }).textureContrast),
             reverse: [0, 1].map(r => !!P({ TextureDensity: 50, TextureCompositeMode: 4, TextureForPlot: 1, TextureReverseDensity: r }, { hasTexture: true }).textureInvert),
             aliased: [P({ AntiAlias: 0 }).aliased, P({ AntiAlias: 1 }).aliased,
@@ -1569,10 +1572,15 @@ await withPage(async (page) => {
     check("anti-aliasing off point-samples a picture once a pixel, unshifted (Cross-hatching for tone scraping lands on Clip Studio's pixels)",
         JSON.stringify(sm.crispPic) === '[[1,0,""],[2,0.25,""],[0,0,""],[1,0,""]]', JSON.stringify(sm.crispPic));
     check("a Clip Studio picture at low anti-aliasing is point-sampled a quarter pixel on, a dab as a ribbon (Chalk's 30px picture is 30 rows)",
-        JSON.stringify(sm.lowAA.slice(0, 2)) === '[[2,0.25],[2,0.25]]' && JSON.stringify(sm.lowAA[3]) === '[0,0]', JSON.stringify(sm.lowAA));
+        JSON.stringify(sm.lowAA.slice(0, 2)) === '[[2,0.25,null],[2,0.25,null]]' && JSON.stringify(sm.lowAA[3]) === '[0,0,null]', JSON.stringify(sm.lowAA));
     // one Bumpy dab at medium and high is all sixteenths, a quarter pixel on (cdp-csp/aa4fit.py)
-    check("...and at medium and high 4x4, a quarter pixel on (not yet a ribbon)",
-        JSON.stringify([sm.lowAA[2], sm.lowAA[4], sm.lowAA[5]]) === '[[4,0.25],[4,0.25],[0,0]]', JSON.stringify(sm.lowAA));
+    check("...and at medium and high 4x4, a quarter pixel on",
+        JSON.stringify([sm.lowAA[2], sm.lowAA[4]]) === '[[4,0.25,null],[4,0.25,null]]', JSON.stringify(sm.lowAA));
+    // Braid, Waved line, Rough edged sit on Clip Studio's pixels at half the shrink's error (cdp-csp/qx)
+    check("...a ribbon too, 4x4 an eighth across at medium and high, a quarter at low",
+        JSON.stringify(sm.lowAA.slice(5)) === '[[4,0.25,null],[4,0.25,0.125],[2,0.25,null]]', JSON.stringify(sm.lowAA));
+    check("a ribbon's first picture starts on the pen to the fraction (Zipper's 21.61, not 22)",
+        Math.abs(sm.zipAlong - 50 * 635 / 1469) < 1e-9, sm.zipAlong);
     check('paper contrast -30 and +30 spread the paper 0.7 and 1/0.7 times',
         Math.abs(sm.contrast[0] - 0.7) < 1e-9 && Math.abs(sm.contrast[1] - 1 / 0.7) < 1e-9, JSON.stringify(sm.contrast));
     /* Dry ink with reverse on lays 24.7k of ink in Clip Studio, 29.6k off

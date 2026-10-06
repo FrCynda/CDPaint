@@ -3879,7 +3879,8 @@
             out.spacingIsotropic = false;
             delete out.spacingByWidth;   // a ribbon is spaced by its length along the line
             // The first picture starts at the stroke's start, not centred on it (Dashed line's first dash 3.5px in).
-            out.offsetAlong = Math.round(50 * (side ? opts.tipW : opts.tipH) / Math.max(opts.tipW, opts.tipH));
+            // unrounded: Zipper's 21.61 taken as 22 laid every tooth 0.19px late
+            out.offsetAlong = 50 * (side ? opts.tipW : opts.tipH) / Math.max(opts.tipW, opts.tipH);
             // straight along or across: Bumpy's turn of 1 lays level there (near at 270, off at 271)
             out.angle = ((Math.round(rr / 90) * 90 - 90) % 360 + 360) % 360;
             out.angleSrc = 'direction';
@@ -4255,11 +4256,20 @@
          * is all sixteenths (Clip Studio's pixels at 2 and 3 identical), and
          * the 4x4 picture fits 98.6-99.6% of them with the dab a quarter pixel
          * right and down of the pen -- where low's 2x2 fits too (cdp-csp/aa4fit.py).
-         * ponytail: a ribbon's quarter at 4x4 is unmeasured -- Dashed line wants
-         * none, Waved line the quarter -- so ribbons stay on the shrink there. */
-        else if (_sutNum(v.AntiAlias, 1) >= 1 && opts.hasTip && !(_sutNum(v.AntiAlias, 1) >= 2 && _sutNum(v.BrushRibbon, 0))) {
+         * A ribbon too, from its full picture: a quarter on along the stroke at
+         * every size measured, and at low a quarter across (Zipper, Thin chain,
+         * Lace: Lace rms 4 of 255 off Clip Studio's pixels). At 4x4 across it
+         * wanders by picture and size, -0.06 to 0.38 over twelve strokes of
+         * six pictures (cdp-csp/qx), an eighth the least error over the stock
+         * six: Dashed line 16 (33 at the quarter), Braid 19, Waved line 19,
+         * Rough edged 15, against 25, 31, 23 on the shrink.
+         * ponytail: Bumpy's lines are 1.75px in Clip Studio and 2 here at 4x4
+         * (its 10px of 100 at 20), so its edges grade off where the shrink's
+         * blur passed; the rule behind both is open. */
+        else if (_sutNum(v.AntiAlias, 1) >= 1 && opts.hasTip) {
             out.tipSamples = _sutNum(v.AntiAlias, 1) >= 2 ? 4 : 2;
             out.tipShift = 0.25;
+            if (out.tipSamples === 4 && out.ribbonClip) out.tipShiftY = 0.125;
         }
         /* On, it fades a round dab's rim over AA + 0.5 px at every size (a
          * 20px G-pen line's edge 163/111/84 at levels 1/2/3): a 5px spray
