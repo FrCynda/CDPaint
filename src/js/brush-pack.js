@@ -4166,10 +4166,12 @@
          * one: thinned, Ground, Generic Flower and Generic Flower BG all
          * lay ~0.78 of Clip Studio's ink over four draws each; unthinned,
          * 0.98, 0.84 and 0.78 (that last one short of flowers anyway).
+         * A ribbon does take it, each picture laid once with nothing over
+         * it: Rough pen (floor 85) is 0.92 our unthinned width all along.
          * ponytail: read off the draws, not probed one setting at a time. */
         var thinW = opts.hasTip && !vert;
         if ((thinW || (out.aspectRatio || 1) >= 1) &&
-            _sutDrive(out, 'aspectRatio', v.BrushThicknessEffector, warn, 'its thickness', spraying && !vert ? null : 'random') && thinW) out.aspectThinsWidth = true;
+            _sutDrive(out, 'aspectRatio', v.BrushThicknessEffector, warn, 'its thickness', (spraying && !vert) || out.ribbonClip ? null : 'random') && thinW) out.aspectThinsWidth = true;
         if (spraying) _sutDrive(out, 'dabCount', v.BrushSprayDensityEffector, warn, 'its spray density');
 
         /* Colour that wanders. Clip Studio sets a range either side of the
