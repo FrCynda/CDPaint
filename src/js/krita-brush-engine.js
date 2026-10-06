@@ -3737,8 +3737,9 @@
         /* Photoshop lays several dabs at every stop (`Cnt `), which is what
          * turns its scatter brushes into a spray instead of a dotted line.
          * Each one draws from its own slot of the position hash, so a group
-         * is as repeatable as a single dab was. */
-        var count = _clamp(_round(_dyn(p, 'dabCount', p.dabCount, sc, 12)), 1, 16);
+         * is as repeatable as a single dab was. Photoshop stops at 16, Clip
+         * Studio's spray at 20. */
+        var count = _clamp(_round(_dyn(p, 'dabCount', p.dabCount, sc, 12)), 1, 20);
         for (var di = 0; di < count; di++) {
             var dx = x, dy = y;
 

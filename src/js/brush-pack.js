@@ -3857,7 +3857,9 @@
             out.sprayEach = true;
             // a quarter of a particle on (the engine's firstDabAt); a continuous spray lays one at the pen
             if (!_sutNum(v.BrushContinuousPlot, 0)) out.firstDabAt = 0.25;
-            out.dabCount = Math.max(1, Math.min(16, Math.round(_sutNum(v.BrushSprayDensity, 1))));
+            /* Clip Studio lays at most 20 a stop: at 20 and 40 its draws hold
+             * the same ink, ours at 16 0.78 of it (cdp-csp/bsn zbsn*). */
+            out.dabCount = Math.max(1, Math.min(20, Math.round(_sutNum(v.BrushSprayDensity, 1))));
             var bias = Math.max(-100, Math.min(100, Math.round(_sutNum(v.BrushSprayBias, 0))));
             if (bias) out.sprayBias = bias;
         }

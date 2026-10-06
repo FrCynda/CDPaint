@@ -1508,6 +1508,7 @@ await withPage(async (page) => {
         return JSON.stringify({ tilt: [tilt.flowSrc, tilt.flowCurve],
             flat: [flat.aspectRatio, flat.angle], mm: mm.size, cm: cm.size,
             spray: [spray.size, spray.scatter, spray.dabCount],
+            dense: [20, 40].map(d => P(Object.assign({}, sp, { BrushSprayDensity: d })).dabCount),
             sprayHow: [spray.scatterAxis, spray.sprayEach, P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 2, BrushSpraySizeUnit: 2 }).size],
             spin: [65, 1, 129].map(e => { const o = P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 20, BrushThickness: 30,
                 BrushRotation: 45, BrushRotationEffector: 131, BrushRotationRandomScale: 25,
@@ -1637,6 +1638,33 @@ await withPage(async (page) => {
     /* Spray: the size is the patch, the spray size is each particle. */
     check('a spray paints particles over a patch of its size',
         JSON.stringify(sm.spray) === '[10,500,6]', JSON.stringify(sm.spray));
+    // Clip Studio's draws hold the same ink at density 20 and 40 (cdp-csp/bsn), ours at 16 0.78 of it.
+    check('a spray lays up to 20 particles a stop',
+        JSON.stringify(sm.dense) === '[20,20]', JSON.stringify(sm.dense));
+    const dense = await page.eval(`(async () => {
+        const app = PaintApp, br = app.brush;
+        app.layerMgr.collapseToBase({ fresh: true });
+        app.setSize(400, 400); app.config.zoom = 1; app.updateBounds();
+        app.state.selection = null;
+        br.loadPreset('Round');
+        const one = async (n) => {
+            app.ctx.clearRect(0, 0, 400, 400);
+            br.setParam('size', 2); br.setParam('scatter', 8000); br.setParam('scatterAxis', 'disk');
+            br.setParam('sprayEach', true); br.setParam('dabCount', n);
+            let ink = 0;
+            for (let k = 0; k < 20; k++) {
+                br.beginStroke(200, 200, 1, '#000000'); br.endStroke();
+            }
+            await new Promise(r => setTimeout(r, 200));
+            const d = app.ctx.getImageData(0, 0, 400, 400).data;
+            for (let i = 3; i < d.length; i += 4) ink += d[i] / 255;
+            return ink;
+        };
+        const a = await one(10), b = await one(20);
+        br.loadPreset('Round');
+        return b / a;
+    })()`, { awaitPromise: true });
+    check('...and the engine lays all 20 (twice the ink of 10)', Math.abs(dense - 2) < 0.15, dense.toFixed(3));
     /* Measured with 1px particles there: evenly over the patch, each its own
      * size, and a spray size in millimetres converted like the brush size. */
     check('a spray covers its patch evenly, sizes each particle, and reads its unit',
