@@ -3735,11 +3735,13 @@
         opts = opts || {};
         var out = {}, warn = [];
 
-        /* Size may be in centimetres (unit 1) or millimetres (2). Milli pen
-         * set to 1 of each painted 96px and 9.6px wide in Clip Studio.
-         * ponytail: that is the reference canvas's resolution (about 244
-         * dpi); ours has none, so every mm brush takes that one. */
-        var size = _sutNum(v.BrushSize, 20) * ({ 1: 96, 2: 9.6 }[_sutNum(v.BrushSizeUnit, 0)] || 1);
+        /* Size may be in centimetres (unit 1) or millimetres (2): G-pen at
+         * 1 cm and at 10 mm paints exactly 100px in Clip Studio, at 5 mm 50
+         * (cdp-csp/qx qxg*), and Book at 15 mm stands 150px where at 144px
+         * it stands 144. (An older reading of Milli pen gave 96 and 9.6.)
+         * ponytail: that is the reference canvas's resolution (254 dpi);
+         * ours has none, so every mm brush takes that one. */
+        var size = _sutNum(v.BrushSize, 20) * ({ 1: 100, 2: 10 }[_sutNum(v.BrushSizeUnit, 0)] || 1);
         out.size = Math.max(1, Math.min(1000, Math.round(size * 10) / 10));
         out.shape = opts.hasTip ? 'custom' : 'circle';
         out.opacity = Math.max(1, Math.min(100, Math.round(_sutNum(v.Opacity, 100))));
@@ -3848,7 +3850,7 @@
          * a band 139px tall -- 30 of patch plus a particle either side. Ours
          * is the particle, scattered up to half the patch from the line. */
         if (spraying) {
-            var spray = _sutNum(v.BrushSpraySize, 0) * ({ 1: 96, 2: 9.6 }[_sutNum(v.BrushSpraySizeUnit, 0)] || 1);
+            var spray = _sutNum(v.BrushSpraySize, 0) * ({ 1: 100, 2: 10 }[_sutNum(v.BrushSpraySizeUnit, 0)] || 1);
             out.size = Math.max(1, Math.round(spray));
             out.scatter = Math.max(1, Math.round(size / 2 / out.size * 100));
             out.scatterAxis = 'disk';

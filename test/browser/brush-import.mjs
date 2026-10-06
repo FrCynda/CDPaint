@@ -1444,7 +1444,7 @@ await withPage(async (page) => {
         const plot = P({ TextureDensity: 80, TextureCompositeMode: 2, TextureForPlot: 1, TextureScale2: 20,
                          TextureDensityEffector: new Uint8Array(rnd.buffer) }, { hasTexture: true });
         const flat = P({ BrushSize: 20, BrushThickness: 30 });
-        const mm = P({ BrushSize: 5, BrushSizeUnit: 2 });
+        const mm = P({ BrushSize: 5, BrushSizeUnit: 2 }), cm = P({ BrushSize: 1, BrushSizeUnit: 1 });
         const spray = P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 10, BrushSprayDensity: 6 });
         const rndE = new Uint8Array(rnd.buffer), sp = { BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 10 };
         const sprayRnd = P(Object.assign({ BrushIntervalEffector: rndE, BrushThicknessEffector: rndE, BrushSprayDensityEffector: rndE }, sp));
@@ -1465,7 +1465,7 @@ await withPage(async (page) => {
         const cj = { BrushHueChange: 15, BrushSaturationChange: -50, BrushValueChange: 100,
             BrushHueChangeEffector: cjE(0x80, -100), BrushSaturationChangeEffector: cjE(0x80, 0), BrushValueChangeEffector: cjE(0, 0) };
         return JSON.stringify({ tilt: [tilt.flowSrc, tilt.flowCurve],
-            flat: [flat.aspectRatio, flat.angle], mm: mm.size,
+            flat: [flat.aspectRatio, flat.angle], mm: mm.size, cm: cm.size,
             spray: [spray.size, spray.scatter, spray.dabCount],
             sprayHow: [spray.scatterAxis, spray.sprayEach, P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 2, BrushSpraySizeUnit: 2 }).size],
             spin: [65, 1, 129].map(e => { const o = P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 20, BrushThickness: 30,
@@ -1592,14 +1592,14 @@ await withPage(async (page) => {
     /* Thickness squeezes the width, so an unturned flat tip stands upright. */
     check('a thin tip stands upright, its thickness kept exactly',
         sm.flat[0] === 3.33 && sm.flat[1] === 90, JSON.stringify(sm.flat));
-    check('a size given in millimetres is converted to pixels', sm.mm === 48, `${sm.mm}`);
+    check('a size in millimetres or centimetres is 10px a millimetre, as Clip Studio paints G-pen', sm.mm === 50 && sm.cm === 100, `${sm.mm} ${sm.cm}`);
     /* Spray: the size is the patch, the spray size is each particle. */
     check('a spray paints particles over a patch of its size',
         JSON.stringify(sm.spray) === '[10,500,6]', JSON.stringify(sm.spray));
     /* Measured with 1px particles there: evenly over the patch, each its own
      * size, and a spray size in millimetres converted like the brush size. */
     check('a spray covers its patch evenly, sizes each particle, and reads its unit',
-        JSON.stringify(sm.sprayHow) === '["disk",true,19]', JSON.stringify(sm.sprayHow));
+        JSON.stringify(sm.sprayHow) === '["disk",true,20]', JSON.stringify(sm.sprayHow));
     check('a spray turns its particles by the in-spray rotation (bit 64 follows the line), not the brush rotation',
         JSON.stringify(sm.spin) === '[[180,"direction"],[180,null],[180,null]]', JSON.stringify(sm.spin));
     check('Droplet: particles point away from the patch centre (in-spray bit 512) and random thickness thins a picture by width',
