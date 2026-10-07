@@ -1139,7 +1139,7 @@
      * place, and now that the grain is anchored to the document its phase
      * differs at every position -- so a textured dab must always start from
      * a clean tint. */
-    var _tintMask = null, _tintColor = null;
+    var _tintMask = null, _tintColor = null, _tintInk = '#000000';   // _tintInk: the ink under a jittered sub colour (a grey picture's darks)
 
     function _colorizeMask(maskCanvas, colorHex, mode) {
         var mw = maskCanvas.width;
@@ -1162,14 +1162,14 @@
              * scratch mixes a half-clear pixel with the fill, and a picture
              * of thin lines shrunk to a dab is mostly half-clear pixels --
              * Rubble at size 40 kept 0.64 of Clip Studio's ink. */
-            if (_params.subMix || _params.jitterSub) {
+            if (_params.subMix || _params.jitterSub || _params.tipTint) {
                 var c = _hexToRgb(colorHex), id = _scratchCtx.getImageData(0, 0, mw, mh), d = id.data;
-                var sm = !!_params.subMix, js = !!_params.jitterSub;
+                var sm = !!(_params.subMix || _params.tipTint), js = !!_params.jitterSub, ink = js && _params.tipTint ? _hexToRgb(_tintInk) : c;
                 for (var i = 0; i < d.length; i += 4) {
                     if (!d[i + 3]) continue;
                     for (var n = 0; n < 3; n++) {
                         var v = d[i + n];
-                        if (sm) v = 255 - (255 - c[n]) * (255 - v) / 255;
+                        if (sm) v = 255 - (255 - ink[n]) * (255 - v) / 255;
                         if (js) v = v * c[n] / 255;
                         d[i + n] = v;
                     }
@@ -3784,6 +3784,7 @@
         }
 
         // a sub colour's change shades a picture's whites (white is the sub colour), never the ink
+        _tintInk = colorHex;
         var finalColor = !p.jitterSub ? _jitterColor(p, colorHex, x, y)
             : p.tipMode === 'color' ? _jitterColor(p, '#ffffff', x, y) : colorHex;
         if (p.normalMap) finalColor = _normalColor(p.normalMap, _dabIndex === 1 ? _lockAngle : strokeAngle);   // the first dab's angle is from the canvas origin
@@ -5985,6 +5986,7 @@
         tipMirror: false,
         /* What the tip's pixels mean: 'alpha' a cut-out, 'lightness' its
          * greys over the colour, 'color' the picture itself. */
+        tipTint: false,      // a grey Clip Studio picture takes the ink in its darks and white in its lights (screen)
         tipMode: 'alpha',
         /* Which engine paints. 'brush' stamps dabs; 'shape' fills the
          * outline the stroke draws, which is Krita's experiment brush;
@@ -9874,6 +9876,7 @@
                 if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = tip.pick === 'cycle' ? 'cycle' : ps.tipPick || tip.pick; }
                 if (tip.lens && ps.ribbonClip) ps.ribbonLens = tip.lens;
                 if (tip.params && tip.params.tipMode) ps.tipMode = tip.params.tipMode;
+                if (tip.params && tip.params.tipTint) ps.tipTint = true;
             }
             if (tip2 && tip2.url.length <= TIP_CAP) ps._tip2Url = _tipStash(tip2.url);
             if (sec) {

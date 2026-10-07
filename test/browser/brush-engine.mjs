@@ -3950,12 +3950,13 @@ await withPage(async (page) => {
             b.loadCustomTip(url, null);
             await new Promise(r => setTimeout(r, 400));
             ['texture', 'opacity', 'flow', 'scatter', 'colorRate', 'sizeSrc',
-             'taperStart', 'taperEnd', 'tip2Depth', 'valJitter', 'jitterSub', 'colorJitterRange', 'subMix', 'dabOpacitySrc', 'dabOpacityMin'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+             'taperStart', 'taperEnd', 'tip2Depth', 'valJitter', 'jitterSub', 'colorJitterRange', 'subMix', 'dabOpacitySrc', 'dabOpacityMin', 'tipTint'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
             b.setParam('dynamicsMode', 'off');
             b.setParam('size', 80); b.setParam('hardness', 100);
             b.setParam('tipMode', mode);
             // the sub colour (white) taken half down, every dab
-            if (sub === 'mix') b.setParam('subMix', 50);
+            if (sub === 'tint') b.setParam('tipTint', true);
+            else if (sub === 'mix') b.setParam('subMix', 50);
             else if (sub === 'ad') { b.setParam('dabOpacitySrc', 'random'); b.setParam('dabOpacityMin', 100); }
             else if (sub) { b.setParam('valJitter', 50); b.setParam('colorJitterRange', [[0, 0], [0, 0], [-1, -1]]); b.setParam('jitterSub', true); }
             const L = __B.layer();
@@ -3966,7 +3967,7 @@ await withPage(async (page) => {
         };
         const out = { alpha: await run('alpha'), light: await run('lightness'),
                       color: await run('color'), sub: await run('color', true), mix: await run('color', 'mix'),
-                      ad: await run('color', 'ad') };
+                      ad: await run('color', 'ad'), tint: await run('color', 'tint') };
         b.setParam('subMix', 0); b.setParam('dabOpacitySrc', 'none'); b.setParam('dabOpacityMin', b.DEFAULTS.dabOpacityMin);
         b.forgetSaved(b._currentPreset || 'Round');
         b.loadPreset('Round');
@@ -3989,6 +3990,11 @@ await withPage(async (page) => {
     // its darks in the half-mixed ink (128 -> 192), its lights toward white: 32 -> 200, 224 -> 247
     check('a sub colour mix lightens a picture as Clip Studio tints it, ink to white',
         Math.abs(redOf(tm.mix.left) - 200) < 4 && Math.abs(redOf(tm.mix.right) - 247) < 4, JSON.stringify(tm.mix));
+    /* A grey Clip Studio picture (Button, Braid, Chain, Grass patch) paints its darks in the colour you
+     * picked and its lights in white -- screen(ink, picture): ink 128 over 32 -> 144, over 224 -> 240.
+     * Stamped as it was it came out black whatever the colour (Button in purple, CSP vs ours: 145 off). */
+    check('a grey picture takes the picked colour in its darks and white in its lights',
+        Math.abs(redOf(tm.tint.left) - 144) < 6 && Math.abs(redOf(tm.tint.right) - 240) < 6, JSON.stringify(tm.tint));
     // a canvas blend mixed a half-clear pixel with the fill: 32 at half alpha came out 72 (Rubble lost a third of its ink)
     check('a sub colour shades a half-clear pixel no lighter than it was',
         redOf(tm.sub.half) <= redOf(tm.color.half) && Math.abs(redOf(tm.mix.half) - 200) < 4 && tm.sub.half.split(',')[3] === tm.color.half.split(',')[3],

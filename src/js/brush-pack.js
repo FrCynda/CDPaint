@@ -1845,7 +1845,7 @@
             var st2 = _strip(cells);
             if (exact) { st2.w = exact[0]; st2.h = exact[1]; }
             return { url: st2.url, size: st2.size, w: st2.w, h: st2.h, whole: whole,
-                     cells: cells.length, pick: pick, lens: opts && opts.crop && pick === 'random' && lens || null, params: shaded || own ? { tipMode: 'color' } : _paper(cells) };
+                     cells: cells.length, pick: pick, lens: opts && opts.crop && pick === 'random' && lens || null, params: shaded || own ? (shaded && !own ? { tipMode: 'color', tipTint: true } : { tipMode: 'color' }) : _paper(cells) };
         });
     };
 
