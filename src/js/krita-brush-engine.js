@@ -3395,7 +3395,7 @@
      * where Krita, over its white background, lays opaque grey.
      * ponytail: the picture is read whole once a stroke (4 bytes a pixel);
      * read it by the dab's rect if big documents stall. */
-    var _smS = null, _smG = null, _smPic = null, _smBase = null, _smB = new Float64Array(4);
+    var _smS = null, _smG = null, _smPic = null, _smBase = null, _smOwn = null, _smB = new Float64Array(4);
     function _smRead(d, rx, ry, rw, rh, T, F, pic) {
         var n = rw * rh * 4;
         if (!F || F.length < n) F = new Float32Array(n);
@@ -3506,10 +3506,10 @@
         var prev = _smPrev;
         _smPrev = [x, y, kx + kW / 2, ky + kH / 2];
         if (!prev) {                        // the first dab only loads the brush
-            _smPic = _smBase = null;
+            _smPic = _smBase = _smOwn = null;
             // Clip Studio Multiply on a mixing brush (Wet wash): each stroke multiplies what was there before it began, not its own dabs
             // Wet wash: v' = v (0.3 b + 0.7 v) fits Clip Studio's 1-10 layer stacks to ~6 levels with the 0.85 (colour pick-up, below)
-            if (p.mixAlpha != null && p.blendMode === 'multiply') { try { _smBase = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data; } catch (e1) { _smBase = null; } }
+            if (p.mixAlpha != null && p.blendMode === 'multiply') { try { _smBase = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data; _smOwn = new Float32Array(ctx.canvas.width * ctx.canvas.height); } catch (e1) { _smBase = _smOwn = null; } }
             if (p.smudgeMerged && app.layerMgr && app.layerMgr.getFlattenedCanvas) {
                 try { _smPic = app.layerMgr.getFlattenedCanvas().getContext('2d').getImageData(0, 0, _docW(), _docH()).data; } catch (e0) { _smPic = null; }
             }
@@ -3671,7 +3671,7 @@
                     k = mtr ? k0 / _clamp(alpha, 0, 1) * mt[j * mw + i] / 255 : k0 * m / 255;
                     B[0] = src[u] * ci + pr; B[1] = src[u + 1] * ci + pg; B[2] = src[u + 2] * ci + pb; B[3] = src[u + 3] * ci + pa;
                     if (mt && !mtr) { var gr = mt[j * mw + i] / m; B[0] *= gr; B[1] *= gr; B[2] *= gr; B[3] *= gr; }
-                    if (_smBase) { var bi = ((ry + py) * ctx.canvas.width + rx + px) * 4, fb = _smBase[bi + 3] / 255; var pm = p.mixColor / 100 * fb * 0.85; for (n = 0; n < 3; n++) { var pc = rgb[n] + (_smBase[bi + n] * fb + 255 * (1 - fb) - rgb[n]) * pm; B[n] = fb * _smBase[bi + n] * (1 - c + c * pc / 255) + (1 - fb) * c * pc; } B[3] = 255 * (fb + (1 - fb) * c); }
+                    if (_smBase) { var bi = ((ry + py) * ctx.canvas.width + rx + px) * 4, fb = _smBase[bi + 3] / 255; var pm = p.mixColor / 100 * fb * 0.85; for (n = 0; n < 3; n++) { var pc = rgb[n] + (_smBase[bi + n] * fb + 255 * (1 - fb) - rgb[n]) * pm; B[n] = (fb + (1 - fb) * c) * (fb > 0 ? _smBase[bi + n] * (1 - c + c * pc / 255) : pc); } B[3] = 255 * (fb + (1 - fb) * c); }
                 } else {
                     k = m / 255;
                     var sa = p.smudgeSmearAlpha === false ? src[u + 3] / 255 * sO : 0;
@@ -3697,6 +3697,17 @@
                 var inv = 255 / oa;
                 d[t] = _clamp(or * inv, 0, 255); d[t + 1] = _clamp(og * inv, 0, 255);
                 d[t + 2] = _clamp(ob * inv, 0, 255);
+                if (_smOwn && !locked) {    // multiply: a stroke's edge does not pile up on the last stroke's edge, the alpha is the larger of the two
+                    var oi = (ry + py) * ctx.canvas.width + rx + px, ow = _smOwn[oi];
+                    ow += (pa - ow) * k; _smOwn[oi] = ow;
+                    var fb2 = _smBase[oi * 4 + 3];
+                    if (oa > fb2 && ow < oa) oa = fb2 > ow ? fb2 : ow;
+                    if (fb2 > 0 && oa > 0) {    // the multiply reaches the colour in full even where the edge is thin; alpha says how much shows
+                        var fq = fb2 / 255, pq = p.mixColor / 100 * fq * 0.85;
+                        for (n = 0; n < 3; n++) { var pz = rgb[n] + (_smBase[oi * 4 + n] * fq + 255 * (1 - fq) - rgb[n]) * pq; d[t + n] = _smBase[oi * 4 + n] * (1 - c + c * pz / 255); }
+                        or = d[t] * oa / 255; og = d[t + 1] * oa / 255; ob = d[t + 2] * oa / 255;
+                    }
+                }
                 if (!locked) { d[t + 3] = oa; f[t] = or; f[t + 1] = og; f[t + 2] = ob; f[t + 3] = oa; }
                 else { a = f[t + 3] / 255; f[t] = d[t] * a; f[t + 1] = d[t + 1] * a; f[t + 2] = d[t + 2] * a; }
             }
@@ -6569,7 +6580,7 @@
             if (_params.hasOwnProperty(_fk)) _strokeParams[_fk] = _isArray(_params[_fk]) ? _cloneCurve(_params[_fk]) : _params[_fk];
         }
         _wet = [];                // the brush is loaded fresh each stroke
-        _smPrev = null; _smT = null; _smS = null; _smPic = _smBase = null; _smCar = null; _smPx = _smPy = NaN;
+        _smPrev = null; _smT = null; _smS = null; _smPic = _smBase = _smOwn = null; _smCar = null; _smPx = _smPy = NaN;
         _wetPos = [];
         _smoothAngle = NaN;
         _lastDabDist = 0;

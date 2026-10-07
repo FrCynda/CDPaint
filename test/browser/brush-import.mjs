@@ -1057,6 +1057,28 @@ await withPage(async (page) => {
     check("a multiply mixing brush stacks darker than plain multiply: light blue's green after 4 strokes is 130-175, not 184",
         ww[3] > 130 && ww[3] < 175 && ww[3] < ww[2] && ww[2] < ww[1], JSON.stringify(ww));
 
+    /* Clip Studio's Wet wash edge: ten strokes over one another leave a soft edge no wider than one stroke
+     * (its alpha does not pile up), and what is there is as dark as the middle, not a purple fringe. */
+    const we = await page.eval(`(() => {
+        const app = PaintApp, b = app.brush, ctx = app.layerMgr.layers[app.layerMgr.activeIdx].ctx;
+        const clock = performance.now; let tick = 0; performance.now = () => tick;
+        try {
+            b.PRESETS.__w = Object.assign({}, b.DEFAULTS, { size: 30, spacing: 5, hardness: 0, flow: 100, opacity: 100, blendMode: 'multiply', mixAlpha: 50, mixColor: 70, mixStretch: 10 });
+            b.loadPreset('__w');
+            ctx.clearRect(0, 0, 300, 100);
+            const out = [];
+            for (let k = 0; k < 10; k++) {
+                b.beginStroke(40, 50, 1, '#912dcd');
+                for (let x = 41; x <= 200; x++) { tick += 2; b.moveStroke(x, 50, 1, '#912dcd'); }
+                b.endStroke();
+                if (k === 0 || k === 9) { let best = null; for (let y = 30; y < 50; y++) { const d = ctx.getImageData(120, y, 1, 1).data; if (d[3] > 40 && d[3] < 200) { best = [d[3], d[0], d[1], d[2]]; break; } } out.push(best); }
+            }
+            return JSON.stringify(out);
+        } finally { performance.now = clock; delete b.PRESETS.__w; b.loadPreset('Round'); }
+    })()`).then(JSON.parse);
+    check("a multiply mixing brush's thin edge keeps its alpha across strokes but darkens: first partly covered row, strokes 1 and 10",
+        we[0] && we[1] && we[1][0] < we[0][0] * 2 + 20 && we[1][2] < we[0][2] * 0.5, JSON.stringify(we));
+
     /* A deform brush dabs every spacing along the path and pushes by the
      * distance since the dab before; a push read at every input point is
      * under half a pixel and moves nothing. What it drags keeps its colour. */
