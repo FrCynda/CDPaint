@@ -41,6 +41,7 @@ const FILES = {
     'rough-scrape.sut': b64('rough-scrape.sut'),
     'pixel-select.sut': b64('pixel-select.sut'),
     'multiply-scrape.sut': b64('multiply-scrape.sut'),
+    'mix-spray-scrape.sut': b64('mix-spray-scrape.sut'),
     'dot-pen.sut': b64('dot-pen.sut'),
     'library-tips.sut': b64('library-tips.sut'),
     'library-repeat.sut': b64('library-repeat.sut'),
@@ -1367,6 +1368,21 @@ await withPage(async (page) => {
 
     check('a .sut installs', sut.r.brushes === 1 && sut.r.failed === 0, JSON.stringify(sut.r));
     check('the sub tool keeps its name', sut.name === 'Rough Scrape', `${sut.name}`);
+    /* Pointillism's colour change shows about a quarter in Clip Studio when the brush sprays and mixes; Pastel's (mixes, no spray) shows whole. */
+    const msj = await page.eval(`(async () => {
+        for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
+        const out = [];
+        for (const f of ['rough-scrape.sut', 'mix-spray-scrape.sut']) {
+            await PaintApp.brush.importFiles([window.__files[f]]);
+            const p = PaintApp.brush.PRESETS[PaintApp.brush.userPresetNames()[0]];
+            out.push([p.hueJitter, p.satJitter]);
+            for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
+        }
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('a spraying mixing brush takes a quarter of its colour jitter, a plain spray all of it',
+        msj[0][0] === 30 && msj[0][1] === 20 && msj[1][0] === 8 && msj[1][1] === 5, JSON.stringify(msj));
+
     /* Composite mode 2 is Multiply (every watercolour, Wet wash, the inks): stacked in Clip Studio
      * (255,50,100) goes (255,70,101) after 3 strokes and (255,4,13) after 10. Importing it as normal
      * left them stuck at the one colour. */

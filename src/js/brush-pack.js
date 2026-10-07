@@ -4245,6 +4245,10 @@
             _sutJitter(out, v.BrushHueChange, v.BrushSaturationChange, v.BrushValueChange,
                        [v.BrushHueChangeEffector, v.BrushSaturationChangeEffector, v.BrushValueChangeEffector]);
         if (dabJit && _sutNum(v.BrushChangeColorTarget, 1) === 2) out.jitterSub = true;
+        /* A spray that mixes with the canvas (Pointillism: hue 30, sat 20, value 10) shows about a quarter of its colour change in
+         * Clip Studio: three strokes spread hue 2.5 degrees, saturation 0.04, value 0.014 where a plain spray of those ranges spreads
+         * 15, 0.11, 0.05. A mixing brush that is not a spray (Pastel) shows all of it. */
+        if (dabJit && out.sprayEach && out.mixAlpha != null) ['hueJitter', 'satJitter', 'valJitter'].forEach(function (k) { if (out[k]) out[k] = Math.max(1, Math.round(out[k] / 4)); });
         /* Sub colour mix: each dab goes that far toward the sub colour
          * (white), its random input scaling it -- Generic Flower's 38% at
          * floor 21 lays flowers from grey 41 to 112, 101-115 without the
