@@ -6,6 +6,7 @@
 //   node test/krita/bank.mjs --holdout [--render]
 //   node test/krita/bank.mjs --random [--render]   the presets that ask for chance, by statistics
 //   node test/krita/bank.mjs -j 1             one pack at a time (default: several at once)
+//   node test/krita/bank.mjs --stack [--render]    the same paint again and again: 1/3/10/30 taps on one spot, a line laid 5/10/20/30 times, over blue and over white
 //   node test/krita/bank.mjs --scene [--render]    the scene: strokes crossing, in colour, over paint, a curve, a tap
 //   node test/krita/bank.mjs --engine colorsmudge  only presets of the engines it matches (a regex)
 //
@@ -45,14 +46,24 @@ const BANDS = [[0, 100], [100, 200], [200, 300]];
  * across both; two strokes crossing; two overlapping strokes over a
  * half-transparent green; a curve (Krita's paintPath, full pressure); a tap.
  * Scored on how far each pixel moved off the start, and on colour. */
-const SCENE = process.argv.includes('--scene');
-const SCENE_SET = {
+/* --stack: build-up. Taps on one spot (1, 3, 10, 30 of them) and one short line
+ * laid 5, 10, 20, 30 times, over an opaque blue block and over bare white: how
+ * the colour piles up, where it saturates, whether the hue drifts. Same scoring. */
+const STACK = process.argv.includes('--stack');
+const SCENE = process.argv.includes('--scene') || STACK;
+const STACK_LINES = [];
+for (const x0 of [0, 230]) {
+    [1, 3, 10, 30].forEach((n, i) => { for (let k = 0; k < n; k++) STACK_LINES.push([x0 + 40 + i * 40, 40, 0.8, x0 + 40.5 + i * 40, 40, 0.8]); });
+    [5, 10, 20, 30].forEach((n, i) => { for (let k = 0; k < n; k++) STACK_LINES.push([x0 + 40, 90 + i * 40, 0.6, x0 + 170, 90 + i * 40, 0.6]); });
+}
+const STACK_SET = { color: [220, 110, 30], rects: [[10, 10, 220, 280, 40, 80, 200, 255]], paths: [] };
+const SCENE_SET = STACK ? STACK_SET : {
     color: [220, 110, 30],
     rects: [[60, 30, 120, 80, 200, 40, 40, 255], [260, 30, 120, 80, 40, 80, 200, 255], [260, 140, 190, 50, 40, 160, 60, 128]],
     paths: [Array.from({ length: 61 }, (_, i) => { const t = i / 60 * 5 * Math.PI / 3; return [355 + 35 * Math.cos(t), 245 + 35 * Math.sin(t)]; })
         .flat().map(v => +v.toFixed(2))],
 };
-const SCENE_LINES = [[30, 70, 0.3, 450, 70, 1.0], [40, 140, 0.6, 210, 280, 1.0], [210, 140, 1.0, 40, 280, 0.6],
+const SCENE_LINES = STACK ? STACK_LINES : [[30, 70, 0.3, 450, 70, 1.0], [40, 140, 0.6, 210, 280, 1.0], [210, 140, 1.0, 40, 280, 0.6],
     [270, 160, 0.8, 440, 160, 0.8], [270, 168, 0.8, 440, 168, 0.8], [235, 215, 1.0, 236, 215, 1.0]];
 const engineRe = process.argv.includes('--engine') ? new RegExp(process.argv[process.argv.indexOf('--engine') + 1], 'i') : null;
 
@@ -149,7 +160,7 @@ for (const p of packs) {
 const results = [];
 // Packs not run this time keep their last results.
 const save = () => {
-    const file = path.join(RUN, RANDOM ? 'results-random.json' : SCENE ? 'results-scene.json' : 'results.json'), ids = new Set(results.map(r => r.pack));
+    const file = path.join(RUN, RANDOM ? 'results-random.json' : STACK ? 'results-stack.json' : SCENE ? 'results-scene.json' : 'results.json'), ids = new Set(results.map(r => r.pack));
     const old = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).filter(r => !ids.has(r.pack)) : [];
     if (!only && !engineRe) fs.writeFileSync(file, JSON.stringify([...old, ...results], null, 1));
 };
@@ -235,8 +246,8 @@ async function scorePack(page, p) {
             }));
         })()`, { awaitPromise: true }));
         const todo = list.filter(e => RANDOM ? e.random.length : !e.random.length);
-        todo.forEach((e, i) => { e.key = (RANDOM ? 'r' : SCENE ? 's' : 'p') + i; });
-        const refDir = path.join(p.dir, RANDOM ? 'rref' : SCENE ? 'sref' : 'ref');
+        todo.forEach((e, i) => { e.key = (RANDOM ? 'r' : STACK ? 't' : SCENE ? 's' : 'p') + i; });
+        const refDir = path.join(p.dir, RANDOM ? 'rref' : STACK ? 'tref' : SCENE ? 'sref' : 'ref');
 
         if (RENDER && !fs.existsSync(path.join(refDir, 'meta.json'))) {
             const res = path.join(p.dir, 'kres');
