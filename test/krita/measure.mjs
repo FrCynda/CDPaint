@@ -32,6 +32,7 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         // Krita's createDocument puts an opaque white layer under ours; a merged smudge picks it up
         { const bg = app.layerMgr.layers[0].ctx; bg.fillStyle = '#fff'; bg.fillRect(0, 0, W + ${OX}, H + ${OY}); }
         app.state.selection = null;
+        app.config.c2 = '#000000';   // the harness's Krita background colour: P1's Mix fades to black there
         const L = app.layerMgr.layers[app.layerMgr.activeIdx];
         b.loadPreset(imp.added[0]);
         ${c.size != null ? `b.setParam('size', ${c.size});` : ''}

@@ -900,6 +900,34 @@
     }
 
     var _shiftCanvas = null, _shiftCtx = null;   // _paintDab's grained dab, before its sub-pixel move
+    var _addCanvas = null, _addCtx = null;       // _addDab's dab, moved onto whole pixels
+    /* Krita's addition (cfAddition through KoCompositeOpGeneric): the light
+     * sums, the cover is a union -- the browser's 'lighter' sums the cover
+     * too, and Glow's soft rim came out 1.2x Krita's. */
+    function _addDab(dc, ox, oy, mw, mh, a) {
+        var fx = _floor(ox), fy = _floor(oy), w = mw + 1, h = mh + 1;
+        if (!_addCanvas || _addCanvas.width < w || _addCanvas.height < h) {
+            _addCanvas = new OffscreenCanvas(w, h);
+            _addCtx = _addCanvas.getContext('2d', { willReadFrequently: true });
+        }
+        _addCtx.clearRect(0, 0, w, h);
+        // at full strength, scaled after: X1BB's 5% dabs read whole lost their soft rims (ink 0.99 -> 0.90)
+        _addCtx.drawImage(_scratchCanvas, 0, 0, mw, mh, ox - fx, oy - fy, mw, mh);
+        _addPx(dc, _addCtx.getImageData(0, 0, w, h).data, fx, fy, w, h, a);
+    }
+    // ...and the stroke onto the layer by the same rule (s: unpremultiplied RGBA, a: opacity)
+    function _addPx(dc, s, x, y, w, h, a) {
+        var img = dc.getImageData(x, y, w, h), d = img.data;
+        for (var i = 0; i < s.length; i += 4) {
+            var sA = s[i + 3] / 255 * a;
+            if (!sA) continue;
+            var dA = d[i + 3] / 255, nA = sA + dA - sA * dA;
+            for (var n = 0; n < 3; n++)
+                d[i + n] = ((1 - sA) * dA * d[i + n] + (1 - dA) * sA * s[i + n] + sA * dA * _min(255, s[i + n] + d[i + n])) / nA;
+            d[i + 3] = nA * 255;
+        }
+        dc.putImageData(img, x, y);
+    }
     function _ensureScratch(w, h) {
         if (!_scratchCanvas || _scratchCanvas.width < w || _scratchCanvas.height < h
             || (_scratchCanvas.width > w * 2 && _scratchCanvas.width * SHRINK_THRESHOLD > w)) {
@@ -2397,13 +2425,20 @@
         if (ad && ox === _floor(ox) && oy === _floor(oy)) _adDab(ox, oy, mw, mh, adFlow);
         else if (_tp.dabMax && !ad) _maxDab(dc, _round(ox), _round(oy), mw, mh, _clamp(alpha, 0, 1));
         else {
-        if (ad) dc.globalCompositeOperation = 'lighten';
+        /* Build-up in a blend mode: each dab lands on the layer by that mode,
+         * so the dabs add (or multiply) onto each other too -- Glow's core
+         * goes yellow where one pass of its orange stays orange. */
+        var dop = ad ? 'lighten' : destCtx === _flowCtx && getParams().dabBlend ? _blendOp(getParams().blendMode) : null;
+        if (dop === 'lighter') _addDab(dc, ox, oy, mw, mh, _clamp(alpha, 0, 1));
+        else {
+        if (dop) dc.globalCompositeOperation = dop;
         dc.globalAlpha = _clamp(alpha, 0, 1);
         dc.imageSmoothingEnabled = true;
         dc.imageSmoothingQuality = 'low';
         dc.drawImage(_scratchCanvas, 0, 0, mw, mh, ox, oy, mw, mh);
         dc.globalAlpha = 1;
-        if (ad) dc.globalCompositeOperation = 'source-over';
+        if (dop) dc.globalCompositeOperation = 'source-over';
+        }
         }
 
         var AA_MARGIN = 1;
@@ -3679,10 +3714,26 @@
     var _scDab  = { x: 0, y: 0, pressure: 0, strokeAngle: 0 };
     var _scFlow = { x: 0, y: 0, pressure: 0, strokeAngle: 0 };
 
-    // that far toward the sub colour, white (Clip Studio's sub colour mix)
+    // that far toward the sub colour: white (Clip Studio's sub colour mix) or the background colour (Krita's Mix)
     function _subMixed(p, hex, sc) {
         var m = _dyn(p, 'subMix', p.subMix, sc, 20) / 100, c = _hexToRgb(hex);
-        return _rgbToHex(c[0] + (255 - c[0]) * m, c[1] + (255 - c[1]) * m, c[2] + (255 - c[2]) * m);
+        var t = p.subColor === 'background' ? _hexToRgb(app.config.c2 || '#ffffff') : _WHITE3;
+        return _rgbToHex(c[0] + (t[0] - c[0]) * m, c[1] + (t[1] - c[1]) * m, c[2] + (t[2] - c[2]) * m);
+    }
+    var _WHITE3 = [255, 255, 255];
+    /* Krita's tangent normal colour (KisTangentTiltOption::apply, its 8 bits
+     * cut, not rounded): an upright pen is 127,127,255 whatever the paint. */
+    function _normalColor(n, ang) {
+        var tilt = (_penTiltX || _penTiltY ? _atan2(-_penTiltX, _penTiltY) : -_PI / 2) / (2 * _PI) * 360 + 180;
+        var along = 270 + (ang || 0), e = _elevation() * 90, d;
+        if (n.type === 1) { d = along; e = 0; }
+        else if (n.type === 2) d = _penTwist;
+        else if (n.type === 3) d = tilt * (1 - n.mix / 100) + along * n.mix / 100;
+        else d = tilt;
+        e = _floor(e * n.sens / 100 + 90 - n.sens * 0.9) * _PI / 180; d *= _PI / 180;
+        var h = 0.5 + 0.5 * Math.cos(e) * Math.sin(d), v = 0.5 + 0.5 * Math.cos(e) * Math.cos(d), z = Math.sin(e);
+        var ax = [h, 1 - h, v, 1 - v, z, 1 - z];
+        return _rgbToHex(_floor(ax[n.r] * 255), _floor(ax[n.g] * 255), _floor(ax[n.b] * 255));
     }
     function _renderDab(x, y, pressure, colorHex, strokeAngle, rawPressure, taper) {
         var p = getParams();
@@ -3731,6 +3782,7 @@
         // a sub colour's change shades a picture's whites (white is the sub colour), never the ink
         var finalColor = !p.jitterSub ? _jitterColor(p, colorHex, x, y)
             : p.tipMode === 'color' ? _jitterColor(p, '#ffffff', x, y) : colorHex;
+        if (p.normalMap) finalColor = _normalColor(p.normalMap, _dabIndex === 1 ? _lockAngle : strokeAngle);   // the first dab's angle is from the canvas origin
         var baseColor = finalColor;
         if (p.subMix) finalColor = _subMixed(p, baseColor, sc);
         if (p.grid) { _gridDab(p, x, y, finalColor); return; }
@@ -4845,7 +4897,8 @@
         } else {
             mainCtx.globalCompositeOperation = blend;
         }
-        mainCtx.drawImage(src, x, y, w, h, x, y, w, h);
+        if (blend === 'lighter' && !locked) _addPx(mainCtx, src.getContext('2d').getImageData(x, y, w, h).data, x, y, w, h, opacity);
+        else mainCtx.drawImage(src, x, y, w, h, x, y, w, h);
         mainCtx.restore();
         // Preview-mode: clear the flushed area from the flow buffer so the
         // dirty rect stays small and per-flush compositing stays O(new dabs)
@@ -5935,7 +5988,7 @@
         engineKind: 'brush',
         shapeWinding: true,
         sketchWidth: 1, sketchWidthSrc: 'none', sketchWidthMin: 0, sketchWidthCurve: 1,
-        sketchOffset: 0.3, sketchProb: 1, sketchMagnet: true, sketchDistDensity: false, sketchDistOpacity: false, sketchAA: false,
+        sketchOffset: 0.3, sketchProb: 1, sketchRandomRGB: false, sketchMagnet: true, sketchDistDensity: false, sketchDistOpacity: false, sketchAA: false,
         /* 'curve' (Krita's curve brush) shares sketchWidth for its line. */
         curveHistory: 30, curveConnect: true, curveQuad: true,
         curvesOpacity: 1, curvesOpacitySrc: 'none', curvesOpacityMin: 0, curvesOpacityCurve: 1,
@@ -6045,8 +6098,11 @@
         valJitter: 0,
         jitterSub: false,        // the jitter shades a colour tip's whites (Clip Studio's sub colour), not the ink
         subMix: 0,               // % each dab goes toward white (Clip Studio's sub colour mix)
+        normalMap: null,         // Krita's tangent normal: the dab's colour is the pen's normal (swizzle, type, sensitivity)
+        subColor: null,          // what subMix goes toward: null white, 'background' the second colour
         subMixSrc: 'none', subMixMin: 0, subMixCurve: 1, subMixSensors: null, subMixCombine: 0,
         cutByLight: false,       // a cutting second brush takes away as much as its colour is light (Clip Studio mode 2)
+        dabBlend: false,         // each dab lands by the blend mode, onto the dabs before it too (Krita build-up)
         dabMax: false,           // each dab keeps the stronger of it and what is there (Clip Studio's blend by darken)
         colorJitterPer: 'dab',
         colorJitterRange: null,  // Clip Studio: [lo, hi] per hue, sat, value, in units of the dial
@@ -6905,11 +6961,19 @@
      * ponytail: O(history) per point -- a grid of past points if very long
      * strokes get slow. Magnetify off, distance density/opacity: guessed
      * linear falloff, unmeasured. Wide lines are anti-aliased; Krita's hard. */
+    /* Chrome's random colour (Sketch/randomRGB): each reach line takes the
+     * paint's channels times three random numbers, and the colour stays on
+     * Krita's line painter -- so every later connection line is drawn in the
+     * last one picked (kis_sketch_paintop.cpp). Sketch_chrome's arc goes
+     * brown there and its bare straight lines stay the paint's colour. */
+    var _skCol = null;
     function _paintSketch(pts, from, to) {
         var p = getParams(), c = _flowCtx;
         if (!c) return;
         c.save();
-        c.fillStyle = c.strokeStyle = _state.lastColor;
+        if (from === 0 || !_skCol) _skCol = _state.lastColor;
+        var rgb = p.sketchRandomRGB ? _hexToRgb(_state.lastColor) : null;
+        c.fillStyle = c.strokeStyle = _skCol;
         c.lineCap = 'round';
         var off = p.sketchOffset == null ? 0.3 : p.sketchOffset, prob = p.sketchProb == null ? 1 : p.sketchProb;
         for (var i = _max(1, from + 1); i <= to; i++) {
@@ -6918,6 +6982,7 @@
             var o = _clamp(_dyn(p, 'flow', p.flow / 100, sc, 0), 0, 1);
             var reach = _dyn(p, 'size', p.size, sc, 0) / 2;
             c.lineWidth = w;
+            c.fillStyle = c.strokeStyle = _skCol;
             _sketchLine(c, pts[i - 1], b, w, o, i > 1);
             for (var j = 0; j < i - 1; j++) {
                 var q = pts[j], dx = q.x - b.x, dy = q.y - b.y, D = _hypot(dx, dy);
@@ -6926,6 +6991,7 @@
                 if (p.sketchDistOpacity) a *= f;
                 if (p.sketchDistDensity) pr *= f;
                 if (pr < 1 && _dabRand(i, j, 29) >= pr) continue;
+                if (rgb) c.fillStyle = c.strokeStyle = _skCol = _rgbToHex(rgb[0] * _dabRand(i, j, 31), rgb[1] * _dabRand(i, j, 32), rgb[2] * _dabRand(i, j, 33));
                 var s0 = { x: b.x + dx * off, y: b.y + dy * off };
                 var s1 = p.sketchMagnet === false   // fur: centred on the new point, pointing at the old one
                     ? { x: b.x - dx * off, y: b.y - dy * off } : { x: q.x - dx * off, y: q.y - dy * off };

@@ -983,6 +983,55 @@ await withPage(async (page) => {
     check('...and its RGBA tip keeps its own alpha as lightness, where a coverage tip reads grey as half ink',
         k4[2] > 120 && k4[2] < 135 && k4[3] === 255, JSON.stringify(k4));
 
+    /* Krita's colour rules, found painting in colour over painted blocks
+     * (bank.mjs --scene): each case is a Krita preset's settings, a stroke,
+     * and the pixel Krita's rule gives. */
+    const kc = await page.eval(`(() => {
+        const app = PaintApp, b = app.brush, ctx = app.layerMgr.layers[app.layerMgr.activeIdx].ctx;
+        const clock = performance.now; let tick = 0; performance.now = () => tick;
+        const tip = '<Brush type="auto_brush" spacing="0.1"><MaskGenerator id="default" diameter="20" ratio="1" hfade="1" vfade="1" spikes="2" type="circle"/></Brush>';
+        const paint = (paintop, params, under, pts, pr) => {
+            b.PRESETS.__kc = Object.assign({}, BrushPack.toPreset({ name: '__kc', paintop, params: Object.assign({ brush_definition: tip }, params) }, { tipSize: 20 }).params);
+            b.loadPreset('__kc');
+            ctx.clearRect(0, 0, 200, 100);
+            if (under) { ctx.fillStyle = under; ctx.fillRect(0, 0, 200, 100); }
+            b.beginStroke(pts[0][0], pts[0][1], pr, '#dc6e1e');
+            for (const [x, y] of pts.slice(1)) { tick += 2; b.moveStroke(x, y, pr, '#dc6e1e'); }
+            b.endStroke();
+            return Array.from(ctx.getImageData(100, 50, 1, 1).data);
+        };
+        const line = [[60, 50], [70, 50], [80, 50], [90, 50], [100, 50], [110, 50], [120, 50], [130, 50], [140, 50]];
+        const ring = Array.from({ length: 40 }, (_, i) => [100 + 8 * Math.cos(i / 6), 50 + 8 * Math.sin(i / 6)]);
+        try {
+            app.config.c2 = '#000000';
+            const up = { PaintOpAction: '1', OpacityValue: '0.5', PressureOpacity: 'false', OpacityUseCurve: 'false' };
+            const r = {
+                add: paint('paintbrush', Object.assign({ CompositeOp: 'add' }, up), null, line, 1),
+                mult: paint('paintbrush', Object.assign({ CompositeOp: 'multiply' }, up), '#808080', line, 1),
+                union: paint('paintbrush', { CompositeOp: 'add', OpacityValue: '0.5', PressureOpacity: 'false', OpacityUseCurve: 'false' }, 'rgba(220,110,30,0.5)', [[100, 50], [100.5, 50]], 1),
+                mix: paint('paintbrush', { PressureMix: 'true', MixUseCurve: 'true', MixSensor: '<params id="pressure"><curve>0,0;1,1;</curve></params>' }, null, line, 0.5),
+                normal: paint('tangentnormal', {}, null, line, 1)
+            };
+            paint('sketchbrush', { 'Sketch/randomRGB': 'true', 'Sketch/probability': '1', 'Sketch/offset': '0', 'Sketch/lineWidth': '1' }, null, ring, 1);
+            const d = ctx.getImageData(80, 30, 40, 40).data;
+            r.chrome = 0;
+            for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && Math.abs(d[i] - 220) + Math.abs(d[i + 1] - 110) > 40) r.chrome++;
+            return JSON.stringify(r);
+        } finally { performance.now = clock; delete b.PRESETS.__kc; b.loadPreset('Round'); }
+    })()`).then(JSON.parse);
+    check('build-up in add: each dab adds onto the last, so the stroke burns past its colour',
+        kc.add[1] > 150 && kc.add[0] >= 250, JSON.stringify(kc.add));
+    check('build-up in multiply: each dab multiplies the last, darker than one pass of the colour',
+        kc.mult[0] < 100, JSON.stringify(kc.mult));
+    check("add's cover is a union: half paint over half paint is 3/4, not full",
+        kc.union[3] > 180 && kc.union[3] < 200, JSON.stringify(kc.union));
+    check("Mix goes from the background colour toward the paint as pressure rises: half pressure is half the orange",
+        kc.mix[0] > 95 && kc.mix[0] < 125, JSON.stringify(kc.mix));
+    check("a tangent normal paints the upright pen's normal, 127,127,255, not the paint",
+        kc.normal.slice(0, 3).join() === '127,127,255', JSON.stringify(kc.normal));
+    check("chrome's random colour shades its lines away from the paint",
+        kc.chrome > 20, JSON.stringify(kc.chrome));
+
     console.log('\n== dropping a file on the panel ==');
     /* Same importer, reached the way a downloaded pack actually arrives.
      * Worth its own check because a drop that nothing handles falls through

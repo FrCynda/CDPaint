@@ -763,6 +763,7 @@
             if (BLENDS[op]) out.blendMode = BLENDS[op];
             else warn.push('blend mode "' + op + '" has no equivalent; painting normally');
         }
+        if (buildUp && out.blendMode && out.blendMode !== 'erase' && out.blendMode !== 'normal') out.dabBlend = true;
 
         /* The size option's strength scales the dab whenever the option is
          * on (KisStandardOption): Nylnook Poska Square's 0.82 laid 1.24x
@@ -852,6 +853,24 @@
                 if (sfs.curve) out.softnessCurve = sfs.curve;
             }
         }
+
+        /* Tangent normal paints no colour of its own: each dab is the normal
+         * the pen's tilt or the stroke's direction makes, its axes put on
+         * red, green and blue as the preset says (KisTangentTiltOption). */
+        if (preset.paintop === 'tangentnormal') out.normalMap = {
+            r: _num(P['Tangent/swizzleRed'], 0), g: _num(P['Tangent/swizzleGreen'], 2), b: _num(P['Tangent/swizzleBlue'], 4),
+            type: _num(P['Tangent/directionType'], 0), sens: _num(P['Tangent/elevationSensitivity'], 100), mix: _num(P['Tangent/mixValue'], 50) };
+
+        /* Mix: the paint runs from the background colour at 0 to the
+         * foreground at 1 along its curve (KisPlainColorSource::selectColor),
+         * which is the sub colour mix turned round. P1 lays brown at light
+         * pressure in Krita, where we laid its orange thinner. */
+        var mxs = preset.paintop === 'paintbrush' && _sensorFor(P, 'Mix');
+        if (mxs && mxs.src && !mxs.all) {
+            out.subMix = 100; out.subColor = 'background'; out.subMixSrc = mxs.src; out.subMixMin = 0;
+            out.subMixCurve = (mxs.curve || [[0, 0], [1, 1]]).map(function (pt) { return [pt[0], 1 - pt[1]].concat(pt.slice(2)); });
+            _kritaReach(out, mxs);
+        } else if (mxs) warn.push('Mix followed ' + mxs.id + ', which we cannot reproduce; painting the foreground colour');
 
         /* ...and a pressure-driven opacity in build-up scales each dab, which
          * then stacks: the same probe's lone dab at pressure 0.5 was 124 and
@@ -1195,7 +1214,7 @@
                 _kritaReach(out, lw, 'sketchWidth');
                 if (lw.curve) out.sketchWidthCurve = lw.curve;
             }
-            if (_bool(P['Sketch/randomRGB'])) warn.push('dropped: the slight colour wobble on its lines');
+            out.sketchRandomRGB = _bool(P['Sketch/randomRGB']);
             if (_bool(P['Sketch/randomOpacity'])) warn.push('dropped: the random opacity on its lines');
         } else if (preset.paintop === 'curvebrush') {
             /* Krita's curve brush: no dabs. Each new input point is joined to
