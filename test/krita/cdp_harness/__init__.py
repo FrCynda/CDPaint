@@ -18,9 +18,9 @@ A job is JSON:
   "listFile": "C:/.../presets.json" }          (optional: every loaded preset)
 xmlSub edits the preset's XML before painting (Preset.toXML/fromXML), to
 render a preset with one option switched off. The edit is in memory only:
-Krita keeps it as an unsaved tweak and nothing is written back -- which also
-means it is STILL THERE for every later render of the same preset in the job.
-A render must set every value an earlier one changed, or run in its own job.
+Krita keeps it as an unsaved tweak and nothing is written back, and every
+render puts back the preset's own XML first (taken the first time it is
+picked), so one job can hold any number of variants of the same preset.
 Each line is ONE Krita stroke (Node.paintLine, whole-pixel ends in 5.3): pressure runs linearly from
 p0 to p1 along it, the way a tablet sweep would. Each render goes on a fresh
 transparent layer and is written to <out>/<name>.png as straight RGBA.
@@ -50,6 +50,7 @@ def _run():
     view = win.addView(doc)
     root = doc.rootNode()
     meta = {}
+    pristine = {}   # filename -> the preset's XML before any render tweaked it
     for r in job["renders"]:
         try:
             p = presets.get(r.get("preset"))
@@ -58,6 +59,11 @@ def _run():
             if p is None:
                 _log("MISSING PRESET %s %s" % (r.get("preset"), r.get("file"))); continue
             view.setCurrentBrushPreset(p)
+            if p.filename() in pristine:   # undo an earlier render's xmlSub
+                Preset(view.currentBrushPreset()).fromXML(pristine[p.filename()])
+                view.setCurrentBrushPreset(view.currentBrushPreset())
+            else:
+                pristine[p.filename()] = Preset(view.currentBrushPreset()).toXML()
             if r.get("dumpXml"):
                 open(os.path.join(job["out"], r["name"] + ".xml"), "w", encoding="utf-8").write(Preset(view.currentBrushPreset()).toXML())
             if r.get("xmlSub"):
