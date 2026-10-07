@@ -1709,6 +1709,35 @@ await withPage(async (page) => {
         mul.quarter[0] > 55 && mul.quarter[0] < 75, JSON.stringify(mul.quarter));
     check("...and a strip of masking tips lays one of them a dab, at the dab's size",
         mul.cells[0] > 240 && mul.cells[1] > 240, JSON.stringify(mul.cells));
+    /* RGBA Rake keeps the lesser of its stroke and its masking stroke
+     * (Krita's darken), and its tines run along the line: a wide bar of a
+     * mask, turned down a downward line, leaves a strip a bar tall wide. */
+    const rake = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, c = document.createElement('canvas'), L = __B.layer().ctx;
+        c.width = 64; c.height = 16; c.getContext('2d').fillRect(0, 0, 64, 16);
+        const reset = () => { b.forgetSaved('Round'); b.loadPreset('Round');
+            b.setParam('size', 40); b.setParam('hardness', 100);
+            b.setParam('flowSrc', 'none'); b.setParam('sizeSrc', 'none'); b.setParam('smoothingMode', 'none');
+            b.setParam('maskOp', 'min'); b.setParam('maskSize', 100); b.setParam('maskSpin', 0); };
+        reset(); b.setParam('maskOpacity', 25);
+        L.clearRect(0, 0, 200, 200);
+        b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+        const dark = L.getImageData(100, 100, 1, 1).data[3];
+        reset(); b.loadDualTip(c.toDataURL()); await new Promise(r => setTimeout(r, 300));
+        b.setParam('maskPicture', true); b.setParam('maskAlong', true);
+        L.clearRect(0, 0, 200, 200);
+        b.beginStroke(100, 40, 1, '#000000');
+        for (let y = 41; y <= 160; y++) b.moveStroke(100, y, 1, '#000000');
+        b.endStroke();
+        const d = L.getImageData(0, 100, 200, 1).data; let w = 0;
+        for (let x = 0; x < 200; x++) if (d[x * 4 + 3] > 128) w++;
+        b.setParam('maskAlong', false);
+        return JSON.stringify({ dark, w });
+    })()`, { awaitPromise: true }));
+    check('a darken masking brush keeps the lesser of the stroke and its mask',
+        rake.dark > 55 && rake.dark < 75, 'alpha ' + rake.dark);
+    check('...and a masking tip set to the drawing angle turns with the line',
+        rake.w > 4 && rake.w < 20, rake.w + ' columns');
     /* Fuzzy is additive in Krita: it scales the size whatever the option's
      * mode. Impasto-details takes the max of fuzzy and pressure, and at full
      * pressure painted every dab full size here, random ones in Krita. */

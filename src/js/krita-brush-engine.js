@@ -811,7 +811,8 @@
      * the finished stroke's alpha --
      *   subtract:     max(0, a - mask)   Waterpaint Soft Edges, hollow;
      *   add:          a ? min(1, a + mask) : 0   (linear dodge), Charcoal;
-     *   multiply:     a * mask           RGBA Impasto.
+     *   multiply:     a * mask           RGBA Impasto;
+     *   min:          min(a, mask)       (darken) RGBA Rake.
      * The mask is built the way Krita builds any stroke, alpha darken
      * included, so it is kept as grey on black like _adCanvas and its dabs
      * cap at their own opacity. Applied in _adToFlow, which rebuilds the
@@ -855,7 +856,7 @@
         }
         // The dab in grey at its opacity, then lightened on: alpha darken.
         var o = _clamp(p.maskOpacity / 100 * _dyn(p, 'maskOpacity', 1, sc, 17), 0, 1);
-        var n = _max(1, _ceil(d * (pic && p.maskSpin ? Math.SQRT2 : 1)) + 2);
+        var n = _max(1, _ceil(d * (pic && (p.maskSpin || p.maskAlong) ? Math.SQRT2 : 1)) + 2);
         if (!_mkDab || _mkDab.width < n || _mkDab.height < n) _mkDab = new OffscreenCanvas(n, n);
         var dc = _mkDab.getContext('2d');
         dc.clearRect(0, 0, n, n);
@@ -867,6 +868,7 @@
             var pk = d / _max(cw, pic.height), pw = cw * pk, ph = pic.height * pk;
             dc.save(); dc.translate(n / 2, n / 2);
             if (p.maskSpin) dc.rotate((_dabRand(x, y, 43) * 2 - 1) * _PI * p.maskSpin);
+            else if (p.maskAlong) dc.rotate((sc.strokeAngle || 0) * _PI / 180);
             dc.drawImage(pic, ci * cw, 0, cw, pic.height, -pw / 2, -ph / 2, pw, ph); dc.restore();
         } else dc.drawImage(_mkStamp.canvas, n / 2 - d / 2, n / 2 - d / 2, d, d);
         dc.globalCompositeOperation = 'source-over';
@@ -890,7 +892,7 @@
         var col = _adColOn === 2 ? _adColCtx.getImageData(x, y, w, h).data : null;
         for (var i = 0; i < d.length; i += 4) {
             d[i + 3] = !m ? d[i] : op === 'add' ? (d[i] ? _min(255, d[i] + m[i]) : 0)
-                : op === 'multiply' ? _round(d[i] * m[i] / 255) : _max(0, d[i] - m[i]);
+                : op === 'multiply' ? _round(d[i] * m[i] / 255) : op === 'min' ? _min(d[i], m[i]) : _max(0, d[i] - m[i]);
             if (col) { d[i] = col[i]; d[i + 1] = col[i + 1]; d[i + 2] = col[i + 2]; }
             else { d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; }
         }
@@ -6068,7 +6070,7 @@
          * alpha comes off this one (see _maskStrokeDab). Sizes are % of the
          * brush, spacing % of the mask dab. */
         speedMax: 3,             // px/ms that reads as full speed
-        maskOp: '', maskCells: 1, maskSize: 100, maskFlow: 100, maskOpacity: 100, maskSpacing: 10, maskTipCurve: null, maskHardness: 100, maskPicture: false,
+        maskOp: '', maskCells: 1, maskAlong: false, maskSize: 100, maskFlow: 100, maskOpacity: 100, maskSpacing: 10, maskTipCurve: null, maskHardness: 100, maskPicture: false,
         maskScatter: 0, maskSpin: 0, maskScatterSrc: 'none', maskScatterMin: 0, maskScatterCurve: 1,
         maskOpacitySrc: 'none', maskOpacityMin: 0, maskOpacityCurve: 1,
         maskSizeSrc: 'none', maskSizeMin: 0, maskSizeCurve: 1,

@@ -934,6 +934,15 @@ await withPage(async (page) => {
         appn[3][0] === 'color', appn[3].join(' | '));
     check('the one we cannot do -- reading a gradient -- still says so',
         appn[2][0] === 'alpha' && /gradient/.test(appn[2][1]), appn[2].join(' | '));
+    /* RGBA Rake: a darken mask whose tines turn with the drawing angle. */
+    const rk = await page.eval(`BrushPack.toPreset({ name: 'x', params: {
+        brush_definition: '<Brush type="auto_brush" spacing="0.1"><MaskGenerator id="default" diameter="30" ratio="1" hfade="1" vfade="1" spikes="2" type="circle"/></Brush>',
+        'MaskingBrush/Enabled': 'true', 'MaskingBrush/MaskingCompositeOp': 'darken',
+        'MaskingBrush/Preset/brush_definition': '<Brush type="gbr_brush" filename="rake.png" scale="1" spacing="0.1"/>',
+        'MaskingBrush/Preset/PressureRotation': 'true',
+        'MaskingBrush/Preset/RotationSensor': '<params id="drawingangle"/>' } }, { tipSize: 30 }).params`);
+    check("a Krita darken mask comes across as one, its tip turned along the line",
+        rk.maskOp === 'min' && rk.maskAlong === true, JSON.stringify([rk.maskOp, rk.maskAlong]));
     /* Krita 4 wrote lightness as its own flag, and its ratio option at a
      * fixed strength squashes the tip with no curve at all (RGBA Impasto:
      * preserveLightness="1", ratio 0.68 with the curve box clear). An RGBA

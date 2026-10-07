@@ -668,8 +668,10 @@
          * is the same second stroke added on instead (Charcoal Pencil), and
          * multiply the stroke times it: RGBA Impasto's rock specks, 12% of
          * each cell, pile up dab on dab into whole rocks there, where
-         * stamped through each dab they left a third of Krita's ink. */
-        var mop = { subtract: 'subtract', linear_dodge: 'add', multiply: 'multiply' }[P['MaskingBrush/MaskingCompositeOp']];
+         * stamped through each dab they left a third of Krita's ink. Darken
+         * keeps the lesser of the two (cfDarkenOnly): RGBA Rake's tines,
+         * stamped through each dab, kept 0.18 of Krita's ink. */
+        var mop = { subtract: 'subtract', linear_dodge: 'add', multiply: 'multiply', darken: 'min' }[P['MaskingBrush/MaskingCompositeOp']];
         if (mb && (mb.mask || mb.filename) && mop) {
             var MP = {}, pre = 'MaskingBrush/Preset/';
             Object.keys(P).forEach(function (k) { if (k.indexOf(pre) === 0) MP[k.slice(pre.length)] = P[k]; });
@@ -693,6 +695,8 @@
             if (_bool(MP.PressureScatter)) out.maskScatter = Math.round(_num(MP.ScatterValue, 0) * 100);
             var mr = _bool(MP.PressureRotation) && /id="fuzzy(dab)?"/.test(MP.RotationSensor || '');
             if (mr) out.maskSpin = _num(MP.RotationValue, 1);
+            // or along the stroke: RGBA Rake's tines run with the line whichever way it goes
+            else if (_bool(MP.PressureRotation) && /id="drawingangle"/.test(MP.RotationSensor || '')) out.maskAlong = true;
             ['Size', 'Flow', 'Opacity', 'Scatter'].forEach(function (o) {
                 if (o === 'Scatter' && !out.maskScatter) return;
                 var s = _sensorFor(MP, o);
