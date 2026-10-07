@@ -7,11 +7,22 @@
 // packVar: page expression holding the pack's bytes; packName its filename.
 // importExpr: page expression for any other import ({ ok, added: [name] }).
 // Imported presets are deleted again, so a long run never fills storage.
-export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false, seed = null, selfSeed = null, refB = null, moves = 0, origin = null, intMoves = false }) {
+export async function measureCase(page, c, { packVar, packName, refB64, W, H, keep = false, importExpr, kritaStart = true, onWhite = false, msPerPx = 0, keepErase = false, under = false, seed = null, selfSeed = null, refB = null, moves = 0, origin = null, intMoves = false, scene = null }) {
     // origin: where the reference's frame sits on its program's canvas, so canvas-anchored paper lands in phase
     const [OX, OY] = origin || [0, 0];
     return JSON.parse(await page.eval(`(async () => {
         const app = PaintApp, b = app.brush, W = ${W}, H = ${H};
+        /* One unpacking a pack: the import reads the whole zip to take one
+         * preset out, and a 91MB pack did that for every brush in it. Each
+         * import gets its own preset list (it filters that list in place). */
+        if (!BrushPack.__memo) {
+            const read = BrushPack.read, memo = new WeakMap();
+            BrushPack.read = (u8) => {
+                if (!memo.has(u8)) memo.set(u8, read(u8));
+                return memo.get(u8).then(p => Object.assign({}, p, { presets: p.presets.slice() }));
+            };
+            BrushPack.__memo = true;
+        }
         const imp = ${importExpr || `await b.importBrushPack(${packVar}, ${JSON.stringify(packName)},
                                             { only: ${JSON.stringify(c.file ? [c.file] : [c.preset, c.preset.replace(/ /g, '_')])} })`};   // the file says b)_Basic-2, Krita shows b) Basic-2
         if (!imp.ok || !imp.added.length) return JSON.stringify({ error: imp.error || 'not imported', skipped: imp && imp.skipped });
@@ -28,7 +39,8 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         // Node.paintLine takes no eraser toggle from the preset (a) Eraser_Textured paints ink
         // there); a true erase blend leaves Krita's canvas blank and is never scored.
         if (b.getParams().blendMode === 'erase' && !${keepErase}) b.setParam('blendMode', 'normal');
-        await new Promise(res => setTimeout(res, 600));          // let the tip load
+        // let the tip and paper load: until the engine has none out (a fixed 600ms was most of a bank run)
+        for (let t = 0; t < 5000 && (t < 20 || (b.loading && b.loading())); t += 10) await new Promise(res => setTimeout(res, 10));
         /* under: stripes to smudge or rub out (mypaint-render.py's), and each
          * side scored by how far it moved a pixel off them, as black ink. */
         const STRIPES = [[255, 0, 0], [0, 0, 255], [255, 255, 0]];
@@ -38,11 +50,29 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
             for (let k = 0; k < 3; k++) m = Math.max(m, Math.abs(Math.round(d[i * 4 + k] * a / 255) - c[k]));
             d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 0; d[i * 4 + 3] = m;
         } };
+        /* scene: { color, rects, paths } -- painted blocks laid on the layer
+         * first, the strokes in colour, then full-pressure paths (Krita's
+         * paintPath). Scored on how far each pixel moved off that start,
+         * and colErr: how far the two disagree on colour where both moved. */
+        const SC = ${JSON.stringify(scene)};
+        const INK = SC ? '#' + SC.color.map(v => v.toString(16).padStart(2, '0')).join('') : '#000000';
+        let base = null, rawOurs = null, rawTheirs = null;
+        if (SC) {
+            const bc = new OffscreenCanvas(W, H), bx = bc.getContext('2d');
+            for (const [x, y, w, h, ...cc] of SC.rects) { bx.fillStyle = 'rgba(' + cc.slice(0, 3).join(',') + ',' + cc[3] / 255 + ')'; bx.fillRect(x, y, w, h); }
+            base = bx.getImageData(0, 0, W, H).data;
+        }
+        const changed = (d) => { for (let i = 0; i < W * H * 4; i += 4) {
+            let m = Math.abs(d[i + 3] - base[i + 3]);
+            for (let k = 0; k < 3; k++) m = Math.max(m, Math.abs(d[i + k] * d[i + 3] - base[i + k] * base[i + 3]) / 255);
+            d[i] = d[i + 1] = d[i + 2] = 0; d[i + 3] = Math.round(m);
+        } };
         // seed pins the stroke's random numbers (null: a fresh draw, as a user gets)
         const paint = async (seed) => {
         if (seed != null) b._setStrokeSeed(seed);
         L.ctx.clearRect(0, 0, W + ${OX}, H + ${OY});
         if (${under}) for (let x = 0; x < W; x += 16) { L.ctx.fillStyle = 'rgb(' + STRIPES[x / 16 % 3] + ')'; L.ctx.fillRect(x, 0, 16, H); }
+        if (SC) for (const [x, y, w, h, ...cc] of SC.rects) { L.ctx.fillStyle = 'rgba(' + cc.slice(0, 3).join(',') + ',' + cc[3] / 255 + ')'; L.ctx.fillRect(x + ${OX}, y + ${OY}, w, h); }
         // Krita's paintLine interpolates pressure along the line; a
         // tablet reports about one sample a pixel at this speed.
         // Node.paintLine hands Krita no speed at all, so the clock stands
@@ -65,21 +95,28 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
             // ...and its distance is counted from the canvas origin (a blank
             // KisDistanceInformation's lastPosition is 0,0): X3CD Doodle.
             b.distanceFrom = ${kritaStart} ? Math.hypot(x0 + (x1 - x0) * h, y0 + (y1 - y0) * h) : 0;
-            b.beginStroke(x0 + (x1 - x0) * h, y0 + (y1 - y0) * h, p0 + (p1 - p0) * h, '#000000');
+            b.beginStroke(x0 + (x1 - x0) * h, y0 + (y1 - y0) * h, p0 + (p1 - p0) * h, INK);
             for (let i = 1; i <= n; i++) {
                 const t = i / n;
                 tick += ${msPerPx} * len / n;
                 // intMoves: Clip Studio's drag posts whole pixels, (x1 - x0) * i / n in integers
-                if (${intMoves}) b.moveStroke(x0 + Math.trunc((x1 - x0) * i / n), y0 + Math.trunc((y1 - y0) * i / n), p0 + (p1 - p0) * t, '#000000');
-                else b.moveStroke(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, p0 + (p1 - p0) * t, '#000000');
+                if (${intMoves}) b.moveStroke(x0 + Math.trunc((x1 - x0) * i / n), y0 + Math.trunc((y1 - y0) * i / n), p0 + (p1 - p0) * t, INK);
+                else b.moveStroke(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, p0 + (p1 - p0) * t, INK);
             }
             b.endStroke();
         }
+        // a path is one stroke at full pressure through its own points only
+        for (const pts of SC ? SC.paths : []) {
+            b.beginStroke(pts[0] + ${OX}, pts[1] + ${OY}, 1, INK);
+            for (let k = 2; k < pts.length; k += 2) b.moveStroke(pts[k] + ${OX}, pts[k + 1] + ${OY}, 1, INK);
+            b.endStroke();
+        }
         performance.now = clock;
-        await new Promise(res => setTimeout(res, 250));
+        await new Promise(res => setTimeout(res, 0));
         b.distanceFrom = 0;
         const ours = L.ctx.getImageData(${OX}, ${OY}, W, H).data;
         if (${under}) moved(ours);
+        if (SC) { if (!rawOurs) rawOurs = ours.slice(); changed(ours); }
         // A reference captured as ink on white (Clip Studio) scores darkness
         // over white, so a stamp's own white parts are paper there too.
         if (${onWhite}) for (let i = 0; i < W * H * 4; i += 4)
@@ -102,6 +139,7 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
         kx.drawImage(img, 0, 0);
         const theirs = kx.getImageData(0, 0, W, H).data;
         if (${under}) moved(theirs);
+        if (SC) { rawTheirs = theirs.slice(); changed(theirs); }
 
         const stat = (d) => {
             let ink = 0, px = 0, part = 0, x0 = W, x1 = -1, y0 = H, y1 = -1, cy = 0;
@@ -176,11 +214,24 @@ export async function measureCase(page, c, { packVar, packName, refB64, W, H, ke
             kk = { soft: softIou(bk, blur(tb)), ink: stat(tb).ink };
         }
         const so = stat(ours), sk = stat(theirs);
+        /* Where both moved a pixel past half, the mean of its worst channel's
+         * difference, each composited on white: right ink, wrong colour. */
+        const colErr = () => {
+            if (!SC) return null;
+            let e = 0, m = 0;
+            const wh = (d, i, k) => d[i + k] * d[i + 3] / 255 + 255 - d[i + 3];
+            for (let i = 0; i < W * H * 4; i += 4) {
+                if (ours[i + 3] <= half || theirs[i + 3] <= half) continue;
+                let w = 0; for (let k = 0; k < 3; k++) w = Math.max(w, Math.abs(wh(rawOurs, i, k) - wh(rawTheirs, i, k)));
+                e += w; m++;
+            }
+            return m ? +(e / m).toFixed(1) : null;
+        };
         return JSON.stringify({ png: btoa(s), ours: so, krita: sk,
             inkRatio: +(so.ink / Math.max(1, sk.ink)).toFixed(3),
             bandInk: so.bands.map((v, i) => +(v / Math.max(1, sk.bands[i])).toFixed(3)),
             meanDiff: +(diff / Math.max(1, n)).toFixed(1), maxDiff: maxd,
-            iou: +(both / Math.max(1, either)).toFixed(3), soft: softIou(bo, bk),
+            iou: +(both / Math.max(1, either)).toFixed(3), soft: softIou(bo, bk), colErr: colErr(),
             self: self ? softIou(bo, blur(self)) : null, kk,
             warnings: imp.notes || [],
             // What the import actually produced, long strings (tip data) cut.

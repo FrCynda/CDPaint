@@ -6,6 +6,8 @@
 //   node test/krita/bank.mjs --holdout [--render]
 //   node test/krita/bank.mjs --random [--render]   the presets that ask for chance, by statistics
 //   node test/krita/bank.mjs -j 1             one pack at a time (default: several at once)
+//   node test/krita/bank.mjs --scene [--render]    the scene: strokes crossing, in colour, over paint, a curve, a tap
+//   node test/krita/bank.mjs --engine colorsmudge  only presets of the engines it matches (a regex)
 //
 // The fixed corpus (compare.mjs) tests seventeen brushes by hand; this runs
 // the whole of Krita's own bundles plus the packs downloaded into
@@ -38,6 +40,21 @@ const W = 480, H = 300, MAX_SIZE = 30;
 const LINES = [[40, 50, 0.1, 440, 50, 1.0], [60, 185, 0.8, 200, 115, 0.8], [300, 115, 0.5, 300, 185, 0.5],
     [440, 250, 1.0, 40, 250, 0.5]];
 const BANDS = [[0, 100], [100, 200], [200, 300]];
+/* --scene: what the strips never ask. Orange paint (each channel different,
+ * so a swapped or greyed colour shows) over a red and a blue block, a ramp
+ * across both; two strokes crossing; two overlapping strokes over a
+ * half-transparent green; a curve (Krita's paintPath, full pressure); a tap.
+ * Scored on how far each pixel moved off the start, and on colour. */
+const SCENE = process.argv.includes('--scene');
+const SCENE_SET = {
+    color: [220, 110, 30],
+    rects: [[60, 30, 120, 80, 200, 40, 40, 255], [260, 30, 120, 80, 40, 80, 200, 255], [260, 140, 190, 50, 40, 160, 60, 128]],
+    paths: [Array.from({ length: 61 }, (_, i) => { const t = i / 60 * 5 * Math.PI / 3; return [355 + 35 * Math.cos(t), 245 + 35 * Math.sin(t)]; })
+        .flat().map(v => +v.toFixed(2))],
+};
+const SCENE_LINES = [[30, 70, 0.3, 450, 70, 1.0], [40, 140, 0.6, 210, 280, 1.0], [210, 140, 1.0, 40, 280, 0.6],
+    [270, 160, 0.8, 440, 160, 0.8], [270, 168, 0.8, 440, 168, 0.8], [235, 215, 1.0, 236, 215, 1.0]];
+const engineRe = process.argv.includes('--engine') ? new RegExp(process.argv[process.argv.indexOf('--engine') + 1], 'i') : null;
 
 const argv = process.argv.slice(2);
 /* --random scores the presets left out for chance: Krita renders each twice,
@@ -132,29 +149,41 @@ for (const p of packs) {
 const results = [];
 // Packs not run this time keep their last results.
 const save = () => {
-    const file = path.join(RUN, RANDOM ? 'results-random.json' : 'results.json'), ids = new Set(results.map(r => r.pack));
+    const file = path.join(RUN, RANDOM ? 'results-random.json' : SCENE ? 'results-scene.json' : 'results.json'), ids = new Set(results.map(r => r.pack));
     const old = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).filter(r => !ids.has(r.pack)) : [];
-    if (!only) fs.writeFileSync(file, JSON.stringify([...old, ...results], null, 1));
+    if (!only && !engineRe) fs.writeFileSync(file, JSON.stringify([...old, ...results], null, 1));
 };
 /* -j N scores N packs at once, each in a browser of its own (BANK_CHILD:
  * a child scores the one pack it is given and hands its rows back in that
- * file). Rendering stays one Krita at a time. Default: half the cores, to 6. */
+ * file). Rendering stays one Krita at a time (render.mjs borrows the user's
+ * kritarc): with --render, Krita renders pack after pack in children of
+ * their own (--render-only) while the scorers take each pack once it is
+ * rendered. Default: half the cores, to 6. */
 const CHILD = process.env.BANK_CHILD;
-const JOBS = CHILD || argv.includes('--render') ? 1
+const RENDER = argv.includes('--render') || argv.includes('--render-only'), RENDER_ONLY = argv.includes('--render-only');
+const JOBS = CHILD ? 1
     : argv.includes('-j') ? +argv[argv.indexOf('-j') + 1] : Math.max(1, Math.min(6, os.cpus().length >> 1));
 if (JOBS > 1 && packs.length > 1) {
     const queue = [...packs].sort((a, b) => fs.statSync(b.zip).size - fs.statSync(a.zip).size);   // biggest first
-    const pass = argv.filter((a, i) => a !== '-j' && argv[i - 1] !== '-j' && a !== '--packs' && argv[i - 1] !== '--packs');
+    const pass = argv.filter((a, i) => a !== '-j' && argv[i - 1] !== '-j' && a !== '--packs' && argv[i - 1] !== '--packs' && a !== '--render');
+    const child = (args, out) => new Promise(res => {
+        const c = spawn(process.execPath, [fileURLToPath(import.meta.url), ...args], { env: { ...process.env, BANK_CHILD: out } });
+        let s = ''; c.stdout.on('data', d => s += d); c.stderr.on('data', d => s += d);
+        c.on('close', () => res(s));
+    });
+    const rendered = {};   // pack id -> done; one Krita at a time, in the order the scorers want them
+    let chain = Promise.resolve();
+    for (const p of queue) rendered[p.id] = chain = !RENDER ? chain : chain.then(async () => {
+        const log = await child([...pass, '--render-only', '--packs', p.id], path.join(RUN, `.render-${p.id}.json`));
+        fs.rmSync(path.join(RUN, `.render-${p.id}.json`), { force: true });
+        process.stdout.write(log.split('\n').filter(l => /rendered|Krita failed|harness error/.test(l)).map(l => p.id + ':' + l).join('\n') + '\n');
+    });
     await Promise.all(Array.from({ length: JOBS }, async () => {
         for (let p; (p = queue.shift());) {
+            await rendered[p.id];
             const out = path.join(RUN, `.child-${p.id}.json`);
             fs.rmSync(out, { force: true });
-            const log = await new Promise(res => {
-                const c = spawn(process.execPath, [fileURLToPath(import.meta.url), ...pass, '--packs', p.id],
-                    { env: { ...process.env, BANK_CHILD: out } });
-                let s = ''; c.stdout.on('data', d => s += d); c.stderr.on('data', d => s += d);
-                c.on('close', () => res(s));
-            });
+            const log = await child([...pass, '--packs', p.id], out);
             process.stdout.write(log.split('\n').filter(l => !/^\s*$|^ \{|^worst:/.test(l)).join('\n') + '\n');
             if (fs.existsSync(out)) { results.push(...JSON.parse(fs.readFileSync(out, 'utf8'))); fs.rmSync(out); }
             else results.push({ pack: p.id, status: 'harness error', why: ['the child scored nothing'] });
@@ -206,17 +235,18 @@ async function scorePack(page, p) {
             }));
         })()`, { awaitPromise: true }));
         const todo = list.filter(e => RANDOM ? e.random.length : !e.random.length);
-        todo.forEach((e, i) => { e.key = (RANDOM ? 'r' : 'p') + i; });
-        const refDir = path.join(p.dir, RANDOM ? 'rref' : 'ref');
+        todo.forEach((e, i) => { e.key = (RANDOM ? 'r' : SCENE ? 's' : 'p') + i; });
+        const refDir = path.join(p.dir, RANDOM ? 'rref' : SCENE ? 'sref' : 'ref');
 
-        if (argv.includes('--render') && !fs.existsSync(path.join(refDir, 'meta.json'))) {
+        if (RENDER && !fs.existsSync(path.join(refDir, 'meta.json'))) {
             const res = path.join(p.dir, 'kres');
             fs.rmSync(res, { recursive: true, force: true });
             fs.mkdirSync(res, { recursive: true });
             if (p.folder) fs.cpSync(p.flat, res, { recursive: true });
             else fs.copyFileSync(p.src, path.join(res, path.basename(p.src)));
             const job = { width: W, height: H, out: refDir.replace(/\\/g, '/'), renders: todo.flatMap(e =>
-                ['a', 'b'].map(s => ({ name: e.key + s, file: e.file, maxSize: MAX_SIZE, lines: LINES }))) };
+                ['a', 'b'].map(s => SCENE ? { name: e.key + s, file: e.file, maxSize: MAX_SIZE, lines: SCENE_LINES, ...SCENE_SET }
+                    : { name: e.key + s, file: e.file, maxSize: MAX_SIZE, lines: LINES })) };
             fs.mkdirSync(p.dir, { recursive: true });
             fs.writeFileSync(path.join(p.dir, 'job.json'), JSON.stringify(job));
             const t = Date.now();
@@ -227,10 +257,11 @@ async function scorePack(page, p) {
             fs.rmSync(res, { recursive: true, force: true });
             console.log(`  rendered ${todo.length} presets in ${Math.round((Date.now() - t) / 1000)}s`);
         }
+        if (RENDER_ONLY) return;
         const meta = fs.existsSync(path.join(refDir, 'meta.json')) ? JSON.parse(fs.readFileSync(path.join(refDir, 'meta.json'), 'utf8')) : null;
 
         for (const e of RANDOM ? todo : list) {
-            if (only && !only.test(e.name)) continue;
+            if (only && !only.test(e.name) || engineRe && !engineRe.test(e.engine)) continue;
             const row = { pack: p.id, name: e.name, engine: e.engine };
             results.push(row);
             if (RANDOM) { await scoreRandom(page, p, e, row, refDir, meta); continue; }
@@ -254,22 +285,24 @@ async function scorePack(page, p) {
             if (!(fs.readFileSync(path.join(refDir, e.key + 'a.png')).length > 0)) { row.status = 'no render'; continue; }
             let r;
             try {
-                r = await measureCase(page, { preset: e.name, file: e.file, size: row.size, lines: LINES, bands: BANDS },
-                    { packVar: 'window.__pk', packName: path.basename(p.zip), refB64: A, W, H });
+                r = await measureCase(page, { preset: e.name, file: e.file, size: row.size, lines: SCENE ? SCENE_LINES : LINES, bands: BANDS },
+                    { packVar: 'window.__pk', packName: path.basename(p.zip), refB64: A, W, H, scene: SCENE ? SCENE_SET : null, keepErase: SCENE });
             } catch (err) { row.status = 'harness error'; row.why = [err.message]; continue; }
             if (r.error) { row.status = 'CDPaint could not import it'; row.why = [r.error, ...(r.skipped || []).map(s => s.why)]; continue; }
             // ours should be blank too: say how much we laid down where Krita laid none
             if (!r.krita.ink) { row.status = 'Krita painted nothing'; row.ourInk = r.ours.ink; continue; }
             fs.writeFileSync(path.join(p.dir, e.key + '.png'), Buffer.from(r.png, 'base64'));
             Object.assign(row, { status: 'scored', key: e.key, inkRatio: r.inkRatio, bandInk: r.bandInk, iou: r.iou,
-                meanDiff: r.meanDiff, warnings: (r.warnings[0] || {}).warnings || [] });
-            console.log(`  ${e.name.padEnd(46).slice(0, 46)} ink ${String(r.inkRatio).padEnd(6)} IoU ${r.iou}`);
+                meanDiff: r.meanDiff, colErr: r.colErr, warnings: (r.warnings[0] || {}).warnings || [] });
+            console.log(`  ${e.name.padEnd(46).slice(0, 46)} ink ${String(r.inkRatio).padEnd(6)} IoU ${r.iou}${SCENE ? ' colour ' + r.colErr : ''}`);
         }
 }
 
 const scored = results.filter(r => r.status === 'scored');
-const grade = RANDOM ? gradeRandom : r => r.iou >= 0.9 && r.inkRatio >= 0.9 && r.inkRatio <= 1.1 ? 'close'
-    : r.iou >= 0.75 && r.inkRatio >= 0.8 && r.inkRatio <= 1.25 ? 'near' : 'off';
+// scene: right shape, wrong colour is not close. Colour errors split at 9 -> 22 (a gap in all 386 rows)
+const ce = r => r.colErr ?? 0;
+const grade = RANDOM ? gradeRandom : r => r.iou >= 0.9 && r.inkRatio >= 0.9 && r.inkRatio <= 1.1 && ce(r) <= 10 ? 'close'
+    : r.iou >= 0.75 && r.inkRatio >= 0.8 && r.inkRatio <= 1.25 && ce(r) <= 25 ? 'near' : 'off';
 const tally = {};
 for (const r of results) {
     const k = r.status === 'scored' ? grade(r) : r.status;

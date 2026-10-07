@@ -6361,6 +6361,9 @@
         img.src = url;
     }
 
+    // a tip or paper image still loading: the Krita bank waits on this, not a fixed 600ms
+    engine.loading = function () { return _pendingLoads.length > 0; };
+
     engine.loadCustomTip = function (url, forPreset) {
         console.log('[KritaEngine] loadCustomTip called with:', url);
         _loadTipImage(url, forPreset, function (oc) {
