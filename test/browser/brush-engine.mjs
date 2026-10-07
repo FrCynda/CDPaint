@@ -1229,6 +1229,18 @@ await withPage(async (page) => {
         b.endStroke();
         delete b.PRESETS[b._currentPreset].second;
         out.addPx = Array.from(__B.layer().ctx.getImageData(100, 100, 1, 1).data);
+        /* Clip Studio's measured watercolour rim lifts the alpha of the faintest edge pixels; their own colour is 8-bit noise
+         * ((127,0,255) for alpha 2), so the lift must not show it: Flat watercolor's rim had (255,0,255) specks. */
+        b.PRESETS.__rimTest = { size: 120, hardness: 40, opacity: 100, flow: 100, spacing: 1, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none', blendMode: 'multiply',
+            edgeWidth: 2, edgeAdd: true, edgeDensity: 10, edgeValue: 0 };
+        b.loadPreset('__rimTest');
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(30, 100, 1, '#912dcd');
+        for (let x = 31; x <= 170; x += 3) b.moveStroke(x, 100, 1, '#912dcd');
+        b.endStroke();
+        delete b.PRESETS.__rimTest;
+        const rim = __B.layer().ctx.getImageData(0, 0, 200, 200).data;
+        out.rimBad = 0; for (let i = 0; i < rim.length; i += 4) if (rim[i + 3] && Math.abs(rim[i] - 145) + Math.abs(rim[i + 1] - 45) + Math.abs(rim[i + 2] - 205) > 150) out.rimBad++;
         /* A preset's sub colour mix may be random (Generic Flower BG), and
          * with a random opacity too each dab keeps its own colour: the
          * opacity's buffer used to paint the whole stroke the last dab's. */
@@ -1274,6 +1286,8 @@ await withPage(async (page) => {
         csp.lit > 10, 'lit ' + csp.lit);
     check("Clip Studio's mode 2 second brush adds its colour to the first's: 80,48,112 twice is 160,96,224",
         csp.addPx.join() === '160,96,224,255', JSON.stringify(csp.addPx));
+    check("a watercolour rim's lifted faint pixels keep the paint's colour, not 8-bit noise",
+        csp.rimBad === 0, 'bad ' + csp.rimBad);
     check("a Clip Studio sub colour mix at random gives each dab its own grey, random opacity or not",
         csp.greys >= 3, 'greys ' + csp.greys);
     check("a Clip Studio thickness driven by two inputs thins the tip",

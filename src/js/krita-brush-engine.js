@@ -2059,11 +2059,20 @@
             if (yy < eh - 1) { v = _min(v, D[i + ew] + 1); if (xx < ew - 1) v = _min(v, D[i + ew + 1] + S); if (xx > 0) v = _min(v, D[i + ew - 1] + S); }
             D[i] = v;
         }
+        /* Read back from the buffer's premultiplied 8 bits, a faint pixel (alpha 2) has no colour worth the name -- it
+         * reads (127,0,255) -- and the lift below made it a visible (255,0,255) speck on Flat watercolor's rim. A faint
+         * pixel takes the colour of the stroke's body instead.
+         * ponytail: the mean of the solid pixels in the region, so a brush that varies its colour dab to dab has a flat rim. */
+        var br = 0, bg = 0, bb = 0, bn = 0;
+        var ma = 0; for (i = 0; i < n; i++) if (d[i * 4 + 3] > ma) ma = d[i * 4 + 3];
+        for (i = 0; i < n; i++) if (d[i * 4 + 3] >= ma * 0.9 && ma > 128) { br += d[i * 4]; bg += d[i * 4 + 1]; bb += d[i * 4 + 2]; bn++; }
+        if (bn >= 16) { br /= bn; bg /= bn; bb /= bn; } else bn = 0;
         var ox = x - ex, oy = y - ey;
         for (yy = 0; yy < h; yy++) for (xx = 0; xx < w; xx++) {
             i = (yy + oy) * ew + xx + ox; v = D[i];
             if (!v) continue;
             var t = v < R ? (v < 1.5 ? 0.29 : (R - v) / R) : 0, kt = k * t;
+            if (bn && t && d[i * 4 + 3] && d[i * 4 + 3] < ma / 2) { var fu = 1 - d[i * 4 + 3] * 2 / ma; d[i * 4] += (br - d[i * 4]) * fu; d[i * 4 + 1] += (bg - d[i * 4 + 1]) * fu; d[i * 4 + 2] += (bb - d[i * 4 + 2]) * fu; }
             d[i * 4 + 3] = _min(255, _round(d[i * 4 + 3] * opacity + 255 * kt));
             if (value && t) {
                 var j = i * 4, m = _max(d[j], d[j + 1], d[j + 2]) / 255;
