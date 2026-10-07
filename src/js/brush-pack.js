@@ -3802,6 +3802,9 @@
          * it: an eraser at the brush's opacity.
          * ponytail: its soft falloff is not ours yet -- ours clears a flat band. */
         if (_sutNum(v.CompositeMode, 0) === 27) out.blendMode = 'erase';
+        // Mode 2 is Multiply (the watercolours, Wet wash, the inks): stacked strokes darken and saturate
+        // (255,50,100) x3 -> (255,70,101), x10 -> (255,4,13), measured in Clip Studio
+        else if (_sutNum(v.CompositeMode, 0) === 2) out.blendMode = 'multiply';
         // a picture takes no hardness: Pastel's dab at 1 and at 100 is the same picture x flow
         out.hardness = opts.hasTip ? 100 : Math.max(0, Math.min(100, Math.round(_sutNum(v.BrushHardness, 80))));
         /* Spacing mode 0 is Clip Studio's fixed interval; 1-3 (wide, normal,

@@ -3390,7 +3390,7 @@
      * where Krita, over its white background, lays opaque grey.
      * ponytail: the picture is read whole once a stroke (4 bytes a pixel);
      * read it by the dab's rect if big documents stall. */
-    var _smS = null, _smG = null, _smPic = null, _smB = new Float64Array(4);
+    var _smS = null, _smG = null, _smPic = null, _smBase = null, _smB = new Float64Array(4);
     function _smRead(d, rx, ry, rw, rh, T, F, pic) {
         var n = rw * rh * 4;
         if (!F || F.length < n) F = new Float32Array(n);
@@ -3501,7 +3501,9 @@
         var prev = _smPrev;
         _smPrev = [x, y, kx + kW / 2, ky + kH / 2];
         if (!prev) {                        // the first dab only loads the brush
-            _smPic = null;
+            _smPic = _smBase = null;
+            // Clip Studio Multiply on a mixing brush (Wet wash): each stroke multiplies what was there before it began, not its own dabs
+            if (p.mixAlpha != null && p.blendMode === 'multiply') { try { _smBase = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data; } catch (e1) { _smBase = null; } }
             if (p.smudgeMerged && app.layerMgr && app.layerMgr.getFlattenedCanvas) {
                 try { _smPic = app.layerMgr.getFlattenedCanvas().getContext('2d').getImageData(0, 0, _docW(), _docH()).data; } catch (e0) { _smPic = null; }
             }
@@ -3663,6 +3665,7 @@
                     k = mtr ? k0 / _clamp(alpha, 0, 1) * mt[j * mw + i] / 255 : k0 * m / 255;
                     B[0] = src[u] * ci + pr; B[1] = src[u + 1] * ci + pg; B[2] = src[u + 2] * ci + pb; B[3] = src[u + 3] * ci + pa;
                     if (mt && !mtr) { var gr = mt[j * mw + i] / m; B[0] *= gr; B[1] *= gr; B[2] *= gr; B[3] *= gr; }
+                    if (_smBase) { var bi = ((ry + py) * ctx.canvas.width + rx + px) * 4, fb = _smBase[bi + 3] / 255; for (n = 0; n < 3; n++) B[n] = fb * _smBase[bi + n] * (1 - c + c * rgb[n] / 255) + (1 - fb) * c * rgb[n]; B[3] = 255 * (fb + (1 - fb) * c); }
                 } else {
                     k = m / 255;
                     var sa = p.smudgeSmearAlpha === false ? src[u + 3] / 255 * sO : 0;
@@ -6556,7 +6559,7 @@
             if (_params.hasOwnProperty(_fk)) _strokeParams[_fk] = _isArray(_params[_fk]) ? _cloneCurve(_params[_fk]) : _params[_fk];
         }
         _wet = [];                // the brush is loaded fresh each stroke
-        _smPrev = null; _smT = null; _smS = null; _smPic = null; _smCar = null; _smPx = _smPy = NaN;
+        _smPrev = null; _smT = null; _smS = null; _smPic = _smBase = null; _smCar = null; _smPx = _smPy = NaN;
         _wetPos = [];
         _smoothAngle = NaN;
         _lastDabDist = 0;

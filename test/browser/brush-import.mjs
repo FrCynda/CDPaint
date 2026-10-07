@@ -40,6 +40,7 @@ const FILES = {
     'seed-csp2pc.brush': b64('seed-csp2pc.brush'),
     'rough-scrape.sut': b64('rough-scrape.sut'),
     'pixel-select.sut': b64('pixel-select.sut'),
+    'multiply-scrape.sut': b64('multiply-scrape.sut'),
     'dot-pen.sut': b64('dot-pen.sut'),
     'library-tips.sut': b64('library-tips.sut'),
     'library-repeat.sut': b64('library-repeat.sut'),
@@ -1320,6 +1321,18 @@ await withPage(async (page) => {
 
     check('a .sut installs', sut.r.brushes === 1 && sut.r.failed === 0, JSON.stringify(sut.r));
     check('the sub tool keeps its name', sut.name === 'Rough Scrape', `${sut.name}`);
+    /* Composite mode 2 is Multiply (every watercolour, Wet wash, the inks): stacked in Clip Studio
+     * (255,50,100) goes (255,70,101) after 3 strokes and (255,4,13) after 10. Importing it as normal
+     * left them stuck at the one colour. */
+    const mul = await page.eval(`(async () => {
+        for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
+        await PaintApp.brush.importFiles([window.__files['multiply-scrape.sut']]);
+        const a = PaintApp.brush.PRESETS[PaintApp.brush.userPresetNames()[0]].blendMode;
+        for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
+        await PaintApp.brush.importFiles([window.__files['rough-scrape.sut']]);
+        return JSON.stringify([a, PaintApp.brush.PRESETS[PaintApp.brush.userPresetNames()[0]].blendMode || 'normal']);
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('Clip Studio composite mode 2 imports as multiply, mode 0 stays normal', mul[0] === 'multiply' && mul[1] === 'normal', JSON.stringify(mul));
     /* Clip Studio stores a real diameter, unlike Procreate, so the size is
      * the brush's own and not the tip image's. This one sprays, so each
      * dab is a particle of its spray size (14.1) over an 80px patch. */
