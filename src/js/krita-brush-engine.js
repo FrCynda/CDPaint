@@ -5995,6 +5995,7 @@
         sketchWidthSensors: null, sketchWidthCombine: 0, curvesOpacitySensors: null, curvesOpacityCombine: 0,
         /* What a deform does to the pixels it finds, and how hard. */
         deformAction: 'move',
+        deformBilinear: false,   // Krita's "use bilinear": the pushed pixel is blended from four, not the nearest taken
         deformAmount: 30,
         tipFlip: '',
         scatter: 0,
@@ -7410,32 +7411,38 @@
             } catch (e2) { stencil = null; }
         }
         var locked = _alphaLocked();
-        var amt = _clamp(amount, 0, 1);
+        var amt = _clamp(amount, 0, 1), bil = !!getParams().deformBilinear;
         for (var py = 0; py < h; py++) {
             for (var px = 0; px < w; px++) {
                 var i = (py * w + px) * 4;
                 od[i] = sd[i]; od[i + 1] = sd[i + 1]; od[i + 2] = sd[i + 2]; od[i + 3] = sd[i + 3];
-                var ddx = (x0 + px + 0.5) - cx, ddy = (y0 + py + 0.5) - cy;
-                var d = _hypot(ddx, ddy);
-                if (d > r) continue;
+                /* DeformBrush::paintMask: a pixel index against the dab's centre, its
+                 * distance 0 at the middle to 1 at the rim, the sample point moved
+                 * by the action, and the nearest pixel taken (bilinear is off by
+                 * default). Move, grow, shrink and swirl are all linear in it. */
+                var ddx = (x0 + px) - cx, ddy = (y0 + py) - cy;
+                var d = _hypot(ddx, ddy) / r;
+                if (d > 1) continue;
                 if (stencil && !stencil[i + 3]) continue;
-                // Strongest under the middle of the dab, nothing at its edge.
-                var fall = 1 - d / r;
-                fall = fall * fall * amt;
-                var sx = x0 + px + 0.5, sy = y0 + py + 0.5;
+                var sx, sy, f1 = 1 - d;
                 if (action === 'move') {
-                    sx -= mvx * fall; sy -= mvy * fall;
-                } else if (action === 'grow' || action === 'lens-in') {
-                    sx = cx + ddx * (1 - fall); sy = cy + ddy * (1 - fall);
-                } else if (action === 'shrink' || action === 'lens-out') {
-                    sx = cx + ddx * (1 + fall); sy = cy + ddy * (1 + fall);
-                } else {                       // the two swirls
-                    var a = fall * _PI * (action === 'swirl-ccw' ? -1 : 1);
+                    sx = cx + ddx - mvx * amt * f1; sy = cy + ddy - mvy * amt * f1;
+                } else if (action === 'grow' || action === 'shrink') {
+                    var sf = f1 * (action === 'grow' ? 1 + amt : 1 - amt) + d;
+                    sx = cx + ddx / sf; sy = cy + ddy / sf;
+                } else if (action === 'swirl-cw' || action === 'swirl-ccw') {
+                    var a = -_PI * amt * (action === 'swirl-cw' ? 1 : -1) * f1;
                     var ca = _cos(a), sa = _sin(a);
-                    sx = cx + ddx * ca - ddy * sa;
-                    sy = cy + ddx * sa + ddy * ca;
+                    sx = cx + ddx * ca - ddy * sa; sy = cy + ddx * sa + ddy * ca;
+                } else {                       // the lenses: the old falloff, unmeasured
+                    var fall = f1 * f1 * amt;
+                    sx = action === 'lens-in' ? cx + ddx * (1 - fall) : cx + ddx * (1 + fall);
+                    sy = action === 'lens-in' ? cy + ddy * (1 - fall) : cy + ddy * (1 + fall);
                 }
-                _sampleBilinear(sd, w, h, sx - x0 - 0.5, sy - y0 - 0.5, od, i);
+                if (bil) { _sampleBilinear(sd, w, h, sx - x0, sy - y0, od, i); if (locked) od[i + 3] = sd[i + 3]; continue; }
+                var qx = _round(sx) - x0, qy = _round(sy) - y0;
+                if (qx < 0 || qy < 0 || qx >= w || qy >= h) { od[i + 3] = 0; od[i] = od[i + 1] = od[i + 2] = 0; }
+                else { var q = (qy * w + qx) * 4; od[i] = sd[q]; od[i + 1] = sd[q + 1]; od[i + 2] = sd[q + 2]; od[i + 3] = sd[q + 3]; }
                 if (locked) od[i + 3] = sd[i + 3];
             }
         }
@@ -7443,24 +7450,25 @@
     }
 
     /* Four pixels blended, because a deform moves pixels by fractions of one
-     * and taking the nearest turns a smooth smear into stair steps. */
+     * and taking the nearest turns a smooth smear into stair steps. Colour is
+     * weighted by alpha: a see-through pixel's black is no part of the picture
+     * (Distort Move dragged the red block's edge out grey). */
     function _sampleBilinear(sd, w, h, fx, fy, od, at) {
         var ix = _floor(fx), iy = _floor(fy);
         var tx = fx - ix, ty = fy - iy;
-        var c;
-        for (c = 0; c < 4; c++) {
-            var v = 0, wsum = 0;
-            for (var oy = 0; oy < 2; oy++) {
-                for (var ox = 0; ox < 2; ox++) {
-                    var sx = ix + ox, sy = iy + oy;
-                    if (sx < 0 || sy < 0 || sx >= w || sy >= h) continue;
-                    var wt = (ox ? tx : 1 - tx) * (oy ? ty : 1 - ty);
-                    v += sd[(sy * w + sx) * 4 + c] * wt;
-                    wsum += wt;
-                }
+        var r = 0, g = 0, b = 0, a = 0, wsum = 0;
+        for (var oy = 0; oy < 2; oy++) {
+            for (var ox = 0; ox < 2; ox++) {
+                var sx = ix + ox, sy = iy + oy;
+                if (sx < 0 || sy < 0 || sx >= w || sy >= h) continue;
+                var wt = (ox ? tx : 1 - tx) * (oy ? ty : 1 - ty), j = (sy * w + sx) * 4, wa = wt * sd[j + 3];
+                r += sd[j] * wa; g += sd[j + 1] * wa; b += sd[j + 2] * wa; a += wa; wsum += wt;
             }
-            od[at + c] = wsum > 0 ? _round(v / wsum) : od[at + c];
         }
+        if (!(wsum > 0)) return;
+        od[at + 3] = _round(a / wsum);
+        if (a > 0) { od[at] = _round(r / a); od[at + 1] = _round(g / a); od[at + 2] = _round(b / a); }
+        else od[at] = od[at + 1] = od[at + 2] = 0;
     }
 
     /* Walk the points this frame added and deform along them.
@@ -7482,19 +7490,22 @@
             var a = pts[i - 1], b = pts[i];
             var mvx = b.x - a.x, mvy = b.y - a.y;
             var dist = _hypot(mvx, mvy);
-            if (action !== 'move') {
-                if (i === to) _deformAt(b.x, b.y, 0, 0, sz, amount, action);
-                continue;
-            }
-            if (dist < 0.5) continue;
-            var n = _max(1, _ceil(dist / step));
-            for (var k = 1; k <= n; k++) {
-                var t = k / n;
-                _deformAt(_lerp(a.x, b.x, t), _lerp(a.y, b.y, t),
-                          mvx / n, mvy / n, sz, amount, action);
+            /* Krita lays a dab every `spacing` along the path, and each pushes
+             * by how far the pen has come since the dab before (the first dab
+             * only notes where it is, so it pushes nothing). */
+            if (i === 1 || !_dfLast) _dfLast = { x: a.x, y: a.y, first: true };
+            var dx = b.x - a.x, dy = b.y - a.y, seg = _hypot(dx, dy), at = 0;
+            while (seg > 0) {
+                var room = step - (_hypot(a.x + dx * at / seg - _dfLast.x, a.y + dy * at / seg - _dfLast.y));
+                if (room > seg - at) break;
+                at += room;
+                var px = a.x + dx * at / seg, py = a.y + dy * at / seg;
+                if (!_dfLast.first || action !== 'move') _deformAt(px, py, px - _dfLast.x, py - _dfLast.y, sz, amount, action);
+                _dfLast.x = px; _dfLast.y = py; _dfLast.first = false;
             }
         }
     }
+    var _dfLast = null;
 
     /* ── MyPaint ─────────────────────────────────────────────────────────
      * libmypaint 1.6.1 (ISC licence, (C) 2007-2011 Martin Renold and

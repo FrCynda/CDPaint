@@ -1032,6 +1032,26 @@ await withPage(async (page) => {
     check("chrome's random colour shades its lines away from the paint",
         kc.chrome > 20, JSON.stringify(kc.chrome));
 
+    /* A deform brush dabs every spacing along the path and pushes by the
+     * distance since the dab before; a push read at every input point is
+     * under half a pixel and moves nothing. What it drags keeps its colour. */
+    const dfm = await page.eval(`(() => {
+        const app = PaintApp, b = app.brush, ctx = app.layerMgr.layers[app.layerMgr.activeIdx].ctx;
+        const clock = performance.now; let tick = 0; performance.now = () => tick;
+        try {
+            b.PRESETS.__d = Object.assign({}, b.DEFAULTS, { engineKind: 'deform', deformAction: 'move', deformAmount: 30, deformBilinear: true, size: 50, spacing: 15, shape: 'circle' });
+            b.loadPreset('__d');
+            ctx.clearRect(0, 0, 300, 100); ctx.fillStyle = '#c82828'; ctx.fillRect(60, 30, 120, 40);
+            b.beginStroke(30, 50, 1, '#000000');
+            for (let x = 31; x <= 200; x++) { tick += 2; b.moveStroke(x, 50, 1, '#000000'); }
+            b.endStroke();
+            return JSON.stringify([Array.from(ctx.getImageData(186, 50, 1, 1).data), Array.from(ctx.getImageData(62, 50, 1, 1).data)]);
+        } finally { performance.now = clock; delete b.PRESETS.__d; b.loadPreset('Round'); }
+    })()`).then(JSON.parse);
+    check("a move deform drags the block's edge out, still red, not grey",
+        dfm[0][3] > 200 && dfm[0][0] > 190 && dfm[0][1] < 60, JSON.stringify(dfm[0]));
+    check('...and leaves the edge it started from a little hollow', dfm[1][3] < 255, JSON.stringify(dfm[1]));
+
     console.log('\n== dropping a file on the panel ==');
     /* Same importer, reached the way a downloaded pack actually arrives.
      * Worth its own check because a drop that nothing handles falls through

@@ -1160,6 +1160,7 @@
             } else {
                 out.engineKind = 'deform';
                 out.deformAction = act;
+                out.deformBilinear = _bool(P['Deform/bilinear']);
                 out.deformAmount = Math.max(1, Math.min(100,
                     Math.round(_num(P['Deform/deformAmount'], 0.3) * 100)));
                 out.shape = 'circle';
