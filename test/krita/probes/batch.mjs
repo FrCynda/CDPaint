@@ -11,6 +11,7 @@ for (const probe of probes.split(',')) {
     for (const n of names.length ? names : fs.readdirSync(root).filter(d => fs.existsSync(path.join(root, d, 'job.json'))))
         if (fs.existsSync(path.join(root, n, 'job.json'))) runs.push(path.join(root, n));
 }
+if (!runs.length) throw new Error('no such variants: ' + names.join(' ') + ' (variants are separate arguments)');
 const jobs = runs.map(d => JSON.parse(fs.readFileSync(path.join(d, 'job.json'), 'utf8')));
 const W = Math.max(...jobs.map(j => j.width)), H = Math.max(...jobs.map(j => j.height));
 const tmp = path.resolve('test/krita/out/.batch'); fs.rmSync(tmp, { recursive: true, force: true }); fs.mkdirSync(tmp, { recursive: true });

@@ -949,6 +949,14 @@ await withPage(async (page) => {
         brush_definition: '<Brush type="auto_brush" spacing="0.1"><MaskGenerator id="default" diameter="30" ratio="1" hfade="1" vfade="1" spikes="2" type="circle"/></Brush>',
         PressureScatter: 'true', 'Scattering/Amount': '2.5' } }, { tipSize: 30 }).params.scatter`);
     check("a Krita 2 preset's Scattering/Amount still scatters", aq === 250, String(aq));
+    /* A colour smudge that stores no opacity curve box reads it ticked, as
+     * Krita does, though PressureOpacity says false (Aquarelle Paint); a
+     * pixel brush stored the same way stays flat. */
+    const op = await page.eval(`JSON.stringify(['colorsmudge', 'paintbrush'].map(id => BrushPack.toPreset({ name: 'x', paintop: id, params: {
+        brush_definition: '<Brush type="auto_brush" spacing="0.1"><MaskGenerator id="default" diameter="30" ratio="1" hfade="1" vfade="1" spikes="2" type="circle"/></Brush>',
+        PressureOpacity: 'false', OpacitySensor: '<params id="pressure"><curve>0,0;1,1;</curve></params>' } }, { tipSize: 30 }).params.dabOpacitySrc || null))`).then(JSON.parse);
+    check('a colour smudge with no opacity curve box follows pressure, a pixel brush does not',
+        op[0] === 'pressure' && op[1] === null, JSON.stringify(op));
     /* Krita 4 wrote lightness as its own flag, and its ratio option at a
      * fixed strength squashes the tip with no curve at all (RGBA Impasto:
      * preserveLightness="1", ratio 0.68 with the curve box clear). An RGBA

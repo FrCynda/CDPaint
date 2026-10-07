@@ -769,9 +769,13 @@
          * Krita's ink without it. */
         if (_bool(P.PressureSize) && _num(P.SizeValue, 1) !== 1) out.sizeStrength = _num(P.SizeValue, 1);
 
-        // Size and flow ride their sensors the same way ours do.
+        /* Size and flow ride their sensors the same way ours do. A colour
+         * smudge preset that stores no opacity curve box gets it ticked, as
+         * Krita reads it: Aquarelle Paint's pressure counts four times over
+         * (opacity into colour rate and final strength), ink 1.55 -> 0.98.
+         * On other engines the same rule turned 13 close presets off. */
         [['Size', 'size'], ['Flow', 'flow'], ['Opacity', 'opacity']].forEach(function (pair) {
-            var s = _sensorFor(P, pair[0], pair[0] === 'Flow' && preset.paintop === 'paintbrush');
+            var s = _sensorFor(P, pair[0], pair[0] === 'Flow' && preset.paintop === 'paintbrush' || pair[0] === 'Opacity' && preset.paintop === 'colorsmudge');
             var key = pair[1];
             if (!s) return;
             if (key === 'opacity') {
