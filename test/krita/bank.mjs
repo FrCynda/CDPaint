@@ -5,6 +5,7 @@
 //   node test/krita/bank.mjs --packs deevad23,eo-v3
 //   node test/krita/bank.mjs --holdout [--render]
 //   node test/krita/bank.mjs --random [--render]   the presets that ask for chance, by statistics
+//   node test/krita/bank.mjs -j 1             one pack at a time (default: several at once)
 //
 // The fixed corpus (compare.mjs) tests seventeen brushes by hand; this runs
 // the whole of Krita's own bundles plus the packs downloaded into
@@ -18,7 +19,9 @@
 import { withPage, REPO_ROOT } from '../browser.mjs';
 import { renderKrita } from './render.mjs';
 import { measureCase } from './measure.mjs';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
+import { fileURLToPath } from 'url';
+import os from 'os';
 import fs from 'fs';
 import path from 'path';
 
@@ -127,17 +130,47 @@ for (const p of packs) {
 }
 
 const results = [];
-await withPage(async (page) => {
+// Packs not run this time keep their last results.
+const save = () => {
+    const file = path.join(RUN, RANDOM ? 'results-random.json' : 'results.json'), ids = new Set(results.map(r => r.pack));
+    const old = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).filter(r => !ids.has(r.pack)) : [];
+    if (!only) fs.writeFileSync(file, JSON.stringify([...old, ...results], null, 1));
+};
+/* -j N scores N packs at once, each in a browser of its own (BANK_CHILD:
+ * a child scores the one pack it is given and hands its rows back in that
+ * file). Rendering stays one Krita at a time. Default: half the cores, to 6. */
+const CHILD = process.env.BANK_CHILD;
+const JOBS = CHILD || argv.includes('--render') ? 1
+    : argv.includes('-j') ? +argv[argv.indexOf('-j') + 1] : Math.max(1, Math.min(6, os.cpus().length >> 1));
+if (JOBS > 1 && packs.length > 1) {
+    const queue = [...packs].sort((a, b) => fs.statSync(b.zip).size - fs.statSync(a.zip).size);   // biggest first
+    const pass = argv.filter((a, i) => a !== '-j' && argv[i - 1] !== '-j' && a !== '--packs' && argv[i - 1] !== '--packs');
+    await Promise.all(Array.from({ length: JOBS }, async () => {
+        for (let p; (p = queue.shift());) {
+            const out = path.join(RUN, `.child-${p.id}.json`);
+            fs.rmSync(out, { force: true });
+            const log = await new Promise(res => {
+                const c = spawn(process.execPath, [fileURLToPath(import.meta.url), ...pass, '--packs', p.id],
+                    { env: { ...process.env, BANK_CHILD: out } });
+                let s = ''; c.stdout.on('data', d => s += d); c.stderr.on('data', d => s += d);
+                c.on('close', () => res(s));
+            });
+            process.stdout.write(log.split('\n').filter(l => !/^\s*$|^ \{|^worst:/.test(l)).join('\n') + '\n');
+            if (fs.existsSync(out)) { results.push(...JSON.parse(fs.readFileSync(out, 'utf8'))); fs.rmSync(out); }
+            else results.push({ pack: p.id, status: 'harness error', why: ['the child scored nothing'] });
+        }
+    }));
+    save();
+} else await withPage(async (page) => {
     for (const p of packs) {
         console.log(`== ${p.id}`);
         try { await scorePack(page, p); }
         catch (e) { console.log('  harness error: ' + e.message); results.push({ pack: p.id, status: 'harness error', why: [e.message] }); }
-        // Packs not run this time keep their last results.
-        const file = path.join(RUN, RANDOM ? 'results-random.json' : 'results.json'), ids = new Set([p.id, ...results.map(r => r.pack)]);
-        const old = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).filter(r => !ids.has(r.pack)) : [];
-        if (!only) fs.writeFileSync(file, JSON.stringify([...old, ...results], null, 1));
+        if (CHILD) fs.writeFileSync(CHILD, JSON.stringify(results));
+        else save();
     }
 });
+if (CHILD) process.exit(0);
 
 async function scorePack(page, p) {
         // In pieces: a 91MB pack in one message outlives the CDP timeout.

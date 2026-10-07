@@ -194,7 +194,7 @@ class Session {
                 return await this.eval(`await new Promise((resolve, reject) => {
                     const t0 = Date.now();
                     (function poll() {
-                        if (window.PaintApp && PaintApp.ui && PaintApp.ui.cMain) return resolve(true);
+                        if (window.PaintApp && PaintApp.ui && PaintApp.ui.cMain && document.readyState === 'complete') return resolve(true);   // every deferred script run: under load PaintApp is up before freehand-path-engine.js
                         if (Date.now() - t0 > 20000) return reject(new Error('PaintApp never appeared'));
                         setTimeout(poll, 50);
                     })();
@@ -306,7 +306,7 @@ export async function withPage(fn, opts = {}) {
                 await session.eval(`await new Promise((resolve, reject) => {
                     const t0 = Date.now();
                     (function poll() {
-                        if (window.PaintApp && PaintApp.ui && PaintApp.ui.cMain) return resolve(true);
+                        if (window.PaintApp && PaintApp.ui && PaintApp.ui.cMain && document.readyState === 'complete') return resolve(true);   // every deferred script run: under load PaintApp is up before freehand-path-engine.js
                         if (Date.now() - t0 > 20000) return reject(new Error('PaintApp never appeared'));
                         setTimeout(poll, 50);
                     })();

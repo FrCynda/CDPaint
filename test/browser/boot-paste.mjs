@@ -53,7 +53,12 @@ const EARLY_PASTE = `
 
 await withPage(async (page) => {
     await page.reloadWith(EARLY_PASTE);
-    await new Promise(r => setTimeout(r, 2500));
+    /* The drained paste decodes its image before it lands: 2.5s fixed found
+     * it drained and not yet down on a busy machine. Up to 10s; lost is lost. */
+    for (let t = 0; t < 10000; t += 250) {
+        await new Promise(r => setTimeout(r, 250));
+        if (t >= 2250 && await page.eval('!!(window.PaintApp && PaintApp.state && PaintApp.state.selection)')) break;
+    }
 
     const probe = await page.eval('window.__probe');
     check('paste was dispatched during boot', probe.dispatched === true,
