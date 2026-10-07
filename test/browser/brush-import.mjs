@@ -1033,6 +1033,30 @@ await withPage(async (page) => {
     check("chrome's random colour shades its lines away from the paint",
         kc.chrome > 20, JSON.stringify(kc.chrome));
 
+    /* Wet wash (Clip Studio multiply + colour mixing) darkens faster than plain multiply as strokes
+     * stack: light blue's green 255 -> 236 -> 218 -> 192 -> 159 over four strokes in Clip Studio;
+     * plain multiply gets 184 on the fourth, a brush that also takes up the canvas colour 150-160. */
+    const ww = await page.eval(`(() => {
+        const app = PaintApp, b = app.brush, ctx = app.layerMgr.layers[app.layerMgr.activeIdx].ctx;
+        const clock = performance.now; let tick = 0; performance.now = () => tick;
+        try {
+            b.PRESETS.__w = Object.assign({}, b.DEFAULTS, { size: 30, spacing: 5, hardness: 100, flow: 100, opacity: 100, blendMode: 'multiply', mixAlpha: 50, mixColor: 70, mixStretch: 10 });
+            b.loadPreset('__w');
+            ctx.clearRect(0, 0, 300, 100);
+            const g = [];
+            for (let k = 0; k < 4; k++) {
+                b.beginStroke(40, 50, 1, '#bfebff');
+                for (let x = 41; x <= 200; x++) { tick += 2; b.moveStroke(x, 50, 1, '#bfebff'); }
+                b.endStroke();
+                const d = ctx.getImageData(120, 50, 1, 1).data;
+                g.push(Math.round(d[3] / 255 * d[1] + (1 - d[3] / 255) * 255));
+            }
+            return JSON.stringify(g);
+        } finally { performance.now = clock; delete b.PRESETS.__w; b.loadPreset('Round'); }
+    })()`).then(JSON.parse);
+    check("a multiply mixing brush stacks darker than plain multiply: light blue's green after 4 strokes is 130-175, not 184",
+        ww[3] > 130 && ww[3] < 175 && ww[3] < ww[2] && ww[2] < ww[1], JSON.stringify(ww));
+
     /* A deform brush dabs every spacing along the path and pushes by the
      * distance since the dab before; a push read at every input point is
      * under half a pixel and moves nothing. What it drags keeps its colour. */

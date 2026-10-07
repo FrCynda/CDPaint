@@ -3503,6 +3503,7 @@
         if (!prev) {                        // the first dab only loads the brush
             _smPic = _smBase = null;
             // Clip Studio Multiply on a mixing brush (Wet wash): each stroke multiplies what was there before it began, not its own dabs
+            // Wet wash: v' = v (0.3 b + 0.7 v) fits Clip Studio's 1-10 layer stacks to ~6 levels with the 0.85 (colour pick-up, below)
             if (p.mixAlpha != null && p.blendMode === 'multiply') { try { _smBase = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data; } catch (e1) { _smBase = null; } }
             if (p.smudgeMerged && app.layerMgr && app.layerMgr.getFlattenedCanvas) {
                 try { _smPic = app.layerMgr.getFlattenedCanvas().getContext('2d').getImageData(0, 0, _docW(), _docH()).data; } catch (e0) { _smPic = null; }
@@ -3665,7 +3666,7 @@
                     k = mtr ? k0 / _clamp(alpha, 0, 1) * mt[j * mw + i] / 255 : k0 * m / 255;
                     B[0] = src[u] * ci + pr; B[1] = src[u + 1] * ci + pg; B[2] = src[u + 2] * ci + pb; B[3] = src[u + 3] * ci + pa;
                     if (mt && !mtr) { var gr = mt[j * mw + i] / m; B[0] *= gr; B[1] *= gr; B[2] *= gr; B[3] *= gr; }
-                    if (_smBase) { var bi = ((ry + py) * ctx.canvas.width + rx + px) * 4, fb = _smBase[bi + 3] / 255; for (n = 0; n < 3; n++) B[n] = fb * _smBase[bi + n] * (1 - c + c * rgb[n] / 255) + (1 - fb) * c * rgb[n]; B[3] = 255 * (fb + (1 - fb) * c); }
+                    if (_smBase) { var bi = ((ry + py) * ctx.canvas.width + rx + px) * 4, fb = _smBase[bi + 3] / 255; var pm = p.mixColor / 100 * fb * 0.85; for (n = 0; n < 3; n++) { var pc = rgb[n] + (_smBase[bi + n] * fb + 255 * (1 - fb) - rgb[n]) * pm; B[n] = fb * _smBase[bi + n] * (1 - c + c * pc / 255) + (1 - fb) * c * pc; } B[3] = 255 * (fb + (1 - fb) * c); }
                 } else {
                     k = m / 255;
                     var sa = p.smudgeSmearAlpha === false ? src[u + 3] / 255 * sO : 0;
@@ -6023,6 +6024,7 @@
         smudgeSample: 0,     // Krita's smudge radius, 0..3: how much of the last dab dulling averages    // Krita's new smudge engine (_smudgeDab)
         smudgeSmearAlpha: true,   // Krita's smudge rate switched off: smears at full strength
         mixAlpha: null,      // Clip Studio's density of paint, 0..100; see _smudgeDab
+        mixColor: 0,         // Clip Studio's amount of paint taken from the canvas, used by a multiply mixing brush
         mixFlat: false,      // ...laid flat at that density, nothing picked up (BrushWaterColor 1)
         textureStroke: null,   // Clip Studio's paper blend (0..7) on the finished stroke, not on each dab
         textureBlend: null,  // Clip Studio's paper blend on each dab, 0..7; see _cspPaper

@@ -4127,6 +4127,7 @@
                     if (ma < 100) {
                         out.mixAlpha = ma;
                         out.mixStretch = Math.max(0, Math.min(100, _sutNum(v.BrushMixColorExtension, 0)));
+                        out.mixColor = Math.max(0, Math.min(100, _sutNum(v.BrushMixColor, 0)));   // multiply only: how much of the canvas colour the paint takes (Wet wash, measured)
                         if (wck === 1) out.mixFlat = true;
                     }
                 } else if (v.BrushMixAlpha == null) {
