@@ -1606,6 +1606,28 @@ await withPage(async (page) => {
         sm.faint >= 4, 'alpha ' + sm.faint);
     check('...and a smear lays its dabs on whole pixels, as Krita turns its sub-pixel phase off (Basic Soft Wet)',
         sm.snap[0] > 20 && Math.abs(sm.snap[0] - sm.snap[1]) <= 3, sm.snap.join(','));
+    /* ...and a picture tip turned with the line sits half a pixel higher
+     * first: Rake Smudge's tines lay a row above where an unturned tip's do
+     * (test/krita/probes/rksm). A tip inked in its top half, 30px. */
+    const rks = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, L = __B.layer().ctx, c = document.createElement('canvas');
+        c.width = c.height = 30; c.getContext('2d').fillRect(0, 0, 30, 15);
+        const row = async (src) => {
+            b.forgetSaved('Round'); b.loadPreset('Round');
+            b.loadCustomTip(c.toDataURL('image/png'), null); await new Promise(r => setTimeout(r, 300));
+            for (const [k, v] of Object.entries({ smudgeMode: 0, colorRate: 100, smudgeRate: 50, size: 30, spacing: 10,
+                flowSrc: 'none', sizeSrc: 'none', colorRateSrc: 'none', smoothingMode: 'none', angle: 0, angleSrc: src })) b.setParam(k, v);
+            L.clearRect(0, 0, 200, 200);
+            b.beginStroke(20, 100, 1, '#000000');
+            for (let x = 21; x <= 180; x++) b.moveStroke(x, 100, 1, '#000000');
+            b.endStroke();
+            for (let y = 70; y < 100; y++) if (L.getImageData(100, y, 1, 1).data[3] > 20) return y;
+            return -1;
+        };
+        return JSON.stringify([await row('none'), await row('direction')]);
+    })()`, { awaitPromise: true }));
+    check("...and a turned picture tip's smear sits a row above an unturned one's, as Krita's does (Rake Smudge)",
+        rks[0] === 85 && rks[1] === 84, JSON.stringify(rks));
     /* Measured against a real Krita dab (test/krita): its "soft" tip reads
      * the curve at the SQUARED radius, and its curves are splines. Read at
      * the plain radius, Airbrush Soft came out at 0.59x Krita's ink. And a

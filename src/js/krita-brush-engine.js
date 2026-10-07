@@ -3823,10 +3823,14 @@
              * sub-pixel phase off (KisColorSmudgeOp, bug 327235), so the dab
              * sits at floor(pos - half) + half. Under a pressure-sized tip the
              * half changes along the stroke, and Basic Soft Wet's line steps a
-             * pixel where Krita's does. */
+             * pixel where Krita's does. A picture tip that turns sits half a
+             * pixel further up and left first: Rake Smudge's tines lay a row
+             * above an unturned one's on the same line, and the line moved
+             * down 0.75px came back to it, 0.25px did not (probes/rksm). */
             if (p.smudgeMode === 0) {
                 var hw = _max(1, sz * _min(1, asp || 1)) / 2, hh = _max(1, sz / _max(1, asp || 1)) / 2;
-                dx = _floor(dx - hw) + hw; dy = _floor(dy - hh) + hh;
+                var tq = p.shape === 'custom' && p.angleSrc !== 'none' ? 0.5 : 0;
+                dx = _floor(dx - hw - tq) + hw; dy = _floor(dy - hh - tq) + hh;
             }
             /* Clip Studio sprays size each particle on its own (Droplet's
              * random spray size: 14 specks at 18, 12, 9, 6 and 4px), and
