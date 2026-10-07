@@ -3954,6 +3954,7 @@
         var order = _sutNum(v.BrushPatternOrderType, 3);
         if (order === 0) out.tipPick = 'cycle';
         else if (order === 1) out.tipPick = 'pingpong';
+        if (order < 2) out.tipCycleReset = true;   // every stroke starts at the first picture: Crack laid twice is the same crack
         /* Reverse horizontal/vertical: 1 flips every dab, 2 each one at
          * random (Pastel, one picture, lays no two dabs alike in Clip
          * Studio). 3 painted a level stroke unflipped. A ribbon's pieces are

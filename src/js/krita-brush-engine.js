@@ -6129,7 +6129,7 @@
         angleSensors: null, angleCombine: 0, angleReach: null, sizeSensors: null, sizeCombine: 0, colorRateSensors: null, colorRateCombine: 0, spacingSensors: null, spacingCombine: 0, aspectRatioSensors: null, aspectRatioCombine: 0, textureSensors: null, textureCombine: 0, scatterSensors: null, scatterCombine: 0, smudgeRateSensors: null, smudgeRateCombine: 0, flowSensors: null, flowCombine: 0, dabOpacitySensors: null, dabOpacityCombine: 0,
         /* Krita's texture maths (see _applyKritaTexture). '' keeps our own
          * grain; 'multiply' / 'subtract' are Krita's two alpha modes. */
-        tipShrink: '', tipSamples: 0, tipShift: 0, tipShiftY: null, tipPaper: false, textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
+        tipShrink: '', tipCycleReset: false, tipSamples: 0, tipShift: 0, tipShiftY: null, tipPaper: false, textureMode: '', textureNeutral: 0.5, textureBrightness: 0, textureContrast: 1,
         textureInvert: false, textureRotate: 0, textureSoft: false, textureCutoff: 0, textureCutoffLo: 0, textureCutoffHi: 255, textureOffsetX: 0, textureOffsetY: 0,
         /* Krita presets: curves are splines (_splineAt), and a round tip may
          * carry its own falloff curve (Krita's "soft" generator). */
@@ -6553,6 +6553,7 @@
     engine.beginStroke = function (x, y, pressure, color) {
         _strokeSeed = _pinnedSeed == null
             ? Math.floor(Math.random() * 2147483647) : _pinnedSeed;
+        if (_params.tipCycleReset) _tipCycle = 0;
         _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null; _adAvg = 0; _adColOn = 0;
         /* Freeze the params for this stroke (see the getParams seam): a copy,
          * not the pointer — setParam mutates _params in place. Iterates _params

@@ -4262,6 +4262,30 @@ await withPage(async (page) => {
     // a pixel's four samples land the checker's pitch apart: all on its black or all off
     check("Clip Studio's low anti-aliasing point-samples a picture, not averages it",
         crisp.max[2] > 250 && crisp.max[3] < 160, JSON.stringify(crisp.max));
+    /* Clip Studio starts every stroke at the first of a picture pipe, so the same drag laid twice is the same
+     * picture (Crack); without it the pipe goes on from where the last stroke stopped. */
+    const cyc = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, out = [];
+        const c = document.createElement('canvas'); c.width = 192; c.height = 64;
+        const g = c.getContext('2d'); g.fillRect(0, 0, 40, 64); g.fillRect(64, 0, 64, 20); g.fillRect(128, 40, 64, 24);   // three different pictures
+        b.setParam('tipCells', 3);
+        b.loadCustomTip(c.toDataURL('image/png'), null);
+        await new Promise(r => setTimeout(r, 400));
+        b.setParam('tipCells', 3); b.setParam('tipPick', 'cycle'); b.setParam('size', 30); b.setParam('spacing', 100); b.setParam('autoSpacing', 0);
+        for (const reset of [true, false]) {
+            b.setParam('tipCycleReset', reset);
+            const L = __B.doc(200, 100);
+            await __B.stroke(30, 50, 75, 50, '#000000'); const a = Array.from(L.ctx.getImageData(0, 0, 200, 100).data);
+            L.ctx.clearRect(0, 0, 200, 100);
+            await __B.stroke(30, 50, 75, 50, '#000000'); const d = Array.from(L.ctx.getImageData(0, 0, 200, 100).data);
+            out.push(a.every((v, i) => v === d[i])); 
+        }
+        ['tipCells', 'tipPick', 'spacing', 'autoSpacing', 'tipCycleReset', 'size'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`, { awaitPromise: true }));
+    check("a stroke starts the picture pipe again from its first picture when the format says so (Clip Studio's Crack)",
+        cyc[0] === true && cyc[cyc.length - 1] === false, JSON.stringify(cyc));
     const dabs = crisp.dabs.map(d => d[1]).join(''), mgaps = crisp.dabs.slice(1).map((d, i) => d[0] - crisp.dabs[i][0]);
     check('a mirrored tip taken in turn keeps its turn and flips each dab at random',
         dabs.length >= 4 && Math.max(...mgaps) - Math.min(...mgaps) <= 2 && dabs.includes('L') && dabs.includes('R'), dabs + ' ' + mgaps);
