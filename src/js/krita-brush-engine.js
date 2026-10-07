@@ -1164,13 +1164,18 @@
              * Rubble at size 40 kept 0.64 of Clip Studio's ink. */
             if (_params.subMix || _params.jitterSub || _params.tipTint) {
                 var c = _hexToRgb(colorHex), id = _scratchCtx.getImageData(0, 0, mw, mh), d = id.data;
-                var sm = !!(_params.subMix || _params.tipTint), js = !!_params.jitterSub, ink = js && _params.tipTint ? _hexToRgb(_tintInk) : c;
+                var sm = !!(_params.subMix || _params.tipTint), js = !!_params.jitterSub, tj = js && !!_params.tipTint, ink = tj ? _hexToRgb(_tintInk) : c;
                 for (var i = 0; i < d.length; i += 4) {
                     if (!d[i + 3]) continue;
                     for (var n = 0; n < 3; n++) {
                         var v = d[i + n];
-                        if (sm) v = 255 - (255 - ink[n]) * (255 - v) / 255;
-                        if (js) v = v * c[n] / 255;
+                        /* A tinted picture under a jittered sub colour: its darks are the ink, its lights the jittered
+                         * white, whatever the jitter (Thin chain's links stay (145,45,205) over grey 204) */
+                        if (tj) v = ink[n] + (c[n] - ink[n]) * v / 255;
+                        else {
+                            if (sm) v = 255 - (255 - ink[n]) * (255 - v) / 255;
+                            if (js) v = v * c[n] / 255;
+                        }
                         d[i + n] = v;
                     }
                 }
