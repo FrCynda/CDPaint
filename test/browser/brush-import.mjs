@@ -943,6 +943,12 @@ await withPage(async (page) => {
         'MaskingBrush/Preset/RotationSensor': '<params id="drawingangle"/>' } }, { tipSize: 30 }).params`);
     check("a Krita darken mask comes across as one, its tip turned along the line",
         rk.maskOp === 'min' && rk.maskAlong === true, JSON.stringify([rk.maskOp, rk.maskAlong]));
+    /* Krita 2 stored scatter as Scattering/Amount (Aquarelle Paint); Krita
+     * still reads it when ScatterValue is missing. */
+    const aq = await page.eval(`BrushPack.toPreset({ name: 'x', params: {
+        brush_definition: '<Brush type="auto_brush" spacing="0.1"><MaskGenerator id="default" diameter="30" ratio="1" hfade="1" vfade="1" spikes="2" type="circle"/></Brush>',
+        PressureScatter: 'true', 'Scattering/Amount': '2.5' } }, { tipSize: 30 }).params.scatter`);
+    check("a Krita 2 preset's Scattering/Amount still scatters", aq === 250, String(aq));
     /* Krita 4 wrote lightness as its own flag, and its ratio option at a
      * fixed strength squashes the tip with no curve at all (RGBA Impasto:
      * preserveLightness="1", ratio 0.68 with the curve box clear). An RGBA

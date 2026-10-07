@@ -741,8 +741,10 @@
          * both, so a one-axis preset is reported rather than silently widened. */
         /* ScatterValue is stored whether or not the option is switched on --
          * Krita keeps every widget's last value -- so the value alone would
-         * put a wild jitter on brushes that never scatter. */
-        var scat = _bool(P.PressureScatter) ? _num(P.ScatterValue, 0) : 0;
+         * put a wild jitter on brushes that never scatter. Krita 2 wrote it
+         * as Scattering/Amount, which Krita still reads when ScatterValue is
+         * missing: Aquarelle Paint laid a tight line where Krita's sprays. */
+        var scat = _bool(P.PressureScatter) ? _num(P.ScatterValue != null ? P.ScatterValue : P['Scattering/Amount'], 0) : 0;
         out.scatter = Math.round(scat * 100);
         /* Krita's scatter axes are the stroke's own: X spreads dabs along
          * the line, Y across it. One axis on its own is what keeps a rake
