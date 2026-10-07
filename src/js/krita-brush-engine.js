@@ -3936,7 +3936,7 @@
             flowSc.pressure = pressure; flowSc.strokeAngle = strokeAngle;
             var alpha = _clamp(_dyn(p, 'flow', p.flow / 100, flowSc, 4), 0, 1);
             if (tfInk < 1) alpha = _taperAlpha(alpha, tfInk, dsz, p);
-            if (p.cutByLight) { var lc = _hexToRgb(finalColor); alpha *= _max(lc[0], lc[1], lc[2]) / 255; }
+            if (p.cutByLight && _subOn !== 'add') { var lc = _hexToRgb(finalColor); alpha *= _max(lc[0], lc[1], lc[2]) / 255; }
 
             if (p.hatch) {
                 var hv = function (o) { return o.src ? _curveAt(o.curve, _sensor(o.src, sc, 16, p), p.curveSmooth) : o.v; };
@@ -4746,6 +4746,9 @@
                 _washCtx.drawImage(src, x, y, w, h, x, y, w, h);
             }
             var wi = _washCtx.getImageData(x, y, w, h), wd = wi.data, sd = _subCtx.getImageData(x, y, w, h).data;
+            if (_subOn === 'add') {     // Clip Studio's mode 2: the second brush's colour is added to the first's wherever the first has ink
+                for (var ai = 3; ai < wd.length; ai += 4) if (wd[ai] && sd[ai]) for (var an = ai - 3; an < ai; an++) wd[an] = _min(255, wd[an] + _round(sd[an] * sd[ai] / 255));
+            } else
             for (var si = 3; si < wd.length; si += 4) wd[si] = _subOn === 'min' ? _min(wd[si], sd[si])
                 : _subOn === 'cut' ? wd[si] - _round(sd[si] * _min(wd[si], 255 - wd[si]) / 255) : wd[si] - sd[si];
             _washCtx.putImageData(wi, x, y);
@@ -6125,7 +6128,7 @@
         normalMap: null,         // Krita's tangent normal: the dab's colour is the pen's normal (swizzle, type, sensitivity)
         subColor: null,          // what subMix goes toward: null white, 'background' the second colour
         subMixSrc: 'none', subMixMin: 0, subMixCurve: 1, subMixSensors: null, subMixCombine: 0,
-        cutByLight: false,       // a cutting second brush takes away as much as its colour is light (Clip Studio mode 2)
+        cutByLight: false,       // the second brush of Clip Studio mode 2 (adds its colour): laid over the finished first
         dabBlend: false,         // each dab lands by the blend mode, onto the dabs before it too (Krita build-up)
         dabMax: false,           // each dab keeps the stronger of it and what is there (Clip Studio's blend by darken)
         colorJitterPer: 'dab',
@@ -6875,7 +6878,7 @@
     // Both brushes along pts, a segment of each in turn.
     function _paintBoth(pts, color, sec) {
         var st = _secondState(sec), n = pts.length, main = _flowCtx;
-        _subOn = sec.op === 'subtract' || sec.op === 'min' || sec.op === 'cut' || sec.op === 'contrast' ? sec.op : false;
+        _subOn = sec.op === 'subtract' || sec.op === 'min' || sec.op === 'cut' || sec.op === 'contrast' || sec.op === 'add' ? sec.op : false;
         if (_subOn) {
             if (!_subCanvas || _subCanvas.width !== _flowCanvas.width || _subCanvas.height !== _flowCanvas.height) {
                 _subCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);

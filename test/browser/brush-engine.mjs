@@ -1219,6 +1219,16 @@ await withPage(async (page) => {
         delete b.PRESETS[b._currentPreset].second;
         const lit = __B.layer().ctx.getImageData(50, 100, 90, 1).data;
         out.lit = 0; for (let x = 0; x < 90; x++) if (lit[x * 4 + 3] < 128) out.lit++;
+        /* Mode 2's second brush adds its colour to the first's wherever the first has ink (Glitter's purple turns magenta). */
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        b.PRESETS[b._currentPreset].second = { op: 'add', p: { size: 30, spacing: 5, hardness: 100, flowSrc: 'none', sizeSrc: 'none', cutByLight: true } };
+        for (const [k, v] of Object.entries(Object.assign({}, base, { size: 30, spacing: 5 }))) b.setParam(k, v);
+        __B.layer().ctx.clearRect(0, 0, 200, 200);
+        b.beginStroke(40, 100, 1, '#503070');
+        for (let x = 50; x <= 160; x += 10) b.moveStroke(x, 100, 1, '#503070');
+        b.endStroke();
+        delete b.PRESETS[b._currentPreset].second;
+        out.addPx = Array.from(__B.layer().ctx.getImageData(100, 100, 1, 1).data);
         /* A preset's sub colour mix may be random (Generic Flower BG), and
          * with a random opacity too each dab keeps its own colour: the
          * opacity's buffer used to paint the whole stroke the last dab's. */
@@ -1262,6 +1272,8 @@ await withPage(async (page) => {
         csp.gaps.own <= 2 && csp.gaps.slot > 5 && csp.gaps.firsts.every(x => x === 10), JSON.stringify(csp.gaps));
     check("Clip Studio's lightening second brush lights the whole stroke, not just its last stretch",
         csp.lit > 10, 'lit ' + csp.lit);
+    check("Clip Studio's mode 2 second brush adds its colour to the first's: 80,48,112 twice is 160,96,224",
+        csp.addPx.join() === '160,96,224,255', JSON.stringify(csp.addPx));
     check("a Clip Studio sub colour mix at random gives each dab its own grey, random opacity or not",
         csp.greys >= 3, 'greys ' + csp.greys);
     check("a Clip Studio thickness driven by two inputs thins the tip",

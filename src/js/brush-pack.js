@@ -3733,15 +3733,13 @@
      * leaving 0.21; the engine's 'cut' has the whole rule). Mode 3 subtracts it, a - d (Dappled light on one dab,
      * cdp-csp/pr-dt: 0.90 of ink under its dab leaves 0.25, 0.45 leaves
      * nothing); laid under solid ink it had seemed to move none. Mode 11
-     * (burns) changes the colour only and moves no ink; it returns null. Mode 2 adds its colour: with
-     * no colour change it adds black and nothing moves, but Glitter's colour
-     * change runs to white and its second spray halves the ink (3427 ->
-     * 1596), lightening part of each particle. On paper adding a colour of
-     * lightness v to black ink is taking v of the ink away, so it cuts by
-     * each dab's lightness (cutByLight).
-     * ponytail: a cut, not an add -- over a darker layer it shows what is
-     * under it rather than a lighter colour. */
-    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'destination-out', 3: 'subtract', 4: 'destination-over', 12: 'cut' };
+     * (burns) changes the colour only and moves no ink; it returns null. Mode 2 adds its colour to the
+     * first's, wherever the first has ink: with no colour change it adds
+     * black and nothing moves, but Glitter's colour change runs to white,
+     * so its purple particles turn magenta (mean 240,141,251 against Clip
+     * Studio's 239,138,250; read as a cut by lightness they were pale
+     * violet). */
+    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'add', 3: 'subtract', 4: 'destination-over', 12: 'cut' };
     BrushPack.sutSecond = function (v) {
         var op = _sutNum(v.UseDualBrush, 0) && SUT_SECOND_OP[_sutNum(v.DualBrushCompositeMode, 0)];
         if (!op) return null;
