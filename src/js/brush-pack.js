@@ -3305,6 +3305,7 @@
     function _sqliteRecord(rec, rowid, cols, pkIdx) {
         var h = _sqliteVarint(rec, 0);
         var hdrLen = h[0], p = h[1], types = [];
+        if (hdrLen > rec.length) throw new Error('bad record header');
         while (p < hdrLen) {
             var t = _sqliteVarint(rec, p);
             types.push(t[0]);
