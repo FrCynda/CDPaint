@@ -1827,7 +1827,11 @@
                     solid++;
                     if (c.rgb[q * 3] + c.rgb[q * 3 + 1] + c.rgb[q * 3 + 2] > 600) white++;
                 }
-                return white > solid * 0.05;
+                /* A picture of nothing but white (Oil 6, 7 and 11's solid white
+                 * strokes) has no darks to hold the ink: Clip Studio paints it
+                 * in the ink colour, where the lights-go-white rule left ours
+                 * painting white on white. */
+                return white > solid * 0.05 && white < solid * 0.95;
             });
             var own = opts && opts.keepColor && cells.some(function (c) {
                 for (var q = 0; q < c.alpha.length; q++) {
@@ -3837,13 +3841,13 @@
          * 10-80, fit 3, 2 and 1.4 times). A fixed interval stays put. */
         if (ivt >= 1 && ivt <= 3 && !opts.hasTip)
             out.spacing = Math.round(out.spacing * (3 - 2 * Math.min(100, _sutNum(v.BrushHardness, 100)) / 100) * 10) / 10;
-        /* "Adjust density by interval": each dab lays flow x spacing / 33.1,
+        /* "Adjust density by interval": each dab lays flow x spacing / 33.1 (spacing as it really falls: a 4px tip at 4% still steps a pixel),
          * never more than the flow -- one hard dab at 10 and 23.8% takes 0.30
          * and 0.72 off solid ink in Clip Studio (cdp-csp/pr-dc, zdah*). The
          * 35.36 fitted to whole strokes before left Soft 7% light. Not a
          * ribbon's, laid end to end: Braid (25.8) inks its outlines black. */
         if (_sutNum(v.BrushAdjustFlowByInterval, 0) && !_sutNum(v.BrushRibbon, 0))
-            out.flow = Math.max(1, Math.round(out.flow * Math.min(1, out.spacing / 33.1)));
+            out.flow = Math.max(1, Math.round(out.flow * Math.min(1, Math.max(out.spacing, 100 / out.size) / 33.1)));   // dabs never sit closer than a pixel (minStep)
 
         /* Thickness is how wide the tip stays, as a percentage; ours is how
          * many times longer than wide it is. 16% thick is a blade six times
