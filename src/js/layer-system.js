@@ -450,6 +450,7 @@
             '<div class="lsctx-item" id="lsctx-alpha">Alpha channel</div>' +
             '<div class="lsctx-sep"></div>' +
             '<div class="lsctx-item" id="lsctx-lock">Lock layer</div>' +
+            '<div class="lsctx-item" id="lsctx-ref">Reference layer</div>' +
             '<div class="lsctx-sep"></div>' +
             '<div class="lsctx-item" id="lsctx-clip">Clip to layer below</div>' +
             '<div class="lsctx-item" id="lsctx-passthrough">Pass through</div>' +
@@ -483,6 +484,7 @@
             alphaItem.className     = 'lsctx-item' + (l.alpha !== false ? ' checked' : '');
             alphaLockItem.className = 'lsctx-item' + (l.alphaLock ? ' checked' : '');
             lockItem.className      = 'lsctx-item' + (l.locked ? ' checked' : '');
+            document.getElementById('lsctx-ref').className = 'lsctx-item' + (l.reference ? ' checked' : '');
 
             // Clipping: only meaningful when there is a layer underneath to
             // clip to, and never for the bottom layer.
@@ -634,6 +636,15 @@
             const l = mgr.layers[_ctxTargetIdx];
             l.locked = !l.locked;
             _closeCtx(); _refreshList(); _syncBtns();
+        });
+        // Clip Studio's reference layer: brushes and fills that "refer to the
+        // reference layer" read their boundaries from it (usually the line art).
+        document.getElementById('lsctx-ref').addEventListener('click', () => {
+            if (_ctxTargetIdx < 0) return;
+            const l = mgr.layers[_ctxTargetIdx];
+            l.reference = !l.reference;
+            _closeCtx(); _refreshList();
+            app.saveState();
         });
         document.getElementById('lsctx-dup').addEventListener('click', () => {
             if (_ctxTargetIdx < 0) return;
@@ -1162,7 +1173,7 @@
                 canvas: c, ctx,
                 visible: src.visible !== false, opacity: src.opacity,
                 isBase: false, locked: false, alpha: src.alpha !== false,
-                blendMode: src.blendMode, alphaLock: src.alphaLock,
+                blendMode: src.blendMode, alphaLock: src.alphaLock, reference: !!src.reference,
                 isGroup, _open: src._open !== false,
                 // A copy that quietly dropped the mask or the clipping was not
                 // a copy — both used to be left behind here.
@@ -1504,6 +1515,8 @@
                     ? '<span class="lsi-alpha-badge" title="Alpha channel">α</span>' : '';
                 // A clipped layer is confined to the one below — show it the way
                 // Photoshop does, with a turned corner arrow.
+                const refBadge = l.reference
+                    ? '<span class="lsi-clip-badge" title="Reference layer">◎</span>' : '';
                 const clipBadge = l.clipped
                     ? '<span class="lsi-clip-badge" title="Clipped to the layer below">⤷</span>' : '';
                 const maskBadge = l.mask
@@ -1529,7 +1542,7 @@
                     '</div>' +
                     '<div class="lsi-thumb-wrap"><canvas class="lsi-thumb" id="lsit-' + l.id + '" width="42" height="40"></canvas></div>' +
                     '<div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;padding-right:4px;">' +
-                      '<span class="lsi-name" title="' + app.escapeHtml(l.name) + '">' + app.escapeHtml(l.name) + clipBadge + maskBadge + alphaBadge + (l.alphaLock ? ' <span style="font-size:9px;color:#0078d7;background:rgba(0,120,215,.1);padding:0 3px;border-radius:2px;font-weight:600;">\u{1F512}</span>' : '') + '</span>' +
+                      '<span class="lsi-name" title="' + app.escapeHtml(l.name) + '">' + app.escapeHtml(l.name) + refBadge + clipBadge + maskBadge + alphaBadge + (l.alphaLock ? ' <span style="font-size:9px;color:#0078d7;background:rgba(0,120,215,.1);padding:0 3px;border-radius:2px;font-weight:600;">\u{1F512}</span>' : '') + '</span>' +
                       '<select class="lsi-blend" data-bi="' + i + '" title="Blend mode" style="font-size:10px;border:1px solid #ccc;border-radius:2px;background:#fff;padding:0 2px;height:16px;width:100%;cursor:pointer;">' +
                         '<option value="source-over"'  + ((!l.blendMode || l.blendMode==='source-over')  ? ' selected' : '') + '>Normal</option>' +
                         '<option value="multiply"'     + (l.blendMode==='multiply'     ? ' selected' : '') + '>Multiply</option>' +
@@ -1902,7 +1915,7 @@
                 if (!l._dirty && prev) {
                     // Layer unchanged — share the previous entry's snap by reference.
                     return { id: l.id, name: l.name, visible: l.visible, opacity: l.opacity,
-                             blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock, locked: l.locked,
+                             blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock, locked: l.locked, reference: !!l.reference,
                              parentId: l.parentId, isGroup: !!l.isGroup, clipped: !!l.clipped,
                              mask,
                              isBase: l.isBase, snap: null, bitmap: null, ref: prev };
@@ -1914,7 +1927,7 @@
                 snap.getContext('2d').drawImage(l.canvas, 0, 0);
                 ownedBytes += snap.width * snap.height * 4;
                 return { id: l.id, name: l.name, visible: l.visible, opacity: l.opacity,
-                         blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock, locked: l.locked,
+                         blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock, locked: l.locked, reference: !!l.reference,
                          parentId: l.parentId, isGroup: !!l.isGroup, clipped: !!l.clipped,
                          mask,
                          isBase: l.isBase, snap, bitmap: null, ref: null };
@@ -2065,7 +2078,7 @@
                     l.ctx.clearRect(0, 0, width, height);
                     if (src) l.ctx.drawImage(src, 0, 0);
                     l.name = sv.name; l.visible = sv.visible; l.opacity = sv.opacity;
-                    l.blendMode = sv.blendMode; l.alpha = sv.alpha; l.alphaLock = sv.alphaLock; l.locked = sv.locked; l.parentId = sv.parentId;
+                    l.blendMode = sv.blendMode; l.alpha = sv.alpha; l.alphaLock = sv.alphaLock; l.locked = sv.locked; l.reference = !!sv.reference; l.parentId = sv.parentId;
                     l.isGroup = !!sv.isGroup;
                     l.clipped = !!sv.clipped;
                     _restoreMask(l, sv, width, height);
@@ -2081,7 +2094,7 @@
                         id: sv.id, name: sv.name,
                         canvas: c, ctx,
                         visible: sv.visible, opacity: sv.opacity,
-                        blendMode: sv.blendMode, alpha: sv.alpha, alphaLock: sv.alphaLock, locked: sv.locked,
+                        blendMode: sv.blendMode, alpha: sv.alpha, alphaLock: sv.alphaLock, locked: sv.locked, reference: !!sv.reference,
                         isBase: i === 0, _dirty: false,
                         isGroup: !!sv.isGroup, clipped: !!sv.clipped, mask: null,
                         parentId: sv.parentId,
@@ -2666,6 +2679,7 @@
                 return `opacity="${opacity}" visibility="${visible}" composite-op="${blend}"` +
                        (l.locked    ? ' paint:locked="true"'    : '') +
                        (l.alphaLock ? ' paint:alphaLock="true"' : '') +
+                       (l.reference ? ' paint:reference="true"' : '') +
                        (l.isBase    ? ' paint:isBase="true"'    : '') +
                        (l.clipped   ? ' paint:clipped="true"'   : '') +
                        (l.alpha === false ? ' paint:opaque="true"' : '') +
@@ -2873,6 +2887,7 @@
                                 : (_oraToBlend[el.getAttribute('composite-op') || 'svg:src-over'] || 'source-over'),
                             locked:    el.getAttribute('locked') === 'true',
                             alphaLock: el.getAttribute('alphaLock') === 'true',
+                            reference: el.getAttribute('reference') === 'true',
                             clipped: el.getAttribute('clipped') === 'true',
                             maskSrc: el.getAttribute('mask') || null,
                             maskDisabled: el.getAttribute('maskDisabled') === 'true',
@@ -2925,7 +2940,7 @@
                         id: mgr.nextId++, name: ld.name, canvas: c, ctx,
                         visible: ld.visible, opacity: ld.opacity,
                         blendMode: ld.blendMode, locked: ld.locked,
-                        alphaLock: ld.alphaLock,
+                        alphaLock: ld.alphaLock, reference: ld.reference,
                         isGroup: ld.isGroup, _open: true,
                         isBase, alpha: ld.opaque ? false : (!ld.isGroup && !isBase),
                         clipped: !!ld.clipped, mask: null,

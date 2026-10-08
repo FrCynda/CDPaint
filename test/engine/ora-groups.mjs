@@ -68,7 +68,7 @@ function layer(name, extra) {
 const bg      = layer('BG', { isBase: true, alpha: false });
 const folderA = layer('Folder A', { isGroup: true, canvas: fakeCanvas('A'), ctx: null,
                                     blendMode: 'pass-through' });
-const inner   = layer('Inner', { parentId: folderA.id, blendMode: 'multiply',
+const inner   = layer('Inner', { parentId: folderA.id, blendMode: 'multiply', reference: true,
                                  mask: { canvas: fakeCanvas('MASK'), enabled: true } });
 const folderB = layer('Folder B', { isGroup: true, canvas: fakeCanvas('B'), ctx: null,
                                     parentId: folderA.id, opacity: 0.5 });
@@ -131,6 +131,8 @@ check('stack.xml was produced', !!capturedXml);
         /<stack[^>]*opacity="0\.5000"/.test(capturedXml));
     check('a mask on a layer inside a folder is still written',
         /paint:mask="data\/mask_0\.png"/.test(capturedXml));
+    check('the reference-layer flag is written',
+        /<layer[^>]*name="Inner"[^>]*paint:reference="true"/.test(capturedXml) && !/name="Top"[^>]*paint:reference/.test(capturedXml));
     check('clipping survives on a layer nested two folders deep',
         /<layer[^>]*name="Deep"[^>]*paint:clipped="true"/.test(capturedXml));
     check('the active layer is an index into the rebuild order',
@@ -208,6 +210,7 @@ check('order matches the layer array: bottom-first, folder before its contents',
     check('folder opacity round-trips', byName['Folder B'].d.opacity === 0.5);
     check('blend mode round-trips', byName['Inner'].d.blendMode === 'multiply');
     check('clipping round-trips', byName['Deep'].d.clipped === true);
+    check('the reference layer round-trips', byName['Inner'].d.reference === true && byName['Top'].d.reference === false);
     check('hidden stays hidden', byName['Top'].d.visible === false);
     check('the mask file is carried on the right layer',
         !!byName['Inner'].d.maskCanvas && !byName['Top'].d.maskCanvas);

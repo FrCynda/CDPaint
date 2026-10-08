@@ -304,6 +304,29 @@ await withPage(async (page) => {
         check('pass-through survived', g.blendMode === 'pass-through', g.blendMode);
     }
 
+    console.log('\n== reference layer toggle ==');
+    {
+        const r = await page.eval(`(() => {
+            __t.reset();
+            __t.addLayer(1);
+            const mgr = __t.mgr();
+            __t.menu(1); __t.click('lsctx-ref');
+            const on = !!mgr.layers[1].reference;
+            const badge = !!__t.row(1).querySelector('[title="Reference layer"]');
+            __t.menu(1);
+            const checked = document.getElementById('lsctx-ref').classList.contains('checked');
+            document.body.click();
+            PaintApp.undo();
+            return { on, badge, checked, other: !!mgr.layers[0].reference,
+                     undone: !mgr.layers[1].reference && !__t.row(1).querySelector('[title="Reference layer"]') };
+        })()`);
+        check('the menu entry marks the layer as reference', r.on);
+        check('the layer shows a reference badge', r.badge);
+        check('the menu shows it ticked', r.checked);
+        check('other layers are untouched', !r.other);
+        check('undo clears it', r.undone, JSON.stringify(r));
+    }
+
     const errs = page.errors();
     console.log(`\npage errors during the run: ${errs.length}`);
     for (const e of errs.slice(0, 8)) console.log('  ! ' + e.text.split('\n')[0]);

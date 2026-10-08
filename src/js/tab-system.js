@@ -78,7 +78,7 @@
                     snap.getContext('2d').drawImage(l.canvas, 0, 0);
                     return { id: l.id, name: l.name, visible: l.visible, opacity: l.opacity,
                              blendMode: l.blendMode, alpha: l.alpha, alphaLock: l.alphaLock,
-                             locked: l.locked, parentId: l.parentId, isBase: l.isBase,
+                             locked: l.locked, reference: !!l.reference, parentId: l.parentId, isBase: l.isBase,
                              snap: snap, bitmap: null, ref: null };
                 });
                 entry = { _lsys: true, snaps: snaps, width: app.config.width, height: app.config.height };
