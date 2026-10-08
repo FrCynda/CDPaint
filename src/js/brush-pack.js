@@ -3805,7 +3805,7 @@
          * thins a black line it crosses to a third, in place, never dragging
          * it: an eraser at the brush's opacity.
          * ponytail: its soft falloff is not ours yet -- ours clears a flat band. */
-        if (_sutNum(v.CompositeMode, 0) === 27) out.blendMode = 'erase';
+        if (_sutNum(v.CompositeMode, 0) === 27 || _sutNum(v.CompositeMode, 0) === 11) out.blendMode = 'erase';   // 11: a soft eraser too (Marker's zb055 fades stripes, lays nothing on empty)
         // Mode 2 is Multiply (the watercolours, Wet wash, the inks): stacked strokes darken and saturate
         // (255,50,100) x3 -> (255,70,101), x10 -> (255,4,13), measured in Clip Studio
         else if (_sutNum(v.CompositeMode, 0) === 2) out.blendMode = 'multiply';
