@@ -4181,6 +4181,9 @@
          * the strongest of each 42), and at density 100 build to solid. */
         if (_sutNum(v.BrushBlendPatternByDarken, 0) && !_sutNum(v.BrushUseWaterColor, 0) && !_sutNum(v.BrushUseWaterColor2, 0)) {
             out.dabMax = true;
+            /* Dabs that keep the stronger of themselves and the layer do not pile up, so the density-by-interval cut
+             * has nothing to compensate: ОК 4's 100 stays 100 (ink 47201 of Clip Studio's 39519; at 12 it laid nothing). */
+            if (_sutNum(v.BrushAdjustFlowByInterval, 0) && !_sutNum(v.BrushRibbon, 0)) out.flow = Math.max(1, Math.min(100, Math.round(_sutNum(v.BrushFlow, 100))));
             delete out.watercolor; delete out.wetBlend; delete out.edgeWidth; delete out.edgeDensity;
         }
 
