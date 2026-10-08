@@ -6866,6 +6866,7 @@
         var p = {}, k, c = _second2;
         for (k in engine.DEFAULTS) p[k] = engine.DEFAULTS[k];
         for (k in sec.p) p[k] = sec.p[k];
+        if (sec.ratio && _params.size) p.size = _params.size * sec.ratio;
         p.tip2Depth = 0;
         var key = engine._currentPreset + '|' + (p.tipCells || 1);
         if (c.src !== _tip2Canvas || c.key !== key) {
@@ -9914,7 +9915,8 @@
                 if (tip2 && tip2.cells > 1) { p2.tipCells = tip2.cells; p2.tipPick = tip2.pick === 'cycle' ? 'cycle' : p2.tipPick || tip2.pick; }
                 if (tip2 && tip2.params && tip2.params.tipMode) p2.tipMode = tip2.params.tipMode;
                 if (sec.light) p2.cutByLight = true;
-                ps.second = { op: sec.op, p: p2 };
+                // synced, the second brush grows and shrinks with the first (zb042: 119 of 100)
+                ps.second = { op: sec.op, p: p2, ratio: +sec.variant.SyncDualBrushSize && ps.size ? p2.size / ps.size : 0 };
             }
             if (ps.texture > 0 && pr.texture) {
                 ps.texturePattern = both[2] ? _tipStash(both[2]) : _bytesToPngUrl(pr.texture);
