@@ -1255,9 +1255,9 @@
     /* Defined locally and published next to the other engine methods: this
      * sits far above `var engine`, and assigning onto it here would throw at
      * module evaluation and take the whole brush engine down with it. */
-    function _loadTexturePattern(url, forPreset) {
-        if (!url) { _patWanted = null; return; }
-        if (_patTiles[url]) { _patWanted = url; return; }
+    function _loadTexturePattern(url, forPreset, quiet) {
+        if (!url) { if (!quiet) _patWanted = null; return; }
+        if (_patTiles[url]) { if (!quiet) _patWanted = url; return; }
         var img = new Image();
         _pendingLoads.push(img);
         function done() {
@@ -1283,7 +1283,8 @@
                 /* Same trap the tips hit: the image arrives whenever it
                  * arrives, and by then the user may be on another brush.
                  * A late pattern must not grain somebody else's paint. */
-                if (!forPreset || forPreset === engine._currentPreset) {
+                if (quiet) { /* a second brush's paper waits to be swapped in */ }
+                else if (!forPreset || forPreset === engine._currentPreset) {
                     _patWanted = url;
                     _invalidateSwatch(forPreset);
                 }
@@ -6511,6 +6512,7 @@
          * the last one's, which is the same late-arrival trap the tips had. */
         _patWanted = null;
         if (_params.texturePattern) _loadTexturePattern(_params.texturePattern, name);
+        if (preset._tex2Url) _loadTexturePattern(preset._tex2Url, name, true);
         // Bare preset switches must not leave the previous brush's warnings up.
         _syncNotesDiv();
 
@@ -6885,9 +6887,14 @@
         _kReuse = null; _tintMask = null;
         return t;
     }
+    // the second brush's own paper (Clip Studio's DualTexture), if it has one
+    function _secondPaper() {
+        var pr = engine.PRESETS[engine._currentPreset];
+        return pr && pr._tex2Url && _patTiles[pr._tex2Url] ? pr._tex2Url : null;
+    }
     // Both brushes along pts, a segment of each in turn.
     function _paintBoth(pts, color, sec) {
-        var st = _secondState(sec), n = pts.length, main = _flowCtx;
+        var st = _secondState(sec), n = pts.length, main = _flowCtx, pat0 = null;
         _subOn = sec.op === 'subtract' || sec.op === 'min' || sec.op === 'cut' || sec.op === 'contrast' || sec.op === 'add' ? sec.op : false;
         if (_subOn) {
             if (!_subCanvas || _subCanvas.width !== _flowCanvas.width || _subCanvas.height !== _flowCanvas.height) {
@@ -6903,12 +6910,12 @@
         for (var pass = 0; pass < (after ? 2 : 1); pass++)
         for (var i = 0; i < _max(1, n - 1); i++) {
             for (var w = after ? pass : 0; w < (after ? pass + 1 : 2); w++) {
-                if (w) { st = _swapState(st); if (_subOn) _flowCtx = _subCtx; else _flowCtx.globalCompositeOperation = sec.op; }
+                if (w) { st = _swapState(st); if (_subOn) _flowCtx = _subCtx; else _flowCtx.globalCompositeOperation = sec.op; pat0 = _patWanted; _patWanted = _secondPaper(); }
                 try {
                     if (n === 1) _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, color);
                     else _processSegment(pts, i, i + 1, color, 2);
                 } finally {
-                    if (w) { _flowCtx = main; _flowCtx.globalCompositeOperation = 'source-over'; st = _swapState(st); _second2.cache = st[3]; }
+                    if (w) { _patWanted = pat0; _flowCtx = main; _flowCtx.globalCompositeOperation = 'source-over'; st = _swapState(st); _second2.cache = st[3]; }
                 }
             }
         }
@@ -9644,7 +9651,7 @@
             var src = _userPresets[n], rec = {};
             for (var k in src) { if (src.hasOwnProperty(k)) rec[k] = src[k]; }
             out[n] = rec;
-            ['_tipUrl', '_tip2Url', 'texturePattern'].forEach(function (tk) {
+            ['_tipUrl', '_tip2Url', '_tex2Url', 'texturePattern'].forEach(function (tk) {
                 if (typeof rec[tk] !== 'string' || rec[tk].slice(0, 4) !== 'idb:') return;
                 jobs.push(new Promise(function (ok) {
                     _tipResolve(rec[tk], function (u) {
@@ -9680,6 +9687,7 @@
             if (rec._tip2Url && String(rec._tip2Url).length > TIP_CAP) delete rec._tip2Url;
             else if (rec._tip2Url) rec._tip2Url = _tipStash(String(rec._tip2Url));
             if (rec.texturePattern && String(rec.texturePattern).slice(0, 5) === 'data:') rec.texturePattern = _tipStash(String(rec.texturePattern));
+            if (rec._tex2Url && String(rec._tex2Url).slice(0, 5) === 'data:') rec._tex2Url = _tipStash(String(rec._tex2Url));
             var want = _cleanName(raw);
             if (!want) continue;
             // Never overwrite what is already there — an import that quietly
@@ -9879,6 +9887,8 @@
             : Promise.resolve(null);
         // the second brush, painted as a stroke of its own over (or out of) the first
         var sec = !stack && BrushPack.sutSecond(v);
+        var tex2P = sec && pr.texture2 && +v.DualTextureDensity > 0
+            ? (pr.texture2.layer ? BrushPack.sutLayerUrl(pr.texture2).catch(function () { return null; }) : Promise.resolve(null)) : Promise.resolve(null);
         var tip2P = pr.tip2 && !stack
             ? BrushPack.tipStrip(sec ? pr.tips2 : pr.tip2, 'tip2.png', sec ? { csp: true, crop: v.DualRibbon ? (Math.round((v.DualRotation || 0) / 90) % 2 ? 'h' : 'w') : false,
                   join: +v.DualPatternOrderType } : undefined).catch(function () { return null; })
@@ -9886,7 +9896,7 @@
 
         var texP = pr.texture && pr.texture.layer ? BrushPack.sutLayerUrl(pr.texture).catch(function () { return null; }) : Promise.resolve(null);
 
-        return Promise.all([tipP, tip2P, texP]).then(function (both) {
+        return Promise.all([tipP, tip2P, texP, tex2P]).then(function (both) {
             var tip = both[0], tip2 = both[1];
             var want = _packName(pr.name) || 'Clip Studio brush';
             var t = BrushPack.sutToPreset(pr.variant, want,
@@ -9911,7 +9921,9 @@
             if (tip2 && tip2.url.length <= TIP_CAP) ps._tip2Url = _tipStash(tip2.url);
             if (sec) {
                 // its picture is _tip2Url, never carved with (tip2Depth 0)
-                var p2 = BrushPack.sutToPreset(sec.variant, want, { hasTip: !!ps._tip2Url, tipW: tip2 && tip2.w, tipH: tip2 && tip2.h }).params;
+                var p2 = BrushPack.sutToPreset(sec.variant, want, { hasTip: !!ps._tip2Url, tipW: tip2 && tip2.w, tipH: tip2 && tip2.h,
+                    hasTexture: !!both[3], texReal: both[3] && pr.texture2.layer ? pr.texture2.layer.full[0] : 0 }).params;
+                if (both[3] && p2.texture) ps._tex2Url = _tipStash(both[3]); else delete p2.texture;
                 if (tip2 && tip2.cells > 1) { p2.tipCells = tip2.cells; p2.tipPick = tip2.pick === 'cycle' ? 'cycle' : p2.tipPick || tip2.pick; }
                 if (tip2 && tip2.params && tip2.params.tipMode) p2.tipMode = tip2.params.tipMode;
                 if (sec.light) p2.cutByLight = true;

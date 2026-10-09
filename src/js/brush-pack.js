@@ -3762,6 +3762,7 @@
         if (_sutNum(v.DualBrushCompositeMode, 0) === 12 && !_sutNum(v.ChangeRGBByDual, 1)) op = 'contrast';
         var v2 = {}, k;
         for (k in v) v2[k] = v[k];
+        if ('DualTextureScale' in v) v2.TextureScale2 = v.DualTextureScale;
         for (k in v) {
             if (k.indexOf('Dual') !== 0) continue;
             var x = k.slice(4);
@@ -4489,7 +4490,8 @@
                 tips: tips,
                 tip2: tip2 || null,
                 tips2: tip2 ? got.DualPatternImageArray : [],
-                texture: got.TextureImage[0] || null
+                texture: got.TextureImage[0] || null,
+                texture2: got.DualTextureImage[0] || null
             }],
             warnings: warnings
         };
