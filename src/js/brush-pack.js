@@ -3847,7 +3847,7 @@
          * and 0.72 off solid ink in Clip Studio (cdp-csp/pr-dc, zdah*). The
          * 35.36 fitted to whole strokes before left Soft 7% light. Not a
          * ribbon's, laid end to end: Braid (25.8) inks its outlines black. */
-        if (_sutNum(v.BrushAdjustFlowByInterval, 0) && !_sutNum(v.BrushRibbon, 0))
+        if (_sutNum(v.BrushAdjustFlowByInterval, 0) && !_sutNum(v.BrushRibbon, 0) && !_sutNum(v.BrushBlendPatternByDarken, 0))
             out.flow = Math.max(1, Math.round(out.flow * Math.min(1, Math.max(out.spacing, 100 / out.size) / 33.1)));   // dabs never sit closer than a pixel (minStep)
 
         /* Thickness is how wide the tip stays, as a percentage; ours is how
