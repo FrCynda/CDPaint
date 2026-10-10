@@ -4787,10 +4787,12 @@
             if (_subOn === 'add') {     // Clip Studio's mode 2: the second brush's colour is added to the first's wherever the first has ink
                 for (var ai = 3; ai < wd.length; ai += 4) if (wd[ai] && sd[ai]) for (var an = ai - 3; an < ai; an++) wd[an] = _min(255, wd[an] + _round(sd[an] * sd[ai] / 255));
             } else if (_subOn === 'over') {     // the second brush's stroke over the first's, once both are whole
-                for (var oi = 3; oi < wd.length; oi += 4) {
-                    var osa = sd[oi], oda = wd[oi] * (255 - osa) / 255, ona = osa + oda;
-                    if (!osa) continue;
-                    for (var on = oi - 3; on < oi; on++) wd[on] = (sd[on] * osa + wd[on] * oda) / ona;
+                for (var oi = 3, obm = _secondOf().blend; oi < wd.length; oi += 4) {
+                    var osa = sd[oi], oda = wd[oi] * (255 - osa) / 255, ona = osa + oda, on;
+                    if (!osa || obm && !wd[oi]) continue;
+                    // a blend only where the first has ink: zb218 with its screened second brush inks 799 in Clip Studio, ours 760 without it, 16289 laid over
+                    if (obm) { for (on = oi - 3; on < oi; on++) wd[on] += (_blend2(obm, wd[on] / 255, sd[on] / 255) * 255 - wd[on]) * osa / 255; continue; }
+                    for (on = oi - 3; on < oi; on++) wd[on] = (sd[on] * osa + wd[on] * oda) / ona;
                     wd[oi] = ona;
                 }
             } else
@@ -6926,6 +6928,14 @@
     function _secondPaper() {
         var pr = engine.PRESETS[engine._currentPreset];
         return pr && pr._tex2Url && _patTiles[pr._tex2Url] ? pr._tex2Url : null;
+    }
+    /* Clip Studio's second-brush modes 5-8 with the colour change on, the
+     * first's colour c under the second's s: lighten, screen, overlay and
+     * dodge fit zb174's strokes within 2.6/10/9/17 levels a pixel, its
+     * rotation held so each mode's pixels line up (cdp-csp/w174m). */
+    function _blend2(m, c, s) {
+        return m === 'lighten' ? _max(c, s) : m === 'screen' ? 1 - (1 - c) * (1 - s)
+            : m === 'overlay' ? (c < 0.5 ? 2 * c * s : 1 - 2 * (1 - c) * (1 - s)) : _min(1, c / _max(1e-3, 1 - s));
     }
     // Both brushes along pts, a segment of each in turn.
     function _paintBoth(pts, color, sec) {
@@ -9965,6 +9975,7 @@
                 if (sec.light) p2.cutByLight = true;
                 // synced, the second brush grows and shrinks with the first (zb042: 119 of 100)
                 ps.second = { op: sec.op, p: p2, ratio: +sec.variant.SyncDualBrushSize && ps.size ? p2.size / ps.size : 0 };
+                if (sec.blend) ps.second.blend = sec.blend;
             }
             if (ps.texture > 0 && pr.texture) {
                 ps.texturePattern = both[2] ? _tipStash(both[2]) : _bytesToPngUrl(pr.texture);

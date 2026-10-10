@@ -3762,7 +3762,8 @@
      * so its purple particles turn magenta (mean 240,141,251 against Clip
      * Studio's 239,138,250; read as a cut by lightness they were pale
      * violet). */
-    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'add', 3: 'subtract', 4: 'destination-over', 9: 'destination-over', 10: 'destination-over', 12: 'cut' };
+    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'add', 3: 'subtract', 4: 'destination-over', 5: 'over', 6: 'over', 7: 'over', 8: 'over', 9: 'destination-over', 10: 'destination-over', 12: 'cut' },
+        SUT_SECOND_BLEND = { 5: 'lighten', 6: 'screen', 7: 'overlay', 8: 'dodge' };
     BrushPack.sutSecond = function (v) {
         var op = _sutNum(v.UseDualBrush, 0) && SUT_SECOND_OP[_sutNum(v.DualBrushCompositeMode, 0)];
         if (!op) return null;
@@ -3782,6 +3783,8 @@
          * the first: zb159's white shape inks in the ink colour on top in
          * mode 0 and 1 alike, blank with the change off (cdp-csp/w159). */
         else if (_sutNum(v.DualBrushCompositeMode, 0) <= 1) op = 'over';
+        // ...and modes 5-8 blend it on (krita-brush-engine's _blend2)
+        var blend = SUT_SECOND_BLEND[_sutNum(v.DualBrushCompositeMode, 0)];
         /* Mode 12 likewise: with the colour change on it cuts (the probes
          * above, all on); off, it pushes ink away from half -- darker where
          * the second brush is under half, lighter where over -- which is
@@ -3802,7 +3805,7 @@
         v2.UseDualBrush = 0; v2.BrushUseWaterColor = v2.BrushUseWaterColor2 = 0; delete v2.BrushOpacityEffector;
         var light = _sutNum(v.DualBrushCompositeMode, 0) === 2;
         if (!light) v2.BrushChangePatternColor = 0;   // mode 2's colour is the point
-        return { op: op, variant: v2, light: light };
+        return { op: op, variant: v2, light: light, blend: blend };
     };
 
     /* Clip Studio's settings into ours.
