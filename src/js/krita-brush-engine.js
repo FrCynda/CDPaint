@@ -897,7 +897,7 @@
         for (var i = 0; i < d.length; i += 4) {
             d[i + 3] = !m ? d[i] : op === 'add' ? (d[i] ? _min(255, d[i] + m[i]) : 0)
                 : op === 'multiply' ? _round(d[i] * m[i] / 255) : op === 'min' ? _min(d[i], m[i]) : _max(0, d[i] - m[i]);
-            if (col) { d[i] = col[i]; d[i + 1] = col[i + 1]; d[i + 2] = col[i + 2]; }
+            if (col && col[i + 3]) { d[i] = col[i]; d[i + 1] = col[i + 1]; d[i + 2] = col[i + 2]; }
             else { d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; }
         }
         _flowCtx.putImageData(img, x, y);
@@ -2317,7 +2317,13 @@
                     _adColCtx = _adCol.getContext('2d', { willReadFrequently: true });
                 }
                 _adColCtx.fillStyle = _adColor;   // every dab so far was this colour
-                _adColCtx.fillRect(0, 0, _adCol.width, _adCol.height);
+                /* ...or none yet: a picture's first dab is its own colour,
+                 * not a flow's share of it over the ink -- zb197's tinted tip
+                 * at flow 25 laid 145,128,226 and 1.6x Clip Studio's ink
+                 * against its 172,160,235, as without the opacity effector
+                 * (cdp-csp/stk sw-c197). */
+                if (_adColOn) _adColCtx.fillRect(0, 0, _adCol.width, _adCol.height);
+                else _adColCtx.clearRect(0, 0, _adCol.width, _adCol.height);
                 _adColOn = 2;
             } else if (!_adColOn) _adColOn = 1;
             _adColor = colorHex; colorHex = _greyHex(_adAvg); if (_adAvg > 0) alpha *= _adO / _adAvg;
