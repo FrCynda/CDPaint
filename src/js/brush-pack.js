@@ -3938,6 +3938,8 @@
         if (reff & 128 && rrand > 0) {
             out.angleSrc = 'random';
             out.angleRange = rrand;
+            // ...about the line with 64 on too (sw-s43): engine's angleDirJitter
+            if (reff & rdir && !rk) { out.angleSrc = 'direction'; out.angleDirJitter = true; }
         } else if (reff & rdir) {
             out.angleSrc = 'direction';
         } else if (rk && reff & 512) {

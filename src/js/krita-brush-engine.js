@@ -3238,7 +3238,11 @@
         /* The lock is the rotation sensor's own: a size list reading the
          * drawing angle unlocked beside it still follows the stroke (Poska
          * Triangle G). */
-        if (src === 'direction' && sc.strokeAngle != null) return (p.angleLocked ? _lockAngle : sc.strokeAngle) + baseAngle;
+        /* Clip Studio's random turn on top of the stroke's (angleDirJitter):
+         * a tip at random 10 wobbles about the line, not about upright
+         * (cdp-csp/stk sw-s43). */
+        if (src === 'direction' && sc.strokeAngle != null) return (p.angleLocked ? _lockAngle : sc.strokeAngle) + baseAngle
+            + (p.angleDirJitter ? (_dabRand(sc.x, sc.y, 11) * 2 - 1) * (p.angleRange == null ? 180 : p.angleRange) : 0);
         if (src === 'twist' && p.angleStrength == null) return baseAngle + (_penTwist % 360);
         if (src === 'tilt') return baseAngle + _atan2(_penTiltY, _penTiltX) * 180 / _PI;
         /* How far the turn reaches. 180 is a full turn either way, which is
@@ -6234,7 +6238,7 @@
         maskFlowSrc: 'none', maskFlowMin: 0, maskFlowCurve: 1,
         hardnessSrc: 'none',     hardnessMin: 0,   hardnessCurve: 1,
         scatterSrc: 'none',      scatterMin: 0,    scatterCurve: 1,
-        angleSrc: 'none',        angleRange: 180, angleStrength: null, angleCurve: 1,
+        angleSrc: 'none',        angleRange: 180, angleStrength: null, angleCurve: 1, angleDirJitter: false,
         aspectRatioSrc: 'none',  aspectRatioMin: 0, aspectRatioCurve: 1,
         textureSrc: 'none',      textureMin: 0,    textureCurve: 1,
         colorRateSrc: 'none',    colorRateMin: 0,  colorRateCurve: 1,
