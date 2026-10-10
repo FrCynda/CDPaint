@@ -1894,6 +1894,12 @@
      * 25th/50th/75th of the paper (cdp-csp/pr-dab pfF25), where clipped
      * first it never went under 26. */
     function _cspPaper(m, a, s, d) {
+        /* 9 keeps ink by how far the density clears the paper: d/10 - s,
+         * density as a percentage, so 0 lays nothing and 20 clears any paper
+         * (zb108's on a whole stroke against its own multiply, grey by grey:
+         * 0.31/0.18/0.03 at density 5 and 0.82/0.63/0.32 at 10 where the
+         * paper is 0.18/0.37/0.47-0.68; cdp-csp/w108p). */
+        if (m === 9) return a * _clamp(10 * d - s, 0, 1);
         if (m === 2) return _max(0, a - d * (1 - s));
         if (m === 0) return _min(1, a * (1.5 - d * (1 - s)));
         if (m === 4) return a + d * (a + s - 1);

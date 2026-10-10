@@ -4002,7 +4002,7 @@
             var dens = _sutNum(v.TextureDensity, 0);
             // laid by darken, the paper on each dab is the paper on the stroke (Soft bleed, pr-sb: 0.55 both ways at 50)
             var tm = Math.round(_sutNum(v.TextureCompositeMode, 1)),
-                perDab = (_sutNum(v.TextureForPlot, 0) || _sutNum(v.BrushBlendPatternByDarken, 0)) && tm >= 0 && tm <= 7;
+                perDab = (_sutNum(v.TextureForPlot, 0) || _sutNum(v.BrushBlendPatternByDarken, 0)) && tm >= 0 && (tm <= 7 || tm === 9);
             // blend 0 at density 0 is still half again each dab (see _cspPaper)
             if (!dens && perDab && tm === 0) out.flow = Math.min(100, Math.round(out.flow * 1.5));
             if (dens > 0 && perDab) {
@@ -4037,7 +4037,7 @@
                  * plain dab with Pastel's paper, a strength per mode:
                  * subtract at half density matched multiply, 3 showed a
                  * sixth as much, 4 and 5 a twentieth, 0 and 6 no grain. */
-                if (tm === 1 || tm === 2) {
+                if (tm === 1 || tm === 2 || tm === 9) {
                     out.texture = Math.max(0, Math.min(100, Math.round(dens)));
                     out.textureStroke = tm;
                     /* Its modifiers, measured on Round watercolor's paper
