@@ -3687,8 +3687,8 @@
                 if (!nw) {          // legacy, premultiplied: lerp(dst, lerp(pickup, paint, c), s * tip)
                     k = mtr ? k0 / _clamp(alpha, 0, 1) * mt[j * mw + i] / 255 : k0 * m / 255;
                     B[0] = src[u] * ci + pr; B[1] = src[u + 1] * ci + pg; B[2] = src[u + 2] * ci + pb; B[3] = src[u + 3] * ci + pa;
-                    if (mt && !mtr) { var gr = mt[j * mw + i] / m; B[0] *= gr; B[1] *= gr; B[2] *= gr; B[3] *= gr; }
                     if (_smBase) { var bi = ((ry + py) * ctx.canvas.width + rx + px) * 4, fb = _smBase[bi + 3] / 255; var pm = p.mixColor / 100 * fb * 0.85; for (n = 0; n < 3; n++) { var pc = rgb[n] + (_smBase[bi + n] * fb + 255 * (1 - fb) - rgb[n]) * pm; B[n] = (fb + (1 - fb) * c) * (fb > 0 ? _smBase[bi + n] * (1 - c + c * pc / 255) : pc); } B[3] = 255 * (fb + (1 - fb) * c); }
+                    if (mt && !mtr) { var gr = mt[j * mw + i] / m; B[0] *= gr; B[1] *= gr; B[2] *= gr; B[3] *= gr; }
                 } else {
                     k = m / 255;
                     var sa = p.smudgeSmearAlpha === false ? src[u + 3] / 255 * sO : 0;
