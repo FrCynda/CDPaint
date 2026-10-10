@@ -1907,6 +1907,11 @@
         if (m === 2) return _max(0, a - d * (1 - s));
         if (m === 0) return _min(1, a * (1.5 - d * (1 - s)));
         if (m === 4) return a + d * (a + s - 1);
+        /* 8 doubles the dab, then takes the density's share of the paper's
+         * dark off: a single hard dab at flow 25/50/75 lays s - 0.5, s and
+         * s + 0.5 at density 100, 0.5 s at 50 on flow 25, and 0.49 at density
+         * 0 (cdp-csp/stk sw-u8, sw-v8). */
+        if (m === 8) return 2 * a + d * (s - 1);
         return a + d * (_cspPaperFull(m, a, s) - a);
     }
     function _cspPaperFull(m, a, s) {
@@ -6107,7 +6112,7 @@
         mixColor: 0,         // Clip Studio's amount of paint taken from the canvas, used by a multiply mixing brush
         mixFlat: false,      // ...laid flat at that density, nothing picked up (BrushWaterColor 1)
         textureStroke: null,   // Clip Studio's paper blend (0..7) on the finished stroke, not on each dab
-        textureBlend: null,  // Clip Studio's paper blend on each dab, 0..7; see _cspPaper
+        textureBlend: null,  // Clip Studio's paper blend on each dab, 0..9; see _cspPaper
         textureStress: false, // Clip Studio's emphasised density; see _applyTextureNoise
         mixStretch: 0,       // Clip Studio's colour stretch, 0..100
         hatch: null,         // Krita's hatching brush: see _applyHatch

@@ -4027,9 +4027,9 @@
             var dens = _sutNum(v.TextureDensity, 0);
             // laid by darken, the paper on each dab is the paper on the stroke (Soft bleed, pr-sb: 0.55 both ways at 50)
             var tm = Math.round(_sutNum(v.TextureCompositeMode, 1)),
-                perDab = (_sutNum(v.TextureForPlot, 0) || _sutNum(v.BrushBlendPatternByDarken, 0)) && tm >= 0 && (tm <= 7 || tm === 9);
-            // blend 0 at density 0 is still half again each dab (see _cspPaper)
-            if (!dens && perDab && tm === 0) out.flow = Math.min(100, Math.round(out.flow * 1.5));
+                perDab = (_sutNum(v.TextureForPlot, 0) || _sutNum(v.BrushBlendPatternByDarken, 0)) && tm >= 0 && tm <= 9;
+            // blend 0 at density 0 is still half again each dab, 8 twice it (see _cspPaper)
+            if (!dens && perDab && (tm === 0 || tm === 8)) out.flow = Math.min(100, Math.round(out.flow * (tm ? 2 : 1.5)));
             if (dens > 0 && perDab) {
                 /* Paper on each dab (TextureForPlot): the blend is Clip
                  * Studio's own, measured dab by dab -- see _cspPaper. */
