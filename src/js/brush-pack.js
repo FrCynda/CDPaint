@@ -4065,7 +4065,16 @@
                  * plain dab with Pastel's paper, a strength per mode:
                  * subtract at half density matched multiply, 3 showed a
                  * sixth as much, 4 and 5 a twentieth, 0 and 6 no grain. */
-                if (tm === 1 || tm === 2 || tm === 9) {
+                /* So do 3 to 8, each as measured on a dab (with 5 to 7's
+                 * density on the paper, see _cspPaper): a round stroke of
+                 * flow-20 dabs under zb085's paper lays 0.91-0.96 of Clip
+                 * Studio's ink in every one of them, at density 100, 50 and
+                 * 25, against the bare stroke's 1.03 (cdp-csp/stk sw-q85,
+                 * sw-r85). Not yet on a mixing brush (zb000, zb028, zb018 lose
+                 * 5 -> 40, 6 -> 41, 1 -> 6 so) or a second brush, which lays
+                 * no stroke paper at all here. */
+                var mixing = _sutNum(v.BrushUseWaterColor, 0) || _sutNum(v.BrushUseWaterColor2, 0);
+                if (tm === 1 || tm === 2 || tm === 9 || tm >= 3 && tm <= 8 && !mixing && !opts.second) {
                     out.texture = Math.max(0, Math.min(100, Math.round(dens)));
                     out.textureStroke = tm;
                     /* Emphasised density holds here as on a dab (see

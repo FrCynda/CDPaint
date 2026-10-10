@@ -2011,10 +2011,10 @@ await withPage(async (page) => {
     check('a brush laid by darken keeps its strongest dab and drops the wash, its paper on each dab',
         JSON.stringify(sm.darken) === '[[true,false,0,0,null,100],[true,false,0,50,0,100],[true,false,0,0,null,75]]', JSON.stringify(sm.darken));
     /* Multiply and subtract blend once over the whole stroke (Round
-     * watercolor brush), reversed or not (cdp-csp/pa); the rest keep a
-     * strength per mode. */
-    check('the paper shows as strongly as its blend lets it, multiply and subtract on the whole stroke',
-        JSON.stringify(sm.paper) === '[[50,1],[50,2],[3,null],[0,null],[50,1]]', JSON.stringify(sm.paper));
+     * watercolor brush), reversed or not (cdp-csp/pa); so do 3 to 8
+     * (cdp-csp/stk sw-q85); mode 0 keeps a strength of its own. */
+    check('the paper shows as strongly as its blend lets it, every blend but 0 on the whole stroke',
+        JSON.stringify(sm.paper) === '[[50,1],[50,2],[50,4],[0,null],[50,1]]', JSON.stringify(sm.paper));
     check('...brightened, turned and reversed as Clip Studio does the paper on a whole stroke',
         JSON.stringify(sm.paperMods) === '[0.2,45,true]', JSON.stringify(sm.paperMods));
     /* Clip Studio's pictures (Book, Building) stamp their own greys and

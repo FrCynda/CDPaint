@@ -1912,6 +1912,7 @@
          * s + 0.5 at density 100, 0.5 s at 50 on flow 25, and 0.49 at density
          * 0 (cdp-csp/stk sw-u8, sw-v8). */
         if (m === 8) return 2 * a + d * (s - 1);
+        if (m >= 5 && m <= 7) return _cspPaperFull(m, a, 1 - d * (1 - s));
         return a + d * (_cspPaperFull(m, a, s) - a);
     }
     function _cspPaperFull(m, a, s) {
@@ -9990,7 +9991,7 @@
             if (tip2 && tip2.url.length <= TIP_CAP) ps._tip2Url = _tipStash(tip2.url);
             if (sec) {
                 // its picture is _tip2Url, never carved with (tip2Depth 0)
-                var p2 = BrushPack.sutToPreset(sec.variant, want, { hasTip: !!ps._tip2Url, tipW: tip2 && tip2.w, tipH: tip2 && tip2.h,
+                var p2 = BrushPack.sutToPreset(sec.variant, want, { second: true, hasTip: !!ps._tip2Url, tipW: tip2 && tip2.w, tipH: tip2 && tip2.h,
                     hasTexture: !!both[3], texReal: both[3] && pr.texture2.layer ? pr.texture2.layer.full[0] : 0 }).params;
                 if (both[3] && p2.texture) ps._tex2Url = _tipStash(both[3]); else delete p2.texture;
                 if (tip2 && tip2.cells > 1) { p2.tipCells = tip2.cells; p2.tipPick = tip2.pick === 'cycle' ? 'cycle' : p2.tipPick || tip2.pick; }
