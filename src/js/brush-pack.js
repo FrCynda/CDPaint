@@ -1855,8 +1855,11 @@
              * empty layer and covers the stripes white in Clip Studio, their
              * ink all from the second brush), but in the ink among darker
              * ones (zb164, zb171: three white pictures of five, all inked as
-             * our ink-only reading had it, colour within 3). */
-            var shaded = pale && (pale.indexOf(1) >= 0 || pale.length > 0 && pale.every(function (k) { return k === 2; }));
+             * our ink-only reading had it, colour within 3). One white picture
+             * among black ones paints white too: zb091's white shape after its
+             * black speckles leaves the paper as it was in Clip Studio, alone
+             * or second (cdp-csp/stk e91, e92), where ours inked it solid. */
+            var shaded = pale && (pale.indexOf(1) >= 0 || pale.indexOf(2) >= 0);
             var own = opts && opts.keepColor && cells.some(function (c) {
                 for (var q = 0; q < c.alpha.length; q++) {
                     var r = c.rgb[q * 3], g = c.rgb[q * 3 + 1], b = c.rgb[q * 3 + 2];
