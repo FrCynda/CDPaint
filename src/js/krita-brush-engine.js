@@ -1902,8 +1902,12 @@
          * density as a percentage, so 0 lays nothing and 20 clears any paper
          * (zb108's on a whole stroke against its own multiply, grey by grey:
          * 0.31/0.18/0.03 at density 5 and 0.82/0.63/0.32 at 10 where the
-         * paper is 0.18/0.37/0.47-0.68; cdp-csp/w108p). */
-        if (m === 9) return a * _clamp(10 * d - s, 0, 1);
+         * paper is 0.18/0.37/0.47-0.68; cdp-csp/w108p). The density scales
+         * the dab, not the result: a soft round dab under zb153's flat paper
+         * (0.26) lays 10 d a - 0.26 -- solid to its rim at 100, slope 5 at
+         * 50, 2a - 0.26 at 20, 0.62 and 0.17 of its 0.89 middle at 10 and 5
+         * (cdp-csp/stk sw-m9). */
+        if (m === 9) return _clamp(10 * d * a - s, 0, 1);
         if (m === 2) return _max(0, a - d * (1 - s));
         if (m === 0) return _min(1, a * (1.5 - d * (1 - s)));
         if (m === 4) return a + d * (a + s - 1);
@@ -1993,7 +1997,9 @@
                     if (br) s = _clamp(s - br, 0, 1);
                     if (inv) s = 1 - s;
                     if (stress) s = _clamp(sm + stress * (s - sm), 0, 1);
-                    dd[q] = _round(_clamp(_cspPaper(blend, a, s, D), 0, 1) * 255);
+                    // 9 sees the tip without its flow, which scales what it leaves (flow 50: half, 25: a quarter; sw-m9f)
+                    dd[q] = blend === 9 && flow != null ? _round(flow * _cspPaper(9, dd[q] / 255, s, D) * 255)
+                        : _round(_clamp(_cspPaper(blend, a, s, D), 0, 1) * 255);
                 }
             }
             ctx.putImageData(img, at ? ox : 0, at ? oy : 0);
