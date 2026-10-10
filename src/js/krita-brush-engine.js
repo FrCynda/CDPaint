@@ -3835,8 +3835,10 @@
 
         // a sub colour's change shades a picture's whites (white is the sub colour), never the ink
         _tintInk = colorHex;
+        /* ...and a mode-2 second brush lays that sub colour: zb042's takes the first's colour 2.8x its flow of the way to white in Clip Studio
+         * (0.14/0.28/0.43/0.70/0.97 at 5-35), green 0.86 as far as red -- white on its shaded ink, where ours added the ink (cdp-csp/w42e) */
         var finalColor = !p.jitterSub ? _jitterColor(p, colorHex, x, y)
-            : p.tipMode === 'color' ? _jitterColor(p, '#ffffff', x, y) : colorHex;
+            : p.tipMode === 'color' || (p.cutByLight && _subOn === 'add') ? _jitterColor(p, '#ffffff', x, y) : colorHex;
         if (p.normalMap) finalColor = _normalColor(p.normalMap, _dabIndex === 1 ? _lockAngle : strokeAngle);   // the first dab's angle is from the canvas origin
         var baseColor = finalColor;
         if (p.subMix) finalColor = _subMixed(p, baseColor, sc);
