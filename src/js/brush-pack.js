@@ -1812,14 +1812,11 @@
              * pictures: stamped with black they show their own greys and
              * whites. A tip with no solid white is ink, its greys only how
              * dense it is (Crayon's soft grey blob, painted solid black).
-             * A coloured picture paints its darkest channel as grey (Bead
-             * chain's pink beads paint dark grey with black: ink 1.01 of
-             * Clip Studio's, where brightness gave 0.82).
+             * A grey picture's darkest channel is its grey.
              * ponytail: Clip Studio tints the greys between the main and
              * sub colour; ours stamps them as they are, right for black.
-             * That is its 'change brush tip colour'. Off, a picture paints
-             * in its own colours whatever the ink: Bead chain's beads come
-             * out red and pink with black. */
+             * A coloured picture paints in its own colours whatever the ink
+             * (Bead chain's red and pink beads with black; see `own`). */
             var pale = opts && opts.csp && cells.map(function (c) {
                 var solid = 0, white = 0, dark = 0, mid = 0;
                 for (var q = 0; q < c.alpha.length; q++) {
@@ -1860,7 +1857,11 @@
              * black speckles leaves the paper as it was in Clip Studio, alone
              * or second (cdp-csp/stk e91, e92), where ours inked it solid. */
             var shaded = pale && (pale.indexOf(1) >= 0 || pale.indexOf(2) >= 0);
-            var own = opts && opts.keepColor && cells.some(function (c) {
+            /* A coloured picture keeps its colours with 'change brush tip
+             * colour' on too: zb095's tan smear lays 223,184,135 in Clip
+             * Studio either way, and with its hue, saturation and value
+             * changes at 0 or fixed (cdp-csp/stk sw-b95). */
+            var own = cells.some(function (c) {
                 for (var q = 0; q < c.alpha.length; q++) {
                     var r = c.rgb[q * 3], g = c.rgb[q * 3 + 1], b = c.rgb[q * 3 + 2];
                     if (c.alpha[q] > 127 && Math.max(r, g, b) - Math.min(r, g, b) > 30) return true;

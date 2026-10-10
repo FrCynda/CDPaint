@@ -9961,7 +9961,7 @@
             +v.BrushRibbon && +v.DualRibbon && Math.abs(v.DualSize - v.BrushSize) < 0.5 && +v.DualRotation === +v.BrushRotation);
         var tipP = (pr.tips && pr.tips.length)
             ? BrushPack.tipStrip(stack ? pr.tips.concat([pr.tip2]) : pr.tips, 'tip.png', { csp: true, crop: v.BrushRibbon ? (Math.round((v.BrushRotation || 0) / 90) % 2 ? 'h' : 'w') : false,
-                  join: +v.BrushPatternOrderType, stack: stack && (v.DualFlow == null ? 1 : Math.max(0, Math.min(100, +v.DualFlow)) / 100), keepColor: v.BrushChangePatternColor != null && !+v.BrushChangePatternColor }).catch(function () { return null; })
+                  join: +v.BrushPatternOrderType, stack: stack && (v.DualFlow == null ? 1 : Math.max(0, Math.min(100, +v.DualFlow)) / 100) }).catch(function () { return null; })
             : Promise.resolve(null);
         // the second brush, painted as a stroke of its own over (or out of) the first
         var sec = !stack && BrushPack.sutSecond(v);

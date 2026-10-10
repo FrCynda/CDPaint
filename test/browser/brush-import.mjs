@@ -2058,7 +2058,7 @@ await withPage(async (page) => {
      * square, so it is cut back to the real shape, margins kept (Dashed
      * line's gaps are its margins); a long one is laid in pieces so a
      * stroke stops near the pen (Rough pen ran 100px on); order 1 runs out
-     * and back (Bead chain); a coloured one paints its darkest channel. */
+     * and back (Bead chain); a coloured one paints its own colours. */
     const rib = await page.eval(`(async () => {
         const png = async (w, h, draw) => {
             const c = new OffscreenCanvas(w, h), x = c.getContext('2d'); draw(x);
@@ -2076,16 +2076,12 @@ await withPage(async (page) => {
         const g = await BrushPack.tipStrip([pink], 'tip.png', { csp: true });
         const im = new Image(); im.src = g.url; await im.decode();
         const cv = new OffscreenCanvas(im.width, im.height), cx = cv.getContext('2d'); cx.drawImage(im, 0, 0);
-        const g2 = await BrushPack.tipStrip([pink], 'tip.png', { csp: true, keepColor: true });
-        const im2 = new Image(); im2.src = g2.url; await im2.decode();
-        const cv2 = new OffscreenCanvas(im2.width, im2.height), cx2 = cv2.getContext('2d'); cx2.drawImage(im2, 0, 0);
         const halves = await Promise.all([0, 5].map(y => png(10, 10, x => { x.fillStyle = '#000'; x.fillRect(0, y, 10, 5); })));
         const st = await BrushPack.tipStrip(halves, 'tip.png', { csp: true, crop: 'w', stack: 0.5 });
         const sm = new Image(); sm.src = st.url; await sm.decode();
         const sv = new OffscreenCanvas(sm.width, sm.height), sx = sv.getContext('2d'); sx.drawImage(sm, 0, 0);
         return JSON.stringify({ cut: [cut.w, cut.h, cut.cells, cut.pick], bounce: [bounce.cells, bounce.w, bounce.h],
-            grey: Array.from(cx.getImageData(1, 1, 1, 1).data.slice(0, 3)),
-            own: [g2.params && g2.params.tipMode].concat(Array.from(cx2.getImageData(1, 1, 1, 1).data.slice(0, 3))),
+            own: [g.params && g.params.tipMode].concat(Array.from(cx.getImageData(1, 1, 1, 1).data.slice(0, 3))),
             exact: [cut2.w, +cut2.h.toFixed(2)],
             stack: [st.cells, sx.getImageData(5, 2, 1, 1).data[3], sx.getImageData(5, 7, 1, 1).data[3]] });
     })()`, { awaitPromise: true }).then(JSON.parse);
@@ -2097,10 +2093,8 @@ await withPage(async (page) => {
         JSON.stringify(rib.exact) === '[9,23.4]', JSON.stringify(rib.exact));
     check('...its pictures joined out and back in order 1',
         JSON.stringify(rib.bounce) === '[4,20,10]', JSON.stringify(rib.bounce));
-    check('a coloured picture paints its darkest channel',
-        JSON.stringify(rib.grey) === '[128,128,128]', JSON.stringify(rib.grey));
-    // Clip Studio's 'change brush tip colour' off: Bead chain's beads paint red and pink with black
-    check('...unless its colour is not to be changed, when it paints its own',
+    // Bead chain's beads paint red and pink with black, zb095's smear tan with its colour change on
+    check('a coloured picture paints its own colours',
         JSON.stringify(rib.own) === '["color",255,128,192]', JSON.stringify(rib.own));
     /* Zipper's second ribbon is its upper row of teeth: laid over the first,
      * not cut through it (one row with the second brush off there). */
