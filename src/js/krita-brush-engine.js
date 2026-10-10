@@ -2665,7 +2665,7 @@
         // gated — applying it while another tool is active would stomp that
         // tool's own cursor (e.g. the pencil's, right after boot).
         var isActiveTool = app.config && app.config.tool === 'paintbrush';
-        var sz = _params.size;
+        var sz = _params.size * (_params.sizeAcross || 1);
         if (sz <= 2) {
             if (isActiveTool && app.ui && app.ui.stage) app.ui.stage.style.cursor = 'crosshair';
             return;
@@ -6114,6 +6114,7 @@
         sprayEach: false,        // Clip Studio sprays: each particle sized on its own, stops spaced by the plain size
         firstDabAt: 0,           // the first dab this many sizes along the stroke, none at the pen (Clip Studio sprays)
         ribbonClip: false,       // Clip Studio ribbons: the last picture is cut off where the pen stops
+        sizeAcross: null,        // ...whose size is the picture's side across the stroke: the long side is size x this
         ribbonLens: null,        // ...and its pictures' own lengths, when picked at random (_ribbonLen)
         /* Several dabs at every stop, and where each one lands relative to
          * the cursor -- both measured in the stroke's own frame. */
@@ -6669,6 +6670,7 @@
         for (var _fk in _params) {
             if (_params.hasOwnProperty(_fk)) _strokeParams[_fk] = _isArray(_params[_fk]) ? _cloneCurve(_params[_fk]) : _params[_fk];
         }
+        if (_strokeParams.sizeAcross) _strokeParams.size *= _strokeParams.sizeAcross;
         _wet = [];                // the brush is loaded fresh each stroke
         _smPrev = null; _smT = null; _smS = null; _smPic = _smBase = _smOwn = _smOp0 = _smFl0 = null; _smCar = null; _smPx = _smPy = NaN;
         _wetPos = [];
@@ -6945,6 +6947,7 @@
         for (k in engine.DEFAULTS) p[k] = engine.DEFAULTS[k];
         for (k in sec.p) p[k] = sec.p[k];
         if (sec.ratio && _params.size) p.size = _params.size * sec.ratio;
+        if (p.sizeAcross) p.size *= p.sizeAcross;
         p.tip2Depth = 0;
         var key = engine._currentPreset + '|' + (p.tipCells || 1);
         if (c.src !== _tip2Canvas || c.key !== key) {

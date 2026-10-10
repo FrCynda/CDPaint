@@ -3986,9 +3986,19 @@
          * a turn other than 0 or 90 is taken as the nearer of them (unmeasured past 1). */
         if (_sutNum(v.BrushRibbon, 0) && opts.hasTip && opts.tipW && opts.tipH) {
             var rr = _sutNum(v.BrushRotation, 0), side = Math.round(rr / 90) % 2 !== 0;
-            var across = side ? opts.tipH : opts.tipW;
-            // to a hundredth: Waved line's 10 x 300/117 is 25.64, and 26 drifted a wave in 20
-            out.size = Math.max(1, Math.min(5000, Math.round(100 * size * Math.max(opts.tipW, opts.tipH) / across) / 100));
+            /* The size is the picture's side across the stroke, as Clip
+             * Studio's own number: set to 20, zb216's 74x138 pieces stand 20
+             * across there, where ours took 20 as the long side and stood
+             * 10.7 (ink 0.55-0.6 of Clip Studio's for every ribbon in the zb
+             * bank; zb217 and zb233 too, turned 0, and zb202 turned 90). The
+             * engine lays the long side at size x sizeAcross, unrounded:
+             * Waved line's 10 x 300/117 is 25.64, and 26 drifted.
+             * ponytail: between 0 and 90 the turned picture's extent across;
+             * zb239 at 50 stands 13 in Clip Studio, ours 8 so and 19 at 90's. */
+            var r90 = Math.round(rr / 90) * 90, rad = (Math.abs(rr - r90) <= 1 ? r90 : rr) * Math.PI / 180,
+                across = Math.abs(opts.tipW * Math.cos(rad)) + Math.abs(opts.tipH * Math.sin(rad));
+            out.size = Math.max(1, Math.min(5000, size));
+            out.sizeAcross = Math.max(opts.tipW, opts.tipH) / across;
             out.spacing = 100;
             delete out.spacingByWidth; delete out.spacingBySize;   // a ribbon is spaced by its length along the line
             // The first picture starts at the stroke's start, not centred on it (Dashed line's first dash 3.5px in).

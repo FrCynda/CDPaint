@@ -1727,8 +1727,8 @@ await withPage(async (page) => {
                   P({ BrushAutoIntervalType: 2 })].map(p => !!p.spacingBySize),
             byWidth: [P({ BrushSize: 100, BrushAutoIntervalType: 1 }, { hasTip: true, tipW: 100, tipH: 100 }).spacingByWidth || false,
                 P({ BrushSize: 100, BrushAutoIntervalType: 1 }).spacingByWidth || false, ribbon.spacingByWidth || false],
-            ribbon: [ribbon.size, ribbon.spacing, ribbon.angle, ribbon.angleSrc, ribbon.offsetAlong], ribbonNote,
-            ribTilt: [ribTilt.angle, ribTilt.size, ribTilt.ribbonClip],
+            ribbon: [ribbon.size, +(ribbon.size * ribbon.sizeAcross).toFixed(2), ribbon.spacing, ribbon.angle, ribbon.angleSrc, ribbon.offsetAlong], ribbonNote,
+            ribTilt: [ribTilt.angle, ribTilt.size, +(ribTilt.size * ribTilt.sizeAcross).toFixed(2), ribTilt.ribbonClip],
             cj: [P(cj).colorJitterRange, [P(cj).hueJitter, P(cj).satJitter, P(cj).valJitter],
                  P(Object.assign({ BrushChangePatternColor: 0 }, cj)).valJitter || 0,
                  [P(Object.assign({ BrushChangeColorTarget: 2 }, cj)).valJitter, P(Object.assign({ BrushChangeColorTarget: 2 }, cj)).jitterSub],
@@ -1906,15 +1906,16 @@ await withPage(async (page) => {
      * a fixed interval and a generated tip go by the size, however turned. */
     check('a fixed interval or a generated tip is spaced by the size alone',
         JSON.stringify(sm.iso) === '[false,true,true]', JSON.stringify(sm.iso));
-    /* A ribbon tiles its picture end to end, as wide as the brush, the
-     * first starting at the stroke's start (Dashed line's first dash). */
+    /* A ribbon tiles its picture end to end, as wide as the brush -- its
+     * size Clip Studio's own, the picture's side across the stroke (zb216)
+     * -- the first starting at the stroke's start (Dashed line's first dash). */
     check('a ribbon lays its picture end to end along the stroke',
-        JSON.stringify(sm.ribbon) === '[90,100,270,"direction",50]', JSON.stringify(sm.ribbon));
+        JSON.stringify(sm.ribbon) === '[30,90,100,270,"direction",50]', JSON.stringify(sm.ribbon));
     check('...and is no longer reported as dropped', !/ribbon/.test(sm.ribbonNote), sm.ribbonNote);
     /* Bumpy's turn of 1 lays level there; Waved line's 10 x 300/117 is 25.64,
      * and rounded to 26 it drifted a whole wave over a line; it stops at the pen. */
     check('a ribbon lies straight, keeps its length to a hundredth and stops at the pen',
-        JSON.stringify(sm.ribTilt) === '[270,25.64,true]', JSON.stringify(sm.ribTilt));
+        JSON.stringify(sm.ribTilt) === '[270,10,25.64,true]', JSON.stringify(sm.ribTilt));
     /* Colour change, measured in Clip Studio: a dab lands evenly between
      * x + floor * change and x + change, so hue at floor -100 goes both ways,
      * saturation -50 at floor 0 only down, and a value with no random input
