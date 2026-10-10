@@ -4794,7 +4794,7 @@
          * keeps its dots from one flush to the next.
          * ponytail: over-inks thin hatching by up to a third; a real tip
          * at full resolution would need no guessing. */
-        if (_subOn && _subOn !== 'contrast' && isFinal && _flowCanvas && _secondOf()) {
+        if (_subOn && _subOn !== 'contrast' && _subOn !== 'over' && isFinal && _flowCanvas && _secondOf()) {
             _ensureWashCanvas(_flowCanvas.width, _flowCanvas.height);
             if (src !== _washCanvas) {
                 _washCtx.clearRect(x, y, w, h);
@@ -4803,15 +4803,6 @@
             var wi = _washCtx.getImageData(x, y, w, h), wd = wi.data, sd = _subCtx.getImageData(x, y, w, h).data;
             if (_subOn === 'add') {     // Clip Studio's mode 2: the second brush's colour is added to the first's wherever the first has ink
                 for (var ai = 3; ai < wd.length; ai += 4) if (wd[ai] && sd[ai]) for (var an = ai - 3; an < ai; an++) wd[an] = _min(255, wd[an] + _round(sd[an] * sd[ai] / 255));
-            } else if (_subOn === 'over') {     // the second brush's stroke over the first's, once both are whole
-                for (var oi = 3, obm = _secondOf().blend; oi < wd.length; oi += 4) {
-                    var osa = sd[oi], oda = wd[oi] * (255 - osa) / 255, ona = osa + oda, on;
-                    if (!osa || obm && !wd[oi]) continue;
-                    // a blend only where the first has ink: zb218 with its screened second brush inks 799 in Clip Studio, ours 760 without it, 16289 laid over
-                    if (obm) { for (on = oi - 3; on < oi; on++) wd[on] += (_blend2(obm, wd[on] / 255, sd[on] / 255) * 255 - wd[on]) * osa / 255; continue; }
-                    for (on = oi - 3; on < oi; on++) wd[on] = (sd[on] * osa + wd[on] * oda) / ona;
-                    wd[oi] = ona;
-                }
             } else
             for (var si = 3; si < wd.length; si += 4) wd[si] = _subOn === 'min' ? _min(wd[si], sd[si]) : _subOn === 'mask' ? (sd[si] ? wd[si] : 0)
                 : _subOn === 'cut' ? wd[si] - _round(sd[si] * _min(wd[si], 255 - wd[si]) / 255) : wd[si] - sd[si];
@@ -4934,8 +4925,12 @@
         /* 'contrast' reads the stroke WITH its paper: Wet blotting ink's
          * band is 215 with paper and no second brush, 254 with neither, and
          * the second brush moves the papered 215 (to 178 under it, 244 at
-         * its fading edge) but not the solid 254 (cdp-csp/zx, qw). */
-        if (_subOn === 'contrast' && isFinal && _flowCanvas && _secondOf()) {
+         * its fading edge) but not the solid 254 (cdp-csp/zx, qw).
+         * 'over' lays the second brush on the papered first, unpapered:
+         * zb064's second brush alone (its first at flow 1) lays a solid
+         * band in Clip Studio, 16253 ink, where under the first's paper
+         * ours kept only its squares, 457 (cdp-csp/stk sw-m64). */
+        if ((_subOn === 'contrast' || _subOn === 'over') && isFinal && _flowCanvas && _secondOf()) {
             if (src !== _washCanvas && src !== _edgeCanvas) {
                 _ensureWashCanvas(_flowCanvas.width, _flowCanvas.height);
                 _washCtx.clearRect(x, y, w, h);
@@ -4944,6 +4939,16 @@
             }
             var cctx = src === _edgeCanvas ? _edgeCtx : _washCtx;
             var ci = cctx.getImageData(x, y, w, h), cd = ci.data, csd = _subCtx.getImageData(x, y, w, h).data;
+            if (_subOn === 'over') {     // the second brush's stroke over the first's, once both are whole
+                for (var oi = 3, obm = _secondOf().blend; oi < cd.length; oi += 4) {
+                    var osa = csd[oi], oda = cd[oi] * (255 - osa) / 255, ona = osa + oda, on;
+                    if (!osa || obm && !cd[oi]) continue;
+                    // a blend only where the first has ink: zb218 with its screened second brush inks 799 in Clip Studio, ours 760 without it, 16289 laid over
+                    if (obm) { for (on = oi - 3; on < oi; on++) cd[on] += (_blend2(obm, cd[on] / 255, csd[on] / 255) * 255 - cd[on]) * osa / 255; continue; }
+                    for (on = oi - 3; on < oi; on++) cd[on] = (csd[on] * osa + cd[on] * oda) / ona;
+                    cd[oi] = ona;
+                }
+            } else
             for (var cj = 3; cj < cd.length; cj += 4) cd[cj] += _round((255 - 2 * csd[cj]) * _min(cd[cj], 255 - cd[cj]) / 255);
             cctx.putImageData(ci, x, y);
             _subOn = false;
