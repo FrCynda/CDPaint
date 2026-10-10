@@ -4254,8 +4254,11 @@
          * wet blend or edge comes over with it. Colour mixing turns it off:
          * with it on, Pastel's dabs lay over each other at their density (a
          * stroke of its one dab at 4px 109 of 255 where Clip Studio has 106,
-         * the strongest of each 42), and at density 100 build to solid. */
-        if (_sutNum(v.BrushBlendPatternByDarken, 0) && !_sutNum(v.BrushUseWaterColor, 0) && !_sutNum(v.BrushUseWaterColor2, 0)) {
+         * the strongest of each 42), and at density 100 build to solid.
+         * Not its solid kind (BrushWaterColor 2), which mixes nothing in:
+         * zb080 lays 2700 of ink in a stroke with mixing on or off, its
+         * amount of paint 0-100 or colour stretch 0-100 (cdp-csp/stk sw-a80). */
+        if (_sutNum(v.BrushBlendPatternByDarken, 0) && (!_sutNum(v.BrushUseWaterColor, 0) && !_sutNum(v.BrushUseWaterColor2, 0) || _sutNum(v.BrushWaterColor, 0) === 2)) {
             out.dabMax = true;
             /* Dabs that keep the stronger of themselves and the layer do not pile up, so the density-by-interval cut
              * has nothing to compensate: ОК 4's 100 stays 100 (ink 47201 of Clip Studio's 39519; at 12 it laid nothing). */
