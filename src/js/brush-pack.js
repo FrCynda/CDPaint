@@ -3955,8 +3955,12 @@
             out.scatter = Math.max(1, Math.round(size / 2 / out.size * 100));
             out.scatterAxis = 'disk';
             out.sprayEach = true;
-            // a quarter of a particle on (the engine's firstDabAt); a continuous spray lays one at the pen
-            if (!_sutNum(v.BrushContinuousPlot, 0)) out.firstDabAt = 0.25;
+            /* A particle that follows the line waits a quarter of itself for
+             * a direction (the engine's firstDabAt); one that doesn't, or a
+             * continuous spray, lays one at the pen: Pointillism's first
+             * particle 25px on at size 100, at the pen without bit 64, as
+             * zb232's are (cdp-csp/stk sw-pt5, sw-g232). */
+            if (!_sutNum(v.BrushContinuousPlot, 0) && reff & rdir) out.firstDabAt = 0.25;
             /* Clip Studio lays at most 20 a stop: at 20 and 40 its draws hold
              * the same ink, ours at 16 0.78 of it (cdp-csp/bsn zbsn*). */
             out.dabCount = Math.max(1, Math.min(20, Math.round(_sutNum(v.BrushSprayDensity, 1))));

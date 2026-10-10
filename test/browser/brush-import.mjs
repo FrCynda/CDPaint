@@ -1715,7 +1715,7 @@ await withPage(async (page) => {
             spin: [65, 1, 129].map(e => { const o = P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 20, BrushThickness: 30,
                 BrushRotation: 45, BrushRotationEffector: 131, BrushRotationRandomScale: 25,
                 BrushRotationInSpray: 90, BrushRotationEffectorInSpray: e, BrushRotationRandomInSpray: 0 });
-                return [o.angle || 0, o.angleSrc || null]; }),
+                return [o.angle || 0, o.angleSrc || null, o.firstDabAt || 0]; }),
             drop: (o => [o.angleSrc, !!o.aspectThinsWidth])(P({ BrushSize: 250, BrushUseSpray: 1, BrushSpraySize: 20,
                 BrushRotationInSpray: 90, BrushRotationEffectorInSpray: 513, BrushThicknessEffector: rndE }, { hasTip: true, tipW: 200, tipH: 300 })),
             bias: [-100, 0, 50].map(b => P({ BrushSize: 100, BrushUseSpray: 1, BrushSpraySize: 2, BrushSprayBias: b }).sprayBias || 0),
@@ -1871,8 +1871,9 @@ await withPage(async (page) => {
      * size, and a spray size in millimetres converted like the brush size. */
     check('a spray covers its patch evenly, sizes each particle, and reads its unit',
         JSON.stringify(sm.sprayHow) === '["disk",true,20]', JSON.stringify(sm.sprayHow));
+    // ...and only a particle that follows the line waits a quarter of itself before the first (cdp-csp/stk sw-pt5)
     check('a spray turns its particles by the in-spray rotation (bit 64 follows the line), not the brush rotation',
-        JSON.stringify(sm.spin) === '[[180,"direction"],[180,null],[180,null]]', JSON.stringify(sm.spin));
+        JSON.stringify(sm.spin) === '[[180,"direction",0.25],[180,null,0],[180,null,0]]', JSON.stringify(sm.spin));
     check('Droplet: particles point away from the patch centre (in-spray bit 512) and random thickness thins a picture by width',
         JSON.stringify(sm.drop) === '["radial",true]', JSON.stringify(sm.drop));
     check('a picture on auto spacing is spaced by its own width however it is turned (Pointillism), a round tip or a ribbon not',
