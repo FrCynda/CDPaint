@@ -1821,13 +1821,20 @@
              * in its own colours whatever the ink: Bead chain's beads come
              * out red and pink with black. */
             var pale = opts && opts.csp && cells.map(function (c) {
-                var solid = 0, white = 0, dark = 0;
+                var solid = 0, white = 0, dark = 0, mid = 0;
                 for (var q = 0; q < c.alpha.length; q++) {
                     if (c.alpha[q] > 32 && c.rgb[q * 3] + c.rgb[q * 3 + 1] + c.rgb[q * 3 + 2] < 300) dark++;
                     if (c.alpha[q] <= 127) continue;
                     solid++;
                     if (c.rgb[q * 3] + c.rgb[q * 3 + 1] + c.rgb[q * 3 + 2] > 600) white++;
+                    else if (c.rgb[q * 3] + c.rgb[q * 3 + 1] + c.rgb[q * 3 + 2] >= 300) mid++;
                 }
+                /* A picture mostly mid grey is shaded too, half way from ink to
+                 * white: zb146's grey glow (0.16% white) paints 174,161,235 on
+                 * its own in Clip Studio, ink and white halved 172,160,235;
+                 * zb147's and zb096's 4122 and 4140 at 128,108,224, ours now
+                 * 4208 at 136,118,226 (cdp-csp/w146, w147, w096). */
+                if (mid > solid * 0.5) return 1;
                 /* A picture of nothing but white (Oil 6, 7 and 11's solid white
                  * strokes) has no darks to hold the ink: Clip Studio may paint
                  * it in the ink colour, where the lights-go-white rule left
