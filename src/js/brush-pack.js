@@ -3752,6 +3752,8 @@
     BrushPack.sutSecond = function (v) {
         var op = _sutNum(v.UseDualBrush, 0) && SUT_SECOND_OP[_sutNum(v.DualBrushCompositeMode, 0)];
         if (!op) return null;
+        // mode 2 without the colour change adds nothing: zb156 inks 3213 so, 3199 with no second brush, 653 with the change on (cdp-csp/w156b)
+        if (_sutNum(v.DualBrushCompositeMode, 0) === 2 && !_sutNum(v.ChangeRGBByDual, 1)) return null;
         /* Mode 4 lays the second brush over the first only while it changes
          * the colour (ChangeRGBByDual, on in every probe above); off, it is
          * a mask -- the lesser of the two strokes. Watercolor splash with
