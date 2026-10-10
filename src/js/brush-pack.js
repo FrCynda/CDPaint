@@ -3744,7 +3744,7 @@
      * so its purple particles turn magenta (mean 240,141,251 against Clip
      * Studio's 239,138,250; read as a cut by lightness they were pale
      * violet). */
-    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'add', 3: 'subtract', 4: 'destination-over', 9: 'destination-over', 12: 'cut' };
+    var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'add', 3: 'subtract', 4: 'destination-over', 9: 'destination-over', 10: 'destination-over', 12: 'cut' };
     BrushPack.sutSecond = function (v) {
         var op = _sutNum(v.UseDualBrush, 0) && SUT_SECOND_OP[_sutNum(v.DualBrushCompositeMode, 0)];
         if (!op) return null;
@@ -3753,8 +3753,11 @@
          * a mask -- the lesser of the two strokes. Watercolor splash with
          * both brushes held still: 198k of ink alone or in mode 0, 18k in
          * mode 4, 198k again with the change switched on (cdp-csp/pr-du). */
-        if (_sutNum(v.DualBrushCompositeMode, 0) === 4 && !_sutNum(v.ChangeRGBByDual, 1)) op = 'min';
-        if (_sutNum(v.DualBrushCompositeMode, 0) === 9 && !_sutNum(v.ChangeRGBByDual, 1)) op = 'min';
+        /* So are modes 1, 9 and 10 without it: zb106 (mode 1) inks 3428
+         * with no second brush and 1137 with it, zb065 (mode 10) nothing
+         * at all where its papered second brush lays nothing (cdp-csp/w106,
+         * d65b); with the change on they lay it under, as above. */
+        if ([1, 4, 9, 10].indexOf(_sutNum(v.DualBrushCompositeMode, 0)) >= 0 && !_sutNum(v.ChangeRGBByDual, 1)) op = 'min';
         /* Mode 12 likewise: with the colour change on it cuts (the probes
          * above, all on); off, it pushes ink away from half -- darker where
          * the second brush is under half, lighter where over -- which is
