@@ -1821,8 +1821,9 @@
              * in its own colours whatever the ink: Bead chain's beads come
              * out red and pink with black. */
             var shaded = opts && opts.csp && cells.some(function (c) {
-                var solid = 0, white = 0;
+                var solid = 0, white = 0, dark = 0;
                 for (var q = 0; q < c.alpha.length; q++) {
+                    if (c.alpha[q] > 32 && c.rgb[q * 3] + c.rgb[q * 3 + 1] + c.rgb[q * 3 + 2] < 300) dark++;
                     if (c.alpha[q] <= 127) continue;
                     solid++;
                     if (c.rgb[q * 3] + c.rgb[q * 3 + 1] + c.rgb[q * 3 + 2] > 600) white++;
@@ -1831,7 +1832,10 @@
                  * strokes) has no darks to hold the ink: Clip Studio paints it
                  * in the ink colour, where the lights-go-white rule left ours
                  * painting white on white. */
-                return white > solid * 0.05 && white < solid * 0.95;
+                /* ...unless it has darks of its own, if faint: Sparkle's white
+                 * star in a black glow under half alpha stays white in Clip
+                 * Studio, the glow inked (zb230). */
+                return white > solid * 0.05 && (white < solid * 0.95 || dark > solid * 0.05);
             });
             var own = opts && opts.keepColor && cells.some(function (c) {
                 for (var q = 0; q < c.alpha.length; q++) {
