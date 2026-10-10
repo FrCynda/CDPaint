@@ -7006,6 +7006,16 @@
                 }
             }
         }
+        /* The second brush's paper on its whole stroke, not dab by dab, as
+         * the first's (DualTextureForPlot off): zb059's sprayed mask under
+         * its burn paper (7) inks 2046 at density 100 and 3094 at 50 in Clip
+         * Studio against 3130 bare (cdp-csp/stk sw-t59).
+         * ponytail: the whole canvas once a stroke; the stroke's rect if it shows. */
+        if (_subOn && sec.p.textureStroke != null && sec.p.texture > 0) {
+            st = _swapState(st); pat0 = _patWanted; _patWanted = _secondPaper();
+            try { _applyTextureNoise(_subCtx, _subCanvas.width, _subCanvas.height, sec.p.texture, sec.p.textureScale, sec.p.textureType, 0, 0, sec.p.textureStroke, null, true); }
+            finally { _patWanted = pat0; st = _swapState(st); }
+        }
     }
 
     /* How far out a Clip Studio spray particle lands, as a share of the

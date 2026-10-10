@@ -4084,10 +4084,10 @@
                  * Studio's ink in every one of them, at density 100, 50 and
                  * 25, against the bare stroke's 1.03 (cdp-csp/stk sw-q85,
                  * sw-r85). Not yet on a mixing brush (zb000, zb028, zb018 lose
-                 * 5 -> 40, 6 -> 41, 1 -> 6 so) or a second brush, which lays
-                 * no stroke paper at all here. */
+                 * 5 -> 40, 6 -> 41, 1 -> 6 so). A second brush's goes on its
+                 * own stroke (_paintBoth). */
                 var mixing = _sutNum(v.BrushUseWaterColor, 0) || _sutNum(v.BrushUseWaterColor2, 0);
-                if (tm === 1 || tm === 2 || tm === 9 || tm >= 3 && tm <= 8 && !mixing && !opts.second) {
+                if (tm === 1 || tm === 2 || tm === 9 || tm >= 3 && tm <= 8 && !mixing) {
                     out.texture = Math.max(0, Math.min(100, Math.round(dens)));
                     out.textureStroke = tm;
                     /* Emphasised density holds here as on a dab (see
