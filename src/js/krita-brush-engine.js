@@ -1958,8 +1958,10 @@
              * ran 0.1/1/2.5/5/9.9x steep at density 0/10/25/50/100, every line
              * through 0.347 (the paper's mean, 0.3476), cut at 0 and 1.
              * ponytail: measured on one paper and multiply only; the floor at
-             * density 0 (0.1) is that one point. */
-            var stress = getParams().textureStress ? _max(0.1, 10 * D) : 0, sm = ta.mean;
+             * density 0 (0.1) is that one point.
+             * Mode 9 takes no notice of it: zb157's second brush's paper, mode
+             * 9 at density 9, inks 3228 emphasised and 3229 not (cdp-csp/w157s). */
+            var stress = getParams().textureStress && blend !== 9 ? _max(0.1, 10 * D) : 0, sm = ta.mean;
             if (stress) D = 1;
             var img = ctx.getImageData(at ? ox : 0, at ? oy : 0, w, h), dd = img.data;
             for (var j = 0; j < h; j++) {
@@ -4693,7 +4695,7 @@
                     for (var lj = 3; lj < ld.length; lj += 4) {
                         var la = ld[lj], ls = lsd[lj];
                         ld[lj] = _subOn === 'contrast' ? la + _round((255 - 2 * ls) * _min(la, 255 - la) / 255)
-                            : _subOn === 'min' ? _min(la, ls) : _subOn === 'cut' ? la - _round(ls * _min(la, 255 - la) / 255) : la - ls;
+                            : _subOn === 'min' ? _min(la, ls) : _subOn === 'over' ? la + ls - _round(la * ls / 255) : _subOn === 'cut' ? la - _round(ls * _min(la, 255 - la) / 255) : la - ls;
                     }
                     mainCtx.putImageData(li, x, y);
                     _subOn = false;
@@ -4784,6 +4786,13 @@
             var wi = _washCtx.getImageData(x, y, w, h), wd = wi.data, sd = _subCtx.getImageData(x, y, w, h).data;
             if (_subOn === 'add') {     // Clip Studio's mode 2: the second brush's colour is added to the first's wherever the first has ink
                 for (var ai = 3; ai < wd.length; ai += 4) if (wd[ai] && sd[ai]) for (var an = ai - 3; an < ai; an++) wd[an] = _min(255, wd[an] + _round(sd[an] * sd[ai] / 255));
+            } else if (_subOn === 'over') {     // the second brush's stroke over the first's, once both are whole
+                for (var oi = 3; oi < wd.length; oi += 4) {
+                    var osa = sd[oi], oda = wd[oi] * (255 - osa) / 255, ona = osa + oda;
+                    if (!osa) continue;
+                    for (var on = oi - 3; on < oi; on++) wd[on] = (sd[on] * osa + wd[on] * oda) / ona;
+                    wd[oi] = ona;
+                }
             } else
             for (var si = 3; si < wd.length; si += 4) wd[si] = _subOn === 'min' ? _min(wd[si], sd[si])
                 : _subOn === 'cut' ? wd[si] - _round(sd[si] * _min(wd[si], 255 - wd[si]) / 255) : wd[si] - sd[si];
@@ -6921,7 +6930,7 @@
     // Both brushes along pts, a segment of each in turn.
     function _paintBoth(pts, color, sec) {
         var st = _secondState(sec), n = pts.length, main = _flowCtx, pat0 = null;
-        _subOn = sec.op === 'subtract' || sec.op === 'min' || sec.op === 'cut' || sec.op === 'contrast' || sec.op === 'add' ? sec.op : false;
+        _subOn = sec.op === 'subtract' || sec.op === 'min' || sec.op === 'cut' || sec.op === 'contrast' || sec.op === 'add' || sec.op === 'over' ? sec.op : false;
         if (_subOn) {
             if (!_subCanvas || _subCanvas.width !== _flowCanvas.width || _subCanvas.height !== _flowCanvas.height) {
                 _subCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);
@@ -9952,6 +9961,7 @@
                 if (both[3] && p2.texture) ps._tex2Url = _tipStash(both[3]); else delete p2.texture;
                 if (tip2 && tip2.cells > 1) { p2.tipCells = tip2.cells; p2.tipPick = tip2.pick === 'cycle' ? 'cycle' : p2.tipPick || tip2.pick; }
                 if (tip2 && tip2.params && tip2.params.tipMode) p2.tipMode = tip2.params.tipMode;
+                if (tip2 && tip2.params && tip2.params.tipTint && sec.op === 'over') p2.tipTint = true;
                 if (sec.light) p2.cutByLight = true;
                 // synced, the second brush grows and shrinks with the first (zb042: 119 of 100)
                 ps.second = { op: sec.op, p: p2, ratio: +sec.variant.SyncDualBrushSize && ps.size ? p2.size / ps.size : 0 };

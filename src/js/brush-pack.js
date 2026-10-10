@@ -1820,7 +1820,7 @@
              * That is its 'change brush tip colour'. Off, a picture paints
              * in its own colours whatever the ink: Bead chain's beads come
              * out red and pink with black. */
-            var shaded = opts && opts.csp && cells.some(function (c) {
+            var pale = opts && opts.csp && cells.map(function (c) {
                 var solid = 0, white = 0, dark = 0;
                 for (var q = 0; q < c.alpha.length; q++) {
                     if (c.alpha[q] > 32 && c.rgb[q * 3] + c.rgb[q * 3 + 1] + c.rgb[q * 3 + 2] < 300) dark++;
@@ -1829,9 +1829,9 @@
                     if (c.rgb[q * 3] + c.rgb[q * 3 + 1] + c.rgb[q * 3 + 2] > 600) white++;
                 }
                 /* A picture of nothing but white (Oil 6, 7 and 11's solid white
-                 * strokes) has no darks to hold the ink: Clip Studio paints it
-                 * in the ink colour, where the lights-go-white rule left ours
-                 * painting white on white. */
+                 * strokes) has no darks to hold the ink: Clip Studio may paint
+                 * it in the ink colour, where the lights-go-white rule left
+                 * ours painting white on white -- see below for when. */
                 /* ...unless it has darks of its own, if faint: Sparkle's white
                  * star in a black glow under half alpha stays white in Clip
                  * Studio, the glow inked (zb230). */
@@ -1841,8 +1841,15 @@
                  * zb042__ub). At a thirtieth zb097 72 -> 29, zb042 58 -> 27,
                  * zb145 33 -> 27, zb081 22 -> 16, nothing worse over 243
                  * brushes; at a fiftieth zb143 went 22 -> 48. */
-                return white > solid * 0.03 && (white < solid * 0.95 || dark > solid * 0.05);
+                return white <= solid * 0.03 ? 0 : white < solid * 0.95 || dark > solid * 0.05 ? 1 : 2;
             });
+            /* A picture of nothing but white paints white when every picture
+             * is (zb148, zb152 and zb159's one white shape lays nothing on an
+             * empty layer and covers the stripes white in Clip Studio, their
+             * ink all from the second brush), but in the ink among darker
+             * ones (zb164, zb171: three white pictures of five, all inked as
+             * our ink-only reading had it, colour within 3). */
+            var shaded = pale && (pale.indexOf(1) >= 0 || pale.length > 0 && pale.every(function (k) { return k === 2; }));
             var own = opts && opts.keepColor && cells.some(function (c) {
                 for (var q = 0; q < c.alpha.length; q++) {
                     var r = c.rgb[q * 3], g = c.rgb[q * 3 + 1], b = c.rgb[q * 3 + 2];
@@ -3771,6 +3778,10 @@
          * at all where its papered second brush lays nothing (cdp-csp/w106,
          * d65b); with the change on they lay it under, as above. */
         if ([1, 4, 9, 10].indexOf(_sutNum(v.DualBrushCompositeMode, 0)) >= 0 && !_sutNum(v.ChangeRGBByDual, 1)) op = 'min';
+        /* Modes 0 and 1 with it lay the second brush's tinted picture over
+         * the first: zb159's white shape inks in the ink colour on top in
+         * mode 0 and 1 alike, blank with the change off (cdp-csp/w159). */
+        else if (_sutNum(v.DualBrushCompositeMode, 0) <= 1) op = 'over';
         /* Mode 12 likewise: with the colour change on it cuts (the probes
          * above, all on); off, it pushes ink away from half -- darker where
          * the second brush is under half, lighter where over -- which is
