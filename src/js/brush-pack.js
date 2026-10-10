@@ -3927,13 +3927,13 @@
          * tip. Bits 1 and 2 are on in every brush in every file we have, so
          * they are structure rather than a setting. Bit 128 is random: the
          * only brushes that move BrushRotationRandomScale off 100 are the
-         * ones that set it. Bit 32 is "rotate to follow the stroke" -- an
-         * elongated custom tip (like Flat watercolor brush's 44x99 blade)
-         * left at a fixed angle instead paints a different apparent width
-         * depending on drag direction, which reads as a wrong aspect ratio,
-         * a blotchy/uneven edge, and inconsistent dab overlap. Bit 16 is
-         * still unnamed and stays a warning. */
-        var reff = _sutNum(v['BrushRotationEffector' + rk], 0), rdir = rk ? 64 : 32;
+         * ones that set it. Bit 64 is "follow the stroke", sprayed or not:
+         * zb043's tip squeezed to 30 lies across a vertical stroke and at
+         * -30 degrees on a 60-degree one with it, upright on both with 3
+         * or 35 (cdp-csp/stk sw-r43). Bit 32 turns nothing under a mouse
+         * (a pen's own tilt or turn, it seems); bit 16 is still unnamed.
+         * Both stay a warning. */
+        var reff = _sutNum(v['BrushRotationEffector' + rk], 0), rdir = 64;
         var rrand = Math.min(180, Math.round(_sutNum(v[rk ? 'BrushRotationRandomInSpray' : 'BrushRotationRandomScale'], 100) * 1.8));
         if (reff & 128 && rrand > 0) {
             out.angleSrc = 'random';
