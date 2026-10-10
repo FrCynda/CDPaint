@@ -3706,10 +3706,15 @@
                     }
                 }
                 if (g !== f) for (n = 0; n < 4; n++) g[t + n] += (B[n] - g[t + n]) * k;
-                var oa = f[t + 3] + (B[3] - f[t + 3]) * k;
-                var or = f[t] + (B[0] - f[t]) * k;
-                var og = f[t + 1] + (B[1] - f[t + 1]) * k;
-                var ob = f[t + 2] + (B[2] - f[t + 2]) * k;
+                /* Clip Studio's flat kind (BrushWaterColor 1) lays its density
+                 * over what is there, not in place of it: Blender at density 0
+                 * leaves the stripes it crosses as they were (cdp-csp b4 zb036
+                 * __ub), where replacing wiped them. */
+                var fk = mix && p.mixFlat ? c : 1;
+                var oa = f[t + 3] + (B[3] - f[t + 3] * fk) * k;
+                var or = f[t] + (B[0] - f[t] * fk) * k;
+                var og = f[t + 1] + (B[1] - f[t + 1] * fk) * k;
+                var ob = f[t + 2] + (B[2] - f[t + 2] * fk) * k;
                 if (oa <= 0) { if (!locked) { d[t + 3] = 0; f[t] = f[t + 1] = f[t + 2] = f[t + 3] = 0; } continue; }
                 var inv = 255 / oa;
                 d[t] = _clamp(or * inv, 0, 255); d[t + 1] = _clamp(og * inv, 0, 255);
