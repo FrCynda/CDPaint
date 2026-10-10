@@ -3405,7 +3405,7 @@
      * where Krita, over its white background, lays opaque grey.
      * ponytail: the picture is read whole once a stroke (4 bytes a pixel);
      * read it by the dab's rect if big documents stall. */
-    var _smS = null, _smG = null, _smPic = null, _smBase = null, _smOwn = null, _smB = new Float64Array(4);
+    var _smS = null, _smG = null, _smPic = null, _smBase = null, _smOwn = null, _smOp0 = null, _smB = new Float64Array(4);
     function _smRead(d, rx, ry, rw, rh, T, F, pic) {
         var n = rw * rh * 4;
         if (!F || F.length < n) F = new Float32Array(n);
@@ -3516,7 +3516,13 @@
         var prev = _smPrev;
         _smPrev = [x, y, kx + kW / 2, ky + kH / 2];
         if (!prev) {                        // the first dab only loads the brush
-            _smPic = _smBase = _smOwn = null;
+            _smPic = _smBase = _smOwn = _smOp0 = null;
+            /* A mixing brush's opacity is the whole stroke's, not each dab's:
+             * Clip Studio's zb132 lays 5046/3026/1498 of ink at opacity
+             * 100/60/30 (cdp-csp/w132b), where thinning each dab still
+             * piled up to 5457 at 60. The stroke is mixed at full in _smT
+             * and laid over the layer it began on at the opacity. */
+            if (p.mixAlpha != null && (p.opacity == null ? 100 : p.opacity) < 100) { try { _smOp0 = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data; } catch (e2) { _smOp0 = null; } }
             // Clip Studio Multiply on a mixing brush (Wet wash): each stroke multiplies what was there before it began, not its own dabs
             // Wet wash: v' = v (0.3 b + 0.7 v) fits Clip Studio's 1-10 layer stacks to ~6 levels with the 0.85 (colour pick-up, below)
             if (p.mixAlpha != null && p.blendMode === 'multiply') { try { _smBase = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data; _smOwn = new Float32Array(ctx.canvas.width * ctx.canvas.height); } catch (e1) { _smBase = _smOwn = null; } }
@@ -3563,7 +3569,8 @@
          * dab, so the stroke-wide opacity the other brushes get never reached
          * it. Slider 0.5 painted Krita's 209 where ours stayed at 253
          * (test/krita/probes/smudge7). */
-        var op = _adO * (p.opacity == null ? 100 : p.opacity) / 100;
+        var op = _adO * (p.opacity == null ? 100 : p.opacity) / 100, opS = 1;
+        if (_smOp0) { opS = op / _adO; op = _adO; }
         var k0 = s * _clamp(alpha, 0, 1) * op;
         /* Krita's new smudge engine (SmudgeRateUseNewEngine,
          * KisColorSmudgeStrategyMask) mixes the dab before laying it: what
@@ -3718,7 +3725,13 @@
                         or = d[t] * oa / 255; og = d[t + 1] * oa / 255; ob = d[t + 2] * oa / 255;
                     }
                 }
-                if (!locked) { d[t + 3] = oa; f[t] = or; f[t + 1] = og; f[t + 2] = ob; f[t + 3] = oa; }
+                if (!locked) { f[t] = or; f[t + 1] = og; f[t + 2] = ob; f[t + 3] = oa; }
+                if (_smOp0 && !locked) {
+                    var bq = ((ry + py) * ctx.canvas.width + rx + px) * 4, ba = _smOp0[bq + 3] / 255;
+                    oa = _smOp0[bq + 3] + (oa - _smOp0[bq + 3]) * opS;
+                    if (oa > 0) { inv = 255 / oa; d[t] = _clamp((_smOp0[bq] * ba + (or - _smOp0[bq] * ba) * opS) * inv, 0, 255); d[t + 1] = _clamp((_smOp0[bq + 1] * ba + (og - _smOp0[bq + 1] * ba) * opS) * inv, 0, 255); d[t + 2] = _clamp((_smOp0[bq + 2] * ba + (ob - _smOp0[bq + 2] * ba) * opS) * inv, 0, 255); }
+                }
+                if (!locked) d[t + 3] = oa;
                 else { a = f[t + 3] / 255; f[t] = d[t] * a; f[t + 1] = d[t + 1] * a; f[t + 2] = d[t + 2] * a; }
             }
         }
@@ -6594,7 +6607,7 @@
             if (_params.hasOwnProperty(_fk)) _strokeParams[_fk] = _isArray(_params[_fk]) ? _cloneCurve(_params[_fk]) : _params[_fk];
         }
         _wet = [];                // the brush is loaded fresh each stroke
-        _smPrev = null; _smT = null; _smS = null; _smPic = _smBase = _smOwn = null; _smCar = null; _smPx = _smPy = NaN;
+        _smPrev = null; _smT = null; _smS = null; _smPic = _smBase = _smOwn = _smOp0 = null; _smCar = null; _smPx = _smPy = NaN;
         _wetPos = [];
         _smoothAngle = NaN;
         _lastDabDist = 0;
