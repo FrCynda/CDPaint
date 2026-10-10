@@ -3710,7 +3710,8 @@
      * Clip Studio paints its leaves black.
      * ponytail: a pressure input is taken at full pressure, as measured. */
     function _sutJitter(out, hue, sat, val, effs) {
-        var c = [Math.max(-180, Math.min(180, _sutNum(hue, 0))),
+        // hue runs a whole turn: Clip Studio's 360 with floor 98 keeps zb084 purple, where cut to 180 it went yellow
+        var c = [Math.max(-360, Math.min(360, _sutNum(hue, 0))),
                  Math.max(-100, Math.min(100, _sutNum(sat, 0))),
                  Math.max(-100, Math.min(100, _sutNum(val, 0)))];
         if (effs) c = c.map(function (ch, i) {
