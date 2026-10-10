@@ -1835,7 +1835,13 @@
                 /* ...unless it has darks of its own, if faint: Sparkle's white
                  * star in a black glow under half alpha stays white in Clip
                  * Studio, the glow inked (zb230). */
-                return white > solid * 0.05 && (white < solid * 0.95 || dark > solid * 0.05);
+                /* A twentieth of white was too much to ask: zb042's grey smear,
+                 * 4.99% white, covers the stripes it crosses with a pale tint
+                 * in Clip Studio, where ours laid it as see-through ink (b4
+                 * zb042__ub). At a thirtieth zb097 72 -> 29, zb042 58 -> 27,
+                 * zb145 33 -> 27, zb081 22 -> 16, nothing worse over 243
+                 * brushes; at a fiftieth zb143 went 22 -> 48. */
+                return white > solid * 0.03 && (white < solid * 0.95 || dark > solid * 0.05);
             });
             var own = opts && opts.keepColor && cells.some(function (c) {
                 for (var q = 0; q < c.alpha.length; q++) {
