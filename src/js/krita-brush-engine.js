@@ -3417,7 +3417,7 @@
      * where Krita, over its white background, lays opaque grey.
      * ponytail: the picture is read whole once a stroke (4 bytes a pixel);
      * read it by the dab's rect if big documents stall. */
-    var _smS = null, _smG = null, _smPic = null, _smBase = null, _smOwn = null, _smOp0 = null, _smB = new Float64Array(4);
+    var _smS = null, _smG = null, _smPic = null, _smBase = null, _smOwn = null, _smOp0 = null, _smFl0 = null, _smB = new Float64Array(4);
     function _smRead(d, rx, ry, rw, rh, T, F, pic) {
         var n = rw * rh * 4;
         if (!F || F.length < n) F = new Float32Array(n);
@@ -3528,7 +3528,8 @@
         var prev = _smPrev;
         _smPrev = [x, y, kx + kW / 2, ky + kH / 2];
         if (!prev) {                        // the first dab only loads the brush
-            _smPic = _smBase = _smOwn = _smOp0 = null;
+            _smPic = _smBase = _smOwn = _smOp0 = _smFl0 = null;
+            if (p.mixAlpha != null && p.mixFlat) { try { _smFl0 = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data; } catch (e3) { _smFl0 = null; } }
             /* A mixing brush's opacity is the whole stroke's, not each dab's:
              * Clip Studio's zb132 lays 5046/3026/1498 of ink at opacity
              * 100/60/30 (cdp-csp/w132b), where thinning each dab still
@@ -3722,11 +3723,18 @@
                  * over what is there, not in place of it: Blender at density 0
                  * leaves the stripes it crosses as they were (cdp-csp b4 zb036
                  * __ub), where replacing wiped them. */
-                var fk = mix && p.mixFlat ? c : 1;
-                var oa = f[t + 3] + (B[3] - f[t + 3] * fk) * k;
-                var or = f[t] + (B[0] - f[t] * fk) * k;
-                var og = f[t + 1] + (B[1] - f[t + 1] * fk) * k;
-                var ob = f[t + 2] + (B[2] - f[t + 2] * fk) * k;
+                /* ...as it was when the stroke began, so the stroke itself stays
+                 * flat at the density: one stroke at 50 lays 127 on an empty
+                 * layer (cdp-csp/qo qod), where over its own dabs it ran to 255. */
+                if (mix && p.mixFlat && _smFl0) {
+                    var fi = ((ry + py) * ctx.canvas.width + rx + px) * 4, fa = _smFl0[fi + 3] / 255 * (1 - c);
+                    for (n = 0; n < 3; n++) B[n] += _smFl0[fi + n] * fa;
+                    B[3] += 255 * fa;
+                }
+                var oa = f[t + 3] + (B[3] - f[t + 3]) * k;
+                var or = f[t] + (B[0] - f[t]) * k;
+                var og = f[t + 1] + (B[1] - f[t + 1]) * k;
+                var ob = f[t + 2] + (B[2] - f[t + 2]) * k;
                 if (oa <= 0) { if (!locked) { d[t + 3] = 0; f[t] = f[t + 1] = f[t + 2] = f[t + 3] = 0; } continue; }
                 var inv = 255 / oa;
                 d[t] = _clamp(or * inv, 0, 255); d[t + 1] = _clamp(og * inv, 0, 255);
@@ -6635,7 +6643,7 @@
             if (_params.hasOwnProperty(_fk)) _strokeParams[_fk] = _isArray(_params[_fk]) ? _cloneCurve(_params[_fk]) : _params[_fk];
         }
         _wet = [];                // the brush is loaded fresh each stroke
-        _smPrev = null; _smT = null; _smS = null; _smPic = _smBase = _smOwn = _smOp0 = null; _smCar = null; _smPx = _smPy = NaN;
+        _smPrev = null; _smT = null; _smS = null; _smPic = _smBase = _smOwn = _smOp0 = _smFl0 = null; _smCar = null; _smPx = _smPy = NaN;
         _wetPos = [];
         _smoothAngle = NaN;
         _lastDabDist = 0;

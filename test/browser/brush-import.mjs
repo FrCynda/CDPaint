@@ -1925,13 +1925,14 @@ await withPage(async (page) => {
     check('a colour change is read at full pressure and tilt, as a mouse paints it (Leaves: +25 falling to 0 there)',
         JSON.stringify(sm.cj[5]) === '[0,20]', JSON.stringify(sm.cj[5]));
     /* Clip Studio's second brush is a brush of its own, its Dual columns
-     * read as the Brush ones: laid under the first in modes 0/1/4, cut out
-     * of it in 12. Mode 2 adds its colour to the first's wherever that has ink
-     * and keeps its colour change (Glitter: purple turns magenta, 240,141,251 as in Clip Studio). Modes 3/11 only shift colour, so they are
-     * named; none of them carves, as we used to. */
-    check('a second brush becomes a brush of its own, laid under or cut out, never carved with',
-        JSON.stringify(sm.dual) === JSON.stringify([[0, 'destination-over', 76, 20, '', false, 0], [0, 'add', 76, 20, '', true, null],
-            [0, 'subtract', 76, 20, '', false, 0], [0, null, null, null, 'dropped: its second brush tip', false, null], [0, 'cut', 76, 20, '', false, 0]]), JSON.stringify(sm.dual));
+     * read as the Brush ones: laid over the first in modes 0/1 with the
+     * colour change on (cdp-csp/w159), under it in 4, blended into it in 5-8
+     * (w174m), cut out of it in 12. Mode 2 adds its colour to the first's wherever that has ink
+     * and keeps its colour change (Glitter: purple turns magenta, 240,141,251 as in Clip Studio). Mode 3 subtracts;
+     * none of them carves, as we used to. */
+    check('a second brush becomes a brush of its own, laid over, blended or cut out, never carved with',
+        JSON.stringify(sm.dual) === JSON.stringify([[0, 'over', 76, 20, '', false, 0], [0, 'add', 76, 20, '', true, null],
+            [0, 'subtract', 76, 20, '', false, 0], [0, 'over', 76, 20, '', false, 0], [0, 'cut', 76, 20, '', false, 0]]), JSON.stringify(sm.dual));
     check('...mode 4 lays it under while it changes the colour, and with the change off keeps the lesser of the two strokes',
         JSON.stringify(sm.mask4) === '["destination-over","min"]', JSON.stringify(sm.mask4));
     // Wet blotting ink: mode 12 cuts with the colour change on, pushes from half with it off (cdp-csp/qw)
