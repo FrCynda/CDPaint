@@ -4049,7 +4049,7 @@
                  * edges, 29.6k of ink to 24.7k in Clip Studio, where off it
                  * matched ours to 0.998 (cdp-csp/pr-dua zdiE, zdiF). */
                 if (_sutNum(v.TextureReverseDensity, 0)) out.textureInvert = true;
-            } else if (dens > 0) {
+            } else if (dens > 0 || _sutNum(v.TextureStressDensity, 0)) {
                 /* Paper on the whole stroke, blended as on a dab (_cspPaper)
                  * but once, over the finished stroke: laid on each of a
                  * dense stroke's dabs, the next one fills the grain back in.
@@ -4068,6 +4068,13 @@
                 if (tm === 1 || tm === 2 || tm === 9) {
                     out.texture = Math.max(0, Math.min(100, Math.round(dens)));
                     out.textureStroke = tm;
+                    /* Emphasised density holds here as on a dab (see
+                     * _applyTextureNoise), down to density 0, which lays the
+                     * paper flat at its floor -- density 1's 10 x 1%: zb199's
+                     * paper at density 0 takes its stroke from 1847 of ink to
+                     * 130 in Clip Studio, at 100 from 79 to 270 (cdp-csp/stk
+                     * sw-t199). */
+                    if (_sutNum(v.TextureStressDensity, 0)) { out.textureStress = true; out.texture = Math.max(1, out.texture); }
                     /* Its modifiers, measured on Round watercolor's paper
                      * (cdp-csp/pa): contrast spreads the paper about mid grey
                      * as on a dab, brightness b takes b/200 off it after that,
@@ -4081,12 +4088,12 @@
                     if (!out.texture) delete out.texture;
                 }
             }
-            if (dens > 0 && (out.textureBlend != null || out.textureStroke != null)) {   // ponytail: brightness and rotation measured on a whole stroke's paper only
+            if (out.texture > 0 && (out.textureBlend != null || out.textureStroke != null)) {   // ponytail: brightness and rotation measured on a whole stroke's paper only
                 var tb = Math.max(-100, Math.min(100, _sutNum(v.TextureBrightness, 0)));
                 if (tb) out.textureBrightness = tb / 200;
                 if (_sutNum(v.TextureRotate, 0)) out.textureRotate = _sutNum(v.TextureRotate, 0);
             }
-            if (dens > 0) {
+            if (out.texture > 0) {
                 /* Its strength has its own rule, dab by dab: Chalk's takes a
                  * random 40-100% of it, which is why its grain barely shows
                  * in Clip Studio's stroke (full paper: 225 -> 200 at the
@@ -4126,7 +4133,7 @@
                     warn.push('changed: how its paper texture blends');
                 if (_sutNum(v.TextureReverseDensity, 0) && !perDab && !whole)
                     warn.push('changed: paper texture reverse density');
-                if (_sutNum(v.TextureStressDensity, 0) && !perDab)
+                if (_sutNum(v.TextureStressDensity, 0) && !perDab && !whole)
                     warn.push('changed: paper texture stress density');
                 if (_sutNum(v.TextureContrast, 0) && !perDab && !whole)
                     warn.push('changed: paper texture contrast');
