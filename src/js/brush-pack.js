@@ -3785,7 +3785,7 @@
          * with no second brush and 1137 with it, zb065 (mode 10) nothing
          * at all where its papered second brush lays nothing (cdp-csp/w106,
          * d65b); with the change on they lay it under, as above. */
-        if ([1, 4, 9, 10].indexOf(_sutNum(v.DualBrushCompositeMode, 0)) >= 0 && !_sutNum(v.ChangeRGBByDual, 1)) op = 'min';
+        if ([1, 4, 9, 10].indexOf(_sutNum(v.DualBrushCompositeMode, 0)) >= 0 && !_sutNum(v.ChangeRGBByDual, 1)) op = _sutNum(v.DualBrushCompositeMode, 0) === 9 ? 'mask' : 'min';
         /* Modes 0 and 1 with it lay the second brush's tinted picture over
          * the first: zb159's white shape inks in the ink colour on top in
          * mode 0 and 1 alike, blank with the change off (cdp-csp/w159). */
@@ -4247,7 +4247,7 @@
          * under a second brush cut or laid in turn, which the capped stroke
          * would paint back over (Wet blotting ink 1.01 -> 1.16 of the ink). */
         var sec2 = BrushPack.sutSecond(v);
-        if (_sutNum(v.BrushBlendPatternByDarken, 0) || _sutNum(v.BrushUseWaterColor, 0) || (sec2 && sec2.op !== 'subtract' && sec2.op !== 'min')) {
+        if (_sutNum(v.BrushBlendPatternByDarken, 0) || _sutNum(v.BrushUseWaterColor, 0) || (sec2 && sec2.op !== 'subtract' && sec2.op !== 'min' && sec2.op !== 'mask')) {
             if (out.flowSrc === 'none' && !out.flowSensors) _sutDrive(out, 'flow', v.BrushOpacityEffector, warn, 'its opacity');
         } else if (_sutDrive(out, 'dabOpacity', v.BrushOpacityEffector, warn, 'its opacity')) out.dabOpacityAvg = false;
         if (spraying) _sutDrive(out, 'size', v.BrushSpraySizeEffector, warn, 'its spray');

@@ -755,7 +755,11 @@
      * with the second brush's colour change off ('min') keeps the lesser of
      * the two strokes: Watercolor splash's dense first stroke is left only
      * where its second dabs lie, and to their own levels (cdp-csp/pr-du,
-     * against min 0.005 off a pixel, against a x d 0.137). Mode 12 ('cut')
+     * against min 0.005 off a pixel, against a x d 0.137). Mode 9 ('mask')
+     * keeps all of the first wherever the second lays anything: zb025's
+     * halftone second picture, a faint grey at its size, leaves solid
+     * squares of ink in Clip Studio at interval 100 and a solid band under
+     * a plain round first (cdp-csp/w025i, w025s). Mode 12 ('cut')
      * takes d x min(a, 1 - a): faint ink goes as a x (1 - d), a dense
      * stroke only loses what it lacks of solid, 2a - 1 under a solid cut,
      * so Wet blotting ink's band stays black (to a level on three probes,
@@ -767,7 +771,7 @@
      * lighter band (cdp-csp/qw: fitcut3.py 0.6 levels; the cut rule
      * missed by 15, and by 0.06 with the change on). The second paints
      * into _subCanvas; the final flush takes it off, or under. */
-    var _subCanvas = null, _subCtx = null, _subOn = false;   // false, 'subtract', 'min', 'cut' or 'contrast'
+    var _subCanvas = null, _subCtx = null, _subOn = false;   // false, 'subtract', 'min', 'mask', 'cut', 'contrast', 'add' or 'over'
     /* Clip Studio's "blend by darken" lays each dab by the darker of it and
      * what is there: on one colour the stronger alpha wins and dabs never
      * pile up (cdp-csp/pr-sb, Soft bleed: a hard round at flow 25/50 holds
@@ -4695,7 +4699,7 @@
                     for (var lj = 3; lj < ld.length; lj += 4) {
                         var la = ld[lj], ls = lsd[lj];
                         ld[lj] = _subOn === 'contrast' ? la + _round((255 - 2 * ls) * _min(la, 255 - la) / 255)
-                            : _subOn === 'min' ? _min(la, ls) : _subOn === 'over' ? la + ls - _round(la * ls / 255) : _subOn === 'cut' ? la - _round(ls * _min(la, 255 - la) / 255) : la - ls;
+                            : _subOn === 'min' || _subOn === 'mask' ? _min(la, ls) : _subOn === 'over' ? la + ls - _round(la * ls / 255) : _subOn === 'cut' ? la - _round(ls * _min(la, 255 - la) / 255) : la - ls;
                     }
                     mainCtx.putImageData(li, x, y);
                     _subOn = false;
@@ -4796,7 +4800,7 @@
                     wd[oi] = ona;
                 }
             } else
-            for (var si = 3; si < wd.length; si += 4) wd[si] = _subOn === 'min' ? _min(wd[si], sd[si])
+            for (var si = 3; si < wd.length; si += 4) wd[si] = _subOn === 'min' ? _min(wd[si], sd[si]) : _subOn === 'mask' ? (sd[si] ? wd[si] : 0)
                 : _subOn === 'cut' ? wd[si] - _round(sd[si] * _min(wd[si], 255 - wd[si]) / 255) : wd[si] - sd[si];
             _washCtx.putImageData(wi, x, y);
             _subOn = false;
@@ -6940,7 +6944,7 @@
     // Both brushes along pts, a segment of each in turn.
     function _paintBoth(pts, color, sec) {
         var st = _secondState(sec), n = pts.length, main = _flowCtx, pat0 = null;
-        _subOn = sec.op === 'subtract' || sec.op === 'min' || sec.op === 'cut' || sec.op === 'contrast' || sec.op === 'add' || sec.op === 'over' ? sec.op : false;
+        _subOn = sec.op === 'subtract' || sec.op === 'min' || sec.op === 'cut' || sec.op === 'contrast' || sec.op === 'add' || sec.op === 'over' || sec.op === 'mask' ? sec.op : false;
         if (_subOn) {
             if (!_subCanvas || _subCanvas.width !== _flowCanvas.width || _subCanvas.height !== _flowCanvas.height) {
                 _subCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);
