@@ -9962,6 +9962,8 @@
                 if (tip.lens && ps.ribbonClip) ps.ribbonLens = tip.lens;
                 if (tip.params && tip.params.tipMode) ps.tipMode = tip.params.tipMode;
                 if (tip.params && tip.params.tipTint) ps.tipTint = true;
+                // a picture in colour keeps its greys with anti-aliasing off: zb192's dark haze lays 0.02-1 in even steps in Clip Studio
+                if (ps.tipMode === 'color') delete ps.aliased;
             }
             if (tip2 && tip2.url.length <= TIP_CAP) ps._tip2Url = _tipStash(tip2.url);
             if (sec) {
