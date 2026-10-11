@@ -3457,6 +3457,7 @@
      * ponytail: the picture is read whole once a stroke (4 bytes a pixel);
      * read it by the dab's rect if big documents stall. */
     var _smS = null, _smG = null, _smPic = null, _smBase = null, _smOwn = null, _smOp0 = null, _smFl0 = null, _smB = new Float64Array(4);
+    var _smCov = null, _smCovCtx = null, _smCovP = null;   // a mixing stroke's footprint, for its watercolour edge (_smEdge)
     function _smRead(d, rx, ry, rw, rh, T, F, pic) {
         var n = rw * rh * 4;
         if (!F || F.length < n) F = new Float32Array(n);
@@ -3572,7 +3573,11 @@
         var prev = _smPrev;
         _smPrev = [x, y, kx + kW / 2, ky + kH / 2];
         if (!prev) {                        // the first dab only loads the brush
-            _smPic = _smBase = _smOwn = _smOp0 = _smFl0 = null;
+            _smPic = _smBase = _smOwn = _smOp0 = _smFl0 = _smCov = null;
+            if (p.mixAlpha != null && p.edgeAdd && p.edgeWidth > 0 && p.edgeDensity > 0) {
+                _smCov = new Uint8Array(ctx.canvas.width * ctx.canvas.height); _smCovCtx = ctx; _smCovP = p;
+                _smCov.x1 = _smCov.y1 = Infinity; _smCov.x2 = _smCov.y2 = -Infinity;
+            }
             if (p.mixAlpha != null && p.mixFlat) { try { _smFl0 = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data; } catch (e3) { _smFl0 = null; } }
             /* A mixing brush's opacity is the whole stroke's, not each dab's:
              * Clip Studio's zb132 lays 5046/3026/1498 of ink at opacity
@@ -3728,6 +3733,7 @@
         if (_selStencil && !_previewTarget) {
             try { stencil = _selStencil.getContext('2d').getImageData(rx, ry, rw, rh).data; } catch (e2) { stencil = null; }
         }
+        if (_smCov) { _smCov.x1 = _min(_smCov.x1, rx); _smCov.y1 = _min(_smCov.y1, ry); _smCov.x2 = _max(_smCov.x2, rx + rw); _smCov.y2 = _max(_smCov.y2, ry + rh); }
         for (j = 0; j < mh; j++) {
             for (i = 0; i < mw; i++) {
                 var m = ma[j * mw + i];
@@ -3740,6 +3746,7 @@
                 if (px < 0 || py < 0 || px >= rw || py >= rh) continue;
                 t = (py * rw + px) * 4; u = (j * mw + i) * 4;
                 if (stencil && !stencil[t + 3]) continue;
+                if (_smCov) _smCov[(ry + py) * ctx.canvas.width + rx + px] = 1;
                 var k, ci = 1 - c, B = _smB;
                 if (!nw) {          // legacy, premultiplied: lerp(dst, lerp(pickup, paint, c), s * tip)
                     k = mtr ? k0 / _clamp(alpha, 0, 1) * mt[j * mw + i] / 255 : k0 * m / 255;
@@ -3807,6 +3814,30 @@
         _smWrite(f, rx, ry, rw, rh, _smT);
         if (g !== f) _smWrite(g, rx, ry, rw, rh, _smS);
         ctx.putImageData(img, rx, ry);
+    }
+
+    /* A mixing stroke paints straight into the layer, so its watercolour edge (_applyWaterEdgeAdd) goes on
+     * once the stroke is done, over the pixels its dabs reached: zb032's (radius 2.4, power 15, tone 40)
+     * takes its stroke to (63,45,150) in Clip Studio and (111,88,220) without it (cdp-csp/stk sw-p032),
+     * where ours laid no edge at all. Its ink comes on at the brush's flow times the stroke's own alpha:
+     * zb141's (flow 50, the stroke at 0.68) adds 0.34 of the flat stroke's, 0.14 at flow 25 and 0.7 at 100,
+     * more with more mix alpha (cdp-csp/stk sw-p141, sw-q141). Its tone stays whole (sw-p141 vp40). */
+    function _smEdge() {
+        var c = _smCov, ctx = _smCovCtx, p = _smCovP;
+        _smCov = _smCovCtx = _smCovP = null;
+        var W = ctx.canvas.width, H = ctx.canvas.height, R = _max(1, _round(p.edgeWidth)) + 2;
+        var x0 = _max(0, c.x1 - R), y0 = _max(0, c.y1 - R), w = _min(W, c.x2 + R) - x0, h = _min(H, c.y2 + R) - y0;
+        if (!(w > 0 && h > 0)) return;
+        var img = ctx.getImageData(x0, y0, w, h), d = img.data, ma = 0;
+        var tc = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true }), ti = tc.createImageData(w, h), td = ti.data, i, j, q, n;
+        for (j = 0; j < h; j++) for (i = 0; i < w; i++) if (c[(y0 + j) * W + x0 + i]) { q = (j * w + i) * 4; for (n = 0; n < 4; n++) td[q + n] = d[q + n]; if (d[q + 3] > ma) ma = d[q + 3]; }
+        tc.putImageData(ti, 0, 0);
+        _applyWaterEdgeAdd(tc, 0, 0, w, h, p.edgeWidth, p.edgeDensity, 1, p.edgeValue);
+        td = tc.getImageData(0, 0, w, h).data;
+        var f = p.flow / 100 * ma / 255;
+        for (j = 0; j < h; j++) for (i = 0; i < w; i++) if (c[(y0 + j) * W + x0 + i]) { q = (j * w + i) * 4; td[q + 3] = d[q + 3] + (td[q + 3] - d[q + 3]) * f; for (n = 0; n < 4; n++) d[q + n] = td[q + n]; }
+        ctx.putImageData(img, x0, y0);
+        if (app.layerMgr && app.layerMgr.markDirty && ctx === app.ctx) app.layerMgr.markDirty(x0, y0, w, h);
     }
 
     /* Fading a dab's own alpha does not fade the LINE. Dabs overlap, and
@@ -6709,7 +6740,7 @@
         }
         if (_strokeParams.sizeAcross) _strokeParams.size *= _strokeParams.sizeAcross;
         _wet = [];                // the brush is loaded fresh each stroke
-        _smPrev = null; _smT = null; _smS = null; _smPic = _smBase = _smOwn = _smOp0 = _smFl0 = null; _smCar = null; _smPx = _smPy = NaN;
+        _smPrev = null; _smT = null; _smS = null; _smPic = _smBase = _smOwn = _smOp0 = _smFl0 = _smCov = null; _smCar = null; _smPx = _smPy = NaN;
         _wetPos = [];
         _smoothAngle = NaN;
         _lastDabDist = 0;
@@ -6898,6 +6929,7 @@
             }
         }
         _flushPending(true);
+        if (_smCov) _smEdge();
         _state.strokePoints = [];
         _state.lastProcessedIdx = 0;
         // Defensive: the drain above consumes any suspend, the final branch
