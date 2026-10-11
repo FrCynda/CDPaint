@@ -3971,7 +3971,10 @@
             out.angleSrc = 'random';
             out.angleRange = rrand;
             // ...about the line with 64 on too (sw-s43): engine's angleDirJitter
-            if (reff & rdir && !rk) { out.angleSrc = 'direction'; out.angleDirJitter = true; }
+            /* ...and waits for a line to turn about as the 64 alone does: zb010 at random 50 and 100 lays no
+             * ink on a click in Clip Studio, at 131 it lays one (cdp-csp/stk sw-t010); zb024's taps are blank
+             * in sw-t024 and some lay in b4, at random. */
+            if (reff & rdir && !rk) { out.angleSrc = 'direction'; out.angleDirJitter = true; out.dirWait = true; }
         } else if (reff & rdir) {
             out.angleSrc = 'direction';
             /* ...and a click, with no direction to follow, lays nothing: all 59 bank brushes with 67 lay no ink
