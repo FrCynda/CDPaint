@@ -4031,14 +4031,19 @@
              * bank; zb217 and zb233 too, turned 0, and zb202 turned 90). The
              * engine lays the long side at size x sizeAcross, unrounded:
              * Waved line's 10 x 300/117 is 25.64, and 26 drifted.
-             * ponytail: between 0 and 90 the turned picture's extent across;
-             * zb239 at 50 stands 13 in Clip Studio, ours 8 so and 19 at 90's. */
-            var r90 = Math.round(rr / 90) * 90, rad = (Math.abs(rr - r90) <= 1 ? r90 : rr) * Math.PI / 180,
+             * A turn between is the nearer of 0 and 90 here too: zb239 at 50
+             * lays to the pixel the ink it does at 90 (cdp-csp/stk sw-g239). */
+            var rad = Math.round(rr / 90) * 90 * Math.PI / 180,
                 across = Math.abs(opts.tipW * Math.cos(rad)) + Math.abs(opts.tipH * Math.sin(rad));
             out.size = Math.max(1, Math.min(5000, size));
             out.sizeAcross = Math.max(opts.tipW, opts.tipH) / across;
             out.spacing = 100;
             delete out.spacingByWidth; delete out.spacingBySize;   // a ribbon is spaced by its length along the line
+            // ...even with continuous plot on: zb239's pictures repeat a length apart in Clip Studio, where a dab a report filled them in solid (sw-g239)
+            delete out.dabEachReport;
+            /* Its stretch past 100 keeps to the stroke as the picture turns: zb239 (vertical, 120) turned 90
+             * repeats every 142px where at 100 every 118, and stands as wide (sw-g239). */
+            if (out.tipStretch && side) out.tipStretch = [out.tipStretch[1], out.tipStretch[0]];
             // The first picture starts at the stroke's start, not centred on it (Dashed line's first dash 3.5px in).
             // unrounded: Zipper's 21.61 taken as 22 laid every tooth 0.19px late
             out.offsetAlong = 50 * (side ? opts.tipW : opts.tipH) / Math.max(opts.tipW, opts.tipH);

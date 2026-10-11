@@ -5248,6 +5248,8 @@
             // a star is its diameter every way (KisMaskGenerator::height)
             var asp = p.spikes > 2 ? 1 : p.aspectRatio || 1;
             if (asp >= 1) h /= asp; else w *= asp;
+            // a Clip Studio picture stretched past thickness 100 is spaced by its stretched length: zb239 at 120 repeats every 142px, at 100 every 118 (cdp-csp/stk sw-g239)
+            if (p.tipStretch) { w *= p.tipStretch[0]; h *= p.tipStretch[1]; }
             /* Krita builds a generated tip at the brush's size and keeps its
              * width and height as whole pixels (KisBrush::setWidth takes an
              * int), and spaces by those: 30 at ratio 0.28 is 30x8, not 30x8.4
@@ -10222,7 +10224,8 @@
                 }
                 ps._tipUrl = _tipStash(tip.url);
                 // a long ribbon cut into pieces is laid in turn, whatever its order (tipStrip)
-                if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = tip.pick === 'cycle' ? 'cycle' : ps.tipPick || tip.pick; }
+                // ...from its start each stroke: zb239's ten strokes laid over one another lie in register in Clip Studio (cdp-csp/stk sw-g239)
+                if (tip.cells > 1) { ps.tipCells = tip.cells; ps.tipPick = tip.pick === 'cycle' ? 'cycle' : ps.tipPick || tip.pick; if (tip.pick === 'cycle') ps.tipCycleReset = true; }
                 if (tip.lens && ps.ribbonClip) ps.ribbonLens = tip.lens;
                 if (tip.params && tip.params.tipMode) ps.tipMode = tip.params.tipMode;
                 if (tip.params && tip.params.tipTint) ps.tipTint = true;
