@@ -3451,7 +3451,7 @@
      *
      * Straight onto the layer, like the deform brush: each dab has to read
      * what the one before it left. */
-    var _smPrev = null, _smCar = null, _smCarC = null, _smPk = null, _smPx = NaN, _smPy = NaN, _mixTex = null, _mixTexA = null;
+    var _smPrev = null, _smCar = null, _smCarC = null, _smPk = null, _smPkW = false, _smPx = NaN, _smPy = NaN, _mixTex = null, _mixTexA = null;
     var _smMaskA = new WeakMap();
 
     /* Krita smudges on a precise copy of the layer kept for the whole stroke
@@ -3592,13 +3592,13 @@
                 _smCov = new Uint8Array(ctx.canvas.width * ctx.canvas.height); _smCovCtx = ctx; _smCovP = p;
                 _smCov.x1 = _smCov.y1 = Infinity; _smCov.x2 = _smCov.y2 = -Infinity;
             }
-            /* What a mixing dab picks colour up from (see the mix in _smudgeDab): the layer as the stroke began.
-             * Clip Studio's white is a paper layer mixing cannot read, CDPaint's base layer white pixels, so
-             * those pick nothing up. ponytail: white paint laid on the base layer reads as paper too. */
-            if (p.mixAlpha != null && !p.mixFlat && p.blendMode !== 'multiply') {
+            /* The layer as a mixing stroke began: what its dabs pick colour up from, and what its paper grain
+             * leaves showing (both in _smudgeDab). Clip Studio's white is a paper layer mixing cannot read,
+             * CDPaint's base layer white pixels (_smPkW), so those pick nothing up.
+             * ponytail: white paint laid on the base layer reads as paper too. */
+            if (p.mixAlpha != null) {
                 try { _smPk = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data; } catch (e4) { _smPk = null; }
-                if (_smPk && ctx === app.ctx && !(app.layerMgr && app.layerMgr.active && app.layerMgr.activeIdx > 0))
-                    for (var pq = 0; pq < _smPk.length; pq += 4) if ((_smPk[pq] & _smPk[pq + 1] & _smPk[pq + 2] & _smPk[pq + 3]) === 255) _smPk[pq + 3] = 0;
+                _smPkW = ctx === app.ctx && !(app.layerMgr && app.layerMgr.active && app.layerMgr.activeIdx > 0);
             }
             if (p.mixAlpha != null && p.mixFlat) { try { _smFl0 = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data; } catch (e3) { _smFl0 = null; } }
             /* A mixing brush's opacity is the whole stroke's, not each dab's:
@@ -3722,12 +3722,12 @@
             var A = _clamp(p.mixAlpha, 0, 100) / 100;
             c = A + (1 - A) * (p.mixFlat ? 0 : _smCar);    // opacity is in the dab's k0 already; mixFlat: Clip Studio's BrushWaterColor 1
             var mc = rgb;
-            if (_smPk) {
+            if (_smPk && !p.mixFlat && p.blendMode !== 'multiply') {
                 var kr = 0, kg = 0, kb = 0, ka = 0, kn = 0, cw = ctx.canvas.width, ch = ctx.canvas.height;
                 for (j = 0; j < mh; j++) for (i = 0; i < mw; i++) {
                     var kx3 = ox + i, ky3 = oy + j;
                     if (!ma[j * mw + i] || kx3 < 0 || ky3 < 0 || kx3 >= cw || ky3 >= ch) continue;
-                    var kq = (ky3 * cw + kx3) * 4, kA = _smPk[kq + 3];
+                    var kq = (ky3 * cw + kx3) * 4, kA = _smPkW && (_smPk[kq] & _smPk[kq + 1] & _smPk[kq + 2] & _smPk[kq + 3]) === 255 ? 0 : _smPk[kq + 3];
                     kr += _smPk[kq] * kA; kg += _smPk[kq + 1] * kA; kb += _smPk[kq + 2] * kA; ka += kA; kn++;
                 }
                 var kl = [kr / 255 / (kn || 1), kg / 255 / (kn || 1), kb / 255 / (kn || 1), ka / (kn || 1)], kh = _pow(0.5, (_hypot(mvx, mvy) || 0) / hl);
@@ -3792,7 +3792,14 @@
                     k = mtr ? k0 / _clamp(alpha, 0, 1) * mt[j * mw + i] / 255 : k0 * m / 255;
                     B[0] = src[u] * ci + pr; B[1] = src[u + 1] * ci + pg; B[2] = src[u + 2] * ci + pb; B[3] = src[u + 3] * ci + pa;
                     if (_smBase) { var bi = ((ry + py) * ctx.canvas.width + rx + px) * 4, fb = _smBase[bi + 3] / 255; var pm = p.mixColor / 100 * fb * 0.85; for (n = 0; n < 3; n++) { var pc = rgb[n] + (_smBase[bi + n] * fb + 255 * (1 - fb) - rgb[n]) * pm; B[n] = (fb + (1 - fb) * c) * (fb > 0 ? _smBase[bi + n] * (1 - c + c * pc / 255) : pc); } B[3] = 255 * (fb + (1 - fb) * c); }
-                    if (mt && !mtr) { var gr = mt[j * mw + i] / m; B[0] *= gr; B[1] *= gr; B[2] *= gr; B[3] *= gr; }
+                    /* The grain shows what was there as the stroke began: on an empty layer nothing, over paint the
+                     * paint, where B *= grain left see-through specks in a field (sw-am132) and thinned zb031's stack
+                     * of ten to 0.94 of Clip Studio's ink, now 1.00. Not multiply's, whose colour is laid in full below. */
+                    if (mt && !mtr) {
+                        var gr = mt[j * mw + i] / m, gq = ((ry + py) * ctx.canvas.width + rx + px) * 4, ga = _smPk && !_smBase ? _smPk[gq + 3] / 255 * (1 - gr) : 0;
+                        for (n = 0; n < 3; n++) B[n] = B[n] * gr + (ga ? _smPk[gq + n] * ga : 0);
+                        B[3] = B[3] * gr + 255 * ga;
+                    }
                 } else {
                     k = m / 255;
                     var sa = p.smudgeSmearAlpha === false ? src[u + 3] / 255 * sO : 0;
