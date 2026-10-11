@@ -1984,8 +1984,7 @@
              * density 0 (0.1) is that one point.
              * Mode 9 takes no notice of it: zb157's second brush's paper, mode
              * 9 at density 9, inks 3228 emphasised and 3229 not (cdp-csp/w157s). */
-            var stress = getParams().textureStress && blend !== 9 ? _max(0.1, 10 * D) : 0, sm = ta.mean;
-            if (stress) D = 1;
+            var stress = getParams().textureStress && blend !== 9 ? _max(0.1, 10 * D) : 0, sm = ta.mean;            if (stress) D = 1;
             var img = ctx.getImageData(at ? ox : 0, at ? oy : 0, w, h), dd = img.data;
             for (var j = 0; j < h; j++) {
                 var ty = ((_floor(((oy || 0) + j) / scale) % th) + th) % th;
@@ -2006,12 +2005,14 @@
                      * lifted back by the brightness. zb220's (multiply on each dab, contrast 33)
                      * inks 4099 under brightness -30 in Clip Studio and 2941 with contrast 80 too,
                      * where cut between the two ours laid 9120 and 9083; now 3925 and 2786
-                     * (cdp-csp/stk sw-b220). A whole stroke's keeps the cut between (zb197). */
-                    if (!at && (ct !== 1 || br)) s = _clamp((s - 0.5) * ct + 0.5 - br, 0, 1);
-                    else {
-                        if (ct !== 1) s = _clamp((s - 0.5) * ct + 0.5, 0, 1);
-                        if (br) s = _clamp(s - br, 0, 1);
-                    }
+                     * (cdp-csp/stk sw-b220). A whole stroke's is cut once too, and a contrast
+                     * that spreads it takes the brightness first: zb062's dark paper (linear
+                     * burn, brightness -14, contrast 45) leaves its stroke blank in Clip Studio,
+                     * on its first brush or its second (sw-c062, sw-b062); zb197's (multiply,
+                     * -42, 40) inks 708 there, 725 so, and 1585 at brightness -80, 1602 so
+                     * (sw-a197). One that narrows it takes it after: zb199's (77, -23) inks 754
+                     * unemphasised, 714 so; 833 at contrast 50, 829 brightness first (sw-a199). */
+                    if (ct !== 1 || br) s = _clamp((s - (at && ct > 1 ? br : 0) - 0.5) * ct + 0.5 - (at && ct > 1 ? 0 : br), 0, 1);
                     if (inv) s = 1 - s;
                     if (stress) s = _clamp(sm + stress * (s - sm), 0, 1);
                     // 9 sees the tip without its flow, which scales what it leaves (flow 50: half, 25: a quarter; sw-m9f)
