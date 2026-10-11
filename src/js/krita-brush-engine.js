@@ -1158,6 +1158,15 @@
             /* The tip paints itself: its picture IS the dab, and the chosen
              * colour has no say. Krita calls this an image stamp. */
             _scratchCtx.drawImage(maskCanvas, 0, 0);
+            /* ...but a picture's mode-2 second that keeps its stronger dabs (blend by darken) adds
+             * one flat colour through the picture's shape, not its greys (see _renderDab). */
+            if (_params.cutByLight && _params.dabMax && _subOn === 'add' && _flowCtx === _subCtx) {
+                _scratchCtx.globalCompositeOperation = 'source-in';
+                _scratchCtx.fillStyle = colorHex;
+                _scratchCtx.fillRect(0, 0, mw, mh);
+                _scratchCtx.globalCompositeOperation = 'source-over';
+                return;
+            }
             /* A sub colour mix greys the ink: Clip Studio paints a picture's
              * darks in the ink and its lights in the sub colour, white,
              * which is screen -- c(1 - p) + p. A jitter on the sub colour
@@ -3881,7 +3890,13 @@
         _tintInk = colorHex;
         /* ...and a mode-2 second brush lays that sub colour: zb042's takes the first's colour 2.8x its flow of the way to white in Clip Studio
          * (0.14/0.28/0.43/0.70/0.97 at 5-35), green 0.86 as far as red -- white on its shaded ink, where ours added the ink (cdp-csp/w42e) */
-        var finalColor = !p.jitterSub ? _jitterColor(p, colorHex, x, y)
+        /* A picture's second of that kind that keeps its stronger dabs adds half white through the picture's
+         * shape: zb146's, under its own paper at density 5-60, contrast or none, reversed or not, whitens
+         * the stroke as Clip Studio's does within 0.85-1.07 of its ink (21 variants, cdp-csp/stk sw-p146b,
+         * sw-p146c, sw-s146), where its greys laid 0.18-4.4. Not adjust-by-interval or spacing 2-8
+         * (sw-p146i: no change). zb045's wants about 0.6 (sw-p045). */
+        var finalColor = p.cutByLight && p.dabMax && p.tipMode === 'color' && _subOn === 'add' && _flowCtx === _subCtx ? _jitterColor(p, '#808080', x, y)
+            : !p.jitterSub ? _jitterColor(p, colorHex, x, y)
             : p.tipMode === 'color' || (p.cutByLight && _subOn === 'add') ? _jitterColor(p, '#ffffff', x, y) : colorHex;
         if (p.normalMap) finalColor = _normalColor(p.normalMap, _dabIndex === 1 ? _lockAngle : strokeAngle);   // the first dab's angle is from the canvas origin
         var baseColor = finalColor;
