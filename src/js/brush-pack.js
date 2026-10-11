@@ -4385,9 +4385,11 @@
             out.subMix = Math.min(100, subMix);
             _sutDrive(out, 'subMix', v.BrushSubColorEffector, warn, 'its sub colour mix');
         }
-        /* A change per stroke shows nothing: zb006's (hue 6, saturation 41), and at hue 180 and value 50,
-         * lays three strokes in the plain ink in Clip Studio, with the per-dab switch on or off and mixing
-         * on or off (cdp-csp/stk sw-k3006, sw-k3b06); zb046's likewise (sw-k3046). It stays named below. */
+        if (!dabJit && _sutNum(v.BrushChangeStrokeColor, 0) &&
+            _sutJitter(out, v.BrushStrokeHueChange, v.BrushStrokeSaturationChange,
+                       v.BrushStrokeValueChange)) {
+            out.colorJitterPer = 'stroke';
+        }
 
         /* The second brush is painted by the engine as a stroke of its own
          * (sutSecond). One that only shifts colour is named; carving the
@@ -4405,6 +4407,7 @@
             ['BrushRibbon', 'ribbon rendering']
         ];
         for (var i = 0; i < noted.length; i++) {
+            if (noted[i][0] === 'BrushChangeStrokeColor' && out.colorJitterPer === 'stroke') continue;
             if (noted[i][0] === 'UseDualBrush') continue;
             if (noted[i][0] === 'BrushRibbon' && opts.hasTip && opts.tipW && opts.tipH) continue;
             if (_sutNum(v[noted[i][0]], 0)) {
