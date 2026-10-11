@@ -3864,8 +3864,13 @@
          * 12, 8 and 4% of the size in those modes, whatever the interval. */
         /* Never closer than a pixel: 1% of 20 and 4% of 20 paint the same
          * stroke, and a spray of 6px specks at 8% laid 775 over 800px --
-         * one a pixel, where 0.48px would lay 1667. */
-        out.minStep = 1;
+         * one a pixel, where 0.48px would lay 1667. A thinned tip,
+         * anti-aliased, steps its thickness of a pixel, never under half:
+         * a soft round at thickness 44 paints the same at 0.16 and 0.5px
+         * and more at 0.6, at 70 the same to 0.6px and more at 0.8; with
+         * anti-aliasing off the same at 0.16 and 1px (cdp-csp/stk sw-j001,
+         * zb001's picture at 25-100 in sw-h001, sw-g001). */
+        out.minStep = _sutNum(v.AntiAlias, 1) ? Math.max(0.5, Math.min(100, _sutNum(v.BrushThickness, 100)) / 100) : 1;
         if (_sutNum(v.BrushContinuousPlot, 0)) out.dabEachReport = true;   // see the engine's _each
         var ivt = _sutNum(v.BrushAutoIntervalType, 0);
         /* ...and a fixed interval is a share of the size whatever the tip's
