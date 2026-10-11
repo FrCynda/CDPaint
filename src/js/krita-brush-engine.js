@@ -3675,7 +3675,11 @@
          * (BrushMixColorExtension) is how long the load lasts: its fade-in
          * halves over about 0.65 x the brush size at 100, linearly less
          * below (size 50 at 100/80/50, size 20 at 100), none at 0. Amount of
-         * paint (BrushMixColor) did not move the alpha at all.
+         * paint (BrushMixColor) did not move the alpha at all. The mean counts
+         * every pixel the tip touches alike, its antialiased rim and soft
+         * falloff as much as its core: zb141 at density 20/40/60, flow 50/100,
+         * hardness 10/50/80 settles within 0.02 of Clip Studio's, where the
+         * tip-weighted mean ran 0.06-0.12 over (cdp-csp/stk sw-m141, sw-h141).
          * ponytail: the paint keeps the brush's own colour; Clip Studio's
          * colour pick-up (amount of paint) is unmeasured. */
         if (mix) {
@@ -3683,7 +3687,7 @@
             for (j = 0; j < mh; j++) for (i = 0; i < mw; i++) {
                 var mm = ma[j * mw + i], qx2 = ox + i - rx, qy2 = oy + j - ry;
                 if (!mm || qx2 < 0 || qy2 < 0 || qx2 >= rw || qy2 >= rh) continue;
-                ua += f[(qy2 * rw + qx2) * 4 + 3] * mm; uw += mm;
+                ua += f[(qy2 * rw + qx2) * 4 + 3]; uw++;
             }
             var ub = uw ? ua / uw / 255 : 0, hl = 0.65 * (sz || mw) * _clamp(p.mixStretch, 0, 100) / 100;
             /* A spray's load fades as the pen travels, not as its particles
