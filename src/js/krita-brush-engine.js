@@ -756,7 +756,7 @@
      * the two strokes: Watercolor splash's dense first stroke is left only
      * where its second dabs lie, and to their own levels (cdp-csp/pr-du,
      * against min 0.005 off a pixel, against a x d 0.137). Mode 9 ('mask')
-     * keeps all of the first wherever the second lays anything: zb025's
+     * keeps all of the first wherever the second has laid anything (so far, _keepUnder): zb025's
      * halftone second picture, a faint grey at its size, leaves solid
      * squares of ink in Clip Studio at interval 100 and a solid band under
      * a plain round first (cdp-csp/w025i, w025s). Mode 12 ('cut')
@@ -7135,6 +7135,45 @@
             : m === 'overlay' ? (c < 0.5 ? 2 * c * s : 1 - 2 * (1 - c) * (1 - s))
             : m === 'burn' ? _max(0, 1 - (1 - c) / _max(1e-3, s)) : _min(1, c / _max(1e-3, 1 - s));
     }
+    /* Clip Studio's mode 9 lays the first brush only where the second's
+     * stroke already lies, in turn: zb107's click lays nothing, where its
+     * second brush alone (mode 0) lays a dab there, and spacing the second
+     * out to 100 and 300 leaves 0.80 and 0.27 of its ink (cdp-csp/stk
+     * sw-t107, sw-u107). So each first segment is put back to what it was
+     * wherever the second has laid nothing yet.
+     * ponytail: a colour buffer (_adCol) first made inside a segment is not
+     * put back; no mode-9 brush tints its dabs. */
+    var _kuOld = [], _kuNew = null, _kuMask = null;
+    function _keepUnder(pts, i, n, run) {
+        var a = pts[i], b = pts[_min(i + 1, n - 1)], r = _params.size * (2 + (_params.scatter || 0) / 50) + 4;
+        var x = _max(0, _floor(_min(a.x, b.x) - r)), y = _max(0, _floor(_min(a.y, b.y) - r));
+        var w = _min(_subCanvas.width, Math.ceil(_max(a.x, b.x) + r)) - x, h = _min(_subCanvas.height, Math.ceil(_max(a.y, b.y) + r)) - y;
+        if (w <= 0 || h <= 0) return run();
+        var mk = function (c) { return c && c.width >= w && c.height >= h ? c : new OffscreenCanvas(_max(w, c ? c.width : 0), _max(h, c ? c.height : 0)); };
+        if (_alphaDarken(_params)) _ensureAdBuffer();
+        var cs = [_flowCtx, _adCtx, _adColCtx], k, c;
+        for (k = 0; k < 3; k++) if (cs[k]) {
+            _kuOld[k] = mk(_kuOld[k]);
+            c = _kuOld[k].getContext('2d', { colorType: 'float16' });
+            c.globalCompositeOperation = 'copy'; c.drawImage(cs[k].canvas, x, y, w, h, 0, 0, w, h);
+        }
+        run();
+        _kuMask = mk(_kuMask); _kuNew = mk(_kuNew);
+        var mc = _kuMask.getContext('2d'), m = _subCtx.getImageData(x, y, w, h), d = m.data;
+        for (var j = 3; j < d.length; j += 4) d[j] = d[j] ? 255 : 0;
+        mc.clearRect(0, 0, _kuMask.width, _kuMask.height); mc.putImageData(m, 0, 0);
+        var nc = _kuNew.getContext('2d', { colorType: 'float16' });
+        for (k = 0; k < 3; k++) if (cs[k]) {
+            c = cs[k];
+            // new where the second lies: the new pixels, cut to its mask...
+            nc.globalCompositeOperation = 'copy'; nc.drawImage(c.canvas, x, y, w, h, 0, 0, w, h);
+            nc.globalCompositeOperation = 'destination-in'; nc.drawImage(_kuMask, 0, 0, w, h, 0, 0, w, h);
+            // ...over the old ones with that mask cleared
+            c.save(); c.clearRect(x, y, w, h); c.drawImage(_kuOld[k], 0, 0, w, h, x, y, w, h);   // not 'copy': that blanks the whole canvas
+            c.globalCompositeOperation = 'destination-out'; c.drawImage(_kuMask, 0, 0, w, h, x, y, w, h);
+            c.globalCompositeOperation = 'source-over'; c.drawImage(_kuNew, 0, 0, w, h, x, y, w, h); c.restore();
+        }
+    }
     // Both brushes along pts, a segment of each in turn.
     function _paintBoth(pts, color, sec) {
         var st = _secondState(sec), n = pts.length, main = _flowCtx, pat0 = null;
@@ -7150,13 +7189,30 @@
          * behind it (39% of it lit; in turn left 4%), where one click on
          * its own gets its 2 (cdp-csp/pgl, pgc). */
         var after = sec.p.cutByLight;
+        // ...in turn a second-brush dab apart, not a pen report: zb107's quick strokes lost a quarter of their ink so
+        if (_subOn === 'mask' && n > 1) {
+            var fine = [pts[0]], s2 = _max(1, (sec.ratio ? _params.size * sec.ratio : sec.p.size) * (sec.p.spacing || 10) / 100);
+            for (var q = 1; q < n; q++) {
+                var A = pts[q - 1], B = pts[q], kq = _max(1, Math.ceil(_hypot(B.x - A.x, B.y - A.y) / s2));
+                for (var e = 1; e < kq; e++) {
+                    var f = e / kq;
+                    fine.push({ x: A.x + (B.x - A.x) * f, y: A.y + (B.y - A.y) * f, pressure: A.pressure + (B.pressure - A.pressure) * f,
+                        color: B.color, dist: (A.dist || 0) + ((B.dist || 0) - (A.dist || 0)) * f, t: A.t + (B.t - A.t) * f });
+                }
+                fine.push(B);
+            }
+            pts = fine; n = pts.length;
+        }
         for (var pass = 0; pass < (after ? 2 : 1); pass++)
         for (var i = 0; i < _max(1, n - 1); i++) {
             for (var w = after ? pass : 0; w < (after ? pass + 1 : 2); w++) {
                 if (w) { st = _swapState(st); if (_subOn) _flowCtx = _subCtx; else _flowCtx.globalCompositeOperation = sec.op; pat0 = _patWanted; _patWanted = _secondPaper(); }
                 try {
-                    if (n === 1) { if (!_params.dirWait) _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, color); }
-                    else _processSegment(pts, i, i + 1, color, 2);
+                    var lay = function () {
+                        if (n === 1) { if (!_params.dirWait) _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, color); }
+                        else _processSegment(pts, i, i + 1, color, 2);
+                    };
+                    if (!w && _subOn === 'mask') _keepUnder(pts, i, n, lay); else lay();
                 } finally {
                     if (w) { _patWanted = pat0; _flowCtx = main; _flowCtx.globalCompositeOperation = 'source-over'; st = _swapState(st); _second2.cache = st[3]; }
                 }

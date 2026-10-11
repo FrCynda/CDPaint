@@ -4925,6 +4925,18 @@ await withPage(async (page) => {
             delete b.PRESETS.Round.second;
         }
         b.setParam('flow', 100);
+        // Clip Studio's mode 9 lays the first where the second already lies, in turn: a click keeps nothing
+        out.mask = [];
+        for (const click of [true, false]) {
+            __B.doc(400, 200);
+            b.PRESETS.Round.second = { op: 'mask', p: { size: 40, flow: 100, spacing: 10, hardness: 100 } };
+            b.loadPreset('Round');
+            b.setParam('dynamicsMode', 'off'); b.setParam('scatter', 0); b.setParam('size', 20); b.setParam('hardness', 100); b.setParam('spacing', 10);
+            const L4 = __B.layer();
+            if (click) { b.beginStroke(200, 100, 1, '#000000'); b.endStroke(); } else await __B.stroke(20, 100, 380, 100, '#000000');
+            out.mask.push(+__B.px(L4, 200, 100).split(',')[3]);
+            delete b.PRESETS.Round.second;
+        }
 
         b.loadPreset('Round');
         return JSON.stringify(out);
@@ -4963,6 +4975,8 @@ await withPage(async (page) => {
      * only where both strokes are. */
     check('...and one that masks keeps the first only where the second lies too',
         sc.second.min[0] === 255 && sc.second.min[2] === 0, JSON.stringify(sc.second));
+    check('...and one laid in turn (mode 9) keeps nothing of a click but the stroke where the second lies',
+        sc.mask[0] === 0 && sc.mask[1] > 200, JSON.stringify(sc.mask));
 
     const clear = '0,0,0,0';
     check('the previous stroke does not ghost back into the next',
