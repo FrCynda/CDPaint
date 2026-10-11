@@ -3550,7 +3550,12 @@
             var tc = _mixTex.getContext('2d', { willReadFrequently: true });
             tc.clearRect(0, 0, mw, mh);
             tc.drawImage(mask, 0, 0);
-            var mtr = _applyTextureNoise(tc, mw, mh, tex, p.textureScale, p.textureType, ox, oy, p.textureBlend, _clamp(alpha, 0, 1));
+            /* A burn paper (7) meant for the whole stroke goes on with its own blend and modifiers: zb046's
+             * (density 100, contrast -88, brightness -25) leaves 0.94 of Clip Studio's ink, 0.91 at density 50
+             * and 0.84 at brightness 0, where the plain grain left 0.46 whatever its contrast (cdp-csp/stk
+             * sw-p046). ponytail: on each dab, not the stroke -- a mixing dab has no stroke buffer; at contrast
+             * 0 the paper eats 4x Clip Studio's. Multiply (zb132) keeps the plain grain (12 -> 41 so). */
+            var mtr = _applyTextureNoise(tc, mw, mh, tex, p.textureScale, p.textureType, ox, oy, p.textureBlend != null ? p.textureBlend : p.textureStroke === 7 ? 7 : null, _clamp(alpha, 0, 1));
             var td = tc.getImageData(0, 0, mw, mh).data;
             if (!_mixTexA || _mixTexA.length < mw * mh) _mixTexA = new Uint8Array(mw * mh);
             mt = _mixTexA;
