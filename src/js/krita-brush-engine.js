@@ -4897,8 +4897,11 @@
                 _washCtx.drawImage(src, x, y, w, h, x, y, w, h);
             }
             var wi = _washCtx.getImageData(x, y, w, h), wd = wi.data, sd = _subCtx.getImageData(x, y, w, h).data;
-            if (_subOn === 'add') {     // Clip Studio's mode 2: the second brush's colour is added to the first's wherever the first has ink
-                for (var ai = 3; ai < wd.length; ai += 4) if (wd[ai] && sd[ai]) for (var an = ai - 3; an < ai; an++) wd[an] = _min(255, wd[an] + _round(sd[an] * sd[ai] / 255));
+            /* Clip Studio's mode 2: the second brush's colour is added to the first's wherever the first has ink,
+             * as much less as the stroke's opacity: zb045's at opacity 50 adds what its second does at flow 50,
+             * 811 of ink where flow 50 on the first lays 111 (cdp-csp/stk sw-k045). */
+            if (_subOn === 'add') {
+                for (var ai = 3; ai < wd.length; ai += 4) if (wd[ai] && sd[ai]) for (var an = ai - 3; an < ai; an++) wd[an] = _min(255, wd[an] + _round(sd[an] * sd[ai] / 255 * opacity));
             } else
             for (var si = 3; si < wd.length; si += 4) wd[si] = _subOn === 'min' ? _min(wd[si], sd[si]) : _subOn === 'mul' ? _round(wd[si] * sd[si] / 255) : _subOn === 'mask' ? (sd[si] ? wd[si] : 0)
                 : _subOn === 'cut' ? wd[si] - _round(sd[si] * _min(wd[si], 255 - wd[si]) / 255) : wd[si] - sd[si];
