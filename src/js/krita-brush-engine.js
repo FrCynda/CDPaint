@@ -1159,7 +1159,20 @@
              * colour has no say. Krita calls this an image stamp. */
             _scratchCtx.drawImage(maskCanvas, 0, 0);
             /* ...but a picture's mode-2 second that keeps its stronger dabs (blend by darken) adds
-             * one flat colour through the picture's shape, not its greys (see _renderDab). */
+             * its picture's greys a fifth of the way to white, and a picture of shape alone (black
+             * here) adds white: zb045's (greys 130-218) whitens its stroke 1.76 per point of flow in
+             * Clip Studio, zb146's (57-158) 1.28, both with their colour change on or off and their
+             * paper on or off, ours at 1.00-1.10 of their ink (cdp-csp/stk sw-e045, sw-g146);
+             * zb092's black cells near blank its stroke (25 of ink). A change of the main colour
+             * still adds one flat colour through the picture's shape (see _renderDab). */
+            if (_params.cutByLight && _params.dabMax && _subOn === 'add' && _flowCtx === _subCtx &&
+                (_params.jitterSub || !(_params.hueJitter || _params.satJitter || _params.valJitter))) {
+                var gi = _scratchCtx.getImageData(0, 0, mw, mh), gd = gi.data, gm = 0;
+                for (var g = 0; g < gd.length; g += 4) if (gd[g + 3]) gm = _max(gm, gd[g], gd[g + 1], gd[g + 2]);
+                for (var g = 0; g < gd.length; g += 4) for (var gn = g; gn < g + 3; gn++) gd[gn] = gm ? 255 - (255 - gd[gn]) * 0.8 : 255;
+                _scratchCtx.putImageData(gi, 0, 0);
+                return;
+            }
             if (_params.cutByLight && _params.dabMax && _subOn === 'add' && _flowCtx === _subCtx) {
                 _scratchCtx.globalCompositeOperation = 'source-in';
                 _scratchCtx.fillStyle = colorHex;
@@ -3935,7 +3948,8 @@
          * shape: zb146's, under its own paper at density 5-60, contrast or none, reversed or not, whitens
          * the stroke as Clip Studio's does within 0.85-1.07 of its ink (21 variants, cdp-csp/stk sw-p146b,
          * sw-p146c, sw-s146), where its greys laid 0.18-4.4. Not adjust-by-interval or spacing 2-8
-         * (sw-p146i: no change). zb045's wants about 0.6 (sw-p045). */
+         * (sw-p146i: no change). That grey is now only for a change of the main colour; the sub colour's
+         * second adds its picture's own greys, screened (_colorizeMask). */
         var finalColor = p.cutByLight && p.dabMax && p.tipMode === 'color' && _subOn === 'add' && _flowCtx === _subCtx ? _jitterColor(p, '#808080', x, y)
             : !p.jitterSub ? _jitterColor(p, colorHex, x, y)
             : p.tipMode === 'color' || (p.cutByLight && _subOn === 'add') ? _jitterColor(p, '#ffffff', x, y) : colorHex;
