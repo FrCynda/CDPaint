@@ -3774,7 +3774,7 @@
      * Studio's 239,138,250; read as a cut by lightness they were pale
      * violet). */
     var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'add', 3: 'subtract', 4: 'destination-over', 5: 'over', 6: 'over', 7: 'over', 8: 'over', 9: 'destination-over', 10: 'destination-over', 12: 'cut' },
-        SUT_SECOND_BLEND = { 5: 'lighten', 6: 'screen', 7: 'overlay', 8: 'dodge' };
+        SUT_SECOND_BLEND = { 5: 'lighten', 6: 'screen', 7: 'overlay', 8: 'dodge', 10: 'burn' };
     BrushPack.sutSecond = function (v) {
         var op = _sutNum(v.UseDualBrush, 0) && SUT_SECOND_OP[_sutNum(v.DualBrushCompositeMode, 0)];
         if (!op) return null;
@@ -3794,6 +3794,11 @@
          * the first: zb159's white shape inks in the ink colour on top in
          * mode 0 and 1 alike, blank with the change off (cdp-csp/w159). */
         else if (_sutNum(v.DualBrushCompositeMode, 0) <= 1) op = 'over';
+        /* Mode 10 with it burns the first's colour by the second's and moves
+         * no alpha: zb167's (90,64,214) goes to about (25,5,200) where its
+         * second lies, inking 6024 in Clip Studio and 4617 without the second,
+         * the same alpha in a darker colour (cdp-csp/stk sw-c167). */
+        else if (_sutNum(v.DualBrushCompositeMode, 0) === 10) op = 'over';
         // ...and modes 5-8 blend it on (krita-brush-engine's _blend2)
         var blend = SUT_SECOND_BLEND[_sutNum(v.DualBrushCompositeMode, 0)];
         /* Mode 12 likewise: with the colour change on it cuts (the probes

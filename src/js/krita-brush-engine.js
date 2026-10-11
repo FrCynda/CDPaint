@@ -7050,7 +7050,8 @@
      * rotation held so each mode's pixels line up (cdp-csp/w174m). */
     function _blend2(m, c, s) {
         return m === 'lighten' ? _max(c, s) : m === 'screen' ? 1 - (1 - c) * (1 - s)
-            : m === 'overlay' ? (c < 0.5 ? 2 * c * s : 1 - 2 * (1 - c) * (1 - s)) : _min(1, c / _max(1e-3, 1 - s));
+            : m === 'overlay' ? (c < 0.5 ? 2 * c * s : 1 - 2 * (1 - c) * (1 - s))
+            : m === 'burn' ? _max(0, 1 - (1 - c) / _max(1e-3, s)) : _min(1, c / _max(1e-3, 1 - s));
     }
     // Both brushes along pts, a segment of each in turn.
     function _paintBoth(pts, color, sec) {
