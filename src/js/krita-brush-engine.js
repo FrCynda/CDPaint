@@ -5023,7 +5023,14 @@
             if (_subOn === 'over') {     // the second brush's stroke over the first's, once both are whole
                 for (var oi = 3, obm = _secondOf().blend; oi < cd.length; oi += 4) {
                     var osa = csd[oi], oda = cd[oi] * (255 - osa) / 255, ona = osa + oda, on;
-                    if (!osa || obm && !cd[oi]) continue;
+                    if (!osa || obm && obm !== 'burn' && !cd[oi]) continue;
+                    // burn (mode 10) lays its own ink where the first has none: zb173 with its first's paper at 0 inks 892 in Clip Studio, 0 with no second (sw-c173)
+                    if (obm === 'burn') {
+                        var oas = osa / 255, oab = cd[oi] / 255, oao = oas + oab - oas * oab;
+                        for (on = oi - 3; on < oi; on++) cd[on] = (csd[on] * oas * (1 - oab) + cd[on] * oab * (1 - oas) + _blend2(obm, cd[on] / 255, csd[on] / 255) * 255 * oas * oab) / oao;
+                        cd[oi] = oao * 255;
+                        continue;
+                    }
                     // a blend only where the first has ink: zb218 with its screened second brush inks 799 in Clip Studio, ours 760 without it, 16289 laid over
                     if (obm) { for (on = oi - 3; on < oi; on++) cd[on] += (_blend2(obm, cd[on] / 255, csd[on] / 255) * 255 - cd[on]) * osa / 255; continue; }
                     for (on = oi - 3; on < oi; on++) cd[on] = (csd[on] * osa + cd[on] * oda) / ona;
