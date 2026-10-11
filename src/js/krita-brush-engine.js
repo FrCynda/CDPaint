@@ -5715,8 +5715,26 @@
      * turned 1 degree (cdp-csp/pbm) at size 32: within 0.8% and 2% of Clip
      * Studio's pixels, only whole levels and quarters. Shrinking first and
      * placing after smoothed it twice.
-     * Medium and high are 4x4 (brush-pack's AntiAlias rule); tipShiftY, when
-     * set, moves it across apart from along (a ribbon at 4x4, an eighth). */
+     * Medium and high (tipSamples 4) are 2x2 too, from the picture halved
+     * in 2x2 blocks once per halving of its size, at most twice: zb001's
+     * 2434px picture at size 200 and 500 fits a quarter (err 5 of 143 and
+     * 74 of 870, against 31 and 134 at 4x4 full), at 1200 a half; low fits
+     * the whole picture at every size (cdp-csp/stk sw-m001, sw-n001). At a
+     * shrink of 4-8 it lays nearly what 4x4 of the whole does (Bumpy, below).
+     * A ribbon stays 4x4; tipShiftY, when set, moves it across apart from
+     * along (an eighth). */
+    function _cspMip(src, k) {
+        var b = k > 1 ? _cspMip(src, k - 1) : _kritaTipLevel(src, 1), lv = _kLevels.get(src);
+        if (lv['m' + k]) return lv['m' + k];
+        if (b.w < 2 || b.h < 2) return (lv['m' + k] = b);
+        var w = b.w >> 1, h = b.h >> 1, bv = b.v, BW = b.w * 4, v = new Float32Array(w * h * 4);
+        for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
+            var p = (2 * y * b.w + 2 * x) * 4, t = (y * w + x) * 4;
+            for (var n = 0; n < 4; n++) v[t + n] = (bv[p + n] + bv[p + 4 + n] + bv[p + BW + n] + bv[p + BW + 4 + n]) / 4;
+            v[t + 3] = _floor(v[t + 3] + 1e-4);   // whole levels each halving: floored fits zb001 at 200 a fifth closer than unrounded
+        }
+        return (lv['m' + k] = { w: w, h: h, v: v });
+    }
     function _cspTipMask(src, sz, ang, asp, x, y, n) {
         var mode = _params.tipMode || 'alpha', sh = _params.tipShift || 0, shY = _params.tipShiftY != null ? _params.tipShiftY : sh;
         if (x != null) { x += sh; y += shY; }
@@ -5732,7 +5750,10 @@
         var key = 'c|' + _tipKey() + '|' + sz + '|' + ang.toFixed(3) + '|' + asp.toFixed(2) + '|' + mode + '|' + n + '|' + sh + ',' + shY + '|' + fx + ',' + fy + (st ? '|' + st : '') + '|' + rq;
         var hit = _customTipSizeCache[key];
         if (hit) return hit;
-        var lv = _kritaTipLevel(src, 1), v = lv.v, LW = lv.w, LH = lv.h, nn = n * n;
+        var mk = n === 4 && rq < 0 ? _min(2, _max(0, _floor(Math.log2(1 / sc) + 1e-9))) : -1;
+        if (mk >= 0) n = 2;
+        var lv = mk > 0 ? _cspMip(src, mk) : _kritaTipLevel(src, 1), v = lv.v, LW = lv.w, LH = lv.h, nn = n * n;
+        var mx = LW / src.width, my = LH / src.height;
         // a ribbon's carried pixel (below) can fall past the picture's own box: a clear pixel all round
         var m = rq >= 0 ? 1 : 0, cut = (_params.tipCells || 1) > 1 ? 1 : 0;
         var dw = _max(1, _ceil(fx + bw - 1e-6)) + 2 * m, dh = _max(1, _ceil(fy + bh - 1e-6)) + 2 * m;
@@ -5742,7 +5763,7 @@
             var R = 0, G = 0, B = 0, A = 0;
             for (var k = 0; k < nn; k++) {
                 var qx = i + ((k % n) + 0.5) / n - fx + bx, qy = j + (_floor(k / n) + 0.5) / n - fy + by;
-                var ux = (qx * c + qy * s) / kx, uy = (qy * c - qx * s) / ky, xi = _floor(ux), yi = _floor(uy);
+                var ux = (qx * c + qy * s) / kx * mx, uy = (qy * c - qx * s) / ky * my, xi = _floor(ux), yi = _floor(uy);
                 /* A ribbon's end ahead is carried a pixel on, as in _getCustomTipMask,
                  * where inked -- and, a whole picture, its other end too (Dashed line's
                  * gaps). A piece of a cut picture runs on into the next piece. */

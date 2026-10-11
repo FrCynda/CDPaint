@@ -4421,6 +4421,8 @@
          * is all sixteenths (Clip Studio's pixels at 2 and 3 identical), and
          * the 4x4 picture fits 98.6-99.6% of them with the dab a quarter pixel
          * right and down of the pen -- where low's 2x2 fits too (cdp-csp/aa4fit.py).
+         * Off a picture, it is 2x2 of the picture halved (the engine's _cspMip),
+         * which 4x4 matches at that shrink and zb001's 12-fold does not.
          * A ribbon too, from its full picture: a quarter on along the stroke at
          * every size measured, and at low a quarter across (Zipper, Thin chain,
          * Lace: Lace rms 4 of 255 off Clip Studio's pixels). At 4x4 across it
