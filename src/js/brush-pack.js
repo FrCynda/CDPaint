@@ -4043,11 +4043,16 @@
         }
         /* Several pictures: 0 takes them in turn (Zipper's teeth alternate),
          * 1 out and back (Grass patch's clumps go 0,1,2,1,0), 3 at random
-         * (Book). A ribbon's fixed order is joined into one
+         * (Book). 2 lays only the last with the mouse, its full pressure:
+         * zb040's stroke is its fine third picture, 11 rows where its dot
+         * clouds at 0 lay 15 (cdp-csp/stk sw-r040); taken by pressure as
+         * Krita's pipes are, a lighter pen's pick is not measured. A
+         * ribbon's fixed order is joined into one
          * picture instead (tipStrip's join). */
         var order = _sutNum(v.BrushPatternOrderType, 3);
         if (order === 0) out.tipPick = 'cycle';
         else if (order === 1) out.tipPick = 'pingpong';
+        else if (order === 2) out.tipPick = 'pressure';
         if (order < 2) out.tipCycleReset = true;   // every stroke starts at the first picture: Crack laid twice is the same crack
         /* Reverse horizontal/vertical: 1 flips every dab, 2 each one at
          * random (Pastel, one picture, lays no two dabs alike in Clip
