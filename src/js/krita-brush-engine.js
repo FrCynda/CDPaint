@@ -10679,6 +10679,8 @@
     /* Only the tests use this: a stroke picks its own seed, and pinning it
      * is what lets a speckled stroke be drawn twice and compared. */
     engine._setStrokeSeed = function (n) { _pinnedSeed = n == null ? null : (n | 0); };
+    // Test-only: forget the pen's rate, so a brush drawn after another reads the speed it would alone.
+    engine._resetSpeed = function () { _smoothSpeed = 0; _spLast = null; _spTime = 0; _spDists = [0]; _spDts = []; };
     // Test-only: how many times the live pass suspended this stroke. The
     // hash suite asserts it is non-zero on the drain case, proving the
     // suspend path actually ran before asserting identical pixels.
