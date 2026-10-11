@@ -4987,8 +4987,14 @@
             var _gtx = src === _edgeCanvas ? _edgeCtx : _washCtx;
             /* Clip Studio's paper on the stroke is its own blend, the one
              * measured on each dab (_cspPaper), read straight off the
-             * paper's alpha -- not the contrast-curved grain below. */
-            if (_p.textureStroke == null || !_applyTextureNoise(_gtx, w, h, _p.texture, _p.textureScale, _p.textureType, x, y, _p.textureStroke, null, true)) {
+             * paper's alpha -- not the contrast-curved grain below. It goes
+             * on after the stroke's opacity: zb024's linear light (density
+             * 80) at opacity 75 takes its stroke to full alpha in Clip Studio,
+             * where ours stopped at 0.75 (cdp-csp/stk sw-p024). */
+            var _pOp = _p.textureStroke != null && _p.textureStroke !== 9 && !_p.edgeAdd && !_subOn;
+            if (_p.textureStroke != null && _applyTextureNoise(_gtx, w, h, _p.texture, _p.textureScale, _p.textureType, x, y, _p.textureStroke, _pOp ? opacity : null, true)) {
+                if (_pOp) opacity = 1;
+            } else {
                 /* _applyTextureNoise paints at its ctx's own origin (it's
                  * normally handed a dab-local scratch canvas) -- translate the
                  * full-document buffer to the dirty rect's corner first, and
