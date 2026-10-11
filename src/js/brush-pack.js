@@ -3889,9 +3889,10 @@
          * never more than the flow -- one hard dab at 10 and 23.8% takes 0.30
          * and 0.72 off solid ink in Clip Studio (cdp-csp/pr-dc, zdah*). The
          * 35.36 fitted to whole strokes before left Soft 7% light. Not a
-         * ribbon's, laid end to end: Braid (25.8) inks its outlines black. */
+         * ribbon's, laid end to end: Braid (25.8) inks its outlines black.
+         * The engine takes it dab by dab at the step they really take (flowByGap). */
         if (_sutNum(v.BrushAdjustFlowByInterval, 0) && !_sutNum(v.BrushRibbon, 0) && !_sutNum(v.BrushBlendPatternByDarken, 0))
-            out.flow = Math.max(1, Math.round(out.flow * Math.min(1, Math.max(out.spacing, 100 / out.size) / 33.1)));   // dabs never sit closer than a pixel (minStep)
+            out.flowByGap = true;
 
         /* Thickness is how wide the tip stays, as a percentage; ours is how
          * many times longer than wide it is. 16% thick is a blade six times

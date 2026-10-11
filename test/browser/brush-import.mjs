@@ -1763,8 +1763,9 @@ await withPage(async (page) => {
                   P({ BrushThickness: 50 }, { hasTip: true })].map(p => [p.aspectRatio, p.angle || 0]),
             stretch: [P({ BrushThickness: 150 }, { hasTip: true }), P({ BrushThickness: 150, BrushVerticalThicknes: 1 }, { hasTip: true }),
                       P({ BrushThickness: 150, BrushRibbon: 1 }, { hasTip: true, tipW: 10, tipH: 40 }), P({ BrushThickness: 150 })].map(o => o.tipStretch || null),
-            adj: [5, 20, 40].map(i => P({ BrushFlow: 50, BrushInterval: i, BrushAdjustFlowByInterval: 1 }).flow)
-                .concat(P({ BrushFlow: 50, BrushInterval: 5, BrushAdjustFlowByInterval: 1, BrushRibbon: 1 }, { hasTip: true, tipW: 10, tipH: 40 }).flow),
+            adj: [5, 20, 40].map(i => P({ BrushFlow: 50, BrushInterval: i, BrushAdjustFlowByInterval: 1 }))
+                .concat(P({ BrushFlow: 50, BrushInterval: 5, BrushAdjustFlowByInterval: 1, BrushRibbon: 1 }, { hasTip: true, tipW: 10, tipH: 40 }))
+                .map(o => [o.flow, !!o.flowByGap]),
             paper: [[1], [2], [4], [0], [1, 1]].map(([m, r]) => P({ TextureDensity: 50, TextureCompositeMode: m, TextureReverseDensity: r || 0 }, { hasTexture: true }))
                 .map(o => [o.texture || 0, o.textureStroke ?? null]),
             paperMods: (o => [o.textureBrightness, o.textureRotate, !!o.textureInvert])(P({ TextureDensity: 50, TextureCompositeMode: 1,
@@ -2003,8 +2004,8 @@ await withPage(async (page) => {
      * takes 0.30 and 0.72 off solid ink in Clip Studio (cdp-csp/pr-dc,
      * zdah*), and 40% at 50 lays the flow. Soft had twice Clip Studio's ink without it. */
     // ...but not a ribbon's pictures, laid end to end: Braid's outlines are black in Clip Studio
-    check("density adjusted by interval thins each dab with the spacing, not a ribbon's",
-        JSON.stringify(sm.adj) === '[8,30,50,50]', JSON.stringify(sm.adj));
+    check("density adjusted by interval thins each dab with the spacing (in the engine, at the real step), not a ribbon's",
+        JSON.stringify(sm.adj) === '[[50,true],[50,true],[50,true],[50,false]]', JSON.stringify(sm.adj));
     /* Blend by darken (Soft bleed, measured in Clip Studio): dabs never pile
      * up, its watercolour and edge move no ink on an empty layer, and its
      * paper blends on each dab as it would on the stroke -- blend 0 half

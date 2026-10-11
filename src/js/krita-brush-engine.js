@@ -4029,7 +4029,7 @@
             var flowSc = _scFlow;
             flowSc.x = dx; flowSc.y = dy;
             flowSc.pressure = pressure; flowSc.strokeAngle = strokeAngle;
-            var alpha = _clamp(_dyn(p, 'flow', p.flow / 100, flowSc, 4), 0, 1);
+            var alpha = _clamp(_dyn(p, 'flow', p.flow / 100, flowSc, 4), 0, 1) * (p.flowByGap ? _gapCut : 1);
             if (tfInk < 1) alpha = _taperAlpha(alpha, tfInk, dsz, p);
             if (p.cutByLight && _subOn !== 'add') { var lc = _hexToRgb(finalColor); alpha *= _max(lc[0], lc[1], lc[2]) / 255; }
 
@@ -4196,6 +4196,7 @@
      * added to a bare two-point curve); at low pressure Watercolor Stroke
      * Dry's dab is faint enough that its subtract texture leaves only the
      * cracks. _tcNow is the curve the mask being built draws. */
+    var _gapCut = 1;   // Clip Studio's adjust-density-by-interval at the step the dabs really take (_stepFor)
     var _softNow = 1, _sharpNow = 0, _tcNow = null, _scCache = new Map();
     function _softCurve(c, s) {
         if (s >= 1) return c;
@@ -5201,7 +5202,14 @@
                 var nx = dm >= 0 ? Math.ceil(m + 0.5 - 1e-6) + 0.5 : _floor(m - 1.5 + 1e-6) + 0.5;
                 g = _abs(nx - m) / _max(1e-6, _abs(dm));
             }
-            return _max(p.minStep || 0.5, g);
+            g = _max(p.minStep || 0.5, g);
+            /* Clip Studio's "adjust density by interval": each dab lays its flow x spacing / 33.1, the spacing as
+             * a share of the width it is spaced by and as it really falls -- a tip too small for its spacing
+             * still steps a pixel (minStep), and so keeps more. Taken here, at the size the stroke is painted,
+             * not the file's: zb090's second, 8px at 15% thick, steps 1px, 84% of its width, and keeps its whole
+             * flow; Clip Studio inks it the same at thickness 15 and 100 (cdp-csp/stk sw-q090). */
+            if (p.flowByGap) _gapCut = _min(1, g / (0.331 * _max(0.01, p.spacingByWidth && asp < 1 ? d * asp : d)));
+            return g;
         }
         var pxLine = p.sharpness > 0 && sz <= 1;
         var step = resume ? resume.step
@@ -6238,6 +6246,7 @@
         normalMap: null,         // Krita's tangent normal: the dab's colour is the pen's normal (swizzle, type, sensitivity)
         subColor: null,          // what subMix goes toward: null white, 'background' the second colour
         subMixSrc: 'none', subMixMin: 0, subMixCurve: 1, subMixSensors: null, subMixCombine: 0,
+        flowByGap: false,        // Clip Studio adjust-density-by-interval: flow x real step / (0.331 x width), see _stepFor
         cutByLight: false,       // the second brush of Clip Studio mode 2 (adds its colour): laid over the finished first
         dabBlend: false,         // each dab lands by the blend mode, onto the dabs before it too (Krita build-up)
         dabMax: false,           // each dab keeps the stronger of it and what is there (Clip Studio's blend by darken)
@@ -6982,10 +6991,10 @@
     }
     function _swapState(s) {
         var t = [_params, _strokeParams, _customTipCells, _customTipSizeCache, _dabIndex, _mkLast, _gridSt,
-                 _pxOff, _adAvg, _wet, _smoothAngle, _lastDabDist, _tipCycle];
+                 _pxOff, _adAvg, _wet, _smoothAngle, _lastDabDist, _tipCycle, _gapCut];
         _params = s[0]; _strokeParams = s[1]; _customTipCells = s[2]; _customTipSizeCache = s[3];
         _dabIndex = s[4]; _mkLast = s[5]; _gridSt = s[6]; _pxOff = s[7]; _adAvg = s[8]; _wet = s[9];
-        _smoothAngle = s[10]; _lastDabDist = s[11]; _tipCycle = s[12];
+        _smoothAngle = s[10]; _lastDabDist = s[11]; _tipCycle = s[12]; _gapCut = s[13] == null ? 1 : s[13];
         _kReuse = null; _tintMask = null;
         return t;
     }
