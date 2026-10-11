@@ -1993,8 +1993,16 @@
                     /* Clip Studio's order (cdp-csp/pa, Round watercolor's
                      * paper on a whole stroke): contrast about mid grey, then
                      * brightness takes b/200 off, then reverse. */
-                    if (ct !== 1) s = _clamp((s - 0.5) * ct + 0.5, 0, 1);
-                    if (br) s = _clamp(s - br, 0, 1);
+                    /* On a dab, one cut after both: a paper the contrast took under nothing is not
+                     * lifted back by the brightness. zb220's (multiply on each dab, contrast 33)
+                     * inks 4099 under brightness -30 in Clip Studio and 2941 with contrast 80 too,
+                     * where cut between the two ours laid 9120 and 9083; now 3925 and 2786
+                     * (cdp-csp/stk sw-b220). A whole stroke's keeps the cut between (zb197). */
+                    if (!at && (ct !== 1 || br)) s = _clamp((s - 0.5) * ct + 0.5 - br, 0, 1);
+                    else {
+                        if (ct !== 1) s = _clamp((s - 0.5) * ct + 0.5, 0, 1);
+                        if (br) s = _clamp(s - br, 0, 1);
+                    }
                     if (inv) s = 1 - s;
                     if (stress) s = _clamp(sm + stress * (s - sm), 0, 1);
                     // 9 sees the tip without its flow, which scales what it leaves (flow 50: half, 25: a quarter; sw-m9f)
