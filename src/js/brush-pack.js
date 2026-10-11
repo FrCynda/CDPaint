@@ -4126,6 +4126,13 @@
                     if (!out.texture) delete out.texture;
                 }
             }
+            /* 9 at density 0 lays nothing, on each dab or the whole stroke:
+             * zb108's paper so takes its stroke from 3854 of ink to 0 in Clip
+             * Studio (cdp-csp/stk sw-a108, sw-c108), zb045's likewise. Its
+             * rule (_cspPaper) leaves nothing at a density next to nothing.
+             * ponytail: a second brush's is left alone, its op decides what
+             * nothing does to the first. */
+            if (!dens && tm === 9 && !opts.second && !_sutNum(v.TextureStressDensity, 0)) { out.texture = 0.01; out.textureBlend = 9; delete out.textureStroke; }
             if (out.texture > 0 && (out.textureBlend != null || out.textureStroke != null)) {   // ponytail: brightness and rotation measured on a whole stroke's paper only
                 var tb = Math.max(-100, Math.min(100, _sutNum(v.TextureBrightness, 0)));
                 if (tb) out.textureBrightness = tb / 200;
