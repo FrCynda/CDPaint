@@ -3783,7 +3783,7 @@
      * Studio's 239,138,250; read as a cut by lightness they were pale
      * violet). */
     var SUT_SECOND_OP = { 0: 'destination-over', 1: 'destination-over', 2: 'add', 3: 'subtract', 4: 'destination-over', 5: 'over', 6: 'over', 7: 'over', 8: 'over', 9: 'destination-over', 10: 'destination-over', 12: 'cut' },
-        SUT_SECOND_BLEND = { 5: 'lighten', 6: 'screen', 7: 'overlay', 8: 'dodge', 10: 'burn' };
+        SUT_SECOND_BLEND = { 4: 'darken', 5: 'lighten', 6: 'screen', 7: 'overlay', 8: 'dodge', 10: 'burn' };
     BrushPack.sutSecond = function (v) {
         var op = _sutNum(v.UseDualBrush, 0) && SUT_SECOND_OP[_sutNum(v.DualBrushCompositeMode, 0)];
         if (!op) return null;
@@ -3812,6 +3812,12 @@
          * second lies, inking 6024 in Clip Studio and 4617 without the second,
          * the same alpha in a darker colour (cdp-csp/stk sw-c167). */
         else if (_sutNum(v.DualBrushCompositeMode, 0) === 10) op = 'over';
+        /* Mode 4 with it darkens the first's colour by the second's and lays the
+         * second's own where the first has none: zb172's round second at 30% of
+         * its size draws an ink line down the middle of its first's white specks,
+         * at 104% solid ink, at 200% twice as wide, over a blue field and on white
+         * (cdp-csp/stk sw-m172, sw-n172); zb171's dark picture first keeps its ink. */
+        else if (_sutNum(v.DualBrushCompositeMode, 0) === 4) op = 'over';
         // ...and modes 5-8 blend it on (krita-brush-engine's _blend2)
         var blend = SUT_SECOND_BLEND[_sutNum(v.DualBrushCompositeMode, 0)];
         /* Mode 12 likewise: with the colour change on it cuts (the probes

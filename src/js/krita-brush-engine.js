@@ -5047,9 +5047,9 @@
             if (_subOn === 'over') {     // the second brush's stroke over the first's, once both are whole
                 for (var oi = 3, obm = _secondOf().blend; oi < cd.length; oi += 4) {
                     var osa = csd[oi], oda = cd[oi] * (255 - osa) / 255, ona = osa + oda, on;
-                    if (!osa || obm && obm !== 'burn' && !cd[oi]) continue;
-                    // burn (mode 10) lays its own ink where the first has none: zb173 with its first's paper at 0 inks 892 in Clip Studio, 0 with no second (sw-c173)
-                    if (obm === 'burn') {
+                    if (!osa || obm && obm !== 'burn' && obm !== 'darken' && !cd[oi]) continue;
+                    // burn (mode 10) lays its own ink where the first has none: zb173 with its first's paper at 0 inks 892 in Clip Studio, 0 with no second (sw-c173); so does darken (mode 4, sw-n172)
+                    if (obm === 'burn' || obm === 'darken') {
                         var oas = osa / 255, oab = cd[oi] / 255, oao = oas + oab - oas * oab;
                         for (on = oi - 3; on < oi; on++) cd[on] = (csd[on] * oas * (1 - oab) + cd[on] * oab * (1 - oas) + _blend2(obm, cd[on] / 255, csd[on] / 255) * 255 * oas * oab) / oao;
                         cd[oi] = oao * 255;
@@ -7101,7 +7101,7 @@
      * dodge fit zb174's strokes within 2.6/10/9/17 levels a pixel, its
      * rotation held so each mode's pixels line up (cdp-csp/w174m). */
     function _blend2(m, c, s) {
-        return m === 'lighten' ? _max(c, s) : m === 'screen' ? 1 - (1 - c) * (1 - s)
+        return m === 'lighten' ? _max(c, s) : m === 'darken' ? _min(c, s) : m === 'screen' ? 1 - (1 - c) * (1 - s)
             : m === 'overlay' ? (c < 0.5 ? 2 * c * s : 1 - 2 * (1 - c) * (1 - s))
             : m === 'burn' ? _max(0, 1 - (1 - c) / _max(1e-3, s)) : _min(1, c / _max(1e-3, 1 - s));
     }
