@@ -1856,7 +1856,16 @@
              * among black ones paints white too: zb091's white shape after its
              * black speckles leaves the paper as it was in Clip Studio, alone
              * or second (cdp-csp/stk e91, e92), where ours inked it solid. */
-            var shaded = pale && (pale.indexOf(1) >= 0 || pale.indexOf(2) >= 0);
+            /* ...and so is a picture whose greys vary, white or none: zb143's (23-147 over its solid
+             * pixels) paints 131,111,225 in Clip Studio, its ink at about 0.75, with its paper,
+             * mixing and colour change each off alike, and as solid ink with a round tip (cdp-csp/stk
+             * sw-m143, sw-r143). One flat grey is ink: zb015's 24 and zb179's 14 lay as solid ink. */
+            var shaded = pale && (pale.indexOf(1) >= 0 || pale.indexOf(2) >= 0 || cells.some(function (c) {
+                var h = new Uint32Array(256), n = 0, lo = -1, hi = 0, k = 0;
+                for (var q = 0; q < c.alpha.length; q++) if (c.alpha[q] > 127) { h[Math.min(c.rgb[q * 3], c.rgb[q * 3 + 1], c.rgb[q * 3 + 2])]++; n++; }
+                for (var g = 0; g < 256; g++) { k += h[g]; if (lo < 0 && k > n * 0.05) lo = g; if (k <= n * 0.95) hi = g + 1; }
+                return n && hi - lo > 16;
+            }));
             /* A coloured picture keeps its colours with 'change brush tip
              * colour' on too: zb095's tan smear lays 223,184,135 in Clip
              * Studio either way, and with its hue, saturation and value

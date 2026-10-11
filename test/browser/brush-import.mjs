@@ -2020,16 +2020,17 @@ await withPage(async (page) => {
     check('...brightened, turned and reversed as Clip Studio does the paper on a whole stroke',
         JSON.stringify(sm.paperMods) === '[0.2,45,true]', JSON.stringify(sm.paperMods));
     /* Clip Studio's pictures (Book, Building) stamp their own greys and
-     * whites; a tip with no solid white is ink, its greys only density
-     * (Crayon's grey blob paints solid black there). */
+     * whites; a tip of one flat grey is ink, its greys only density
+     * (Crayon's grey blob paints solid black there, zb015's grey 24 too),
+     * but greys that vary shade it (zb143's 23-147, cdp-csp/stk sw-m143). */
     const shade = await page.eval(`(async () => {
-        const png = async (fill) => {
+        const png = async (fill, flat) => {
             const c = new OffscreenCanvas(24, 16), x = c.getContext('2d'); // 16..24 left clear
-            x.fillStyle = '#000'; x.fillRect(0, 0, 8, 16);
+            x.fillStyle = flat ? fill : '#000'; x.fillRect(0, 0, 8, 16);
             x.fillStyle = fill; x.fillRect(8, 0, 8, 16);
             return new Uint8Array(await (await c.convertToBlob()).arrayBuffer());
         };
-        const mode = async (fill) => ((await BrushPack.tipStrip([await png(fill)], 'tip.png', { csp: true })).params || {}).tipMode || '';
+        const mode = async (fill, flat) => ((await BrushPack.tipStrip([await png(fill, flat)], 'tip.png', { csp: true })).params || {}).tipMode || '';
         const whole = async (real) => { const b = await png('#888'); if (real) b.real = real;
                                         return !!(await BrushPack.tipStrip([b], 'tip.png', { csp: true })).whole; };
         const blob = async () => {   // a soft cloud, as Soft bleed's is, shown shrunk
@@ -2040,10 +2041,10 @@ await withPage(async (page) => {
             return !!(await BrushPack.tipStrip([b], 'tip.png', { csp: true })).whole;
         };
         return JSON.stringify([await mode('#fff'), await mode('#888'), await mode('#000'),
-                               [await whole([24, 16]), await whole([96, 64]), await whole(null), await blob()]]);
+                               [await whole([24, 16]), await whole([96, 64]), await whole(null), await blob()], await mode('#181818', true)]);
     })()`, { awaitPromise: true }).then(JSON.parse);
-    check('a picture tip stamps its own whites, a grey or black one stays ink',
-        shade[0] === 'color' && shade[1] === '' && shade[2] === '', JSON.stringify(shade));
+    check('a picture tip stamps its own whites and varying greys, a flat grey or black one stays ink',
+        shade[0] === 'color' && shade[1] === 'color' && shade[2] === '' && shade[4] === '', JSON.stringify(shade));
     /* Anti-aliasing off sharpens a preview shrunk from a bigger picture (Black
      * soot's), not one that is the picture (Noise's soft 210x204 tip keeps
      * its greys in Clip Studio with it off or on). */
