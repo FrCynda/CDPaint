@@ -4218,12 +4218,9 @@
                 /* Measured in Clip Studio (Round mixing brush): a white
                  * stroke across a black one covers it and drags a little grey
                  * on after, so a dab replaces what is under it and picks some
-                 * colour up. That pick-up (amount of paint) is not mapped:
-                 * our smudge deposits colorRate% brush plus the canvas, and
-                 * on a fresh CDPaint document -- opaque white PIXELS, where
-                 * Clip Studio's white is a Paper layer mixing cannot read --
-                 * it drank the white into every dab. Named as dropped. */
-                warn.push('dropped: the way it mixes with colour already on the canvas');
+                 * colour up -- by the amount of paint (krita-brush-engine's
+                 * _smudgeDab, sw-am046). The flat kind and density 100 do not
+                 * take it up here; those are named as dropped below. */
                 /* Density of paint (BrushMixAlpha) is the part that is
                  * measured (Round mixing brush in Clip Studio, one setting at
                  * a time): the engine's mixAlpha rule. At 100 Clip Studio's
@@ -4245,7 +4242,7 @@
                     if (ma < 100) {
                         out.mixAlpha = ma;
                         out.mixStretch = Math.max(0, Math.min(100, _sutNum(v.BrushMixColorExtension, 0)));
-                        out.mixColor = Math.max(0, Math.min(100, _sutNum(v.BrushMixColor, 0)));   // multiply only: how much of the canvas colour the paint takes (Wet wash, measured)
+                        out.mixColor = Math.max(0, Math.min(100, _sutNum(v.BrushMixColor, 0)));   // amount of paint: how much of a dab is the brush's colour (multiply: the canvas's, Wet wash); both measured
                         if (wck === 1) out.mixFlat = true;
                     }
                 } else if (v.BrushMixAlpha == null) {
@@ -4259,6 +4256,7 @@
                     out.watercolor = 1;
                     out.wetBlend = 1;
                 }
+                if (!(out.mixAlpha != null && !out.mixFlat)) warn.push('dropped: the way it mixes with colour already on the canvas');
             }
         }
 

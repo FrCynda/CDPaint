@@ -3451,7 +3451,7 @@
      *
      * Straight onto the layer, like the deform brush: each dab has to read
      * what the one before it left. */
-    var _smPrev = null, _smCar = null, _smPx = NaN, _smPy = NaN, _mixTex = null, _mixTexA = null;
+    var _smPrev = null, _smCar = null, _smCarC = null, _smPk = null, _smPx = NaN, _smPy = NaN, _mixTex = null, _mixTexA = null;
     var _smMaskA = new WeakMap();
 
     /* Krita smudges on a precise copy of the layer kept for the whole stroke
@@ -3587,10 +3587,18 @@
         var prev = _smPrev;
         _smPrev = [x, y, kx + kW / 2, ky + kH / 2];
         if (!prev) {                        // the first dab only loads the brush
-            _smPic = _smBase = _smOwn = _smOp0 = _smFl0 = _smCov = null;
+            _smPic = _smBase = _smOwn = _smOp0 = _smFl0 = _smCov = _smPk = _smCarC = null;
             if (p.mixAlpha != null && p.edgeAdd && p.edgeWidth > 0 && p.edgeDensity > 0) {
                 _smCov = new Uint8Array(ctx.canvas.width * ctx.canvas.height); _smCovCtx = ctx; _smCovP = p;
                 _smCov.x1 = _smCov.y1 = Infinity; _smCov.x2 = _smCov.y2 = -Infinity;
+            }
+            /* What a mixing dab picks colour up from (see the mix in _smudgeDab): the layer as the stroke began.
+             * Clip Studio's white is a paper layer mixing cannot read, CDPaint's base layer white pixels, so
+             * those pick nothing up. ponytail: white paint laid on the base layer reads as paper too. */
+            if (p.mixAlpha != null && !p.mixFlat && p.blendMode !== 'multiply') {
+                try { _smPk = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data; } catch (e4) { _smPk = null; }
+                if (_smPk && ctx === app.ctx && !(app.layerMgr && app.layerMgr.active && app.layerMgr.activeIdx > 0))
+                    for (var pq = 0; pq < _smPk.length; pq += 4) if ((_smPk[pq] & _smPk[pq + 1] & _smPk[pq + 2] & _smPk[pq + 3]) === 255) _smPk[pq + 3] = 0;
             }
             if (p.mixAlpha != null && p.mixFlat) { try { _smFl0 = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data; } catch (e3) { _smFl0 = null; } }
             /* A mixing brush's opacity is the whole stroke's, not each dab's:
@@ -3713,7 +3721,21 @@
             _smCar = _smCar == null || !(hl > 0) ? ub : ub + (_smCar - ub) * _pow(0.5, (_hypot(mvx, mvy) || 0) / hl);
             var A = _clamp(p.mixAlpha, 0, 100) / 100;
             c = A + (1 - A) * (p.mixFlat ? 0 : _smCar);    // opacity is in the dab's k0 already; mixFlat: Clip Studio's BrushWaterColor 1
-            pr = rgb[0] * c; pg = rgb[1] * c; pb = rgb[2] * c; pa = 255 * c;
+            var mc = rgb;
+            if (_smPk) {
+                var kr = 0, kg = 0, kb = 0, ka = 0, kn = 0, cw = ctx.canvas.width, ch = ctx.canvas.height;
+                for (j = 0; j < mh; j++) for (i = 0; i < mw; i++) {
+                    var kx3 = ox + i, ky3 = oy + j;
+                    if (!ma[j * mw + i] || kx3 < 0 || ky3 < 0 || kx3 >= cw || ky3 >= ch) continue;
+                    var kq = (ky3 * cw + kx3) * 4, kA = _smPk[kq + 3];
+                    kr += _smPk[kq] * kA; kg += _smPk[kq + 1] * kA; kb += _smPk[kq + 2] * kA; ka += kA; kn++;
+                }
+                var kl = [kr / 255 / (kn || 1), kg / 255 / (kn || 1), kb / 255 / (kn || 1), ka / (kn || 1)], kh = _pow(0.5, (_hypot(mvx, mvy) || 0) / hl);
+                if (_smCarC == null || !(hl > 0)) _smCarC = kl; else for (n = 0; n < 4; n++) _smCarC[n] = kl[n] + (_smCarC[n] - kl[n]) * kh;
+                var kw3 = (1 - _clamp((p.mixColor - 10) / 90, 0, 1)) * _smCarC[3] / 255;
+                if (kw3 > 0) mc = [0, 1, 2].map(function (q) { return rgb[q] + (_smCarC[q] * 255 / _smCarC[3] - rgb[q]) * kw3; });
+            }
+            pr = mc[0] * c; pg = mc[1] * c; pb = mc[2] * c; pa = 255 * c;
         }
         // What the brush picked up, premultiplied; off the canvas is transparent.
         for (j = 0; !mix && j < mh; j++) {
@@ -6796,7 +6818,7 @@
         }
         if (_strokeParams.sizeAcross) _strokeParams.size *= _strokeParams.sizeAcross;
         _wet = [];                // the brush is loaded fresh each stroke
-        _smPrev = null; _smT = null; _smS = null; _smPic = _smBase = _smOwn = _smOp0 = _smFl0 = _smCov = null; _smCar = null; _smPx = _smPy = NaN;
+        _smPrev = null; _smT = null; _smS = null; _smPic = _smBase = _smOwn = _smOp0 = _smFl0 = _smCov = _smPk = _smCarC = null; _smCar = null; _smPx = _smPy = NaN;
         _wetPos = [];
         _smoothAngle = NaN;
         _lastDabDist = 0;

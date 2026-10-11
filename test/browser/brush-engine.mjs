@@ -500,6 +500,29 @@ await withPage(async (page) => {
     })()`));
     check('a mixing brush keeps its paint under its second brush', mxs.sec.n > 3000, JSON.stringify(mxs.sec));
     check("...and Clip Studio's mixing kind 1 lays its density flat", Math.abs(mxs.flat.mid - 128) < 6, JSON.stringify(mxs.flat));
+    /* Clip Studio's amount of paint is how much of a dab is the brush's colour, the rest the colour under
+     * it as the stroke began: zb046 at 50 over a blue field keeps 0.37 of its ink (cdp-csp/stk sw-am046).
+     * A fresh document's white base is Clip Studio's paper, which mixing cannot read: the ink stays. */
+    const mpk = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, app = PaintApp;
+        const run = (base) => {
+            __B.doc();
+            if (base) { app.layerMgr.collapseToBase({ fresh: true }); app.ctx.fillStyle = '#ffffff'; app.ctx.fillRect(0, 0, 200, 200); }
+            for (const [k, v] of Object.entries({ size: 30, hardness: 100, spacing: 10, flowSrc: 'none', sizeSrc: 'none', smoothingMode: 'none',
+                mixAlpha: 50, mixStretch: 0, mixColor: 50 })) b.setParam(k, v);
+            const ctx = base ? app.ctx : __B.layer().ctx;
+            if (!base) { ctx.fillStyle = '#2d6edc'; ctx.fillRect(0, 70, 200, 60); }
+            b.beginStroke(40, 100, 1, '#5a40d7');
+            for (let i = 1; i <= 30; i++) b.moveStroke(40 + i * 4, 100, 1, '#5a40d7');
+            b.endStroke();
+            return [...ctx.getImageData(120, 100, 1, 1).data];
+        };
+        const r = { field: run(false), base: run(true) };
+        __B.doc(); b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(r);
+    })()`));
+    check('a mixing brush takes up the colour under it by its amount of paint', mpk.field[0] > 55 && mpk.field[0] < 75 && mpk.field[1] > 82 && mpk.field[1] < 100, JSON.stringify(mpk));
+    check("...but not a fresh document's white, Clip Studio's paper", mpk.base[0] < 100 && mpk.base[1] < 80, JSON.stringify(mpk));
 
     /* Clip Studio's paper on each dab blends with the dab's alpha, flow
      * and all: linear light (4) is solid at full flow and the bare paper
