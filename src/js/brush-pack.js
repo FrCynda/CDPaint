@@ -3889,7 +3889,8 @@
          * ours 260 apart. */
         if (opts.hasTip && ivt >= 1 && ivt <= 3) out.spacingByWidth = true; else out.spacingBySize = true;
         out.spacing = ivt >= 1 && ivt <= 3 ? [12, 8, 4][ivt - 1]
-            : Math.max(1, Math.min(400, Math.round(_sutNum(v.BrushInterval, 10))));
+            // unrounded: zb001 at 2.5% inks its fast diagonal 1132 in Clip Studio and 1030 at 3% (cdp-csp/stk sw-b001, sw-g001)
+            : Math.max(0.1, Math.min(400, Math.round(_sutNum(v.BrushInterval, 10) * 100) / 100));
         /* ...and those three open up as a round tip softens: 1 + 2 x its
          * softness times as far (soft lines at hardness 0, 50 and 80, sizes
          * 10-80, fit 3, 2 and 1.4 times). A fixed interval stays put. */
