@@ -4793,7 +4793,7 @@
                     for (var lj = 3; lj < ld.length; lj += 4) {
                         var la = ld[lj], ls = lsd[lj];
                         ld[lj] = _subOn === 'contrast' ? la + _round((255 - 2 * ls) * _min(la, 255 - la) / 255)
-                            : _subOn === 'min' || _subOn === 'mask' ? _min(la, ls) : _subOn === 'over' ? la + ls - _round(la * ls / 255) : _subOn === 'cut' ? la - _round(ls * _min(la, 255 - la) / 255) : la - ls;
+                            : _subOn === 'min' || _subOn === 'mask' ? _min(la, ls) : _subOn === 'mul' ? _round(la * ls / 255) : _subOn === 'over' ? la + ls - _round(la * ls / 255) : _subOn === 'cut' ? la - _round(ls * _min(la, 255 - la) / 255) : la - ls;
                     }
                     mainCtx.putImageData(li, x, y);
                     _subOn = false;
@@ -4885,7 +4885,7 @@
             if (_subOn === 'add') {     // Clip Studio's mode 2: the second brush's colour is added to the first's wherever the first has ink
                 for (var ai = 3; ai < wd.length; ai += 4) if (wd[ai] && sd[ai]) for (var an = ai - 3; an < ai; an++) wd[an] = _min(255, wd[an] + _round(sd[an] * sd[ai] / 255));
             } else
-            for (var si = 3; si < wd.length; si += 4) wd[si] = _subOn === 'min' ? _min(wd[si], sd[si]) : _subOn === 'mask' ? (sd[si] ? wd[si] : 0)
+            for (var si = 3; si < wd.length; si += 4) wd[si] = _subOn === 'min' ? _min(wd[si], sd[si]) : _subOn === 'mul' ? _round(wd[si] * sd[si] / 255) : _subOn === 'mask' ? (sd[si] ? wd[si] : 0)
                 : _subOn === 'cut' ? wd[si] - _round(sd[si] * _min(wd[si], 255 - wd[si]) / 255) : wd[si] - sd[si];
             _washCtx.putImageData(wi, x, y);
             _subOn = false;
@@ -7090,7 +7090,7 @@
     // Both brushes along pts, a segment of each in turn.
     function _paintBoth(pts, color, sec) {
         var st = _secondState(sec), n = pts.length, main = _flowCtx, pat0 = null;
-        _subOn = sec.op === 'subtract' || sec.op === 'min' || sec.op === 'cut' || sec.op === 'contrast' || sec.op === 'add' || sec.op === 'over' || sec.op === 'mask' ? sec.op : false;
+        _subOn = sec.op === 'subtract' || sec.op === 'min' || sec.op === 'mul' || sec.op === 'cut' || sec.op === 'contrast' || sec.op === 'add' || sec.op === 'over' || sec.op === 'mask' ? sec.op : false;
         if (_subOn) {
             if (!_subCanvas || _subCanvas.width !== _flowCanvas.width || _subCanvas.height !== _flowCanvas.height) {
                 _subCanvas = new OffscreenCanvas(_flowCanvas.width, _flowCanvas.height);
