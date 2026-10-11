@@ -3974,6 +3974,10 @@
             if (reff & rdir && !rk) { out.angleSrc = 'direction'; out.angleDirJitter = true; }
         } else if (reff & rdir) {
             out.angleSrc = 'direction';
+            /* ...and a click, with no direction to follow, lays nothing: all 59 bank brushes with 67 lay no ink
+             * on a tap in Clip Studio, every one, where ours stamped a dab; zb024's 195 (random about the
+             * line) lays one (cdp-csp/stk b4 __blank taps, measured). Not measured on sprays. */
+            if (!rk) out.dirWait = true;
         } else if (rk && reff & 512) {
             out.angleSrc = 'radial';   // each particle points away from the patch's centre (Droplet)
         }
@@ -4040,6 +4044,7 @@
             out.angleSrc = 'direction';
             delete out.angleRange;
             out.ribbonClip = true;
+            out.dirWait = true;   // a click lays no ribbon: zb202/216/217/233/239/240's taps are blank in Clip Studio
         }
         /* Several pictures: 0 takes them in turn (Zipper's teeth alternate),
          * 1 out and back (Grass patch's clumps go 0,1,2,1,0), 3 at random

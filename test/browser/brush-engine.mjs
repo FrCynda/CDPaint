@@ -1883,6 +1883,18 @@ await withPage(async (page) => {
         ksq.cx + ' ' + JSON.stringify(ksq.row));
     check("...and spaces a thin bar on a slant by an ellipse with each axis floored at half a pixel",
         ksq.slant < 0.85, String(ksq.slant));
+    // A Clip Studio tip that turns with the stroke lays nothing on a click (dirWait); a plain one does.
+    const dw = JSON.parse(await page.eval(`(() => {
+        const b = PaintApp.brush, L = () => __B.layer().ctx, out = [];
+        for (const w of [true, false]) {
+            b.forgetSaved('Round'); b.loadPreset('Round'); b.setParam('dirWait', w); L().clearRect(0, 0, 200, 200);
+            b.beginStroke(100, 100, 1, '#000000'); b.endStroke();
+            let s = 0; const d = L().getImageData(80, 80, 40, 40).data; for (let i = 3; i < d.length; i += 4) s += d[i]; out.push(s);
+        }
+        b.forgetSaved('Round'); b.loadPreset('Round');
+        return JSON.stringify(out);
+    })()`));
+    check("a tip that turns with the stroke lays nothing on a click", dw[0] === 0 && dw[1] > 1000, JSON.stringify(dw));
     /* Krita's spikes fold every point back into the first wedge, so a 30x15
      * oval with 3 spikes is a rounded triangle: one point reaching 15px
      * along its axis, the far side only the oval's 8px at 60 degrees

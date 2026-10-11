@@ -6264,6 +6264,7 @@
         scatter: 0,
         scatterAxis: 'both',
         sprayEach: false,        // Clip Studio sprays: each particle sized on its own, stops spaced by the plain size
+        dirWait: false,          // a click lays nothing: the tip turns with a stroke it does not have (Clip Studio)
         firstDabAt: 0,           // the first dab this many sizes along the stroke, none at the pen (Clip Studio sprays)
         ribbonClip: false,       // Clip Studio ribbons: the last picture is cut off where the pen stops
         sizeAcross: null,        // ...whose size is the picture's side across the stroke: the long side is size x this
@@ -7154,7 +7155,7 @@
             for (var w = after ? pass : 0; w < (after ? pass + 1 : 2); w++) {
                 if (w) { st = _swapState(st); if (_subOn) _flowCtx = _subCtx; else _flowCtx.globalCompositeOperation = sec.op; pat0 = _patWanted; _patWanted = _secondPaper(); }
                 try {
-                    if (n === 1) _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, color);
+                    if (n === 1) { if (!_params.dirWait) _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, color); }
                     else _processSegment(pts, i, i + 1, color, 2);
                 } finally {
                     if (w) { _patWanted = pat0; _flowCtx = main; _flowCtx.globalCompositeOperation = 'source-over'; st = _swapState(st); _second2.cache = st[3]; }
@@ -8502,7 +8503,7 @@
                 _paintBoth(pts, _state.lastColor, sec);
                 if (tp.ribbonClip && pts.length > 1) _clipRibbonEnd(pts, tp.size);
             } else if (pts.length === 1) {
-                _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, _state.lastColor);
+                if (!tp.dirWait) _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, _state.lastColor);
             } else {
                 _processSegment(pts, 0, pts.length - 1, _state.lastColor, 2);
                 if (tp.ribbonClip) _clipRibbonEnd(pts, tp.size);
@@ -8516,7 +8517,7 @@
             var startIdx = resume ? resume.segIdx :
                 (_state.started ? _state.lastProcessedIdx : 0);
             if (startIdx >= pts.length - 1) {
-                if (pts.length === 1 || startIdx === 0) {
+                if ((pts.length === 1 || startIdx === 0) && !(pts.length === 1 && tp.dirWait)) {
                     _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, _state.lastColor);
                 }
             } else {
