@@ -1958,14 +1958,15 @@ await withPage(async (page) => {
     check('a brush with no anti-aliasing paints hard pixels, a mixing one does not',
         JSON.stringify(sm.aliased) === '[true,false,false]', JSON.stringify(sm.aliased));
     /* Density of paint and colour stretch, measured in Clip Studio; at
-     * full density its line is the plain one. The watercolour kind alone
+     * full density its line is the plain one, but it still takes up the
+     * colour under it by its amount of paint (sw-an046). The watercolour kind alone
      * moves no ink (Round watercolor brush the same pixels at 2 and 0).
      * Mixing, its watercolour kind 1 lays the density flat and 2 is solid
      * (cdp-csp/qo: Thick oil paint's 2 lays 255 from its first pixel). */
     /* A blender (no paint, density 0: Gouache blender) mixes too -- as a
      * plain brush it painted a solid line where Clip Studio paints nothing. */
     check('colour mixing brings its density of paint, the watercolour kind alone no wash',
-        JSON.stringify(sm.mix) === '[[50,100,0,0],[-1,-1,0,0],[-1,-1,0,0],[0,0,0,0],[50,0,0,1],[-1,-1,0,0]]', JSON.stringify(sm.mix));
+        JSON.stringify(sm.mix) === '[[50,100,0,0],[100,0,0,0],[-1,-1,0,0],[0,0,0,0],[50,0,0,1],[-1,-1,0,0]]', JSON.stringify(sm.mix));
     /* Blend mode 27 (Watery brush) thins paint in place and lays none. */
     /* 1% of 20 and 4% of 20 paint the same stroke there. */
     check('dabs never land closer than a pixel', sm.minStep === 1, `${sm.minStep}`);

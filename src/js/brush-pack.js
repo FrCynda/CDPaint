@@ -4225,7 +4225,11 @@
                  * measured (Round mixing brush in Clip Studio, one setting at
                  * a time): the engine's mixAlpha rule. At 100 Clip Studio's
                  * line is the same solid line as with mixing off, so that
-                 * paints as a plain brush and keeps its paper grain. Only
+                 * paints as a plain brush and keeps its paper grain -- unless
+                 * its amount of paint is under 100: over a blue field zb046 at
+                 * density 100 and amount 50 keeps 0.37 of its ink, as at density
+                 * 0 (cdp-csp/stk sw-an046), and four bank brushes so lay the
+                 * same blank strokes through the mixing as before. Only
                  * for colour mixing (BrushUseWaterColor): the watercolour
                  * kind (BrushWaterColor alone) is unmeasured and keeps the
                  * wash -- given this rule, Rough wash fell near -> off. */
@@ -4239,7 +4243,7 @@
                 var wck = _sutNum(v.BrushWaterColor, 0);
                 if (ma != null && wck === 2) ma = 100;
                 if (ma != null) {
-                    if (ma < 100) {
+                    if (ma < 100 || wck !== 2 && _sutNum(v.BrushMixColor, 0) < 100) {
                         out.mixAlpha = ma;
                         out.mixStretch = Math.max(0, Math.min(100, _sutNum(v.BrushMixColorExtension, 0)));
                         out.mixColor = Math.max(0, Math.min(100, _sutNum(v.BrushMixColor, 0)));   // amount of paint: how much of a dab is the brush's colour (multiply: the canvas's, Wet wash); both measured
