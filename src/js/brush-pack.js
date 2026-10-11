@@ -4307,8 +4307,12 @@
          * 100, never further than the interval. A spray's random interval
          * does nothing, its pressure does: Leaves (pressure falling to 50 at
          * full pressure, random 50) stops 150px apart at 1000% of 30 with
-         * either or both, 300 with neither -- half its leaves were missing. */
-        _sutDrive(out, 'spacing', v.BrushIntervalEffector, warn, 'its spacing', spraying ? 'random' : null);
+         * either or both, 300 with neither -- half its leaves were missing.
+         * An automatic interval takes none: zb177's pressure one (falling to
+         * 0.515) lays its slow row 4087 at auto 1 in Clip Studio and 4163
+         * without it, as at a fixed 12% (cdp-csp/stk sw-i177). */
+        if (ivt >= 1 && ivt <= 3) out.spacingSrc = 'none';
+        else _sutDrive(out, 'spacing', v.BrushIntervalEffector, warn, 'its spacing', spraying ? 'random' : null);
         /* A thickness effector only thins (factor floor..1): Droplet's random
          * one at floor 50 took a quarter off its ink. Ours divides the aspect
          * by it, which thins too -- but a tip already squeezed side to side
