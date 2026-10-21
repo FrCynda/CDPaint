@@ -311,6 +311,33 @@ await withPage(async (page) => {
             r.worst < 60, r.worst.toFixed(1) + ' ms');
     }
 
+    console.log('\n== 5. a mouse is full pressure ==');
+    {
+        /* The browser reports a held mouse button as pressure 0.5; Clip Studio
+         * and Krita draw a mouse at full pressure, so the brush must too. */
+        const r = await page.eval(`(async () => {
+            const app = PaintApp, b = app.brush;
+            app.setTool('paintbrush');
+            b.setParam('size', 30); b.setParam('sizeSrc', 'pressure'); b.setParam('sizeMin', 0);
+            const draw = (pointerType, pressure) => {
+                __p.doc(300, 120);
+                const bd = app.bounds;
+                const fire = (type, x, buttons) => (type === 'pointerdown' ? app.ui.stage : window).dispatchEvent(new PointerEvent(type, {
+                    bubbles: true, cancelable: true, pointerId: 1, pointerType, isPrimary: true, buttons, button: 0, pressure,
+                    clientX: bd.left + x, clientY: bd.top + 60 }));
+                fire('pointerdown', 40, 1);
+                for (let x = 50; x <= 260; x += 10) fire('pointermove', x, 1);
+                fire('pointerup', 260, 0);
+                return __p.inked();
+            };
+            const out = { mouse: draw('mouse', 0.5), pen1: draw('pen', 1), pen5: draw('pen', 0.5) };
+            app.setTool('pencil');
+            return out;
+        })()`);
+        check('a mouse draws as a pen pressed all the way',
+            r.mouse === r.pen1 && r.pen1 > r.pen5 * 1.3, JSON.stringify(r));
+    }
+
     const errs = page.errors();
     console.log(`\npage errors: ${errs.length}`);
     for (const e of errs.slice(0, 6)) console.log('  ! ' + e.text.split('\n')[0]);

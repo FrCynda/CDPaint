@@ -3024,7 +3024,7 @@
      * preset is unchanged, and now editable. */
 
     // Tablet state, set by the paint engine from the pointer event.
-    var _penTiltX = 0, _penTiltY = 0, _penTwist = 0, _penWheel = 0.5;
+    var _penTiltX = 0, _penTiltY = 0, _penTwist = 0, _penWheel = 0.5, _penMouse = false;
 
     var _isArray = Array.isArray;
     function _cloneCurve(c) {
@@ -3078,6 +3078,9 @@
          * middle. Krita calls it tangential pressure and Photoshop calls it
          * the stylus wheel; both mean this one dial. */
         _penWheel = (e.tangentialPressure || 0) / 2 + 0.5;
+        /* A mouse is full pressure, as in Clip Studio and Krita; the browser
+         * reports a held mouse button as 0.5. Lasts until the stroke ends. */
+        _penMouse = e.pointerType === 'mouse';
     }
 
     function _tiltAmount() {
@@ -6871,6 +6874,7 @@
     engine.getParams = getParams;
 
     engine.beginStroke = function (x, y, pressure, color) {
+        if (_penMouse) pressure = 1;
         _strokeSeed = _pinnedSeed == null
             ? Math.floor(Math.random() * 2147483647) : _pinnedSeed;
         if (_params.tipCycleReset) _tipCycle = 0;
@@ -6946,6 +6950,7 @@
 
     engine.moveStroke = function (x, y, pressure, color) {
         if (!_state.isDrawing) return;
+        if (_penMouse) pressure = 1;
         _lastRawX = x; _lastRawY = y;
         // Live read: the stroke path follows the hand; only rendering freezes.
         var p2 = _params;
@@ -7037,6 +7042,7 @@
     };
 
     engine.endStroke = function () {
+        _penMouse = false;
         // endStroke() doubles as a cleanup call — the paint engine invokes it
         // whenever it needs to guarantee no stroke is in flight (closing a
         // modal, switching document, snapshotting a tab). Only a stroke that
