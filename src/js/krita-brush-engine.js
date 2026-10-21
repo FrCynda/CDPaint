@@ -384,16 +384,17 @@
      * straight line to nothing at the rim over `w` px (never past the
      * centre), sampled at pixel centres. Fitted to G-pen lines at every
      * AA level and sizes 5-40 (w = AA + 0.5), all within a grey level. */
-    /* Softer than 100 (hard < 1), a raised cosine runs past the size: out
-     * to 1 + 0.414 x softness of the radius (root 2 at 0), from 1 - 1.245 x
-     * softness of that, and the same ramp still fades its new rim. Single
-     * dabs at hardness 0-80, sizes 6-200: within 3 grey levels and 3% of
-     * ink with anti-aliasing off, 7% with it on (level 2, the smallest). */
+    /* Softer than 100 (hard < 1), the dab runs past the size: out to
+     * 1 + 0.5 x softness of the radius (half again at 0), solid to 1 - 1.225
+     * x softness of that, then cos(pi/2 t)^2.3 (gentle, then steeper), and
+     * the same ramp still fades its new rim. Fitted to single dabs at
+     * hardness 0/30/60/85, anti-aliasing off: within 2 grey levels, tails
+     * as long as Clip Studio's, ink within 1%. */
     function _cspCircleMask(size, w, phase, aspect, ang, hard) {
         // An oval (thickness) keeps the same ramp, measured in px to its rim.
         var rx = size / 2, ry = size / aspect / 2;
         if (aspect < 1) { rx = size * aspect / 2; ry = size / 2; }
-        var soft = 1 - hard, ro = 1 + (Math.SQRT2 - 1) * soft, ri = ro * (1 - 1.245 * soft);
+        var soft = 1 - hard, ro = 1 + 0.5 * soft, ri = ro * (1 - 1.225 * soft);
         var W = _ceil(size * ro) + 3, canvas = new OffscreenCanvas(W, W), c = W / 2;
         if (phase) { canvas._cx = _floor(c) + phase[0]; canvas._cy = _floor(c) + phase[1]; }
         var cx = phase ? canvas._cx : c, cy = phase ? canvas._cy : c, k = 1 / _min(w, rx * ro, ry * ro);
@@ -404,7 +405,7 @@
             var n = Math.sqrt(x * x * qx + y * y * qy);
             // (ro - n) over n's slope: px to the rim, r - d on a circle
             var a = n ? _min(1, (ro - n) * n / _hypot(x * qx, y * qy) * k) : 1;
-            if (soft > 0) a *= 0.5 + 0.5 * _cos(_PI * _clamp((n - ri) / (ro - ri), 0, 1));
+            if (soft > 0) a *= Math.pow(_cos(_PI / 2 * _clamp((n - ri) / (ro - ri), 0, 1)), 2.3);
             if (a <= 0) continue;
             var o = (j * W + i) * 4;
             d[o] = d[o + 1] = d[o + 2] = 255; d[o + 3] = _round(_min(1, a) * 255);
