@@ -3854,7 +3854,7 @@
      */
     BrushPack.sutToPreset = function (v, name, opts) {
         opts = opts || {};
-        var out = {}, warn = [];
+        var out = { curveSmooth: 'quad' }, warn = [];   // its curves are quadratic pieces (the engine's _quadAt)
 
         /* Size may be in centimetres (unit 1) or millimetres (2): G-pen at
          * 1 cm and at 10 mm paints exactly 100px in Clip Studio, at 5 mm 50

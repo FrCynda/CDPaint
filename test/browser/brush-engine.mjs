@@ -2470,6 +2470,12 @@ await withPage(async (page) => {
         b.loadPreset('Round');
         out.ownCurveKept = Math.abs(b.evalCurve('size', 0.5) - 0.95) < 1e-3;
 
+        // Clip Studio's curves are quadratic pieces: [[0,0],[0.5,1],[1,1]] is 2x - x^2, and the end is the end
+        b.setCurve('size', [[0, 0], [0.5, 1], [1, 1]]); b.setParam('curveSmooth', 'quad');
+        out.quad = [0.5, 1].map(v => +b.evalCurve('size', v).toFixed(4));
+        b.setCurve('size', [[0, 1], [0.5, 1], [0.8, 0], [1, 0]]);
+        out.quad.push(+b.evalCurve('size', 0.5).toFixed(4), +b.evalCurve('size', 1).toFixed(4));
+        b.setParam('curveSmooth', false);
         // the widget plots evalCurve, so what is drawn is what is applied
         const cv = document.getElementById('pb-size-curve');
         out.widgetExists = !!cv;
@@ -2489,6 +2495,7 @@ await withPage(async (page) => {
     check('editing one brush curve does not rewrite another brush',
         c.otherPresetUntouched, 'the curve leaked across presets');
     check('a brush keeps its own curve', c.ownCurveKept);
+    check('a Clip Studio curve is quadratic pieces through the midpoints, its end reached', JSON.stringify(c.quad) === '[0.75,1,0.7913,0]', JSON.stringify(c.quad));
     check('the curve widget is in the panel', c.widgetExists);
 
     console.log('\n== hot-path guards ==');

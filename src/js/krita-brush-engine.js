@@ -3178,6 +3178,33 @@
         return _clamp(r.p[i][1] + b * t + m0 * t * t / 2 + (m1 - m0) * t * t * t / (6 * hi), 0, 1);
     }
 
+    /* Clip Studio's curves are quadratic pieces (`curveSmooth: 'quad'`): three
+     * points one piece bent by the middle one; four or more run from the
+     * first point through the midpoints between neighbours to the last, each
+     * inner point pulling its piece. Two points stay a straight line. */
+    var _quads = new WeakMap();
+    function _quadAt(c, v) {
+        var segs = _quads.get(c), n = c.length, k;
+        if (!segs) {
+            segs = [];
+            var mid = function (a, b) { return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; };
+            for (k = 1; k < n - 1; k++)
+                segs.push([k === 1 ? c[0] : mid(c[k - 1], c[k]), c[k], k === n - 2 ? c[n - 1] : mid(c[k], c[k + 1])]);
+            _quads.set(c, segs);
+        }
+        var x = _clamp(v, c[0][0], c[n - 1][0]), s = segs[segs.length - 1];
+        for (k = 0; k < segs.length; k++) if (x <= segs[k][2][0]) { s = segs[k]; break; }
+        var p0 = s[0][0], p1 = s[1][0], p2 = s[2][0], A = p0 - 2 * p1 + p2, B = 2 * (p1 - p0), C = p0 - x, t;
+        if (_abs(A) < 1e-12) t = _abs(B) < 1e-12 ? 0 : -C / B;
+        else {
+            var q = Math.sqrt(_max(0, B * B - 4 * A * C)), t1 = (-B + q) / (2 * A), t2 = (-B - q) / (2 * A);
+            // a hair of slack: at x = 1 rounding puts the root just past 1, and a strict test found none
+            t = t1 >= -1e-7 && t1 <= 1 + 1e-7 ? t1 : t2;
+        }
+        t = _clamp(t, 0, 1);
+        return _clamp((1 - t) * (1 - t) * s[0][1] + 2 * t * (1 - t) * s[1][1] + t * t * s[2][1], 0, 1);
+    }
+
     function _curveAt(curve, v, smooth) {
         if (curve == null) return v;
         if (typeof curve === 'number') {
@@ -3185,6 +3212,7 @@
         }
         if (!curve.length) return v;
         if (curve.length === 1) return _clamp(curve[0][1], 0, 1);
+        if (smooth === 'quad' && curve.length > 2) return _quadAt(curve, v);
         if (smooth && curve.length > 2) return _splineAt(curve, v);
         for (var i = 0; i < curve.length - 1; i++) {
             var a = curve[i], b = curve[i + 1];
