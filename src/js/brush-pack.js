@@ -4079,14 +4079,40 @@
         if (both(rvx === 1, rvy === 1)) out.tipFlip = both(rvx === 1, rvy === 1);
         if (both(rvx === 2, rvy === 2) && !out.ribbonClip) out.tipMirror = both(rvx === 2, rvy === 2);
 
-        /* Starting and ending is NOT a taper here. Real Clip Studio 5 draws
-         * a mouse stroke of G-pen, Calligraphy or Mapping pen (all UseIn/
-         * UseOut on) at full width to both ends, fast or slow; mapping it to
-         * our taper shrank them to a lens over 30% of the line each side.
-         * ponytail: what it does under a pen cannot be measured here (no pen
-         * input reaches a hidden desktop), so it is named, not guessed. */
-        if (_sutNum(v.BrushUseIn, 0) || _sutNum(v.BrushUseOut, 0)) {
-            warn.push('dropped: its pen taper at the start and end of a stroke');
+        /* Starting and ending tapers only what its target flags: the blob
+         * is 24 bytes, then (id, on, floor %) triples, size 0x3e9 and
+         * density 0x3fd. G-pen, Calligraphy and Mapping pen tick both boxes
+         * and flag nothing, and Clip Studio draws them full width to both
+         * ends; zb038 (size, floor 0) is a lens. A flagged value runs from
+         * its floor, not from 0: at 50, 10 to 20 px wide. Lengths are px
+         * (type 0) or % of the stroke (1), as 1 - (1 - t)^1.6. Type 2 fades:
+         * no start, and the end runs from the stroke's start over its out
+         * length, straight, nothing after. Stroke correction stretches a
+         * short taper to ~230 px (200 a fade): 20 px, 100 px and 20% all ramp
+         * alike with it on, as set with it off. By speed scales both by the
+         * px between pen reports over 31: 0.42 at 13, 0.8 at 25 (cdp-csp/stk
+         * sw-t038 .. sw-z038, measured). */
+        var useIn = _sutNum(v.BrushUseIn, 0), useOut = _sutNum(v.BrushUseOut, 0), iot = v.BrushInOutTarget;
+        if ((useIn || useOut) && iot && iot.length >= 24) {
+            var tb = (iot instanceof Uint8Array) ? iot : new Uint8Array(iot), tv = new DataView(tb.buffer, tb.byteOffset, tb.byteLength), tfl = {};
+            for (var to = 24; to + 12 <= tb.length; to += 12) if (tv.getUint32(to + 4)) tfl[tv.getUint32(to)] = Math.min(100, tv.getUint32(to + 8)) / 100;
+            var ioType = _sutNum(v.BrushInOutType, 0), tS = tfl[0x3e9], tD = tfl[0x3fd];
+            if ((tS != null || tD != null) && ioType <= 2) {
+                var lenOf = function (len, unit, ratio) {
+                    if (ioType === 1) return ratio * 2;   // engine's 'stroke' unit: 100 is half the stroke
+                    if (_sutNum(unit, 0) !== 0) warn.push('a taper length in a unit other than px, read as px');
+                    return len;
+                };
+                if (useIn && ioType !== 2) out.taperStart = lenOf(_sutNum(v.BrushInLength, 0), v.BrushInLengthUnit, _sutNum(v.BrushInRatio, 0));
+                if (useOut) out.taperEnd = ioType === 2 ? _sutNum(v.BrushOutLength, 0) : lenOf(_sutNum(v.BrushOutLength, 0), v.BrushOutLengthUnit, _sutNum(v.BrushOutRatio, 0));
+                out.taperUnit = ioType === 1 ? 'stroke' : 'px';
+                out.taperTarget = tS != null && tD != null ? 'both' : tS != null ? 'size' : 'opacity';
+                out.taperFloor = [tS || 0, tD || 0];
+                out.taperPow = 1.6;
+                if (_sutNum(v.BrushUseRevision, 0)) out.taperMin = ioType === 2 ? 200 : 230;   // a fade of 20, 50 or 100 px runs out at 200
+                if (ioType === 2) out.taperFade = true;
+                if (_sutNum(v.BrushInOutBySpeed, 0)) out.taperBySpeed = true;
+            }
         }
 
         if (opts.hasTexture) {

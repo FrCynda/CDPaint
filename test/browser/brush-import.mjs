@@ -42,6 +42,8 @@ const FILES = {
     'pixel-select.sut': b64('pixel-select.sut'),
     'multiply-scrape.sut': b64('multiply-scrape.sut'),
     'multiply-dry.sut': b64('multiply-dry.sut'),
+    'taper-lens.sut': b64('taper-lens.sut'),
+    'taper-unflagged.sut': b64('taper-unflagged.sut'),
     'mix-spray-scrape.sut': b64('mix-spray-scrape.sut'),
     'dot-pen.sut': b64('dot-pen.sut'),
     'library-tips.sut': b64('library-tips.sut'),
@@ -1399,6 +1401,22 @@ await withPage(async (page) => {
         return JSON.stringify([a, PaintApp.brush.PRESETS[PaintApp.brush.userPresetNames()[0]].blendMode || 'normal', w]);
     })()`, { awaitPromise: true }).then(JSON.parse);
     check('Clip Studio composite mode 2 imports as multiply unless it mixes, mode 0 stays normal', mul[0] === 'multiply' && mul[1] === 'normal' && mul[2] === 'normal', JSON.stringify(mul));
+    /* Start and end only taper what the in/out target flags: G-pen ticks both boxes and flags
+     * nothing, full width in Clip Studio. Flagged, the size runs up from its floor. */
+    const tap = await page.eval(`(async () => {
+        const get = async (f) => {
+            for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
+            await PaintApp.brush.importFiles([window.__files[f]]);
+            const p = PaintApp.brush.PRESETS[PaintApp.brush.userPresetNames()[0]];
+            return [p.taperStart || 0, p.taperEnd || 0, p.taperUnit || '', p.taperFloor || null, p.taperTarget || ''];
+        };
+        const r = [await get('taper-unflagged.sut'), await get('taper-lens.sut')];
+        await get('rough-scrape.sut');   // the tests below paint with it
+        return JSON.stringify(r);
+    })()`, { awaitPromise: true }).then(JSON.parse);
+    check('Clip Studio start/end taper only when its target is flagged, from its floor',
+        tap[0][0] === 0 && tap[0][1] === 0 && tap[1][0] === 80 && tap[1][1] === 80 && tap[1][2] === 'stroke' &&
+        tap[1][3] && tap[1][3][0] === 0.5 && tap[1][3][1] === 0 && tap[1][4] === 'size', JSON.stringify(tap));
     /* Clip Studio stores a real diameter, unlike Procreate, so the size is
      * the brush's own and not the tip image's. This one sprays, so each
      * dab is a particle of its spray size (14.1) over an 80px patch. */

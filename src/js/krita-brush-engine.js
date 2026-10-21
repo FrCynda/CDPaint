@@ -3980,6 +3980,8 @@
         var tgt = p.taperTarget || 'size';
         var tfSize = (tf < 1 && tgt !== 'opacity') ? tf : 1;
         var tfInk  = (tf < 1 && tgt !== 'size') ? tf : 1;
+        // Clip Studio's taper runs each from its own floor, not from 0
+        if (p.taperFloor && tf < 1) { tfSize = tgt !== 'opacity' ? _lerp(p.taperFloor[0], 1, tf) : 1; tfInk = tgt !== 'size' ? _lerp(p.taperFloor[1], 1, tf) : 1; }
 
         var effAngle = _dynAngle(p, p.angle, sc);
         var sz = _dyn(p, 'size', p.size, sc, 1) * tfSize;
@@ -4143,7 +4145,8 @@
             flowSc.x = dx; flowSc.y = dy;
             flowSc.pressure = pressure; flowSc.strokeAngle = strokeAngle;
             var alpha = _clamp(_dyn(p, 'flow', p.flow / 100, flowSc, 4), 0, 1) * (p.flowByGap ? _gapCut : 1);
-            if (tfInk < 1) alpha = _taperAlpha(alpha, tfInk, dsz, p);
+            // Clip Studio fades each dab's density, and a dense line fills back in: zb038's 230 px ramp shows over 40
+            if (tfInk < 1) alpha = p.taperFloor ? alpha * tfInk : _taperAlpha(alpha, tfInk, dsz, p);
             if (p.cutByLight && _subOn !== 'add') { var lc = _hexToRgb(finalColor); alpha *= _max(lc[0], lc[1], lc[2]) / 255; }
 
             if (p.hatch) {
@@ -5373,6 +5376,9 @@
             if (p.taperUnit === 'stroke' && taperMode >= 2 && totalDist > 0) {
                 tStart = (p.taperStart / 100) * totalDist * 0.5;
                 tEnd   = (p.taperEnd   / 100) * totalDist * 0.5;
+            } else if (p.taperUnit === 'px' || p.taperUnit === 'stroke') {
+                tStart = p.taperUnit === 'px' ? p.taperStart : 0;   // a share of the stroke waits for the final pass
+                tEnd   = p.taperUnit === 'px' ? p.taperEnd : 0;
             } else {
                 tStart = (p.taperStart / 100) * sz * 30;
                 tEnd   = (p.taperEnd   / 100) * sz * 30;
@@ -5382,7 +5388,10 @@
              * was shorter than it, so a short flick ramped up across its
              * entire length and then stopped dead at part ink — no point on
              * either end, which is the opposite of what taper is for. */
-            if (taperMode >= 2 && totalDist > 0 && tStart + tEnd > totalDist) {
+            // Clip Studio by speed: scaled by the px between pen reports over 31, the start alone held to the minimum
+            if (p.taperBySpeed && points.length > 1) { var _ks = _min(1, totalDist / (points.length - 1) / 31); tStart *= _ks; tEnd *= _ks; }
+            if (p.taperMin) { if (tStart > 0) tStart = _max(tStart, p.taperMin); if (tEnd > 0 && !p.taperBySpeed) tEnd = _max(tEnd, p.taperMin); }
+            if (taperMode >= 2 && totalDist > 0 && tStart + tEnd > totalDist && !p.taperFade) {
                 var _k = totalDist / (tStart + tEnd);
                 tStart *= _k; tEnd *= _k;
             }
@@ -5390,12 +5399,17 @@
 
         function _taperAtDist(dabDist) {
             if (tStart <= 0 && tEnd <= 0) return 1;
+            // a fade runs out from the start, the live preview too
+            if (p.taperFade) return tEnd > 0 ? _clamp(1 - dabDist / tEnd, 0, 1) : 1;
             var f = 1;
             if (tStart > 0 && dabDist < tStart) {
                 var _t = dabDist / tStart;
-                f = _t * _t * (3 - 2 * _t);
+                f = p.taperPow ? 1 - _pow(1 - _t, p.taperPow) : _t * _t * (3 - 2 * _t);
             }
-            if (taperMode >= 2 && tEnd > 0) {
+            if (taperMode >= 2 && tEnd > 0 && p.taperPow) {
+                var _r = _max(0, totalDist - dabDist);
+                if (_r < tEnd) f = _min(f, 1 - _pow(1 - _r / tEnd, p.taperPow));
+            } else if (taperMode >= 2 && tEnd > 0) {
                 var fromEnd = _max(0, totalDist - dabDist);
                 if (fromEnd < tEnd) {
                     var _e = fromEnd / tEnd;
@@ -6385,6 +6399,11 @@
         taperEnd: 0,
         taperTarget: 'size',
         taperUnit: 'brush',
+        taperFloor: null,  // Clip Studio: [size, density] each taper runs up from
+        taperMin: 0,       // Clip Studio: no taper shorter than this, px
+        taperPow: 0,       // Clip Studio: 1 - (1 - t)^pow in place of the smoothstep
+        taperFade: false,  // Clip Studio's fade: the end taper runs from the start, nothing after
+        taperBySpeed: false, // Clip Studio: taper lengths scale with the px between pen reports
         dynamicsMode: 'off',
 
         /* Per-parameter dynamics. sizeSrc/sizeMin and flowSrc/flowMin below
@@ -7277,10 +7296,12 @@
 
     function _needsReplay(p, pts) {
         if (!(p.taperStart > 0 || p.taperEnd > 0)) return false;
+        if (p.taperFade) return false;
         if (p.taperEnd > 0) return true;
         if (p.taperUnit === 'stroke') return true;
         var last = pts[pts.length - 1];
         var totalDist = (last && last.dist) || 0;
+        if (p.taperUnit === 'px') return totalDist < _max(p.taperStart, p.taperMin || 0);
         return totalDist < (p.taperStart / 100) * p.size * 30;
     }
 
@@ -8608,7 +8629,7 @@
                     _renderDab(pts[0].x, pts[0].y, pts[0].pressure || 0.5, _state.lastColor);
                 }
             } else {
-                _processSegment(pts, startIdx, pts.length - 1, _state.lastColor, 0, resume || null);
+                _processSegment(pts, startIdx, pts.length - 1, _state.lastColor, 1, resume || null);   // a start taper is known live
             }
         }
         if (_dirtyRect) {
