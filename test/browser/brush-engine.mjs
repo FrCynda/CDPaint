@@ -4409,6 +4409,38 @@ await withPage(async (page) => {
     check('...and one whose pictures end blank keeps its gaps',
         rib.dash0[1] > 100 && rib.dash2[1] > 100 && rib.dash4[1] > 100, JSON.stringify(rib));
 
+    /* A ribbon is repainted whole when the pen lifts. Drawn a frame at a
+     * time, the live passes had run its pictures on, and the repaint began
+     * on whichever one they stopped at: zb233's first link came out cut in
+     * half. Drawn at once or a frame at a time, the same pixels. */
+    const ribLive = JSON.parse(await page.eval(`(async () => {
+        const b = PaintApp.brush, c = document.createElement('canvas'); c.width = 160; c.height = 32;
+        const g = c.getContext('2d'); g.fillStyle = '#000';
+        for (let k = 0; k < 5; k++) g.fillRect(k * 32 + 2, 2 + k * 5, 28, 28 - k * 5);
+        const draw = async (frames) => {
+            const L = __B.doc(500, 200);
+            b.setParam('tipCells', 5); b.setParam('tipPick', 'cycle'); b.setParam('tipCycleReset', true);
+            b.loadCustomTip(c.toDataURL('image/png'), null);
+            await new Promise(r => setTimeout(r, 400));
+            b.setParam('dynamicsMode', 'off'); b.setParam('size', 50); b.setParam('spacing', 100); b.setParam('autoSpacing', 0);
+            b.setParam('angle', 270); b.setParam('angleSrc', 'direction'); b.setParam('ribbonClip', true);
+            b.beginStroke(20, 100, 1, '#000000');
+            for (let i = 1; i <= 23; i++) {
+                b.moveStroke(20 + 440 * i / 23, 100, 1, '#000000');
+                if (frames) await new Promise(r => setTimeout(r, 20));
+            }
+            b.endStroke(); await new Promise(r => setTimeout(r, 180));
+            return Array.from(L.ctx.getImageData(0, 0, 500, 200).data.filter((v, i) => i % 4 === 3));
+        };
+        const once = await draw(false), live = await draw(true);
+        ['spacing', 'autoSpacing', 'angle', 'angleSrc', 'ribbonClip', 'tipCells', 'tipPick', 'tipCycleReset'].forEach(k => b.setParam(k, b.DEFAULTS[k]));
+        b.forgetSaved(b._currentPreset || 'Round'); b.loadPreset('Round');
+        let diff = 0, ink = 0; once.forEach((v, i) => { diff += Math.abs(v - live[i]); ink += v; });
+        return JSON.stringify({ diff, ink });
+    })()`, { awaitPromise: true }));
+    check('a ribbon drawn a frame at a time comes out as one drawn at once',
+        ribLive.ink > 1000 && ribLive.diff === 0, JSON.stringify(ribLive));
+
     /* A picture turned a quarter turn keeps its pixels: turned about the
      * middle of a square as wide as its diagonal, an odd-by-even picture
      * landed half a pixel off the grid and every line went two pixels grey

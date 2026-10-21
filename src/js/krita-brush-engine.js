@@ -8622,6 +8622,13 @@
             // The replay repaints the whole stroke, so the fade sensor has
             // to start counting again with it.
             _dabIndex = 0; _mkLast = null; _gridSt = null; _pxOff = null; _adAvg = 0; _adColOn = 0;
+            /* ...and the picture a ribbon starts on: the live passes ran its
+             * pictures on, so a ribbon drawn a frame at a time began its replay
+             * on whichever picture they stopped at -- zb233's first link cut in
+             * half, per pixel miss 0.02 drawn at once and 0.56 drawn live
+             * (cdp-csp/stk lv-all). The colour mixing is left as the live passes
+             * left it: reset too, zb132 drawn live 0.07 -> 0.18. */
+            if (tp.tipCycleReset) _tipCycle = 0;
             if (sec) {
                 _paintBoth(pts, _state.lastColor, sec);
                 if (tp.ribbonClip && pts.length > 1) _clipRibbonEnd(pts, tp.size);
