@@ -41,6 +41,7 @@ const FILES = {
     'rough-scrape.sut': b64('rough-scrape.sut'),
     'pixel-select.sut': b64('pixel-select.sut'),
     'multiply-scrape.sut': b64('multiply-scrape.sut'),
+    'multiply-dry.sut': b64('multiply-dry.sut'),
     'mix-spray-scrape.sut': b64('mix-spray-scrape.sut'),
     'dot-pen.sut': b64('dot-pen.sut'),
     'library-tips.sut': b64('library-tips.sut'),
@@ -1383,18 +1384,21 @@ await withPage(async (page) => {
     check('a spraying mixing brush takes a quarter of its colour jitter, a plain spray all of it',
         msj[0][0] === 30 && msj[0][1] === 20 && msj[1][0] === 8 && msj[1][1] === 5, JSON.stringify(msj));
 
-    /* Composite mode 2 is Multiply (every watercolour, Wet wash, the inks): stacked in Clip Studio
-     * (255,50,100) goes (255,70,101) after 3 strokes and (255,4,13) after 10. Importing it as normal
-     * left them stuck at the one colour. */
+    /* Composite mode 2 is Multiply with colour mixing off: zb132 dry, ten strokes stack to
+     * (18,11,141) in Clip Studio. With mixing on they stay the ink colour, (98,73,217). */
     const mul = await page.eval(`(async () => {
         for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
-        await PaintApp.brush.importFiles([window.__files['multiply-scrape.sut']]);
-        const a = PaintApp.brush.PRESETS[PaintApp.brush.userPresetNames()[0]].blendMode;
+        const mode = async (f) => {
+            for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
+            await PaintApp.brush.importFiles([window.__files[f]]);
+            return PaintApp.brush.PRESETS[PaintApp.brush.userPresetNames()[0]].blendMode || 'normal';
+        };
+        const a = await mode('multiply-dry.sut'), w = await mode('multiply-scrape.sut');
         for (const n of PaintApp.brush.userPresetNames()) PaintApp.brush.deleteUserPreset(n);
         await PaintApp.brush.importFiles([window.__files['rough-scrape.sut']]);
-        return JSON.stringify([a, PaintApp.brush.PRESETS[PaintApp.brush.userPresetNames()[0]].blendMode || 'normal']);
+        return JSON.stringify([a, PaintApp.brush.PRESETS[PaintApp.brush.userPresetNames()[0]].blendMode || 'normal', w]);
     })()`, { awaitPromise: true }).then(JSON.parse);
-    check('Clip Studio composite mode 2 imports as multiply, mode 0 stays normal', mul[0] === 'multiply' && mul[1] === 'normal', JSON.stringify(mul));
+    check('Clip Studio composite mode 2 imports as multiply unless it mixes, mode 0 stays normal', mul[0] === 'multiply' && mul[1] === 'normal' && mul[2] === 'normal', JSON.stringify(mul));
     /* Clip Studio stores a real diameter, unlike Procreate, so the size is
      * the brush's own and not the tip image's. This one sprays, so each
      * dab is a particle of its spray size (14.1) over an 80px patch. */

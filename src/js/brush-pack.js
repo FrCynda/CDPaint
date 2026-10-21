@@ -3875,7 +3875,8 @@
         // Mode 2 is Multiply (the watercolours, Wet wash, the inks): stacked strokes darken and saturate
         // (255,50,100) x3 -> (255,70,101), x10 -> (255,4,13), measured in Clip Studio
         // Mode 4 darkens its own stack to black as well (zb115, zb242: ten strokes (0,0,3) at the core); read as Multiply, 34 -> 7
-        else if (_sutNum(v.CompositeMode, 0) === 2 || _sutNum(v.CompositeMode, 0) === 4) out.blendMode = 'multiply';
+        // With colour mixing on, mode 2 is not Multiply: zb132's overlaps stay the ink colour in Clip Studio, 32 -> 7
+        else if ((_sutNum(v.CompositeMode, 0) === 2 && !(_sutNum(v.BrushUseWaterColor, 0) || _sutNum(v.BrushUseWaterColor2, 0))) || _sutNum(v.CompositeMode, 0) === 4) out.blendMode = 'multiply';
         // a picture takes no hardness: Pastel's dab at 1 and at 100 is the same picture x flow
         out.hardness = opts.hasTip ? 100 : Math.max(0, Math.min(100, Math.round(_sutNum(v.BrushHardness, 80))));
         /* Spacing mode 0 is Clip Studio's fixed interval; 1-3 (wide, normal,
