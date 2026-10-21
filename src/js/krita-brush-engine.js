@@ -2000,14 +2000,20 @@
              * 9 at density 9, inks 3228 emphasised and 3229 not (cdp-csp/w157s). */
             var stress = getParams().textureStress && blend !== 9 ? _max(0.1, 10 * D) : 0, sm = ta.mean;            if (stress) D = 1;
             var img = ctx.getImageData(at ? ox : 0, at ? oy : 0, w, h), dd = img.data;
+            /* Clip Studio's paper sits 1.5px further down and right than a tile laid from the
+             * canvas origin: zb199's whole-stroke paper falls (1.1, 0.9) px off ours at every
+             * rotation, thickness and interval, zb056's and zb059's about 2 (cdp-csp/stk sw-r199,
+             * sw-s199, sw-q199). Across the bank 1.5 mends the most and harms none (per pixel
+             * miss 0.0929 -> 0.0872; 1: 0.0879; 2: 0.0865 but zb045 0.058 -> 0.093).
+             * ponytail: one offset for every paper; it differs by brush, 1 to 2 px, unexplained. */
+            var PS = 1.5;
             for (var j = 0; j < h; j++) {
-                var ty = ((_floor(((oy || 0) + j) / scale) % th) + th) % th;
+                var gy = (oy || 0) + j - PS, ty = ((_floor(gy / scale) % th) + th) % th;
                 for (var i = 0; i < w; i++) {
                     var q = (j * w + i) * 4 + 3, a = dd[q] / 255 * (flow == null ? 1 : flow);
                     if (!a) continue;
-                    var tx = ((_floor(((ox || 0) + i) / scale) % tw) + tw) % tw;
+                    var gx = (ox || 0) + i - PS, tx = ((_floor(gx / scale) % tw) + tw) % tw;
                     if (rot) {
-                        var gx = (ox || 0) + i, gy = (oy || 0) + j;
                         tx = ((_floor((gx * rc + gy * rs) / scale) % tw) + tw) % tw;
                         ty = ((_floor((gy * rc - gx * rs) / scale) % th) + th) % th;
                     }
