@@ -3723,10 +3723,11 @@
          * over 97.5px -- not over time: a stroke posted in 70 moves reads
          * 0.117 whether it takes 0.3s or 3s, and 20, 35, 100, 200, 400 and
          * 800 moves read 40, 22.9, 8, 4, 2 and 1px / 97.5 within 0.002, at
-         * brush sizes 40 and 80 alike. Ours is px/ms.
-         * ponytail: taken at a pen reporting every 7.5ms (133Hz); a faster
-         * one reads slower in Clip Studio than here. */
-        if (ins.some(function (s) { return s.src === 'speed'; })) out.speedMax = 13;
+         * brush sizes 40 and 80 alike; 25px a report inks Flat watercolor
+         * alike at 16, 47 and 109ms a report (cdp-csp/stk fw-c3). So ours
+         * counts per report too: px/ms, as it was, faded a real mouse's fast
+         * stroke half as much as Clip Studio does. */
+        if (ins.some(function (s) { return s.src === 'speed'; })) { out.speedMax = 97.5; out.speedPerReport = true; }
         return true;
     }
 

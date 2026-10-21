@@ -39,7 +39,7 @@
     var _smoothBuffer = [];
     var _stabilizerX = 0, _stabilizerY = 0;
     var _lastRawX = 0, _lastRawY = 0;
-    var _smoothSpeed = 0, _spLast = null, _spTime = 0, _spDists = [0], _spDts = [];
+    var _smoothSpeed = 0, _reportSpeed = 0, _spLast = null, _spTime = 0, _spDists = [0], _spDts = [];
     var _lazyX = 0, _lazyY = 0;
 
     /* ------------------------------------------------------------------ */
@@ -75,12 +75,13 @@
      * over that many ticks of the tablet's own rate, which is a trimmed
      * mean of the gaps between events (KisFilteredRollingMean, the middle
      * 80% of the last 200). One late event then cannot spike the reading.
-     * The rate is the pen's, so it outlives the stroke. */
+     * The rate is the pen's, so it outlives the stroke.
+     * _reportSpeed is the same distance per report, no clock: Clip Studio's. */
     function _strokeSpeed(x, y) {
         var now = performance.now();
         if (!_spLast) {
             _spLast = { x: x, y: y }; _spTime = now;
-            return (_smoothSpeed = 0);
+            _reportSpeed = 0; return (_smoothSpeed = 0);
         }
         var dist = _hypot(x - _spLast.x, y - _spLast.y);
         if (dist < 1e-9) return _smoothSpeed;       // the same point, reported again
@@ -101,6 +102,7 @@
             n++; total += _spDists[k];
             if (n > 3 && total > 5) break;
         }
+        if (total > 5) _reportSpeed = total / n;
         if (tick > 0 && total > 5) _smoothSpeed = total / (n * tick);
         return _smoothSpeed;
     }
@@ -3112,7 +3114,7 @@
             case 'twist':    return _clamp((_penTwist % 360) / 360, 0, 1);
             case 'wheel':    return _clamp(_penWheel, 0, 1);
             // Krita's scale is 30 px/ms (maxAllowedSpeedValue); ours predates it.
-            case 'speed':    return _clamp(_smoothSpeed / _max(0.01, (p && p.speedMax) || 3), 0, 1);
+            case 'speed':    return _clamp((p && p.speedPerReport ? _reportSpeed : _smoothSpeed) / _max(0.01, (p && p.speedMax) || 3), 0, 1);
             case 'random':   return _dabRand(sc.x, sc.y, seed);
             case 'fade':
                 return _clamp(1 - _dabIndex / _max(1, (p && p.fadeSteps) || 25), 0, 1);
@@ -6454,6 +6456,7 @@
          * alpha comes off this one (see _maskStrokeDab). Sizes are % of the
          * brush, spacing % of the mask dab. */
         speedMax: 3,             // px/ms that reads as full speed
+        speedPerReport: false,   // speedMax is px between pen reports instead (Clip Studio)
         maskOp: '', maskCells: 1, maskAlong: false, maskSize: 100, maskFlow: 100, maskOpacity: 100, maskSpacing: 10, maskTipCurve: null, maskHardness: 100, maskPicture: false,
         maskScatter: 0, maskSpin: 0, maskScatterSrc: 'none', maskScatterMin: 0, maskScatterCurve: 1,
         maskOpacitySrc: 'none', maskOpacityMin: 0, maskOpacityCurve: 1,
@@ -8904,7 +8907,7 @@
         // The pen's rate outlives a stroke; a tile drawn in one go has no
         // rate, and its gaps of nothing read the next real stroke as a blur
         // (Clip Studio's Milli pen, speed-thinned, drew 6px instead of 10).
-        var savedSpeed = [_smoothSpeed, _spLast, _spTime, _spDists, _spDts];
+        var savedSpeed = [_smoothSpeed, _spLast, _spTime, _spDists, _spDts, _reportSpeed];
         _spDists = [0]; _spDts = [];
         // _flowUsed says which part of the flow buffer to blank next
         // stroke. A preview drives the same painter over its own tiny
@@ -9021,7 +9024,7 @@
             _tipCycle = savedCycle;
             _mpS = savedMp;
             _smoothSpeed = savedSpeed[0]; _spLast = savedSpeed[1]; _spTime = savedSpeed[2];
-            _spDists = savedSpeed[3]; _spDts = savedSpeed[4];
+            _spDists = savedSpeed[3]; _spDts = savedSpeed[4]; _reportSpeed = savedSpeed[5];
             _bgCanvas = savedBg; _bgCtx = savedBgCtx;
         }
 
@@ -10736,7 +10739,7 @@
      * is what lets a speckled stroke be drawn twice and compared. */
     engine._setStrokeSeed = function (n) { _pinnedSeed = n == null ? null : (n | 0); };
     // Test-only: forget the pen's rate, so a brush drawn after another reads the speed it would alone.
-    engine._resetSpeed = function () { _smoothSpeed = 0; _spLast = null; _spTime = 0; _spDists = [0]; _spDts = []; };
+    engine._resetSpeed = function () { _smoothSpeed = 0; _reportSpeed = 0; _spLast = null; _spTime = 0; _spDists = [0]; _spDts = []; };
     // Test-only: how many times the live pass suspended this stroke. The
     // hash suite asserts it is non-zero on the drain case, proving the
     // suspend path actually ran before asserting identical pixels.

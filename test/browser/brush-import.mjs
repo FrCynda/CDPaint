@@ -1359,7 +1359,7 @@ await withPage(async (page) => {
             colorRate: p.colorRate, smudgeLength: p.smudgeLength,
             smudgeRadius: p.smudgeRadius, watercolor: p.watercolor, wetBlend: p.wetBlend,
             flowSrc: p.flowSrc, flowCurve: p.flowCurve, flowMin: p.flowMin,
-            sizeSrc: p.sizeSrc, sizeCurve: p.sizeCurve, sizeMin: p.sizeMin, sizeSensors: p.sizeSensors, speedMax: p.speedMax, scatterSensors: p.scatterSensors,
+            sizeSrc: p.sizeSrc, sizeCurve: p.sizeCurve, sizeMin: p.sizeMin, sizeSensors: p.sizeSensors, speedMax: p.speedMax, speedPerReport: p.speedPerReport, scatterSensors: p.scatterSensors,
             tipCells: p.tipCells || 1, has2: !!p._tip2Url,
             tip2Depth: p.tip2Depth || 0, tip2Size: p.tip2Size || 0,
             tip2Spacing: p.tip2Spacing || 0, tip2Angle: p.tip2Angle || 0,
@@ -1478,13 +1478,13 @@ await withPage(async (page) => {
             JSON.stringify([[0, 0], [0.25, 0.6], [1, 1]]), JSON.stringify(sut.flowCurve));
     /* Two inputs multiply, each curve lifted by its own floor; speed reads
      * as ours does (0 standing still), so this spray gathers in as it speeds up.
-     * Full speed is 97.5px a report, 13px/ms from a 133Hz pen: a Clip Studio
-     * stroke of 11.4px moves read 0.117, and 4 (the old fit) read it at 0.37. */
+     * Full speed is 97.5px a report, counted per report and not per ms: a Clip
+     * Studio stroke of 11.4px moves read 0.117 however long each move took. */
     check('a dial driven by two things keeps both, each over its floor',
         sut.scatterSrc === 'none' && JSON.stringify(sut.scatterSensors) === JSON.stringify([
             { src: 'pressure', curve: [[0, 0.28], [1, 1]] },
-            { src: 'speed', curve: [[0, 1], [1, 0.5]] }]) && sut.speedMax === 13,
-        JSON.stringify([sut.scatterSrc, sut.scatterSensors, sut.speedMax]));
+            { src: 'speed', curve: [[0, 1], [1, 0.5]] }]) && sut.speedMax === 97.5 && sut.speedPerReport === true,
+        JSON.stringify([sut.scatterSrc, sut.scatterSensors, sut.speedMax, sut.speedPerReport]));
     check('an input we cannot name drives nothing',
         sut.sizeSrc === 'none' && !sut.sizeSensors, String(sut.sizeSrc));
     /* Colour change is a range either side of the colour there, and a
