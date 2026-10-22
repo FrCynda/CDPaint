@@ -242,40 +242,6 @@
                 }
                 this.updateColorCustomizerUndoUi();
             },
-            restoreColorCustomizerSnapshot(snapshot) {
-                if (!snapshot || typeof snapshot !== 'object') return;
-                this.colorOverrides = Object.assign({}, snapshot.overrides || {});
-                this.fileTabPresetColor = snapshot.fileTabPresetColor || null;
-                this.saveColorOverrides();
-                this.applyColorOverrides();
-                this.refreshColorCustomizerUI();
-                this.applyColorSearchFilter((document.getElementById('color-customizer-search') || {}).value || '');
-                this.updateColorCustomizerEditor();
-            },
-            undoLastColorCustomizerChange() {
-                const entry = this.colorCustomizerHistory && this.colorCustomizerHistory.length
-                    ? this.colorCustomizerHistory.pop()
-                    : null;
-                if (!entry) {
-                    this.updateColorCustomizerUndoUi();
-                    return;
-                }
-                if (entry.type === 'snapshot') {
-                    this.restoreColorCustomizerSnapshot(entry.prevSnapshot);
-                    this.updateColorCustomizerUndoUi();
-                    return;
-                }
-                if (entry.type === 'token') {
-                    if (entry.prev === null || entry.prev === undefined) delete this.colorOverrides[entry.key];
-                    else this.colorOverrides[entry.key] = entry.prev;
-                    this.saveColorOverrides();
-                    this.applyColorOverrides();
-                    this.refreshColorCustomizerUI();
-                    this.applyColorSearchFilter((document.getElementById('color-customizer-search') || {}).value || '');
-                    this.selectColorCustomizerKey(entry.key, { keepScroll: true });
-                }
-                this.updateColorCustomizerUndoUi();
-            },
             updateColorCustomizerUndoUi() {
                 const btn = document.getElementById('color-customizer-undo-btn');
                 if (!btn) return;

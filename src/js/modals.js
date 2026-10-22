@@ -7,15 +7,13 @@
 (function () {
     Object.assign(PaintEngine.prototype, {
             initModalInteractions() {
-                const ids = ['modal-resize', 'modal-depth', 'modal-gapstitch', 'modal-export', 'modal-huesat', 'save-reminder-modal', 'close-confirm-modal', 'modal-info', 'modal-colors', 'modal-confirm-reset', 'modal-toolbar', 'modal-tool-customizer', 'modal-brush-pack', 'modal-new'];
+                const ids = ['modal-resize', 'modal-depth', 'modal-gapstitch', 'modal-export', 'modal-huesat', 'save-reminder-modal', 'close-confirm-modal', 'modal-info', 'modal-toolbar', 'modal-tool-customizer', 'modal-brush-pack', 'modal-new'];
                 ids.forEach(id => {
                     const modal = document.getElementById(id);
                     if (!modal) return;
                     modal.addEventListener('click', (e) => {
                         if (e.target === modal) {
-                            if (this.isColorModalOpen() && id !== 'modal-colors') return;
                             if (id === 'modal-export') return;
-                            if (id === 'modal-colors') return;
                             if (id === 'modal-huesat') this.cancelHueSat();
                             else if (id === 'modal-resize') this.cancelResize();
                             else if (id === 'modal-depth') this.cancelDepth();
@@ -251,10 +249,6 @@
                 }
                 this.setFileMenuRecentCollapsed(!this.fileMenuRecentCollapsed);
             },
-            isColorModalOpen() {
-                const modal = document.getElementById('modal-colors');
-                return !!(modal && modal.style.display === 'flex');
-            },
             _floatCurrentModal() {
                 const id = this._activeSidebarModalId;
                 if (!id) return;
@@ -380,7 +374,6 @@
                 const winModal = document.getElementById('modal-wincolor');
                 if (winModal) {
                     winModal.addEventListener('dblclick', (e) => {
-                        if (this.isColorModalOpen()) return;
                         if (e.target === winModal) this.closeWinColor();
                     });
                 }
@@ -530,15 +523,6 @@
                         return;
                     }
                 }
-                if(id==='colors') {
-                    if (!this.colorDefaults || !this.colorStyleEl) {
-                        this.initColorCustomizer();
-                    }
-                    this.buildColorCustomizer();
-                    this.toggleThemeSelectMode(false);
-                    this.updateThemeSelectUi();
-                    this.centerModal('modal-' + id);
-                }
                 if(id==='toolbar') {
                     this.applyRibbonLayout();
                     this.buildToolbarCustomizer();
@@ -563,7 +547,6 @@
                 if (id === 'resize') { this.positionResizeModal(); this.updateResizePreview(); }
                 if (id === 'depth') { this.centerModal('modal-'+id); setTimeout(()=>{const b=document.getElementById('depth-apply-btn');if(b)b.focus();},0); }
                 if (id === 'huesat') this.centerModal('modal-'+id);
-                this.syncThemeColorsModelessMode();
             },
             restoreModalPosition(modalId, storageKey) {
                 const modal = document.getElementById(modalId);
@@ -644,15 +627,6 @@
                     this.persistModalPosition('modal-update', 'paint.modal.update.pos');
                 });
             },
-            closeColorModal() {
-                const colors = document.getElementById('modal-colors');
-                if (colors) colors.style.display = 'none';
-                const reset = document.getElementById('modal-confirm-reset');
-                if (reset) reset.style.display = 'none';
-                this.toggleThemeSelectMode(false);
-                if (this.colorPickTarget) this.closeWinColor();
-                this.syncThemeColorsModelessMode();
-            },
             closeModals(options = {}) {
                 // If a panel is docked in the sidebar, move it to body and hide it,
                 // but keep the sidebar open so the user can re-open via its tab
@@ -670,11 +644,7 @@
                     this._activeSidebarModalId = null;
                     this._updateSidebarTabVisibility();
                 }
-                const keepColorsOpen = options.keepColorsOpen !== false;
-                const colorsModal = document.getElementById('modal-colors');
-                const shouldKeepColors = !!(keepColorsOpen && colorsModal && colorsModal.style.display === 'flex');
                 document.querySelectorAll('.modal-mask').forEach(m => {
-                    if (shouldKeepColors && m.id === 'modal-colors') return;
                     m.style.display = 'none';
                     // If this was a floated sidebar modal, un-float its tab
                     const mid = m.id.replace('modal-', '');
@@ -683,9 +653,6 @@
                     }
                 });
                 this._updateSidebarTabVisibility();
-                if (!shouldKeepColors) {
-                    this.toggleThemeSelectMode(false);
-                }
                 const info = document.getElementById('modal-info');
                 if (info) info.style.display = 'none';
                 this.depthBackup = null;
@@ -697,7 +664,6 @@
                 if (this.state.hueSatActive && !this.state.hueSatApplied) {
                     this.cancelHueSat();
                 }
-                this.syncThemeColorsModelessMode();
                 if (this._inPopup) {
                     const tauri = window.__TAURI__;
                     if (tauri && tauri.window && tauri.window.getCurrentWindow) {

@@ -88,15 +88,7 @@
                 return scoped;
             },
             initThemeMode() {
-                const CUSTOM_THEMES_INIT = [
-                    'primeval-forest-mode',
-                    'abyssal-ocean-mode',
-                    'crimson-dusk-mode',
-                    'gilded-obsidian-mode',
-                    'violet-haze-mode',
-                    'steel-tide-mode',
-                    'dappled-grove-mode',
-                ];
+                const CUSTOM_THEMES_INIT = ['steel-tide-mode'];
                 const stored = this.lsGet('paint.themeMode') || 'light';
                 this.themeChrome = {
                     titleBar: document.getElementById('title-bar'),
@@ -134,15 +126,7 @@
                 this.applyDarkRefinedMode(this.darkRefinedMode);
             },
             toggleThemeMode(mode) {
-                const CUSTOM_THEMES = [
-                    'primeval-forest-mode',
-                    'abyssal-ocean-mode',
-                    'crimson-dusk-mode',
-                    'gilded-obsidian-mode',
-                    'violet-haze-mode',
-                    'steel-tide-mode',
-                    'dappled-grove-mode',
-                ];
+                const CUSTOM_THEMES = ['steel-tide-mode'];
                 const isCustom = CUSTOM_THEMES.includes(mode);
                 // Check if already active
                 const alreadyActive = isCustom
@@ -164,15 +148,7 @@
                 }
             },
             setThemeMode(mode, opts = {}) {
-                const CUSTOM_THEMES = [
-                    'primeval-forest-mode',
-                    'abyssal-ocean-mode',
-                    'crimson-dusk-mode',
-                    'gilded-obsidian-mode',
-                    'violet-haze-mode',
-                    'steel-tide-mode',
-                    'dappled-grove-mode',
-                ];
+                const CUSTOM_THEMES = ['steel-tide-mode'];
                 // Remove any previously applied custom theme classes
                 CUSTOM_THEMES.forEach(cls => document.body.classList.remove(cls));
 
@@ -225,15 +201,7 @@
                 if (btn) btn.classList.toggle('is-on', this.themeMode === 'dark');
                 if (label) label.textContent = this.themeMode === 'dark' ? 'Dark' : 'Light';
                 // Sync theme button active states
-                const CUSTOM_THEMES = [
-                    'primeval-forest-mode',
-                    'abyssal-ocean-mode',
-                    'crimson-dusk-mode',
-                    'gilded-obsidian-mode',
-                    'violet-haze-mode',
-                    'steel-tide-mode',
-                    'dappled-grove-mode',
-                ];
+                const CUSTOM_THEMES = ['steel-tide-mode'];
                 const activeCustom = CUSTOM_THEMES.find(c => document.body.classList.contains(c)) || null;
                 const lightBtn = document.getElementById('theme-btn-light');
                 if (lightBtn) lightBtn.classList.toggle('is-on', !activeCustom && this.themeMode === 'light');
@@ -246,15 +214,7 @@
                 const isDark = mode === 'dark';
                 const chrome = this.themeChrome;
                 if (!chrome) return;
-                const CUSTOM_THEMES = [
-                    'primeval-forest-mode',
-                    'abyssal-ocean-mode',
-                    'crimson-dusk-mode',
-                    'gilded-obsidian-mode',
-                    'violet-haze-mode',
-                    'steel-tide-mode',
-                    'dappled-grove-mode',
-                ];
+                const CUSTOM_THEMES = ['steel-tide-mode'];
                 const isCustom = CUSTOM_THEMES.some(c => document.body.classList.contains(c));
                 // Custom themes define their own titlebar/tab-row colors via CSS variables.
                 // Clear any inline overrides so those CSS rules are respected.
@@ -287,279 +247,6 @@
                         arrow.style.color = isDark ? '#f2f2f2' : '';
                     });
                 }
-            },
-            initThemeSelectMode() {
-                if (this.themeSelectBound) return;
-                this.themeSelectBound = true;
-                const btn = document.getElementById('theme-select-toggle-btn');
-                if (btn && !btn.dataset.themeSelectBound) {
-                    btn.dataset.themeSelectBound = '1';
-                    btn.addEventListener('click', () => this.toggleThemeSelectMode());
-                }
-                document.addEventListener('mousemove', (e) => this.handleThemeSelectMouseMove(e), true);
-                document.addEventListener('mousedown', (e) => this.handleThemeSelectMouseDown(e), true);
-                document.addEventListener('click', (e) => this.handleThemeSelectClick(e), true);
-                window.addEventListener('keydown', (e) => this.handleThemeSelectKeydown(e), true);
-                this.updateThemeSelectUi();
-            },
-            syncThemeColorsModelessMode() {
-                document.body.classList.toggle('theme-colors-open', this.isColorModalOpen());
-            },
-            updateThemeSelectUi(hintOverride = '') {
-                const btn = document.getElementById('theme-select-toggle-btn');
-                const hint = document.getElementById('theme-select-hint');
-                if (btn) {
-                    btn.classList.toggle('is-on', this.themeSelectActive);
-                    btn.textContent = this.themeSelectActive ? 'Select to Edit: On' : 'Select to Edit: Off';
-                }
-                if (hint) {
-                    if (hintOverride) {
-                        hint.textContent = hintOverride;
-                    } else if (this.themeSelectActive) {
-                        hint.textContent = 'Click any UI element to edit it. Click near edges for border/outline colors. Esc exits.';
-                    } else {
-                        hint.textContent = 'Turn this on, then click a UI element to edit its color token.';
-                    }
-                }
-            },
-            toggleThemeSelectMode(force = null) {
-                const next = force === null ? !this.themeSelectActive : !!force;
-                if (next && !this.isColorModalOpen()) return;
-                if (next === this.themeSelectActive) {
-                    this.updateThemeSelectUi();
-                    return;
-                }
-                this.themeSelectActive = next;
-                document.body.classList.toggle('theme-select-mode', this.themeSelectActive);
-                if (!this.themeSelectActive) {
-                    this.clearThemeSelectHover();
-                    if (this.themeSelectPickedRowTimer) {
-                        clearTimeout(this.themeSelectPickedRowTimer);
-                        this.themeSelectPickedRowTimer = null;
-                    }
-                }
-                this.updateThemeSelectUi();
-            },
-            clearThemeSelectHover() {
-                if (this.themeSelectHoverEl && this.themeSelectHoverEl.classList) {
-                    this.themeSelectHoverEl.classList.remove('theme-select-candidate');
-                }
-                this.themeSelectHoverEl = null;
-            },
-            setThemeSelectHoverElement(el) {
-                if (this.themeSelectHoverEl === el) return;
-                if (this.themeSelectHoverEl && this.themeSelectHoverEl.classList) {
-                    this.themeSelectHoverEl.classList.remove('theme-select-candidate');
-                }
-                this.themeSelectHoverEl = null;
-                if (el && el.classList) {
-                    el.classList.add('theme-select-candidate');
-                    this.themeSelectHoverEl = el;
-                }
-            },
-            getThemeSelectEventElement(event) {
-                const target = event && event.target && event.target.nodeType === 1 ? event.target : null;
-                if (!target) return null;
-                if (target.closest('#palette-std, #palette-recent, #palette-custom, #palette, #cq-palette')) return null;
-                if (target.closest('#modal-colors .window')) return null;
-                if (target.closest('#modal-wincolor .window')) return null;
-                if (target.closest('.modal-mask .window')) return null;
-                return target;
-            },
-            findThemeColorKeyByColor(normalizedColor) {
-                if (!normalizedColor || !this.colorCustomizerRows) return null;
-                for (const key of this.colorCustomizerRows.keys()) {
-                    if (key.startsWith('var(')) continue;
-                    if (key === normalizedColor) return key;
-                }
-                for (const [key, row] of this.colorCustomizerRows.entries()) {
-                    if (key.startsWith('var(')) continue;
-                    if (row.currentNormalized === normalizedColor) return key;
-                }
-                return null;
-            },
-            findNearestThemeColorKey(normalizedColor, maxDistance = 44) {
-                if (!normalizedColor || !this.colorCustomizerRows || !this.colorCustomizerRows.size) return null;
-                const src = this.colorStringToRgba(normalizedColor);
-                if (!src || src.a <= 0) return null;
-                let bestKey = null;
-                let bestDist = Infinity;
-                for (const [key, row] of this.colorCustomizerRows.entries()) {
-                    const to = this.colorStringToRgba(row.currentNormalized || key);
-                    if (!to || to.a <= 0) continue;
-                    const dr = src.r - to.r;
-                    const dg = src.g - to.g;
-                    const db = src.b - to.b;
-                    const dist = Math.sqrt((dr * dr) + (dg * dg) + (db * db));
-                    if (dist < bestDist) {
-                        bestDist = dist;
-                        bestKey = key;
-                    }
-                }
-                return bestDist <= maxDistance ? bestKey : null;
-            },
-            getThemeSelectPropOrderForElement(el, cs, point = null) {
-                const base = [
-                    'backgroundColor',
-                    'color',
-                    'borderTopColor',
-                    'borderRightColor',
-                    'borderBottomColor',
-                    'borderLeftColor',
-                    'outlineColor'
-                ];
-                if (!el || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return base;
-                let rect = null;
-                try { rect = el.getBoundingClientRect(); } catch (e) { rect = null; }
-                if (!rect) return base;
-                const dTop = Math.abs(point.y - rect.top);
-                const dRight = Math.abs(rect.right - point.x);
-                const dBottom = Math.abs(rect.bottom - point.y);
-                const dLeft = Math.abs(point.x - rect.left);
-                const minEdgeDist = Math.min(dTop, dRight, dBottom, dLeft);
-                if (!Number.isFinite(minEdgeDist) || minEdgeDist > 8) return base;
-                const borderRows = [
-                    { prop: 'borderTopColor', dist: dTop, width: parseFloat(cs.borderTopWidth) || 0 },
-                    { prop: 'borderRightColor', dist: dRight, width: parseFloat(cs.borderRightWidth) || 0 },
-                    { prop: 'borderBottomColor', dist: dBottom, width: parseFloat(cs.borderBottomWidth) || 0 },
-                    { prop: 'borderLeftColor', dist: dLeft, width: parseFloat(cs.borderLeftWidth) || 0 }
-                ];
-                const activeBorders = borderRows.filter(row => row.width > 0.5);
-                const orderedBorders = (activeBorders.length ? activeBorders : borderRows)
-                    .slice()
-                    .sort((a, b) => a.dist - b.dist)
-                    .map(row => row.prop);
-                return [
-                    ...orderedBorders,
-                    'outlineColor',
-                    'backgroundColor',
-                    'color'
-                ];
-            },
-            resolveThemeSelectMatchFromElement(startEl, point = null) {
-                if (!startEl) return null;
-                const attrs = ['fill', 'stroke', 'stop-color'];
-                const seen = new Set();
-                const tryColor = (raw, element, source) => {
-                    const normalized = this.normalizeColor(raw);
-                    if (!normalized || seen.has(normalized)) return null;
-                    seen.add(normalized);
-                    if (normalized === 'rgba(0, 0, 0, 0)') return null;
-                    if (this.getAlphaFromNormalized(normalized) === 0) return null;
-                    const key = this.findThemeColorKeyByColor(normalized);
-                    if (key) return { key, element, inferred: false, source };
-                    const nearest = this.findNearestThemeColorKey(normalized);
-                    return nearest ? { key: nearest, element, inferred: true, source } : null;
-                };
-                let el = startEl;
-                let depth = 0;
-                while (el && depth < 8) {
-                    if (el.nodeType !== 1) break;
-                    let cs = null;
-                    try { cs = getComputedStyle(el); } catch (e) {}
-                    if (cs) {
-                        const props = this.getThemeSelectPropOrderForElement(el, cs, point);
-                        for (const prop of props) {
-                            const match = tryColor(cs[prop], el, prop);
-                            if (match) return match;
-                        }
-                    }
-                    if (el.getAttribute) {
-                        for (const attr of attrs) {
-                            const raw = el.getAttribute(attr);
-                            if (!raw) continue;
-                            const match = tryColor(raw, el, attr);
-                            if (match) return match;
-                        }
-                    }
-                    el = el.parentElement;
-                    depth += 1;
-                }
-                return null;
-            },
-            resolveThemeSelectMatchFromPoint(x, y, fallbackEl = null) {
-                if (typeof document.elementsFromPoint === 'function') {
-                    const stack = document.elementsFromPoint(x, y);
-                    for (const el of stack) {
-                        if (!el || el.nodeType !== 1) continue;
-                        if (el.closest('#modal-colors .window')) continue;
-                        if (el.closest('#modal-wincolor .window')) continue;
-                        if (el.closest('.modal-mask .window')) continue;
-                        const match = this.resolveThemeSelectMatchFromElement(el, { x, y });
-                        if (match) return match;
-                    }
-                }
-                return this.resolveThemeSelectMatchFromElement(fallbackEl, { x, y });
-            },
-            handleThemeSelectMouseMove(e) {
-                if (!this.themeSelectActive) return;
-                if (!this.isColorModalOpen()) {
-                    this.toggleThemeSelectMode(false);
-                    return;
-                }
-                if (this.isWinColorOpen()) {
-                    this.clearThemeSelectHover();
-                    return;
-                }
-                const target = this.getThemeSelectEventElement(e);
-                if (!target) {
-                    this.clearThemeSelectHover();
-                    return;
-                }
-                this.setThemeSelectHoverElement(target);
-            },
-            handleThemeSelectMouseDown(e) {
-                if (!this.themeSelectActive || e.button !== 0) return;
-                if (!this.isColorModalOpen()) {
-                    this.toggleThemeSelectMode(false);
-                    return;
-                }
-                if (this.isWinColorOpen()) return;
-                const target = this.getThemeSelectEventElement(e);
-                if (!target) return;
-                e.preventDefault();
-                e.stopImmediatePropagation();
-                const match = this.resolveThemeSelectMatchFromPoint(e.clientX, e.clientY, target);
-                if (!match) this.updateThemeSelectUi('No editable color token found here. Try another element.');
-            },
-            handleThemeSelectClick(e) {
-                if (!this.themeSelectActive || e.button !== 0) return;
-                if (!this.isColorModalOpen()) {
-                    this.toggleThemeSelectMode(false);
-                    return;
-                }
-                if (this.isWinColorOpen()) return;
-                const target = this.getThemeSelectEventElement(e);
-                if (!target) return;
-                e.preventDefault();
-                e.stopImmediatePropagation();
-                if (!this.colorCustomizerRows || !this.colorCustomizerRows.size) {
-                    this.initColorCustomizer();
-                    this.buildColorCustomizer();
-                }
-                const match = this.resolveThemeSelectMatchFromPoint(e.clientX, e.clientY, target);
-                if (!match) {
-                    this.updateThemeSelectUi('No editable color token found here. Try another element.');
-                    this.clearThemeSelectHover();
-                    return;
-                }
-                this.focusColorCustomizerRow(match.key);
-                this.openColorPickerForKey(match.key);
-                if (match.source && (match.source.indexOf('border') === 0 || match.source === 'outlineColor')) {
-                    this.updateThemeSelectUi('Border/outline token selected.');
-                } else if (match.inferred) {
-                    this.updateThemeSelectUi('Selected nearest token match for this element color.');
-                } else {
-                    this.updateThemeSelectUi();
-                }
-            },
-            handleThemeSelectKeydown(e) {
-                if (!this.themeSelectActive) return;
-                if (e.key !== 'Escape') return;
-                if (this.isWinColorOpen()) return;
-                this.toggleThemeSelectMode(false);
-                e.preventDefault();
-                e.stopImmediatePropagation();
             },
             initRibbonCustomization() {
                 this.setupRibbonDrag('ribbon', 'ribbon-order-home');

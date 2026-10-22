@@ -6,40 +6,9 @@
  */
 (function () {
     Object.assign(PaintEngine.prototype, {
-            applyColorPresetFromUI() {
-                const select = document.getElementById('color-customizer-preset');
-                if (!select) return;
-                const value = select.value;
-                if (!value) return;
-                this.applyColorPreset(value);
-            },
-            saveCustomColorPresetFromUI() {
-                const input = document.getElementById('color-customizer-save-name');
-                if (!input) return;
-                const name = input.value.trim();
-                if (!name) return;
-                this.saveCustomColorPreset(name);
-                input.value = '';
-                this.refreshColorPresetOptions();
-            },
             applyColorPreset(name) {
                 if (!this.colorDefaults) return;
                 const before = this.getColorCustomizerSnapshot();
-                if (name.startsWith('custom:')) {
-                    const preset = this.getCustomColorPreset(name);
-                    if (!preset) return;
-                    this.colorOverrides = Object.assign({}, preset.overrides || {});
-                    this.fileTabPresetColor = preset.fileTabPresetColor || null;
-                    this.saveColorOverrides();
-                    this.applyColorOverrides();
-                    this.pushColorCustomizerHistory({
-                        type: 'snapshot',
-                        prevSnapshot: before,
-                        source: 'preset-custom',
-                        at: Date.now()
-                    });
-                    return;
-                }
                 const palettes = {
                     'girly-pop': ['#ffe1f1', '#ffc7e6', '#ffb1da', '#ff8fc9', '#ff6eb6', '#ff4aa1', '#f7288f', '#d91d7a'],
                     'nature': ['#f1f8f2', '#ddefe1', '#c6e3cc', '#b0d7b5', '#96caa0', '#7bb889', '#5f9f73', '#3f7b56'],
@@ -92,25 +61,6 @@
                     at: Date.now()
                 });
             },
-            getCustomColorPreset(value) {
-                const list = this.customColorPresets || [];
-                const name = decodeURIComponent(value.replace(/^custom:/, ''));
-                return list.find(p => p.name === name) || null;
-            },
-            saveCustomColorPreset(name) {
-                const clean = name.slice(0, 40);
-                const list = Array.isArray(this.customColorPresets) ? this.customColorPresets.slice() : [];
-                const entry = {
-                    name: clean,
-                    overrides: Object.assign({}, this.colorOverrides || {}),
-                    fileTabPresetColor: this.fileTabPresetColor || null
-                };
-                const idx = list.findIndex(p => p.name.toLowerCase() === clean.toLowerCase());
-                if (idx >= 0) list[idx] = entry;
-                else list.push(entry);
-                this.customColorPresets = list;
-                this.saveCustomColorPresets();
-            },
             blendPresetColor(baseColor, targetColor) {
                 const base = this.getHslFromColor(baseColor);
                 const target = this.getHslFromColor(targetColor);
@@ -144,34 +94,6 @@
                 const l = Math.max(0.32, Math.min(0.45, target.l * 0.6 + 0.12));
                 const rgb = this.hslToRgb(h, s, l);
                 return this.rgbToHex(Math.round(rgb.r * 255), Math.round(rgb.g * 255), Math.round(rgb.b * 255));
-            },
-            loadCustomColorPresets() {
-                try {
-                    const raw = this.lsGet('paint.colorPresets');
-                    if (!raw) return [];
-                    const list = JSON.parse(raw);
-                    if (!Array.isArray(list)) return [];
-                    return list.filter(p => p && typeof p.name === 'string' && typeof p.overrides === 'object');
-                } catch (e) {
-                    return [];
-                }
-            },
-            saveCustomColorPresets() {
-                const list = Array.isArray(this.customColorPresets) ? this.customColorPresets : [];
-                this.lsSet('paint.colorPresets', JSON.stringify(list));
-            },
-            refreshColorPresetOptions() {
-                const select = document.getElementById('color-customizer-preset');
-                if (!select) return;
-                Array.from(select.querySelectorAll('option[data-custom="true"]')).forEach(opt => opt.remove());
-                const list = Array.isArray(this.customColorPresets) ? this.customColorPresets : [];
-                list.forEach(preset => {
-                    const opt = document.createElement('option');
-                    opt.value = `custom:${encodeURIComponent(preset.name)}`;
-                    opt.textContent = `Custom: ${preset.name}`;
-                    opt.dataset.custom = 'true';
-                    select.appendChild(opt);
-                });
             },
             initWebGLBrush() {
                 const c = document.createElement('canvas');

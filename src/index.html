@@ -81,7 +81,6 @@
     <div class="tab active" id="tab-home" onclick="PaintApp.setActiveTab('home')">Home</div>
     <div class="tab" id="tab-view" onclick="PaintApp.setActiveTab('view')">Misc</div>
     <div class="tab" id="tab-themes" onclick="PaintApp.setActiveTab('themes')">Themes</div>
-    <div class="tab" id="tab-themes2" onclick="PaintApp.setActiveTab('themes2')">Themes 2</div>
     <div class="tab" id="tab-debug" onclick="PaintApp.setActiveTab('debug')">Debug</div>
 </div>
 
@@ -573,48 +572,13 @@
             <div class="section-title">Light</div>
         </div>
         <div class="section">
-            <button class="btn-large theme-mode-btn" id="theme-btn-primeval-forest-mode" onclick="PaintApp.toggleThemeMode('primeval-forest-mode')">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 3L6 11h3l-3 5h5v5h2v-5h5l-3-5h3L12 3z" fill="#5EC47A"/></svg>
-                Primeval Forest
-            </button>
-            <div class="section-title">Theme</div>
-        </div>
-        <div class="section">
-            <button class="btn-large theme-mode-btn" id="theme-btn-abyssal-ocean-mode" onclick="PaintApp.toggleThemeMode('abyssal-ocean-mode')">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 12c1.5-2 3-3 4.5-3s3 2 4.5 2 3-2 4.5-2S19 11 21 12" stroke="#5AA8F0" stroke-width="2" stroke-linecap="round"/><path d="M3 17c1.5-2 3-3 4.5-3s3 2 4.5 2 3-2 4.5-2S19 16 21 17" stroke="#5AA8F0" stroke-width="2" stroke-linecap="round"/><path d="M3 7c1.5-2 3-3 4.5-3s3 2 4.5 2 3-2 4.5-2S19 6 21 7" stroke="#5AA8F0" stroke-width="2" stroke-linecap="round"/></svg>
-                Abyssal Ocean
-            </button>
-            <div class="section-title">Theme</div>
-        </div>
-        <div class="section">
-            <button class="btn-large theme-mode-btn" id="theme-btn-crimson-dusk-mode" onclick="PaintApp.toggleThemeMode('crimson-dusk-mode')">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 3C9 3 5 7 5 12a7 7 0 0 0 14 0c0-3-1.5-5.5-4-7" stroke="#F07070" stroke-width="2" stroke-linecap="round"/><path d="M3 13h2M19 13h2M12 3v2" stroke="#F07070" stroke-width="2" stroke-linecap="round"/><path d="M5 19l14-14" stroke="#F07070" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/></svg>
-                Crimson Dusk
-            </button>
-            <div class="section-title">Theme</div>
-        </div>
-        <div class="section">
-            <button class="btn-large theme-mode-btn" id="theme-btn-gilded-obsidian-mode" onclick="PaintApp.toggleThemeMode('gilded-obsidian-mode')">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><polygon points="12,2 15.5,9 22,9.5 17,14.5 18.5,21 12,17.5 5.5,21 7,14.5 2,9.5 8.5,9" stroke="#D4A845" stroke-width="1.8" stroke-linejoin="round" fill="none"/></svg>
-                Gilded Obsidian
-            </button>
-            <div class="section-title">Theme</div>
-        </div>
-        <div class="section">
-            <button class="btn-large theme-mode-btn" id="theme-btn-violet-haze-mode" onclick="PaintApp.toggleThemeMode('violet-haze-mode')">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><ellipse cx="12" cy="12" rx="9" ry="5" stroke="#A888F0" stroke-width="1.8"/><ellipse cx="12" cy="12" rx="5" ry="9" stroke="#A888F0" stroke-width="1.8"/><circle cx="12" cy="12" r="2" fill="#A888F0"/></svg>
-                Violet Haze
+            <button class="btn-large theme-mode-btn" id="theme-btn-steel-tide-mode" onclick="PaintApp.toggleThemeMode('steel-tide-mode')">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 15c1.8-2.5 3.6-3.7 5.4-3.7s2.7 1.2 4.5 1.2 3-1.2 4.5-1.2S19.2 12.5 21 15" stroke="#39d0cb" stroke-width="2" stroke-linecap="round"/><path d="M3 9c1.8 1.5 3.6 2.2 5.4 2.2s2.7-1.2 4.5-1.2 3 1.2 4.5 1.2S19.2 10.5 21 9" stroke="#39d0cb" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/></svg>
+                Steel Tide
             </button>
             <div class="section-title">Theme</div>
         </div>
 
-    <div class="section">
-        <div class="btn-large" onclick="PaintApp.openModal('colors')">
-            <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 3c4.97 0 9 3.58 9 8 0 2.76-1.56 5-3.5 5h-1.2c-.72 0-1.3.58-1.3 1.3 0 .34.14.66.36.9.34.36.54.84.54 1.35 0 1.08-.88 1.95-1.95 1.95-4.97 0-9-3.58-9-8s4.03-8 9-8zm-3 7.2a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8zm6-1.4a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8zm-3 4a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8zm-4 2.4a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8z" fill="var(--view-theme-icon-color)"/></svg>
-            <span>Theme Colors</span>
-        </div>
-        <div class="section-title">Theme</div>
-    </div>
     <div class="section">
         <div class="btn-large toggle-btn" id="test-mode-btn" title="Toggle improved dark theme">
             <span class="toggle-icons" aria-hidden="true">
@@ -632,20 +596,6 @@
         </div>
         <div class="section-title">Dark Mode</div>
     </div>
-</div>
-
-<div id="ribbon-themes2" class="ribbon" style="display:none">
-        <div class="section">
-            <button class="btn-large theme-mode-btn" id="theme-btn-steel-tide-mode" onclick="PaintApp.toggleThemeMode('steel-tide-mode')">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 15c1.8-2.5 3.6-3.7 5.4-3.7s2.7 1.2 4.5 1.2 3-1.2 4.5-1.2S19.2 12.5 21 15" stroke="#39d0cb" stroke-width="2" stroke-linecap="round"/><path d="M3 9c1.8 1.5 3.6 2.2 5.4 2.2s2.7-1.2 4.5-1.2 3 1.2 4.5 1.2S19.2 10.5 21 9" stroke="#39d0cb" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/></svg>
-                Steel Tide
-            </button>
-            <button class="btn-large theme-mode-btn" id="theme-btn-dappled-grove-mode" onclick="PaintApp.toggleThemeMode('dappled-grove-mode')">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="17" cy="7" r="3" fill="#f4c95d"/><path d="M4 19c2-6 5-9 9-9s5 3 7 3" stroke="#6fae4a" stroke-width="2" stroke-linecap="round"/><path d="M5 15c2.5-1 5-1 7 1s4 2 6 0" stroke="#3f7d3a" stroke-width="1.6" stroke-linecap="round" opacity="0.6"/></svg>
-                Dappled Grove
-            </button>
-            <div class="section-title">Theme</div>
-        </div>
 </div>
 
 <div id="ribbon-debug" class="ribbon" style="display:none">
@@ -1190,7 +1140,6 @@
                     <li>Swap (X) flips Color 1 and Color 2.</li>
                     <li>Edit Colors opens the Win-style color dialog.</li>
                     <li>Palette export/import uses JASC-PAL format.</li>
-                    <li>Theme Colors editor: full UI color token system with search, presets, randomize, HSL/RGB/A sliders, export/import.</li>
                 </ul>
             </div>
             <div class="info-section">
@@ -1230,7 +1179,7 @@
             <div class="info-section">
                 <div class="info-title">Themes</div>
                 <ul class="info-list">
-                    <li>9 themes: Light (default), Test Mode (dark), Dark Refined, Primeval Forest, Abyssal Ocean, Crimson Dusk, Gilded Obsidian, Violet Haze. Plus Steel Tide and Dappled Grove in the new Themes 2 tab.</li>
+                    <li>3 themes: Light (default), Dark (Test Mode), and Steel Tide.</li>
                     <li>Full UI color token editor with search, presets, randomize, HSL/RGB/A sliders, export/import of theme configurations.</li>
                 </ul>
             </div>
@@ -1267,92 +1216,6 @@
         </div>
     </div>
 </div>
-<div id="modal-colors" class="modal-mask">
-    <div class="window">
-        <div class="title-bar">
-            <span>Theme colors</span>
-            <div class="close-btn" onclick="PaintApp.closeColorModal()">&#10005;</div>
-        </div>
-        <div class="content">
-            <div class="top-note">Edit any color token used in the UI. Select a row to use sliders/values, or click Edit to open the full color picker.</div>
-            <div class="search-row">
-                <input class="search-input" id="color-customizer-search" type="text" placeholder="Search colors or UI elements">
-                <button class="btn btn-small" type="button" id="color-customizer-clear-search">Clear</button>
-                <span class="result-count" id="color-customizer-result-count">0</span>
-            </div>
-            <div class="select-row">
-                <button class="btn btn-small theme-select-btn" id="theme-select-toggle-btn" type="button">Select to Edit: Off</button>
-                <span class="select-hint" id="theme-select-hint">Turn this on, then click a UI element to edit its color token.</span>
-            </div>
-            <div class="preset-row">
-                <select class="preset-select" id="color-customizer-preset">
-                    <option value="">Presets...</option>
-                </select>
-                <button class="btn btn-small" onclick="PaintApp.applyColorPresetFromUI()">Apply Preset</button>
-                <button class="btn btn-small" onclick="PaintApp.randomizeColorOverrides()">Randomize</button>
-                <input class="preset-input" id="color-customizer-save-name" type="text" placeholder="Preset name">
-                <button class="btn btn-small" onclick="PaintApp.saveCustomColorPresetFromUI()">Save</button>
-            </div>
-            <div class="actions-row">
-                <button class="btn btn-small" type="button" id="color-customizer-undo-btn">Undo Last Change</button>
-                <button class="btn btn-small" type="button" id="color-customizer-step-red-btn">Step Next To Pure Red</button>
-                <button class="btn btn-small" type="button" id="color-customizer-step-back-red-btn">Step Back (U)</button>
-                <label class="mini-toggle"><input id="color-customizer-changed-only" type="checkbox"> Changed only</label>
-                <div class="spacer"></div>
-                <button class="btn btn-small" type="button" onclick="PaintApp.exportThemeColors()">Export Theme</button>
-                <button class="btn btn-small" type="button" id="color-customizer-set-selected-red">Selected -> Pure Red</button>
-            </div>
-            <div class="main-layout">
-                <div class="color-list" id="color-customizer-list"></div>
-                <div class="editor-panel">
-                    <div class="editor-title">
-                        <span>Quick Color Editor</span>
-                        <span id="color-customizer-editor-state">No selection</span>
-                    </div>
-                    <div class="editor-preview">
-                        <div class="editor-swatch" id="color-customizer-editor-swatch"></div>
-                        <div class="editor-key" id="color-customizer-editor-key">Select a color token from the list</div>
-                    </div>
-                    <input class="editor-input" id="color-customizer-editor-hex" type="text" placeholder="#RRGGBB or rgb(...)">
-                    <div class="editor-grid">
-                        <label for="color-editor-r-range">R</label>
-                        <input id="color-editor-r-range" type="range" min="0" max="255" value="0">
-                        <input id="color-editor-r-num" type="number" min="0" max="255" value="0">
-
-                        <label for="color-editor-g-range">G</label>
-                        <input id="color-editor-g-range" type="range" min="0" max="255" value="0">
-                        <input id="color-editor-g-num" type="number" min="0" max="255" value="0">
-
-                        <label for="color-editor-b-range">B</label>
-                        <input id="color-editor-b-range" type="range" min="0" max="255" value="0">
-                        <input id="color-editor-b-num" type="number" min="0" max="255" value="0">
-
-                        <label for="color-editor-h-range">H</label>
-                        <input id="color-editor-h-range" type="range" min="0" max="360" value="0">
-                        <input id="color-editor-h-num" type="number" min="0" max="360" value="0">
-
-                        <label for="color-editor-s-range">S</label>
-                        <input id="color-editor-s-range" type="range" min="0" max="100" value="0">
-                        <input id="color-editor-s-num" type="number" min="0" max="100" value="0">
-
-                        <label for="color-editor-l-range">L</label>
-                        <input id="color-editor-l-range" type="range" min="0" max="100" value="0">
-                        <input id="color-editor-l-num" type="number" min="0" max="100" value="0">
-
-                        <label for="color-editor-a-range">A</label>
-                        <input id="color-editor-a-range" type="range" min="0" max="100" value="100">
-                        <input id="color-editor-a-num" type="number" min="0" max="100" value="100">
-                    </div>
-                    <div class="kbd-hint">Shortcuts: Ctrl+F search, Ctrl+Z undo last color change, R = next red step, U = previous red step.</div>
-                </div>
-            </div>
-        </div>
-        <div class="footer">
-            <button class="btn" onclick="PaintApp.confirmResetColorOverrides()">Reset to defaults</button>
-            <div style="font-size:11px; color:#666;">Use the X button to close this window.</div>
-        </div>
-    </div>
-</div>
 <!-- Which brushes to take out of a pack. A pack can hold forty; the old
      Import button installed every one of them into the library whether or
      not the user wanted them, and taking them back out was forty clicks. -->
@@ -1374,22 +1237,6 @@
         </div>
         <div class="footer">
             <button class="btn btn-ok" id="bp-pack-add">Add</button>
-            <button class="btn" onclick="PaintApp.closeModals()">Cancel</button>
-        </div>
-    </div>
-</div>
-
-<div id="modal-confirm-reset" class="modal-mask">
-    <div class="window">
-        <div class="title-bar">
-            <span>Reset colors</span>
-            <div class="close-btn" onclick="PaintApp.closeModals()">&#10005;</div>
-        </div>
-        <div class="content">
-            <div style="font-size:12px;">Reset all theme colors to defaults?</div>
-        </div>
-        <div class="footer">
-            <button class="btn btn-ok" onclick="PaintApp.resetColorOverrides(); PaintApp.closeModals();">Reset</button>
             <button class="btn" onclick="PaintApp.closeModals()">Cancel</button>
         </div>
     </div>

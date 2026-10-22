@@ -6,26 +6,6 @@
  */
 (function () {
     Object.assign(PaintEngine.prototype, {
-            exportThemeColors() {
-                const now = new Date();
-                const pad = (n) => String(n).padStart(2, '0');
-                const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-                const payload = {
-                    app: 'CDPaint',
-                    type: 'theme-colors',
-                    version: 1,
-                    exportedAt: now.toISOString(),
-                    overrides: Object.assign({}, this.colorOverrides || {}),
-                    fileTabPresetColor: this.fileTabPresetColor || null
-                };
-                const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `cdpaint-theme-colors-${stamp}.json`;
-                a.click();
-                setTimeout(() => URL.revokeObjectURL(url), 100);
-            },
             sizeExportModalToContent(recenter = false) {
                 const modal = document.getElementById('modal-export');
                 const win = modal ? modal.querySelector('.window') : null;
